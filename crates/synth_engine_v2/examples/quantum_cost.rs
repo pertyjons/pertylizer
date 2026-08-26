@@ -37,13 +37,8 @@ use synth_engine_v2::quantities::{
     Amplitude, ChannelLayout, CutoffFrequency, Frequency, GainFactor, NormalizedLevel, Resonance,
     SampleRate, Seconds,
 };
-use synth_engine_v2::render::{
-    AudioBlockMut, EventEnvelope, EventPayload, NoteEdge, PreparedRenderer, Renderer, TimedEvent,
-    TimedEvents,
-};
-use synth_engine_v2::time::{
-    FrameCount, PlanPosition, QUANTUM_FRAMES, SampleTime, StreamAnchor, TimeSource,
-};
+use synth_engine_v2::render::{AudioBlockMut, PreparedRenderer, Renderer, TimedEvent, TimedEvents};
+use synth_engine_v2::time::{FrameCount, PlanPosition, QUANTUM_FRAMES, SampleTime, StreamAnchor};
 
 /// This build's quantum, in frames.
 const Q: usize = QUANTUM_FRAMES as usize;
@@ -160,6 +155,16 @@ fn voice() -> GraphIr {
             (OUTPUT, PortId::FIRST),
             SignalDomain::Audio,
         )
+        .declaring(synth_engine_v2::ir::PlanDeclarations {
+            // A plan that starts notes must say who starts them: the identity range a
+            // compiled note-on mints from is partitioned across declared producers.
+            note_producers: vec![synth_engine_v2::ir::NoteProducerDeclaration {
+                compiled: true,
+                simultaneous_notes: synth_engine_v2::quantities::HeldNoteCount::measured(1),
+                simultaneous_holds: synth_engine_v2::quantities::EventCount::NONE,
+            }],
+            ..synth_engine_v2::ir::PlanDeclarations::default()
+        })
         .build()
         .expect("the voice path is a readable plan")
 }
@@ -208,6 +213,16 @@ fn gain_chain() -> GraphIr {
             (OUTPUT, PortId::FIRST),
             SignalDomain::Audio,
         )
+        .declaring(synth_engine_v2::ir::PlanDeclarations {
+            // A plan that starts notes must say who starts them: the identity range a
+            // compiled note-on mints from is partitioned across declared producers.
+            note_producers: vec![synth_engine_v2::ir::NoteProducerDeclaration {
+                compiled: true,
+                simultaneous_notes: synth_engine_v2::quantities::HeldNoteCount::measured(1),
+                simultaneous_holds: synth_engine_v2::quantities::EventCount::NONE,
+            }],
+            ..synth_engine_v2::ir::PlanDeclarations::default()
+        })
         .build()
         .expect("a sine into a chain of gains is a readable plan")
 }
@@ -324,13 +339,17 @@ fn settled(shape: Shape, carry: Option<&mut InputCarry>) -> (PreparedRenderer, V
     // The first call that renders. The note lands at plan sample 0 at every `Q`.
     let played: Vec<TimedEvent> = note
         .map(|slot| {
-            vec![TimedEvent::new(
-                EventEnvelope::new(renderer.epoch(), SampleTime::ZERO, TimeSource::Compiled),
-                EventPayload::Note {
-                    slot,
-                    edge: NoteEdge::On,
-                },
-            )]
+            // Through the sanctioned stamping rather than by hand: identities come from the
+            // plan's admitted partition, and a hand-built event cannot have one.
+            let _epoch = renderer.epoch();
+            synth_engine_v2::schedule::stamp_compiled(
+                &mut renderer,
+                &[synth_engine_v2::schedule::CompiledEvent::new(
+                    SampleTime::ZERO,
+                    synth_engine_v2::schedule::CompiledPayload::NoteOn { slot },
+                )],
+            )
+            .expect("one note-on against an admitted producer")
         })
         .unwrap_or_default();
     call(&mut renderer, &mut block, Q, &played);
@@ -388,10 +407,7 @@ fn digest(shape: Shape) -> String {
             .expect("the envelope is playable");
         vec![OfflineEvent::new(
             SampleTime::ZERO,
-            EventPayload::Note {
-                slot,
-                edge: NoteEdge::On,
-            },
+            synth_engine_v2::schedule::CompiledPayload::NoteOn { slot },
         )]
     } else {
         // `gain-chain` has no envelope, so it renders with no events at all — which is

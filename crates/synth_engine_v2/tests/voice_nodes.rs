@@ -17,7 +17,7 @@ use synth_engine_v2::profile::HostProfile;
 use synth_engine_v2::quantities::{
     Amplitude, ChannelLayout, CutoffFrequency, NormalizedLevel, ParameterValue, Resonance, Seconds,
 };
-use synth_engine_v2::render::EventPayload;
+use synth_engine_v2::schedule::CompiledPayload;
 use synth_engine_v2::time::{FrameCount, PlanPosition, SampleTime};
 
 const FILTER: NodeId = NodeId::new(7);
@@ -515,7 +515,7 @@ fn a_gated_amplifier_passes_the_envelope_it_is_driven_by() {
         PlanPosition::ZERO,
         &[OfflineEvent::new(
             SampleTime::ZERO,
-            EventPayload::SetParameter {
+            CompiledPayload::SetParameter {
                 slot: gate,
                 value: ParameterValue::new(1.0).expect("finite"),
             },

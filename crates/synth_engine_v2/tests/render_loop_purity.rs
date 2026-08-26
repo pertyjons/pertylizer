@@ -447,6 +447,11 @@ fn every_call_the_render_loop_makes_is_inside_the_checked_region() {
         // `Option::map` over a `Copy` payload, in the three helpers that turn an event
         // payload into the node, control and value a sample-positioned change moves.
         "map",
+        // `Option::and_then` in the two helpers that resolve a note edge's node and control.
+        // A note-off carries only an occurrence, so resolving it is itself fallible, and the
+        // slot lookup that follows is fallible too — chaining is what keeps both bounds
+        // checks rather than indexing past one. The closure is a slice `get`.
+        "and_then",
     ];
 
     // This crate's own `const fn` accessors and `Copy` constructors: field reads on the
@@ -474,6 +479,18 @@ fn every_call_the_render_loop_makes_is_inside_the_checked_region() {
         "parameter_targets",
         "sample_rate",
         "id",
+        // `NoteIdentity::table` is a `const fn` field read. The renderer compares it against
+        // its own table's id to reject a foreign occurrence, the same shape the foreign-slot
+        // check already had — a comparison, not a lookup, so a stale identity from another
+        // plan never indexes anything.
+        "table",
+        // The live-note registry's three: `admit` writes one preallocated slot, `note_of`
+        // reads one, and `release` clears one. All three are indexed writes into storage
+        // preparation sized to the whole admitted partition, so none can grow and none can
+        // fail for want of room.
+        "admit",
+        "note_of",
+        "release",
         "plan",
         "index",
         "position",
@@ -507,6 +524,7 @@ fn every_call_the_render_loop_makes_is_inside_the_checked_region() {
         "count_out_of_horizon_event",
         "count_arrival_stamped_event",
         "count_foreign_slot_event",
+        "count_orphan_note_event",
         "count_oversized_callback",
         "count_publication_fault",
         // `PreparedRenderer::diagnostics` and `DiagnosticsReport::needs_reprepare` are

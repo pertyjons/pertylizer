@@ -247,7 +247,17 @@ pub(crate) fn validate(ir: &GraphIr, stream: ChannelLayout) -> Result<Validated,
     // from a declaration that contradicts itself would be checked against the profile and
     // could pass, so the contradiction has to be caught first — and the caller told which
     // producer it was, which a sum cannot say.
+    let mut first_compiled: Option<usize> = None;
     for (index, producer) in ir.declarations().note_producers.iter().enumerate() {
+        if producer.compiled {
+            if let Some(first) = first_compiled {
+                return Err(CompileError::SecondCompiledProducer {
+                    first,
+                    second: index,
+                });
+            }
+            first_compiled = Some(index);
+        }
         if producer.compiled && producer.simultaneous_holds > EventCount::NONE {
             return Err(CompileError::CompiledProducerDeclaresHold {
                 index,

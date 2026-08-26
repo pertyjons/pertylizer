@@ -13,7 +13,7 @@
 
 use crate::ir::{NodeId, ParameterId};
 use crate::node::kernels::{ControlIndex, Kernel, MAX_INPUTS, PreparedNode};
-use crate::quantities::{ChannelLayout, EventCount, SampleRate};
+use crate::quantities::{ChannelLayout, EventCount, HeldNoteCount, SampleRate};
 use crate::time::FrameCount;
 
 /// One buffer in the plan's arena, by index.
@@ -615,6 +615,14 @@ pub struct CompiledPlan {
     maximum_block_size: FrameCount,
     max_events_per_quantum: EventCount,
     compiled_event_share: EventCount,
+    /// The identity range admitted to each note-on producer, in declaration order.
+    ///
+    /// Carried by the plan for the reason every other capacity is: `HOST-INV-001` keeps the
+    /// profile off the audio thread, so admission copies what the renderer's side needs. A
+    /// renderer builds its identity table from this, and a producer's position here is its
+    /// `ProducerId`.
+    note_producer_ranges: Vec<HeldNoteCount>,
+    compiled_note_producer: Option<crate::identity::ProducerId>,
     forward_event_horizon: FrameCount,
     added_latency: FrameCount,
 }
@@ -640,6 +648,8 @@ impl CompiledPlan {
         maximum_block_size: FrameCount,
         max_events_per_quantum: EventCount,
         compiled_event_share: EventCount,
+        note_producer_ranges: Vec<HeldNoteCount>,
+        compiled_note_producer: Option<crate::identity::ProducerId>,
         forward_event_horizon: FrameCount,
         added_latency: FrameCount,
     ) -> Self {
@@ -657,6 +667,8 @@ impl CompiledPlan {
             maximum_block_size,
             max_events_per_quantum,
             compiled_event_share,
+            note_producer_ranges,
+            compiled_note_producer,
             forward_event_horizon,
             added_latency,
         }
@@ -800,6 +812,24 @@ impl CompiledPlan {
     /// admitted plan.
     pub const fn compiled_event_share(&self) -> EventCount {
         self.compiled_event_share
+    }
+
+    /// The identity range admitted to each note-on producer, in declaration order.
+    ///
+    /// A producer's position here **is** its `ProducerId`: the ranges are disjoint by
+    /// construction, so an identity is attributable without carrying a producer tag.
+    pub fn note_producer_ranges(&self) -> &[HeldNoteCount] {
+        &self.note_producer_ranges
+    }
+
+    /// Which producer owns the plan's compiled note events, if it has any.
+    ///
+    /// Validation refuses a second compiled producer, so this is a lookup rather than a
+    /// search: `stamp_compiled` needs the `ProducerId` whose range a compiled note-on mints
+    /// into, and inferring it from position would silently make producer 0 the compiled one
+    /// in every plan that declares a runtime source first.
+    pub const fn compiled_note_producer(&self) -> Option<crate::identity::ProducerId> {
+        self.compiled_note_producer
     }
 
     /// How far ahead an ingress event may be stamped.

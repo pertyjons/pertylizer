@@ -56,13 +56,9 @@ use synth_engine_v2::quantities::{
     Amplitude, ChannelLayout, CutoffFrequency, Frequency, NormalizedLevel, Resonance,
     SampleRate as V2SampleRate, Seconds as V2Seconds,
 };
-use synth_engine_v2::render::{
-    AudioBlockMut, EventEnvelope, EventPayload, NoteEdge, PreparedRenderer, Renderer, TimedEvent,
-    TimedEvents,
-};
-use synth_engine_v2::time::{
-    FrameCount, PlanPosition, QUANTUM_FRAMES, SampleTime, StreamAnchor, TimeSource,
-};
+use synth_engine_v2::render::{AudioBlockMut, PreparedRenderer, Renderer, TimedEvent, TimedEvents};
+use synth_engine_v2::schedule::CompiledPayload;
+use synth_engine_v2::time::{FrameCount, PlanPosition, QUANTUM_FRAMES, SampleTime, StreamAnchor};
 
 // ---------------------------------------------------------------------------
 // The fixture, shared with EVD-0013
@@ -328,6 +324,16 @@ fn v2_graph(amplitude: f32) -> GraphIr {
             (OUTPUT, PortId::FIRST),
             SignalDomain::Audio,
         )
+        .declaring(synth_engine_v2::ir::PlanDeclarations {
+            // A plan that starts notes must say who starts them: the identity range a
+            // compiled note-on mints from is partitioned across declared producers.
+            note_producers: vec![synth_engine_v2::ir::NoteProducerDeclaration {
+                compiled: true,
+                simultaneous_notes: synth_engine_v2::quantities::HeldNoteCount::measured(1),
+                simultaneous_holds: synth_engine_v2::quantities::EventCount::NONE,
+            }],
+            ..synth_engine_v2::ir::PlanDeclarations::default()
+        })
         .build()
         .expect("the voice path is a readable plan")
 }
@@ -426,13 +432,17 @@ fn v2_settled(carry: Option<&mut InputCarry>) -> (PreparedRenderer, Vec<f32>) {
     // The output carry is primed with `Q` frames of silence, so this call
     // renders no quantum and no event may be presented with it.
     call(&mut renderer, &mut block, quantum, &[]);
-    let played = [TimedEvent::new(
-        EventEnvelope::new(renderer.epoch(), SampleTime::ZERO, TimeSource::Compiled),
-        EventPayload::Note {
-            slot,
-            edge: NoteEdge::On,
-        },
-    )];
+    // Stamped rather than hand-built: a note event carries an occurrence, and only the
+    // plan's own admitted partition can mint one.
+    let _epoch = renderer.epoch();
+    let played = synth_engine_v2::schedule::stamp_compiled(
+        &mut renderer,
+        &[synth_engine_v2::schedule::CompiledEvent::new(
+            SampleTime::ZERO,
+            CompiledPayload::NoteOn { slot },
+        )],
+    )
+    .expect("the fixture declares a compiled note producer");
     call(&mut renderer, &mut block, quantum, &played);
     while renderer.clock().as_u64() < (0.25 * SAMPLE_RATE as f64) as u64 {
         call(&mut renderer, &mut block, quantum, &[]);
@@ -470,19 +480,10 @@ fn v2_offline_events(plan: &CompiledPlan) -> Vec<OfflineEvent> {
         .resolve_note(ENVELOPE)
         .expect("the envelope is playable");
     vec![
-        OfflineEvent::new(
-            SampleTime::ZERO,
-            EventPayload::Note {
-                slot,
-                edge: NoteEdge::On,
-            },
-        ),
+        OfflineEvent::new(SampleTime::ZERO, CompiledPayload::NoteOn { slot }),
         OfflineEvent::new(
             SampleTime::new(NOTE_OFF_FRAME),
-            EventPayload::Note {
-                slot,
-                edge: NoteEdge::Off,
-            },
+            CompiledPayload::NoteOff { slot },
         ),
     ]
 }

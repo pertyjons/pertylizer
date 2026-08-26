@@ -329,6 +329,35 @@ pub struct IdentityTable {
     pub(super) live: u32,
 }
 
+/// What the renderer knows about a live note.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct LiveNote {
+    pub(super) generation: u32,
+    pub(super) note: crate::plan::NoteSlot,
+}
+
+/// Which occurrences are currently sounding, and on which node.
+///
+/// **A registry, not a minter, and the split is load-bearing.** [`IdentityTable`] models a
+/// producer's *occupancy*: it allocates an index, advances its generation, and frees it when
+/// the note ends. A compiled schedule is stamped ahead of the render — for a whole piece at
+/// once — so the table's occupancy at stamping time is the schedule's polyphony, which is
+/// what `simultaneous_notes` bounds. It is **not** what is sounding at any moment during the
+/// render, and an index the table has already freed and reissued is exactly the case where
+/// the two disagree.
+///
+/// This is what the audio thread reads instead. It mints nothing and owns no generation
+/// counter: a note-on **admits** its occurrence together with the node the edge names, and a
+/// release resolves through it and clears it. So the renderer's answer to "which note does
+/// this release end" comes from the event stream it is applying, in the order it applies it,
+/// rather than from a table that ran ahead.
+#[derive(Debug)]
+#[must_use]
+pub struct LiveNotes {
+    pub(super) id: TableId,
+    pub(super) slots: Vec<Option<LiveNote>>,
+}
+
 #[path = "identity/table.rs"]
 mod table;
 

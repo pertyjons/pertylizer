@@ -11,8 +11,10 @@
 //! allocates, and a scan over one file holding both could only ever be a scan with
 //! exceptions.
 
+use super::NoteEdge;
 use super::{
-    AudioBlockMut, DueEvent, EventPayload, PendingCounts, PreparedRenderer, Renderer, TimedEvents,
+    AudioBlockMut, DueEvent, EventPayload, PendingCounts, PreparedRenderer, Renderer,
+    ResolvedTarget, TimedEvents,
 };
 use crate::diagnostics::RenderError;
 use crate::node::kernels;
@@ -117,7 +119,11 @@ impl PreparedRenderer {
             // documented post-swap case into a render failure.
             let foreign = match event.payload() {
                 EventPayload::SetParameter { slot, .. } => slot.plan() != self.plan.id(),
-                EventPayload::Note { slot, .. } => slot.plan() != self.plan.id(),
+                // A note edge's provenance is its **identity's table**, not a node address:
+                // `SOUND-INV-017` removes the node from the release, so there is no slot to
+                // compare. An identity from another table is the same class of stale as a
+                // foreign slot and is filtered here for the same reason.
+                EventPayload::Note { identity, .. } => identity.table() != self.live_notes.id(),
             };
             if foreign {
                 pending.foreign_slot = pending.foreign_slot.saturating_add(1);
@@ -191,6 +197,8 @@ impl PreparedRenderer {
             };
             *slot = DueEvent {
                 position,
+                // Resolved below, once the whole span is in render order.
+                target: None,
                 // Four billion events in one span is unreachable, and a saturated arrival
                 // index only affects tie order among events at one position.
                 arrival: u32::try_from(index).unwrap_or(u32::MAX),
@@ -206,6 +214,8 @@ impl PreparedRenderer {
         if let Some(live) = self.event_scratch.get_mut(..self.scratch_len) {
             live.sort_unstable_by_key(|event| (event.position, event.arrival));
         }
+
+        self.resolve_nodes(&mut pending);
 
         Ok(pending)
     }
@@ -296,7 +306,8 @@ impl PreparedRenderer {
                 break;
             }
             last += 1;
-            if let Some(node) = self.timed_target(event.payload) {
+            if let Some(target) = event.target {
+                let node = target.node;
                 // Counted at `node + 1`, so the prefix sum below turns the counts into
                 // starts in place: entry `n` becomes where node `n`'s run begins.
                 if let Some(count) = self.control_starts.get_mut(node + 1) {
@@ -321,13 +332,11 @@ impl PreparedRenderer {
                 break;
             };
             index += 1;
-            let (Some(node), Some(control), Some(value)) = (
-                self.timed_target(event.payload),
-                self.timed_control_index(event.payload),
-                self.timed_value(event.payload),
-            ) else {
+            let (Some(target), Some(value)) = (event.target, self.timed_value(event.payload))
+            else {
                 continue;
             };
+            let (node, control) = (target.node, target.control);
             let (Some(base), Some(filled)) = (
                 self.control_starts.get(node).copied(),
                 self.control_fill.get(node).copied(),
@@ -351,38 +360,70 @@ impl PreparedRenderer {
         }
     }
 
-    /// Which node a payload's sample-positioned effect moves, if it has one.
-    fn timed_target(&self, payload: EventPayload) -> Option<usize> {
-        match payload {
-            EventPayload::Note { slot, .. } => self
-                .plan
-                .note_targets()
-                .get(slot.index())
-                .map(|target| target.node.index()),
-            EventPayload::SetParameter { slot, .. } => self
-                .plan
-                .parameter_targets()
-                .get(slot.index())
-                .filter(|target| matches!(target.rate, ControlRate::Sample))
-                .map(|target| target.node.index()),
+    /// Resolve every admitted event's target **once**, in the order the call will apply them.
+    ///
+    /// This is the only place the live-note registry is written, and it runs after the sort
+    /// so the walk is in render order. That matters for one case and it is not exotic: a
+    /// producer that plays a note, releases it and plays another may have both occurrences
+    /// on the same index, and only a walk in application order sees the first end before the
+    /// second begins. Resolving inside the per-quantum passes instead would read a registry
+    /// those same passes were mutating, and the two passes would stop agreeing — which is
+    /// what makes the counts the first produces describe the writes the second performs.
+    ///
+    /// An orphan release is counted here rather than silently skipped: `SOUND-INV-017`
+    /// requires an identity naming no live note to be *refused and counted*, and this is
+    /// where the refusal happens.
+    fn resolve_nodes(&mut self, pending: &mut PendingCounts) {
+        for index in 0..self.scratch_len {
+            let Some(event) = self.event_scratch.get(index).copied() else {
+                break;
+            };
+            let target = match event.payload {
+                EventPayload::Note {
+                    identity,
+                    edge: NoteEdge::On { slot },
+                } => {
+                    // The on edge names what is played; the registry records it against the
+                    // occurrence so the release does not have to carry it.
+                    self.live_notes.admit(identity, slot);
+                    self.note_target(slot)
+                }
+                EventPayload::Note {
+                    identity,
+                    edge: NoteEdge::Off,
+                } => match self.live_notes.release(identity) {
+                    Some(slot) => self.note_target(slot),
+                    None => {
+                        pending.orphan_note = pending.orphan_note.saturating_add(1);
+                        pending.last_orphan_note = Some(identity);
+                        None
+                    }
+                },
+                EventPayload::SetParameter { slot, .. } => self
+                    .plan
+                    .parameter_targets()
+                    .get(slot.index())
+                    .filter(|row| matches!(row.rate, ControlRate::Sample))
+                    .map(|row| ResolvedTarget {
+                        node: row.node.index(),
+                        control: row.control,
+                    }),
+            };
+            if let Some(slot) = self.event_scratch.get_mut(index) {
+                slot.target = target;
+            }
         }
     }
 
-    /// Which of that node's controls it moves.
-    fn timed_control_index(&self, payload: EventPayload) -> Option<kernels::ControlIndex> {
-        match payload {
-            EventPayload::Note { slot, .. } => self
-                .plan
-                .note_targets()
-                .get(slot.index())
-                .map(|target| target.control),
-            EventPayload::SetParameter { slot, .. } => self
-                .plan
-                .parameter_targets()
-                .get(slot.index())
-                .filter(|target| matches!(target.rate, ControlRate::Sample))
-                .map(|target| target.control),
-        }
+    /// Where a note slot's edge lands.
+    fn note_target(&self, slot: crate::plan::NoteSlot) -> Option<ResolvedTarget> {
+        self.plan
+            .note_targets()
+            .get(slot.index())
+            .map(|row| ResolvedTarget {
+                node: row.node.index(),
+                control: row.control,
+            })
     }
 
     /// What it moves it to.
@@ -547,6 +588,13 @@ impl Renderer for PreparedRenderer {
         }
         for _ in 0..pending.foreign_slot {
             self.diagnostics.count_foreign_slot_event();
+        }
+        // The identity is the most recent orphan's; ADR-0047 clause 4 wants one named, and
+        // the count is what says how many there were.
+        if let Some(identity) = pending.last_orphan_note {
+            for _ in 0..pending.orphan_note {
+                self.diagnostics.count_orphan_note_event(identity);
+            }
         }
         for _ in 0..pending.out_of_horizon {
             self.diagnostics.count_out_of_horizon_event();

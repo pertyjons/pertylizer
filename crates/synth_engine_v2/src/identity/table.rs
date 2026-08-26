@@ -5,8 +5,8 @@
 //! `hot.rs`: the real-time purity region is file-granular and admits no mixed file.
 
 use super::{
-    INDEX_SPACE, IdentityError, IdentityTable, NoteIdentity, PRODUCER_SPACE, ProducerId, Range,
-    Slot, TableId, issue_table_id,
+    INDEX_SPACE, IdentityError, IdentityTable, LiveNotes, NoteIdentity, PRODUCER_SPACE, ProducerId,
+    Range, Slot, TableId, issue_table_id,
 };
 use crate::quantities::HeldNoteCount;
 
@@ -22,6 +22,21 @@ impl IdentityTable {
         producer_ranges: &[HeldNoteCount],
     ) -> Result<Self, IdentityError> {
         Self::with_generation_ceiling(max_held_notes, producer_ranges, u32::MAX)
+    }
+
+    /// Build a table from ranges plan admission has already checked.
+    ///
+    /// No `max_held_notes` argument, because the relation it guards is already established
+    /// upstream: profile construction refuses `max_held_notes` above the index space, and
+    /// plan admission refuses a producer set whose ranges outrun `max_held_notes`. Asking
+    /// for the figure again here would invite a caller to supply a different one, and two
+    /// answers to one question is how they come to disagree.
+    pub fn from_admitted_ranges(producer_ranges: &[HeldNoteCount]) -> Result<Self, IdentityError> {
+        Self::with_generation_ceiling(
+            HeldNoteCount::measured(INDEX_SPACE),
+            producer_ranges,
+            u32::MAX,
+        )
     }
 
     /// The same, with the generation ceiling named.
@@ -86,6 +101,28 @@ impl IdentityTable {
     /// This table's identity.
     pub const fn id(&self) -> TableId {
         self.id
+    }
+
+    /// A working copy, for an operation that must either complete or leave nothing behind.
+    ///
+    /// **Not a general clone, and deliberately not `Clone`.** The copy carries the same
+    /// [`TableId`], so two of these alive at once would both answer to occurrences the other
+    /// minted. The only sanctioned use is commit-or-discard: take a copy, do the whole
+    /// operation on it, and either assign it back or drop it. `stamp_compiled` is the caller,
+    /// and it needs this because minting is what fails — a list can pair correctly and still
+    /// exceed the producer's range, so a check before the first mint cannot catch every case
+    /// without reimplementing allocation. Restoring by releasing what was minted would not
+    /// restore: a release advances the generation, and the paired releases the aborted list
+    /// already performed are not recoverable that way.
+    pub(crate) fn working_copy(&self) -> Self {
+        Self {
+            id: self.id,
+            slots: self.slots.clone(),
+            ranges: self.ranges.clone(),
+            generation_ceiling: self.generation_ceiling,
+            retired: self.retired,
+            live: self.live,
+        }
     }
 
     /// How many indices this table has retired.
@@ -188,5 +225,42 @@ impl IdentityTable {
             });
         }
         Self::with_generation_ceiling(max_held_notes, producer_ranges, self.generation_ceiling)
+    }
+}
+
+impl LiveNotes {
+    /// A registry for the occurrences a table with these ranges can mint.
+    ///
+    /// Takes the minting table's [`TableId`] rather than issuing one: an occurrence carries
+    /// the id of the table that minted it, and the renderer's foreign check compares against
+    /// this. Two ids would make every one of its own events look foreign.
+    ///
+    /// Sized to the whole partition, so `admit` is an indexed write that cannot grow and
+    /// cannot fail for want of room.
+    pub fn for_ranges(
+        id: TableId,
+        producer_ranges: &[super::super::quantities::HeldNoteCount],
+    ) -> Result<Self, IdentityError> {
+        let mut needed: u64 = 0;
+        for range in producer_ranges {
+            needed = needed.saturating_add(u64::from(range.get()));
+        }
+        if needed > u64::from(INDEX_SPACE) {
+            return Err(IdentityError::RangesExceedIndexSpace {
+                needed,
+                available: INDEX_SPACE,
+            });
+        }
+        let total =
+            usize::try_from(needed).map_err(|_| IdentityError::ExtentUnallocatable { needed })?;
+        Ok(Self {
+            id,
+            slots: vec![None; total],
+        })
+    }
+
+    /// How many bytes its storage occupies, for the resource report.
+    pub const fn storage_bytes(&self) -> usize {
+        self.slots.len() * size_of::<Option<super::LiveNote>>()
     }
 }

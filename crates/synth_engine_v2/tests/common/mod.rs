@@ -70,3 +70,20 @@ pub fn refuse(ir: &GraphIr, profile: HostProfile) -> CompileError {
         .into_plan()
         .expect_err("the plan must be refused")
 }
+
+/// Declarations for a plan that plays notes from one compiled source.
+///
+/// A plan that starts notes must say who starts them: ADR-0046 partitions hold entitlements
+/// across admitted note-on producers and ADR-0047 partitions identity ranges across a
+/// superset of those, and neither partition can be computed from a plan that names none.
+/// Compiled sources declare no hold — their releases use plan entitlements.
+pub fn compiled_notes(simultaneous: u32) -> synth_engine_v2::ir::PlanDeclarations {
+    synth_engine_v2::ir::PlanDeclarations {
+        note_producers: vec![synth_engine_v2::ir::NoteProducerDeclaration {
+            compiled: true,
+            simultaneous_notes: synth_engine_v2::quantities::HeldNoteCount::measured(simultaneous),
+            simultaneous_holds: synth_engine_v2::quantities::EventCount::NONE,
+        }],
+        ..synth_engine_v2::ir::PlanDeclarations::default()
+    }
+}

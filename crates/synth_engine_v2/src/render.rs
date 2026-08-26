@@ -46,6 +46,26 @@ pub fn event_scratch_bytes(
         .saturating_add(quanta_per_call.saturating_mul(size_of::<u32>() as u64))
 }
 
+/// How many bytes [`PreparedRenderer::prepare`] will allocate for the note-identity halves,
+/// given a plan's admitted producer partition.
+///
+/// Both halves are sized by the same partition: the minter holds one slot per admitted index
+/// and one range per producer, and the live-note registry holds one entry per index. It lives
+/// next to the allocation it describes for the reason [`event_scratch_bytes`] does — a
+/// budget computed anywhere else drifts from what preparation takes.
+#[must_use]
+pub fn identity_bytes(producer_ranges: &[crate::quantities::HeldNoteCount]) -> u64 {
+    let mut indices = 0_u64;
+    for range in producer_ranges {
+        indices = indices.saturating_add(u64::from(range.get()));
+    }
+    let per_index = (size_of::<crate::identity::Slot>()
+        + size_of::<Option<crate::identity::LiveNote>>()) as u64;
+    indices.saturating_mul(per_index).saturating_add(
+        (producer_ranges.len() as u64).saturating_mul(size_of::<crate::identity::Range>() as u64),
+    )
+}
+
 /// How many bytes [`PreparedRenderer::prepare`] will allocate for the sample-positioned
 /// control scratch, given a plan's per-quantum event capacity and how many records it
 /// schedules.
@@ -172,9 +192,17 @@ impl EventEnvelope {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[must_use]
 pub enum NoteEdge {
-    /// The note is played.
-    On,
-    /// The note is let go.
+    /// The note is played, on this compiled node.
+    ///
+    /// The node rides on this edge and **only** this edge. `SOUND-INV-017` keeps it off the
+    /// release rather than carrying it there and requiring agreement: an event whose
+    /// identity names one occurrence and whose node names another has no safe reading, so
+    /// the case is made unrepresentable instead of adjudicated.
+    On {
+        /// Which compiled node is played.
+        slot: crate::plan::NoteSlot,
+    },
+    /// The note is let go. The occurrence knows its node; nothing here has to.
     Off,
 }
 
@@ -186,7 +214,7 @@ impl NoteEdge {
     /// thread has no way to report a failure and no fallback here would be honest.
     pub const fn value(self) -> ParameterValue {
         match self {
-            Self::On => ParameterValue::ONE,
+            Self::On { .. } => ParameterValue::ONE,
             Self::Off => ParameterValue::ZERO,
         }
     }
@@ -225,8 +253,11 @@ pub enum EventPayload {
     /// one of its controls: what being played *means* belongs to the node kind, which is
     /// what lets a caller play a voice without knowing the graph inside it.
     Note {
-        /// Which compiled node is played.
-        slot: crate::plan::NoteSlot,
+        /// Which occurrence this edge belongs to.
+        ///
+        /// `SOUND-INV-017`: the occurrence is the sole authority for which note an event
+        /// resolves to. Both edges carry it; only the on edge also names a node.
+        identity: crate::identity::NoteIdentity,
         /// Which way the edge goes.
         edge: NoteEdge,
     },
@@ -306,6 +337,22 @@ pub(crate) struct DueEvent {
     pub(crate) position: SampleTime,
     pub(crate) arrival: u32,
     pub(crate) payload: EventPayload,
+    /// The node and control this event moves, resolved once.
+    ///
+    /// **Resolved before the quantum passes and cached, rather than resolved in each.** A
+    /// note edge's node comes from the live-note registry, which the same walk mutates, so a
+    /// second resolution would read a different registry and could disagree with the first —
+    /// and the two passes agreeing is what makes the counts they produce describe the writes
+    /// they perform. `None` is an event with no sample-positioned effect: an orphan release,
+    /// or a parameter whose target is control-rate.
+    pub(crate) target: Option<ResolvedTarget>,
+}
+
+/// Where a sample-positioned event's effect lands, resolved once per call.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct ResolvedTarget {
+    pub(crate) node: usize,
+    pub(crate) control: crate::node::kernels::ControlIndex,
 }
 
 impl DueEvent {
@@ -318,6 +365,7 @@ impl DueEvent {
     const FILL: Self = Self {
         position: SampleTime::ZERO,
         arrival: 0,
+        target: None,
         payload: EventPayload::SetParameter {
             // Never read: `scratch_len` bounds every read of the scratch. The identity
             // is the first a process can issue, so even if it were read it would name a
@@ -340,6 +388,9 @@ struct PendingCounts {
     foreign_slot: u32,
     out_of_horizon: u32,
     arrival_stamped: u32,
+    orphan_note: u32,
+    /// The most recent orphan's occurrence, for the report's attribution.
+    last_orphan_note: Option<crate::identity::NoteIdentity>,
 }
 
 /// An admitted plan, prepared for one stream epoch.
@@ -357,6 +408,19 @@ pub struct PreparedRenderer {
     output_carry: Vec<f32>,
     /// How many frames of [`Self::output_carry`] are live.
     carry_frames: usize,
+    /// The occurrences this stream can mint, and their producers' disjoint ranges.
+    ///
+    /// **Off the audio thread.** A producer's position in the plan's declaration is its
+    /// `ProducerId`. This models *occupancy* — an index is taken at a note-on and freed at
+    /// the release that pairs with it — so what `simultaneous_notes` has to cover is a
+    /// producer's polyphony rather than the note count of a whole piece.
+    minter: crate::identity::IdentityTable,
+    /// Which occurrences are sounding right now, and on which node.
+    ///
+    /// **The audio thread's half**, and separate from the minter for the reason
+    /// [`crate::identity::LiveNotes`] gives: stamping runs ahead of the render, so the
+    /// minter's state is not what is sounding when an event is applied.
+    live_notes: crate::identity::LiveNotes,
     /// ADR-0001 clause 5's input carry.
     ///
     /// Prepared at `maximum_block_size + Q` frames and **not read in this phase**: no
@@ -433,6 +497,14 @@ impl PreparedRenderer {
         let mut output_carry = vec![0.0; carry_frames_capacity.saturating_mul(channels)];
         output_carry.fill(0.0);
 
+        // ADR-0047 clause 3's identity partition, from what admission copied in. A plan with
+        // no note-on producers gets an empty partition, which is right: nothing can start a
+        // note, so nothing can name an occurrence.
+        let minter =
+            crate::identity::IdentityTable::from_admitted_ranges(plan.note_producer_ranges())?;
+        let live_notes =
+            crate::identity::LiveNotes::for_ranges(minter.id(), plan.note_producer_ranges())?;
+
         let has_output = plan
             .ops()
             .iter()
@@ -446,6 +518,8 @@ impl PreparedRenderer {
             output_carry,
             // Primed: `Q` frames of silence are already available to serve.
             carry_frames: quantum,
+            minter,
+            live_notes,
             input_carry: vec![0.0; carry_frames_capacity.saturating_mul(channels)],
             node_states,
             has_output,
@@ -474,6 +548,15 @@ impl PreparedRenderer {
     /// The render clock: input frames consumed so far.
     pub const fn clock(&self) -> SampleTime {
         self.clock
+    }
+
+    /// The minting half, for a producer that mints off the audio thread.
+    ///
+    /// `&mut` because minting is a write, and crate-private because a producer outside this
+    /// crate has no admitted range: the partition is the plan's, and reaching it from
+    /// elsewhere would put occurrences outside what admission checked.
+    pub(crate) const fn minter_mut(&mut self) -> &mut crate::identity::IdentityTable {
+        &mut self.minter
     }
 
     /// The counters this stream has accumulated.

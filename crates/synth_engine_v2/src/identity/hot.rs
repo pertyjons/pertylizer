@@ -7,7 +7,9 @@
 //! the live boundary, which is off the audio thread, and it allocates nothing there either —
 //! but it belongs with construction rather than with the loop that consumes its output.
 
-use super::{IdentityTable, NoteIdentity, OrphanCause, ReleaseScope, Resolution, Slot};
+use super::{
+    IdentityTable, LiveNote, LiveNotes, NoteIdentity, OrphanCause, ReleaseScope, Resolution, Slot,
+};
 use crate::plan::NoteSlot;
 
 impl IdentityTable {
@@ -115,5 +117,58 @@ impl IdentityTable {
         }
         self.live = self.live.saturating_sub(ended);
         ended
+    }
+}
+
+impl LiveNotes {
+    /// Which table's occurrences this registry accepts.
+    pub const fn id(&self) -> super::TableId {
+        self.id
+    }
+
+    /// Record that an occurrence is now sounding on `note`.
+    ///
+    /// The node comes from the **on edge**, not from the minting table: the renderer applies
+    /// an event stream, and what that stream says is played is what it plays. An index the
+    /// minter has since reissued therefore reads correctly here, because this is written in
+    /// the order the events are applied rather than in the order they were stamped.
+    ///
+    /// Silently overwrites a slot already holding an older generation. That is the reissued
+    /// index, and it is the intended case: the older occurrence's release, if one is still in
+    /// flight, then resolves as an orphan, which is what it is.
+    pub fn admit(&mut self, identity: NoteIdentity, note: crate::plan::NoteSlot) {
+        if identity.table != self.id {
+            return;
+        }
+        if let Some(slot) = self.slots.get_mut(usize::from(identity.index)) {
+            *slot = Some(LiveNote {
+                generation: identity.generation,
+                note,
+            });
+        }
+    }
+
+    /// The node an occurrence is sounding on, if it names a live one.
+    pub fn note_of(&self, identity: NoteIdentity) -> Option<crate::plan::NoteSlot> {
+        if identity.table != self.id {
+            return None;
+        }
+        match self.slots.get(usize::from(identity.index)) {
+            Some(Some(live)) if live.generation == identity.generation => Some(live.note),
+            _ => None,
+        }
+    }
+
+    /// End the note an occurrence names, and say what it was.
+    ///
+    /// Only a live occurrence clears anything: an orphan is refused, which is ADR-0046
+    /// clause 3's "counted rather than allowed to release another note" made executable at
+    /// the point the release is applied.
+    pub fn release(&mut self, identity: NoteIdentity) -> Option<crate::plan::NoteSlot> {
+        let note = self.note_of(identity)?;
+        if let Some(slot) = self.slots.get_mut(usize::from(identity.index)) {
+            *slot = None;
+        }
+        Some(note)
     }
 }

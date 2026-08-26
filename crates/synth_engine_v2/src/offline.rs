@@ -17,10 +17,8 @@
 //! sample 0 landing at output sample 0, and this module is what that test drives.
 
 use crate::plan::CompiledPlan;
-use crate::render::{
-    AudioBlockMut, EventEnvelope, EventPayload, PreparedRenderer, Renderer, TimedEvent, TimedEvents,
-};
-use crate::time::{FrameCount, PlanPosition, QUANTUM_FRAMES, SampleTime, StreamAnchor, TimeSource};
+use crate::render::{AudioBlockMut, PreparedRenderer, Renderer, TimedEvent, TimedEvents};
+use crate::time::{FrameCount, PlanPosition, QUANTUM_FRAMES, SampleTime, StreamAnchor};
 
 /// An offline render that could not be produced.
 #[derive(Debug, Clone, PartialEq, thiserror::Error)]
@@ -31,6 +29,10 @@ pub enum OfflineError {
     /// Rendering failed.
     #[error("offline rendering failed: {0}")]
     Render(#[from] crate::diagnostics::RenderError),
+    /// A compiled list could not be stamped: an unmatched release, or no producer to mint
+    /// an occurrence from.
+    #[error("offline stamping failed: {0}")]
+    Stamp(#[from] crate::schedule::SchedulePrepareError),
     /// The requested length does not fit this platform's index type.
     #[error("a {frames}-frame render does not fit this platform's index type")]
     FramesUnrepresentable {
@@ -55,12 +57,12 @@ pub enum OfflineError {
 #[must_use]
 pub struct OfflineEvent {
     time: SampleTime,
-    payload: EventPayload,
+    payload: crate::schedule::CompiledPayload,
 }
 
 impl OfflineEvent {
     /// An event at an engine time within the render.
-    pub const fn new(time: SampleTime, payload: EventPayload) -> Self {
+    pub const fn new(time: SampleTime, payload: crate::schedule::CompiledPayload) -> Self {
         Self { time, payload }
     }
 
@@ -70,7 +72,7 @@ impl OfflineEvent {
     }
 
     /// What it does.
-    pub const fn payload(&self) -> EventPayload {
+    pub const fn payload(&self) -> crate::schedule::CompiledPayload {
         self.payload
     }
 }
@@ -110,16 +112,14 @@ pub fn render_offline(
 
     let mut renderer = PreparedRenderer::prepare(plan, StreamAnchor::new(SampleTime::ZERO, start))?;
 
-    // Stamped only now, with the epoch this stream actually has.
-    let stamped: Vec<TimedEvent> = events
+    // Stamped only now, with the epoch this stream actually has — and through the same
+    // helper the compiled scheduler uses, so a note-on's occurrence and its release's pairing
+    // are decided identically on both paths.
+    let compiled: Vec<crate::schedule::CompiledEvent> = events
         .iter()
-        .map(|event| {
-            TimedEvent::new(
-                EventEnvelope::new(renderer.epoch(), event.time(), TimeSource::Compiled),
-                event.payload(),
-            )
-        })
+        .map(|event| crate::schedule::CompiledEvent::new(event.time(), event.payload()))
         .collect();
+    let stamped = crate::schedule::stamp_compiled(&mut renderer, &compiled)?;
 
     // Render the requested frames plus the priming head, then drop the head. The
     // drained tail is the same fact seen from the other end: the last `Q` frames of

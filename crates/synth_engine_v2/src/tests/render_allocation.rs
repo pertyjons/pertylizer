@@ -247,13 +247,13 @@ fn selecting_a_compiled_schedule_for_the_first_call_allocates_nothing() {
         .expect("the sine declares a frequency parameter");
     let events = [CompiledEvent::new(
         SampleTime::ZERO,
-        EventPayload::SetParameter {
+        crate::schedule::CompiledPayload::SetParameter {
             slot,
             value: ParameterValue::new(880.0).expect("finite"),
         },
     )];
     let mut scheduler =
-        CompiledEventScheduler::prepare(&renderer, &events).expect("the schedule is valid");
+        CompiledEventScheduler::prepare(&mut renderer, &events).expect("the schedule is valid");
     // Prepared outside the counted region, like every other store the loop uses.
     let mut arbiter = crate::publish::PublicationArbiter::prepare(
         &crate::profile::HostProfile::harness(

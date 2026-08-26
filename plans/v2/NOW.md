@@ -1,6 +1,6 @@
 # Core V2: Current Work
 
-Last updated: 2026-08-25
+Last updated: 2026-08-26
 
 This is the only authority for active Core V2 task state, blockers, and next actions. Durable reasoning and measurements
 live in the linked ADRs, specs, and EVDs rather than being repeated here.
@@ -318,6 +318,21 @@ workspace's default members, so it has no in-repo consumer outside its own tests
 persisted, manifest, wire or protocol contracts, which `AGENTS.md` treats separately, and it does not reach any other
 crate. ADR-0020 settles the final crate boundaries and names.
 
+**The note-payload slice breaks a second set of signatures, and they are outside that approval.** An independent
+review raised it, correctly: the approval above names `synth_engine_v2::profile`, and the following are elsewhere.
+`EventPayload::Note` changed from `{ slot, edge }` to `{ identity, edge }`; `NoteEdge::On` gained the node the
+release lost; `CompiledEvent::new` and `OfflineEvent::new` take a `CompiledPayload` rather than an `EventPayload`;
+`CompiledEventScheduler::prepare` takes `&mut PreparedRenderer`; and `stamp_compiled` is new and public.
+
+They are not incidental — they *are* what ADR-0047 clause 1 asks for. A release cannot carry the occurrence alone
+while `EventPayload::Note` carries a node, and the pre-stamp payload has to be a different type because an occurrence
+does not exist until stamping.
+
+**The maintainer approved this second set on 2026-08-26**, asked for separately rather than presumed covered by the
+approval above. The same bound applies and is the reason it was grantable: the crate has no in-repo consumer outside
+its own tests, and nothing persisted, manifest, wire or protocol is touched. The approval reaches these five
+signatures and no others; a further break asks again.
+
 ### Completed slice — a plan declares its note-on producers
 
 The prerequisite the event half was blocked on. ADR-0046 partitions hold entitlements "at plan admission" across
@@ -433,14 +448,87 @@ Acceptance updated three current specifications in the same transaction:
   construction relations gained ADR-0047 clause 5's index bound: the identity index space is at least
   `max_held_notes`, which is otherwise constrained only to be nonzero.
 
-**`SOUND-INV-017`'s table half is now checked; its event half is not.** The slice above supplies the identity type
-and its rules. What has no check is the event side — `EventPayload::Note` still carries `{ slot, edge }` — and the
-conformance table says exactly that rather than implying coverage.
+**`SOUND-INV-017`'s table half was checked first; the event half followed in the slice below.** This slice supplied
+the identity type and its rules; the payload change that consumes them is separate and is recorded on its own.
 
 **REV-P02's `NoteEdge` deviation row is still open.** ADR-0047 adds identity and discharges neither limb; the row
 keeps the owner and the "owed before ingress" deadline REV-P02 gave it. Its pitch limb is blocked on ADR-0025, which
 is `Proposed` for Phase 6, so Phase 3 must either accept that record early or change REV-P02's disposition
 explicitly. Its velocity limb carries no such coupling. That choice is open and belongs to the maintainer.
+
+### Completed slice — a note event carries its occurrence
+
+`SOUND-INV-017`'s event half, and what closes the last of ADR-0047's implementation debt short of ingress.
+`EventPayload::Note` now carries `{ identity, edge }` where `NoteEdge::On` carries the node and `NoteEdge::Off`
+carries nothing. The release has no node field to disagree with its identity, which is the case ADR-0047 removed
+rather than adjudicated.
+
+**Pairing moved to a boundary it can still be answered at.** After stamping, a release carries only an occurrence, so
+"which note-on does this release end" has no answer left in the list. A new `CompiledPayload` — `SetParameter`,
+`NoteOn { slot }`, `NoteOff { slot }` — is what a compiled list is written in *before* stamping, and one shared
+`schedule::stamp_compiled` mints the occurrences and pairs the edges for both the compiled scheduler and the offline
+renderer. Two implementations of that question is how they come to disagree, so there is one. `stamp_compiled` is
+public because it is the only sanctioned way to obtain an identity: the ranges are the plan's, partitioned at
+admission, and a producer that minted its own would land outside the partition every disjointness check relies on.
+It takes no epoch — it derives the renderer's own, because a list stamped against another stream's epoch would
+succeed, reserve this producer's range, and then be discarded event by event as stale.
+
+**Minting and liveness are two jobs, and the slice's first version conflated them.** `IdentityTable` models a
+producer's *occupancy*: an index is taken at a note-on and freed at the release that pairs with it. Stamping runs
+ahead of the render — for a whole piece at once — so the table's state at stamping time is the schedule's polyphony,
+which is exactly what `simultaneous_notes` bounds. It is **not** what is sounding when an event is applied, and a
+reissued index is where the two disagree. The renderer therefore keeps `LiveNotes`, a registry the *events* write: a
+note-on admits its occurrence together with the node its edge names, and a release resolves through it and clears it.
+So both notes that used one index resolve correctly, in the order the renderer applies them.
+
+That resolution happens **once per call**, in a pass that runs after the events are sorted and before the per-quantum
+passes, and the resolved node and control are cached on the scratch event. The two quantum passes must agree — the
+first counts what the second writes — and a registry mutated between them would break that. Nothing in the render
+loop touches the registry any more.
+
+**Four defects the slice found in itself, and six an independent review found after it.** The plan carried the
+producers' *ranges* but not which of them was the compiled one, so stamping took producer 0 — correct in every fixture
+and wrong in any plan declaring a runtime source first; `CompiledPlan` now carries `compiled_note_producer`, and
+admission refuses a **second** compiled producer, because `PlanDeclarations::events_per_quantum` is one figure against
+one share and a second producer would leave both the envelope and the minting range a guess. The renderer's foreign
+filter compares the occurrence's **table** rather than a slot, so a note-on carrying another plan's node address would
+have passed it; `stamp_compiled` refuses that, at the last point the node is present and the one `render_offline`
+reaches without the scheduler's list-wide check. A foreign **parameter** slot is deliberately still filtered and
+counted at render rather than refused: that is the documented post-swap behaviour, and `lowering` asserts it.
+
+The review found the occupancy defect above, and four more that the split does not by itself fix, each now closed:
+stamping is **all or nothing**, so a refused list leaves the minter as it found it — minting as it walked would have
+starved the next, valid attempt; an orphan release is **counted**, not silently skipped, because `SOUND-INV-017`
+requires refused *and* counted and a producer replaying spent releases would otherwise look like one sending nothing;
+the epoch is derived rather than accepted; and the scratch budget now includes both identity halves, which
+preparation allocates per admitted index.
+
+A second review round found two more. "All or nothing" was **not** achieved by validating first: pairing, provenance
+and producer presence are decidable before the first mint, but minting can fail on its own — a list can pair
+correctly and still hold more notes at once than the range admits — and a check for that beforehand would have to
+reimplement allocation. The minting pass therefore works on `IdentityTable::working_copy` and assigns it back only on
+success. Restoring by releasing what was minted would not restore: a release advances the generation, and the paired
+releases an aborted list already performed are not recoverable that way.
+
+And the orphan counter was anonymous where ADR-0047 clause 4 asks for the event to be counted "against its offering
+producer with the identity named". `DiagnosticsReport::last_orphan_note` names one. **Naming the identity names the
+producer** — the ranges are disjoint and a producer's position in the declaration is its `ProducerId`, so the index
+falls in exactly one range. What is owed is *per-producer counts*, and it is owed to ingress: until a runtime note-on
+producer exists, every reachable plan has exactly one note producer, so the aggregate **is** that producer's count.
+A second producer is what makes it ambiguous, and the conformance row says so rather than implying coverage.
+
+Thirteen properties are mutation-verified, listed in the render contract's conformance row. The falsifiable fixture is
+worth naming: two gates in **series**, told apart by release *shape* rather than by level, because the IR has no mixer
+and two sustain levels through one product render identically — a release resolved to the wrong note would have
+passed every level-based assertion.
+
+EVD-0013's thirty-four V2 renders are bit-identical to `2a00685e`, checked against a separate worktree, so the payload
+change is behaviour-preserving on the equivalence arm.
+
+`orphan_note_events` joins `DiagnosticsReport`. It is deliberately **not** a drop: `HOST-INV-009` licenses a drop for a
+shortage, and an orphan is a release for a note that does not exist — reporting one as a drop would make a producer
+look starved when it is not. That is the amendment ADR-0047's specification transaction already made to the invariant;
+this is the counter it named.
 
 ## Paused parallel stream: Phase 0B
 

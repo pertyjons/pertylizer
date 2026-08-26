@@ -13,11 +13,10 @@ use synth_engine_v2::plan::CompiledPlan;
 use synth_engine_v2::profile::{EventLimits, HostProfile, ProducerShares, RenderLimits};
 use synth_engine_v2::publish::{ProducerClass, PublicationArbiter};
 use synth_engine_v2::quantities::{Amplitude, ChannelLayout, EventCount, NormalizedLevel, Seconds};
-use synth_engine_v2::render::{
-    AudioBlockMut, EventPayload, NoteEdge, PreparedRenderer, Renderer, TimedEvents,
-};
+use synth_engine_v2::render::{AudioBlockMut, PreparedRenderer, Renderer, TimedEvents};
 use synth_engine_v2::schedule::{
-    CompiledEvent, CompiledEventScheduler, SchedulePrepareError, ScheduledRenderError,
+    CompiledEvent, CompiledEventScheduler, CompiledPayload, SchedulePrepareError,
+    ScheduledRenderError,
 };
 use synth_engine_v2::time::{PlanPosition, QUANTUM_FRAMES, SampleTime, StreamAnchor};
 
@@ -72,6 +71,11 @@ fn gated_constant() -> GraphIr {
             (OUTPUT, PortId::FIRST),
             SignalDomain::Audio,
         )
+        // Large enough for the density fixture below, which mints one occurrence per
+        // compiled event across three quanta and releases none — 288 note-ons against the
+        // profile's 512 held notes. A smaller declaration is refused, which is the identity
+        // partition working: a producer cannot sound more notes than it declared.
+        .declaring(common::compiled_notes(512))
         .build()
         .expect("a readable plan")
 }
@@ -85,11 +89,18 @@ fn arbiter(block: u64) -> PublicationArbiter {
         .expect("the publication store is preparable")
 }
 
-fn compiled_note(plan: &CompiledPlan, time: u64, edge: NoteEdge) -> CompiledEvent {
+fn compiled_note(plan: &CompiledPlan, time: u64, on: bool) -> CompiledEvent {
     let slot = plan
         .resolve_note(ENVELOPE)
         .expect("the envelope accepts note edges");
-    CompiledEvent::new(SampleTime::new(time), EventPayload::Note { slot, edge })
+    // A compiled list names the node on **both** edges, which is how preparation pairs
+    // them; the stamped event names it on the on edge alone.
+    let payload = if on {
+        CompiledPayload::NoteOn { slot }
+    } else {
+        CompiledPayload::NoteOff { slot }
+    };
+    CompiledEvent::new(SampleTime::new(time), payload)
 }
 
 fn render_partition(plan: &CompiledPlan, partition: &[usize]) -> Vec<f32> {
@@ -105,11 +116,11 @@ fn render_partition(plan: &CompiledPlan, partition: &[usize]) -> Vec<f32> {
     )
     .expect("preparation succeeds");
     let events = [
-        compiled_note(plan, ON, NoteEdge::On),
-        compiled_note(plan, OFF, NoteEdge::Off),
+        compiled_note(plan, ON, true),
+        compiled_note(plan, OFF, false),
     ];
     let mut scheduler =
-        CompiledEventScheduler::prepare(&renderer, &events).expect("the schedule is valid");
+        CompiledEventScheduler::prepare(&mut renderer, &events).expect("the schedule is valid");
     let mut publication = arbiter(TOTAL_FRAMES as u64);
     let mut rendered = Vec::with_capacity(TOTAL_FRAMES);
 
@@ -169,18 +180,18 @@ fn a_compiled_note_is_exact_and_bit_identical_across_actual_host_partitions() {
 #[test]
 fn preparation_rejects_a_descending_compiled_list() {
     let plan = common::admit(&gated_constant(), common::profile(256, ChannelLayout::Mono));
-    let renderer = PreparedRenderer::prepare(
+    let mut renderer = PreparedRenderer::prepare(
         plan.clone(),
         StreamAnchor::new(SampleTime::ZERO, PlanPosition::ZERO),
     )
     .expect("preparation succeeds");
     let events = [
-        compiled_note(&plan, Q, NoteEdge::On),
-        compiled_note(&plan, 0, NoteEdge::Off),
+        compiled_note(&plan, Q, true),
+        compiled_note(&plan, 0, false),
     ];
 
     assert_eq!(
-        CompiledEventScheduler::prepare(&renderer, &events).expect_err("order is invalid"),
+        CompiledEventScheduler::prepare(&mut renderer, &events).expect_err("order is invalid"),
         SchedulePrepareError::EventsOutOfOrder {
             event_index: 1,
             previous: SampleTime::new(Q),
@@ -193,15 +204,15 @@ fn preparation_rejects_a_descending_compiled_list() {
 fn preparation_rejects_a_slot_from_another_plan() {
     let plan = common::admit(&gated_constant(), common::profile(256, ChannelLayout::Mono));
     let foreign = common::admit(&gated_constant(), common::profile(256, ChannelLayout::Mono));
-    let renderer = PreparedRenderer::prepare(
+    let mut renderer = PreparedRenderer::prepare(
         plan.clone(),
         StreamAnchor::new(SampleTime::ZERO, PlanPosition::ZERO),
     )
     .expect("preparation succeeds");
-    let events = [compiled_note(&foreign, 0, NoteEdge::On)];
+    let events = [compiled_note(&foreign, 0, true)];
 
     assert_eq!(
-        CompiledEventScheduler::prepare(&renderer, &events)
+        CompiledEventScheduler::prepare(&mut renderer, &events)
             .expect_err("a foreign plan slot is invalid"),
         SchedulePrepareError::ForeignPlan {
             event_index: 0,
@@ -219,7 +230,7 @@ fn preparation_rejects_a_quantum_over_the_compiled_share_before_a_partition_is_c
     // move here, where a caller can still be told, or an admitted plan could fault at
     // publication — which is the state the whole admission design exists to remove.
     let plan = common::admit(&gated_constant(), common::profile(256, ChannelLayout::Mono));
-    let renderer = PreparedRenderer::prepare(
+    let mut renderer = PreparedRenderer::prepare(
         plan.clone(),
         StreamAnchor::new(SampleTime::ZERO, PlanPosition::ZERO),
     )
@@ -232,10 +243,10 @@ fn preparation_rejects_a_quantum_over_the_compiled_share_before_a_partition_is_c
         plan.compiled_event_share() < plan.max_events_per_quantum(),
         "the premise: the share is narrower than the cap, so the two refusals differ"
     );
-    let events = vec![compiled_note(&plan, 0, NoteEdge::On); admissible + 1];
+    let events = vec![compiled_note(&plan, 0, true); admissible + 1];
 
     assert_eq!(
-        CompiledEventScheduler::prepare(&renderer, &events)
+        CompiledEventScheduler::prepare(&mut renderer, &events)
             .expect_err("the absolute quantum is over its producer's share"),
         SchedulePrepareError::QuantumTooDense {
             quantum_start: SampleTime::ZERO,
@@ -269,11 +280,11 @@ fn one_multi_quantum_host_call_accepts_the_full_share_of_each_quantum() {
     let mut events = Vec::with_capacity(admissible * 3);
     for quantum in 0_u64..3 {
         for _ in 0..admissible {
-            events.push(compiled_note(&plan, quantum * Q, NoteEdge::On));
+            events.push(compiled_note(&plan, quantum * Q, true));
         }
     }
     let mut scheduler =
-        CompiledEventScheduler::prepare(&renderer, &events).expect("every quantum fits");
+        CompiledEventScheduler::prepare(&mut renderer, &events).expect("every quantum fits");
     let mut samples = [0.0_f32; 256];
     let output = AudioBlockMut::new(&mut samples, 256, ChannelLayout::Mono)
         .expect("the output block is shaped correctly");
@@ -290,14 +301,14 @@ fn one_multi_quantum_host_call_accepts_the_full_share_of_each_quantum() {
 #[test]
 fn a_schedule_cannot_cross_a_reprepared_epoch() {
     let plan = common::admit(&gated_constant(), common::profile(256, ChannelLayout::Mono));
-    let first = PreparedRenderer::prepare(
+    let mut first = PreparedRenderer::prepare(
         plan.clone(),
         StreamAnchor::new(SampleTime::ZERO, PlanPosition::ZERO),
     )
     .expect("first preparation succeeds");
-    let event = [compiled_note(&plan, 0, NoteEdge::On)];
+    let event = [compiled_note(&plan, 0, true)];
     let mut scheduler =
-        CompiledEventScheduler::prepare(&first, &event).expect("the schedule is valid");
+        CompiledEventScheduler::prepare(&mut first, &event).expect("the schedule is valid");
     let mut second = PreparedRenderer::prepare(
         plan,
         StreamAnchor::new(SampleTime::ZERO, PlanPosition::ZERO),
@@ -326,9 +337,9 @@ fn bypassing_the_scheduler_cannot_make_a_compiled_event_late_silently() {
         StreamAnchor::new(SampleTime::ZERO, PlanPosition::ZERO),
     )
     .expect("preparation succeeds");
-    let event = [compiled_note(&plan, 0, NoteEdge::On)];
+    let event = [compiled_note(&plan, 0, true)];
     let mut scheduler =
-        CompiledEventScheduler::prepare(&renderer, &event).expect("the schedule is valid");
+        CompiledEventScheduler::prepare(&mut renderer, &event).expect("the schedule is valid");
 
     let mut first = [0.0_f32; 128];
     let output = AudioBlockMut::new(&mut first, 128, ChannelLayout::Mono)
@@ -366,11 +377,11 @@ fn compiled_events_are_charged_to_the_compiled_share() {
     )
     .expect("preparation succeeds");
     let events = [
-        compiled_note(&plan, 1, NoteEdge::On),
-        compiled_note(&plan, 3, NoteEdge::Off),
+        compiled_note(&plan, 1, true),
+        compiled_note(&plan, 3, false),
     ];
     let mut scheduler =
-        CompiledEventScheduler::prepare(&renderer, &events).expect("the schedule is valid");
+        CompiledEventScheduler::prepare(&mut renderer, &events).expect("the schedule is valid");
     let mut publication = arbiter(256);
 
     // 256 frames, not 64: the stream starts with a full quantum of primed carry, so a
@@ -419,9 +430,9 @@ fn a_forged_publication_fault_ends_the_stream_rather_than_the_call() {
         StreamAnchor::new(SampleTime::ZERO, PlanPosition::ZERO),
     )
     .expect("preparation succeeds");
-    let events = [compiled_note(&plan, 1, NoteEdge::On)];
+    let events = [compiled_note(&plan, 1, true)];
     let mut scheduler =
-        CompiledEventScheduler::prepare(&renderer, &events).expect("the schedule is valid");
+        CompiledEventScheduler::prepare(&mut renderer, &events).expect("the schedule is valid");
 
     // Prepared for a single quantum; the call below needs four.
     let mut undersized = arbiter(64);
@@ -485,11 +496,11 @@ fn a_forged_charge_overrun_ends_the_stream_on_its_own_branch() {
     )
     .expect("preparation succeeds");
     let events = [
-        compiled_note(&plan, 65, NoteEdge::On),
-        compiled_note(&plan, 70, NoteEdge::Off),
+        compiled_note(&plan, 65, true),
+        compiled_note(&plan, 70, false),
     ];
     let mut scheduler =
-        CompiledEventScheduler::prepare(&renderer, &events).expect("two events fit the share");
+        CompiledEventScheduler::prepare(&mut renderer, &events).expect("two events fit the share");
 
     let mut narrow =
         PublicationArbiter::prepare(&narrow_compiled_share()).expect("the store is preparable");
@@ -570,9 +581,9 @@ fn a_schedule_refuses_a_second_arbiter() {
         StreamAnchor::new(SampleTime::ZERO, PlanPosition::ZERO),
     )
     .expect("preparation succeeds");
-    let events = [compiled_note(&plan, 65, NoteEdge::On)];
+    let events = [compiled_note(&plan, 65, true)];
     let mut scheduler =
-        CompiledEventScheduler::prepare(&renderer, &events).expect("the schedule is valid");
+        CompiledEventScheduler::prepare(&mut renderer, &events).expect("the schedule is valid");
 
     let mut first = arbiter(256);
     let mut second = arbiter(256);
@@ -618,9 +629,9 @@ fn a_faulted_epoch_is_not_faulted_a_second_time() {
         StreamAnchor::new(SampleTime::ZERO, PlanPosition::ZERO),
     )
     .expect("preparation succeeds");
-    let events = [compiled_note(&plan, 1, NoteEdge::On)];
+    let events = [compiled_note(&plan, 1, true)];
     let mut scheduler =
-        CompiledEventScheduler::prepare(&renderer, &events).expect("the schedule is valid");
+        CompiledEventScheduler::prepare(&mut renderer, &events).expect("the schedule is valid");
     let mut undersized = arbiter(64);
 
     let mut samples = [9.0_f32; 256];

@@ -10,7 +10,7 @@ use std::collections::HashMap;
 
 use crate::arena::{self, ArenaPolicy};
 use crate::diagnostics::{CompileError, CompileWarning};
-use crate::ir::{GraphIr, IrNodeKind, IrObject, NodeId, PortId};
+use crate::ir::{GraphIr, IrNodeKind, IrObject, NodeId, PlanDeclarations, PortId};
 use crate::node::kernels::{MAX_INPUTS, PreparedNode};
 use crate::node::{self, NodeDescriptor};
 use crate::plan::{
@@ -190,7 +190,7 @@ pub(crate) fn compile_with(
 
     let plan = match refusal {
         Some(error) => Err(error),
-        None => Ok(lowered.into_plan(profile)),
+        None => Ok(lowered.into_plan(profile, ir.declarations())),
     };
 
     CompileOutcome {
@@ -345,10 +345,16 @@ fn build_rows(
     // The same count the prepared and mutable rows are over: a node with a kernel, plus
     // whatever the compiler inserted. The renderer allocates one state — and one control
     // range — per one of these, so a second formula here could disagree with preparation.
+    let declared_note_ranges: Vec<_> = declarations
+        .note_producers
+        .iter()
+        .map(|producer| producer.simultaneous_notes)
+        .collect();
     let scratch_bytes = scratch_bytes(
         profile,
         arena_samples,
         ir.scheduled_records(inserted_records),
+        &declared_note_ranges,
     );
 
     let node_count = NodeCount::measured(u32::try_from(ir.nodes().len()).unwrap_or(u32::MAX));
@@ -795,6 +801,7 @@ fn scratch_bytes(
     profile: &HostProfile,
     arena_samples: u64,
     scheduled_records: RecordCount,
+    note_producer_ranges: &[crate::quantities::HeldNoteCount],
 ) -> PreparedBytes {
     let channels = profile.capabilities().channel_layout().channels() as u64;
     let carry_frames = profile
@@ -829,12 +836,19 @@ fn scratch_bytes(
         scheduled_records,
     );
 
+    // And ADR-0047's two identity halves, both sized by the producer partition this plan
+    // declares. Preparation allocates them, so the budget has to cover them: a plan
+    // declaring a large polyphony would otherwise be reported as fitting and then allocate
+    // past the ceiling, which is the defect the event scratch already taught this function.
+    let identities = crate::render::identity_bytes(note_producer_ranges);
+
     PreparedBytes::measured(
         buffers
             .saturating_add(carries)
             .saturating_mul(sample)
             .saturating_add(events)
-            .saturating_add(controls),
+            .saturating_add(controls)
+            .saturating_add(identities),
     )
 }
 
@@ -887,8 +901,22 @@ impl Lowered {
     }
 
     /// Attach the capacities admission copied in.
-    fn into_plan(self, profile: &HostProfile) -> CompiledPlan {
+    fn into_plan(self, profile: &HostProfile, declarations: &PlanDeclarations) -> CompiledPlan {
         let capabilities = profile.capabilities();
+        // A producer's position in the declaration **is** its `ProducerId`, so the ranges are
+        // carried in declaration order and nothing else has to agree on a numbering.
+        let note_producer_ranges: Vec<_> = declarations
+            .note_producers
+            .iter()
+            .map(|producer| producer.simultaneous_notes)
+            .collect();
+        // Validation has already refused a second one, so the first is the only one.
+        let compiled_note_producer = declarations
+            .note_producers
+            .iter()
+            .position(|producer| producer.compiled)
+            .and_then(|index| u16::try_from(index).ok())
+            .map(crate::identity::ProducerId::new);
         CompiledPlan::new(
             self.id,
             self.ops,
@@ -903,6 +931,8 @@ impl Lowered {
             capabilities.maximum_block_size(),
             profile.limits().events().max_events_per_quantum(),
             profile.limits().events().shares().compiled_event_share(),
+            note_producer_ranges,
+            compiled_note_producer,
             profile.limits().events().forward_event_horizon(),
             FrameCount::QUANTUM,
         )

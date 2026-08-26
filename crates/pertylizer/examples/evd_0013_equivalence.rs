@@ -35,7 +35,7 @@ use synth_engine_v2::quantities::{
     Amplitude, ChannelLayout, CutoffFrequency, Frequency, NormalizedLevel, Resonance, SampleRate,
     Seconds,
 };
-use synth_engine_v2::render::{EventPayload, NoteEdge};
+use synth_engine_v2::schedule::CompiledPayload;
 use synth_engine_v2::time::{FrameCount, PlanPosition, SampleTime};
 
 /// The corpus render rate, and the rate both arms' filter coefficients are
@@ -262,6 +262,16 @@ fn v2_graph(frequency: f32, cutoff_hz: f32) -> GraphIr {
             (OUTPUT, PortId::FIRST),
             SignalDomain::Audio,
         )
+        .declaring(synth_engine_v2::ir::PlanDeclarations {
+            // A plan that starts notes must say who starts them: the identity range a
+            // compiled note-on mints from is partitioned across declared producers.
+            note_producers: vec![synth_engine_v2::ir::NoteProducerDeclaration {
+                compiled: true,
+                simultaneous_notes: synth_engine_v2::quantities::HeldNoteCount::measured(1),
+                simultaneous_holds: synth_engine_v2::quantities::EventCount::NONE,
+            }],
+            ..synth_engine_v2::ir::PlanDeclarations::default()
+        })
         .build()
         .expect("the voice path is a readable plan")
 }
@@ -285,19 +295,10 @@ fn v2_samples(frequency: f32, cutoff_hz: f32) -> Result<Vec<f32>, Box<dyn std::e
     // note ends. `render_offline` is latency-compensated, so its first output
     // sample is plan sample 0.
     let events = [
-        OfflineEvent::new(
-            SampleTime::ZERO,
-            EventPayload::Note {
-                slot,
-                edge: NoteEdge::On,
-            },
-        ),
+        OfflineEvent::new(SampleTime::ZERO, CompiledPayload::NoteOn { slot }),
         OfflineEvent::new(
             SampleTime::new(NOTE_OFF_FRAME),
-            EventPayload::Note {
-                slot,
-                edge: NoteEdge::Off,
-            },
+            CompiledPayload::NoteOff { slot },
         ),
     ];
     Ok(render_offline(

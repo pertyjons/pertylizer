@@ -106,7 +106,7 @@ fn a_slot_from_another_plan_is_refused_by_identity_rather_than_applied() {
         PlanPosition::ZERO,
         &[OfflineEvent::new(
             SampleTime::ZERO,
-            synth_engine_v2::render::EventPayload::SetParameter {
+            synth_engine_v2::schedule::CompiledPayload::SetParameter {
                 slot: foreign,
                 // Silencing the sine is what this event would do if it were applied.
                 value: ParameterValue::new(0.0).expect("finite"),

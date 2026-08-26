@@ -18,7 +18,7 @@ use thiserror::Error;
 
 use crate::plan::PlanId;
 use crate::quantities::EventCount;
-use crate::render::{EventEnvelope, EventPayload, PreparedRenderer, TimedEvent};
+use crate::render::{EventEnvelope, EventPayload, NoteEdge, PreparedRenderer, TimedEvent};
 use crate::time::{SampleTime, StreamEpoch, TimeSource};
 
 /// One exact event produced by compiled plan time.
@@ -30,12 +30,43 @@ use crate::time::{SampleTime, StreamEpoch, TimeSource};
 #[must_use]
 pub struct CompiledEvent {
     time: SampleTime,
-    payload: EventPayload,
+    payload: CompiledPayload,
+}
+
+/// What a compiled event does, before preparation stamps it.
+///
+/// Distinct from [`EventPayload`] for the same reason [`CompiledEvent`] has no epoch:
+/// preparation supplies what only it can. A note edge's **occurrence** is minted here, so a
+/// compiled list names the node on both edges — that is how preparation pairs them — while
+/// the stamped event names the node on the on edge alone, per `SOUND-INV-017`.
+#[derive(Debug, Clone, Copy, PartialEq)]
+#[must_use]
+pub enum CompiledPayload {
+    /// Set one compiled parameter slot.
+    SetParameter {
+        /// Which compiled parameter.
+        slot: crate::plan::ParameterSlot,
+        /// The new value.
+        value: crate::quantities::ParameterValue,
+    },
+    /// Play one compiled node.
+    NoteOn {
+        /// Which node is played.
+        slot: crate::plan::NoteSlot,
+    },
+    /// Let go of the most recent unreleased note on one compiled node.
+    ///
+    /// The node is named so preparation can pair this with its note-on. It does **not**
+    /// reach the stamped event: the occurrence carries the node from there on.
+    NoteOff {
+        /// Which node is released.
+        slot: crate::plan::NoteSlot,
+    },
 }
 
 impl CompiledEvent {
     /// An event at an exact engine time.
-    pub const fn new(time: SampleTime, payload: EventPayload) -> Self {
+    pub const fn new(time: SampleTime, payload: CompiledPayload) -> Self {
         Self { time, payload }
     }
 
@@ -45,7 +76,7 @@ impl CompiledEvent {
     }
 
     /// What the event does.
-    pub const fn payload(self) -> EventPayload {
+    pub const fn payload(self) -> CompiledPayload {
         self.payload
     }
 }
@@ -53,6 +84,38 @@ impl CompiledEvent {
 /// Why a compiled schedule could not be prepared.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
 pub enum SchedulePrepareError {
+    /// A release names a node with no unreleased note-on before it.
+    ///
+    /// A compiled list is authored, so this is a malformed plan rather than a runtime
+    /// condition — and it is refused here, where a caller can still be told, rather than
+    /// becoming an orphan the renderer counts. Preparation is the last place the pairing is
+    /// knowable: after it, the release carries only an occurrence.
+    #[error("compiled event {event_index} releases a node with no note sounding")]
+    UnmatchedRelease {
+        /// Position in the supplied event list.
+        event_index: usize,
+    },
+
+    /// The plan declares no compiled note-on producer, but the list has note edges.
+    ///
+    /// Identities come from an admitted producer's range, and a plan that declares none has
+    /// no range to mint from. Refusing names the gap; minting from a range nobody admitted
+    /// would put occurrences outside the partition every other check relies on.
+    #[error("the plan declares no compiled note-on producer, but event {event_index} is a note")]
+    NoCompiledNoteProducer {
+        /// Position in the supplied event list.
+        event_index: usize,
+    },
+
+    /// An identity could not be minted for a compiled note-on.
+    #[error("compiled event {event_index} could not be given an occurrence: {source}")]
+    Identity {
+        /// Position in the supplied event list.
+        event_index: usize,
+        /// Why minting refused.
+        source: crate::identity::IdentityError,
+    },
+
     /// The compiled list is not monotone in engine time.
     #[error("compiled event {event_index} at {time} precedes the previous event at {previous}")]
     EventsOutOfOrder {
@@ -179,7 +242,7 @@ impl CompiledEventScheduler {
     /// absolute quantum is also refused here, before the schedule reaches the audio
     /// thread.
     pub fn prepare(
-        renderer: &PreparedRenderer,
+        renderer: &mut PreparedRenderer,
         events: &[CompiledEvent],
     ) -> Result<Self, SchedulePrepareError> {
         let expected = renderer.plan().id();
@@ -229,13 +292,8 @@ impl CompiledEventScheduler {
         }
 
         let epoch = renderer.epoch();
-        let mut stamped = Vec::with_capacity(events.len());
-        for event in events.iter().copied() {
-            stamped.push(TimedEvent::new(
-                EventEnvelope::new(epoch, event.time(), TimeSource::Compiled),
-                event.payload(),
-            ));
-        }
+
+        let stamped = stamp_compiled(renderer, events)?;
 
         Ok(Self {
             epoch,
@@ -252,12 +310,150 @@ impl CompiledEventScheduler {
     }
 }
 
-const fn payload_plan(payload: EventPayload) -> PlanId {
+const fn payload_plan(payload: CompiledPayload) -> PlanId {
     match payload {
-        EventPayload::SetParameter { slot, .. } => slot.plan(),
-        EventPayload::Note { slot, .. } => slot.plan(),
+        CompiledPayload::SetParameter { slot, .. } => slot.plan(),
+        CompiledPayload::NoteOn { slot } | CompiledPayload::NoteOff { slot } => slot.plan(),
     }
 }
 
 #[path = "schedule/hot.rs"]
 mod hot;
+
+/// Stamp a compiled list with this stream's epoch, minting an occurrence for every note-on.
+///
+/// **The sanctioned way to obtain note identities.** A producer cannot mint them itself: the
+/// ranges are the plan's, partitioned at admission, and reaching around this would put
+/// occurrences outside the partition every other check relies on.
+///
+/// Shared by the compiled scheduler and the offline renderer rather than written twice: two
+/// implementations of "which note-on does this release end" is how they come to disagree.
+///
+/// The epoch is the renderer's own. Taking one from the caller would let a list be stamped
+/// with another stream's epoch: it would succeed, reserve occurrences here, and then be
+/// discarded event by event as stale — reserving a producer's whole range against a render
+/// that never happens.
+///
+/// **All or nothing.** A refused list leaves the minter exactly as it found it. Pairing,
+/// provenance and producer presence are all decided before the first mint — but minting can
+/// fail on its own, because a list can pair correctly and still hold more notes at once than
+/// the producer's range admits, and a check for that before the first mint would have to
+/// reimplement allocation. So the minting pass works on a copy and assigns it back only on
+/// success. Anything less leaves occurrences reserved for a list that was never returned,
+/// and the next attempt fails as false over-emission.
+pub fn stamp_compiled(
+    renderer: &mut PreparedRenderer,
+    events: &[CompiledEvent],
+) -> Result<Vec<TimedEvent>, SchedulePrepareError> {
+    let epoch = renderer.epoch();
+    let expected = renderer.plan().id();
+    let compiled_producer = renderer.plan().compiled_note_producer();
+
+    // Pass one: everything that can refuse. **Pairing happens here or nowhere** — after
+    // stamping a release carries only an occurrence, so this is the last point at which
+    // "which note-on does this release end" is answerable from the list itself. One stack
+    // per node, and a release takes the most recent unreleased note-on on that node, which
+    // is what a keyboard does and what a compiled plan means by a matching pair.
+    let mut sounding: Vec<crate::plan::NoteSlot> = Vec::new();
+    for (event_index, event) in events.iter().copied().enumerate() {
+        // **A note edge's provenance, checked here rather than only in the scheduler.** The
+        // renderer's foreign filter compares a note edge's *table*, because `SOUND-INV-017`
+        // leaves a release no node to compare — so a foreign node address on a note-on would
+        // be stamped with this table's occurrence and pass that filter. This is the last
+        // point at which the node is present to check, and `render_offline` reaches it
+        // without going through `CompiledEventScheduler::prepare`.
+        //
+        // A foreign **parameter** slot is deliberately not refused here. The renderer still
+        // filters and counts it, which is the documented post-swap behaviour ADR-0043 wants
+        // and which `lowering` asserts; the scheduler's own stricter check on that payload is
+        // separate and unchanged.
+        match event.payload() {
+            CompiledPayload::SetParameter { .. } => {}
+            CompiledPayload::NoteOn { slot } => {
+                if slot.plan() != expected {
+                    return Err(SchedulePrepareError::ForeignPlan {
+                        event_index,
+                        expected,
+                        actual: slot.plan(),
+                    });
+                }
+                if compiled_producer.is_none() {
+                    return Err(SchedulePrepareError::NoCompiledNoteProducer { event_index });
+                }
+                sounding.push(slot);
+            }
+            CompiledPayload::NoteOff { slot } => {
+                if slot.plan() != expected {
+                    return Err(SchedulePrepareError::ForeignPlan {
+                        event_index,
+                        expected,
+                        actual: slot.plan(),
+                    });
+                }
+                let Some(position) = sounding.iter().rposition(|node| *node == slot) else {
+                    return Err(SchedulePrepareError::UnmatchedRelease { event_index });
+                };
+                let _ = sounding.remove(position);
+            }
+        }
+    }
+
+    // Pass two: mint. **A release frees its index here**, which is what makes a producer's
+    // declared range its *polyphony* rather than the note count of a whole piece. The
+    // renderer does not see this: it keeps its own registry, written by the events in the
+    // order it applies them, so an index reissued below is still resolvable at both of the
+    // occurrences that used it.
+    let mut open: Vec<crate::identity::NoteIdentity> = Vec::new();
+    let mut open_nodes: Vec<crate::plan::NoteSlot> = Vec::new();
+    // Commit-or-discard: every `?` below drops this copy, and the renderer's own minter is
+    // untouched until the assignment after the loop.
+    let mut minter = renderer.minter_mut().working_copy();
+    let mut stamped = Vec::with_capacity(events.len());
+    for (event_index, event) in events.iter().copied().enumerate() {
+        let payload = match event.payload() {
+            CompiledPayload::SetParameter { slot, value } => {
+                EventPayload::SetParameter { slot, value }
+            }
+            CompiledPayload::NoteOn { slot } => {
+                let Some(producer) = compiled_producer else {
+                    return Err(SchedulePrepareError::NoCompiledNoteProducer { event_index });
+                };
+                let identity = minter.mint(producer, slot).map_err(|source| {
+                    SchedulePrepareError::Identity {
+                        event_index,
+                        source,
+                    }
+                })?;
+                open.push(identity);
+                open_nodes.push(slot);
+                EventPayload::Note {
+                    identity,
+                    edge: NoteEdge::On { slot },
+                }
+            }
+            CompiledPayload::NoteOff { slot } => {
+                // Pass one proved this pairing exists, so the failure branch is unreachable
+                // rather than tolerated — and it is written as a refusal anyway, because a
+                // silent `continue` would drop an event ADR-0001 clause 16 forbids dropping.
+                let Some(position) = open_nodes.iter().rposition(|node| *node == slot) else {
+                    return Err(SchedulePrepareError::UnmatchedRelease { event_index });
+                };
+                let _ = open_nodes.remove(position);
+                let identity = open.remove(position);
+                minter.release(identity);
+                EventPayload::Note {
+                    identity,
+                    edge: NoteEdge::Off,
+                }
+            }
+        };
+        stamped.push(TimedEvent::new(
+            EventEnvelope::new(epoch, event.time(), TimeSource::Compiled),
+            payload,
+        ));
+    }
+
+    // Committed only now that nothing can refuse.
+    *renderer.minter_mut() = minter;
+    Ok(stamped)
+}

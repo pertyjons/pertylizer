@@ -23,6 +23,15 @@ use crate::time::{FrameCount, TimeError};
 /// Why a plan was not admitted.
 #[derive(Debug, Clone, Copy, PartialEq, Error)]
 pub enum CompileError {
+    /// The plan's admitted producer partition could not become an identity table.
+    ///
+    /// Unreachable through the ordinary path — profile construction and plan admission
+    /// between them establish both relations `IdentityTable` checks — and reported rather
+    /// than assumed away, because a preparation that silently built a smaller table would
+    /// hand the renderer one that refuses valid identities.
+    #[error("the admitted note-producer partition is not a usable identity table: {0}")]
+    IdentityPartition(#[from] crate::identity::IdentityError),
+
     /// A note-on producer declared more holds than notes.
     ///
     /// A hold is taken *by* a note-on, so a source cannot hold more obligations than it has
@@ -53,6 +62,25 @@ pub enum CompileError {
         index: usize,
         /// Holds declared.
         holds: crate::quantities::EventCount,
+    },
+
+    /// A plan declared a second compiled note producer.
+    ///
+    /// `PlanDeclarations::events_per_quantum` is one figure, admitted against
+    /// `compiled_event_share`. A second compiled producer would have no separate envelope to
+    /// be admitted against, and `stamp_compiled` would have no way to say which of the two a
+    /// compiled note-on belongs to — so the identity it minted could land in either
+    /// producer's range. Refusing here is what lets both answers be a lookup rather than a
+    /// guess.
+    #[error(
+        "note producers {first} and {second} are both compiled, but a plan carries one compiled \
+         event stream"
+    )]
+    SecondCompiledProducer {
+        /// Position of the first compiled producer.
+        first: usize,
+        /// Position of the second.
+        second: usize,
     },
 
     /// A plan asked for more than a render limit allows.
@@ -528,6 +556,8 @@ pub struct DiagnosticsReport {
     pre_epoch_clamps: u64,
     arrival_stamped_events: u64,
     foreign_slot_events: u64,
+    orphan_note_events: u64,
+    last_orphan_note: Option<crate::identity::NoteIdentity>,
     oversized_callback_faults: u64,
     clock_exhaustion_faults: u64,
     publication_faults: u64,
@@ -595,6 +625,39 @@ impl DiagnosticsReport {
         self.foreign_slot_events
     }
 
+    /// Note edges whose occurrence named no live note.
+    ///
+    /// `SOUND-INV-017`'s orphan, and ADR-0047 clause 4's three cases all land here: a free
+    /// index, a superseded generation, and a retired one. The renderer refuses such an edge
+    /// rather than resolving it to another note, and counts it here so the refusal is
+    /// observable instead of a silent skip. It is deliberately **not** a drop: `HOST-INV-009`
+    /// licenses drops for a shortage, and an orphan is a release for a note that does not
+    /// exist. Reporting it as a drop would make a producer look starved when it is not.
+    ///
+    /// Distinct from [`Self::foreign_slot_events`], which is an event from *another* plan.
+    /// An orphan is this stream's own occurrence, spent or superseded.
+    pub const fn orphan_note_events(&self) -> u64 {
+        self.orphan_note_events
+    }
+
+    /// The most recent orphan's occurrence.
+    ///
+    /// ADR-0047 clause 4 requires an orphan to be counted "against its offering producer with
+    /// the identity named". **Naming the identity names the producer**: the ranges are
+    /// disjoint by construction and a producer's position in the plan's declaration is its
+    /// `ProducerId`, so the index this carries falls in exactly one producer's range. No
+    /// producer tag is needed and none is carried.
+    ///
+    /// One identity rather than all of them, because this report is a fixed-size value the
+    /// audio thread writes with no allocation. **Per-producer counts are owed to the ingress
+    /// slice** and named in the render contract's conformance row: until a runtime note-on
+    /// producer exists, every reachable plan has exactly one note producer — admission
+    /// refuses a second compiled one — so [`Self::orphan_note_events`] *is* that producer's
+    /// count, and a second one is what makes the aggregate ambiguous.
+    pub const fn last_orphan_note(&self) -> Option<crate::identity::NoteIdentity> {
+        self.last_orphan_note
+    }
+
     /// Callbacks larger than the profile's maximum block.
     pub const fn oversized_callback_faults(&self) -> u64 {
         self.oversized_callback_faults
@@ -641,6 +704,11 @@ impl DiagnosticsReport {
 
     pub(crate) fn count_foreign_slot_event(&mut self) {
         self.foreign_slot_events = self.foreign_slot_events.saturating_add(1);
+    }
+
+    pub(crate) fn count_orphan_note_event(&mut self, identity: crate::identity::NoteIdentity) {
+        self.orphan_note_events = self.orphan_note_events.saturating_add(1);
+        self.last_orphan_note = Some(identity);
     }
 
     pub(crate) fn count_oversized_callback(&mut self) {

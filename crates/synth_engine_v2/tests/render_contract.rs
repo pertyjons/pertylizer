@@ -19,9 +19,9 @@ use synth_engine_v2::quantities::{
     Amplitude, ChannelLayout, Frequency, NormalizedLevel, ParameterValue, Seconds,
 };
 use synth_engine_v2::render::{
-    AudioBlockMut, EventEnvelope, EventPayload, NoteEdge, PreparedRenderer, Renderer, TimedEvent,
-    TimedEvents,
+    AudioBlockMut, EventEnvelope, EventPayload, PreparedRenderer, Renderer, TimedEvent, TimedEvents,
 };
+use synth_engine_v2::schedule::{CompiledEvent, CompiledPayload};
 use synth_engine_v2::time::{
     FrameCount, PlanPosition, QUANTUM_FRAMES, SampleTime, StreamAnchor, StreamEpoch, TimeSource,
 };
@@ -538,6 +538,7 @@ fn gated_constant() -> GraphIr {
             (OUTPUT, PortId::FIRST),
             SignalDomain::Audio,
         )
+        .declaring(common::compiled_notes(16))
         .build()
         .expect("a readable plan")
 }
@@ -569,7 +570,7 @@ fn a_late_note_edge_takes_effect_at_its_clamped_render_position() {
         StreamAnchor::new(SampleTime::ZERO, PlanPosition::ZERO),
     )
     .expect("preparation succeeds");
-    let epoch = renderer.epoch();
+    let _epoch = renderer.epoch();
 
     // The first call renders with no events, so the clock passes sample 0 and anything
     // stamped there is late by clause 16's condition.
@@ -611,26 +612,19 @@ fn a_late_note_edge_takes_effect_at_its_clamped_render_position() {
     // is late and clamps forward to the clock. A note-off stamped `GATE` frames after the
     // clock is on time and keeps its declared sample.
     const GATE: u64 = 100;
-    let events = [
-        TimedEvent::new(
-            EventEnvelope::new(epoch, SampleTime::new(0), TimeSource::Compiled),
-            EventPayload::Note {
-                slot,
-                edge: NoteEdge::On,
-            },
-        ),
-        TimedEvent::new(
-            EventEnvelope::new(
-                epoch,
+    // Stamped rather than hand-built: a note event carries an occurrence now, and only the
+    // plan's own partition can mint one.
+    let events = synth_engine_v2::schedule::stamp_compiled(
+        &mut renderer,
+        &[
+            CompiledEvent::new(SampleTime::new(0), CompiledPayload::NoteOn { slot }),
+            CompiledEvent::new(
                 SampleTime::new(clamped_to.as_u64() + GATE),
-                TimeSource::Compiled,
+                CompiledPayload::NoteOff { slot },
             ),
-            EventPayload::Note {
-                slot,
-                edge: NoteEdge::Off,
-            },
-        ),
-    ];
+        ],
+    )
+    .expect("the plan declares a compiled note producer");
     let mut samples = vec![0.0_f32; block];
     let output =
         AudioBlockMut::new(&mut samples, block, ChannelLayout::Mono).expect("shaped block");
@@ -955,7 +949,7 @@ fn an_offline_event_is_stamped_with_the_epoch_preparation_issued() {
     let plan = admit(&ir, host);
     let raise = OfflineEvent::new(
         SampleTime::ZERO,
-        EventPayload::SetParameter {
+        CompiledPayload::SetParameter {
             slot: plan
                 .resolve_parameter(SOURCE, parameters::SINE_AMPLITUDE)
                 .expect("the sine declares an amplitude parameter"),

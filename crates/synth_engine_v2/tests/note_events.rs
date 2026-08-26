@@ -27,7 +27,7 @@ use synth_engine_v2::quantities::{
     Amplitude, ChannelLayout, CutoffFrequency, Frequency, NormalizedLevel, ParameterValue,
     Resonance, Seconds,
 };
-use synth_engine_v2::render::{EventPayload, NoteEdge};
+use synth_engine_v2::schedule::CompiledPayload;
 use synth_engine_v2::time::{FrameCount, PlanPosition, QUANTUM_FRAMES, SampleTime};
 
 const ENVELOPE: NodeId = NodeId::new(11);
@@ -79,6 +79,7 @@ fn gated_constant() -> GraphIr {
             (OUTPUT, PortId::FIRST),
             SignalDomain::Audio,
         )
+        .declaring(common::compiled_notes(16))
         .build()
         .expect("a readable plan")
 }
@@ -139,16 +140,24 @@ fn voice() -> GraphIr {
             (OUTPUT, PortId::FIRST),
             SignalDomain::Audio,
         )
+        .declaring(common::compiled_notes(16))
         .build()
         .expect("a readable plan")
 }
 
 /// A note edge on the plan's one playable node.
-fn note(plan: &CompiledPlan, at: u64, edge: NoteEdge) -> OfflineEvent {
+fn note(plan: &CompiledPlan, at: u64, on: bool) -> OfflineEvent {
     let slot = plan
         .resolve_note(ENVELOPE)
         .expect("an envelope is a node a note can be sent to");
-    OfflineEvent::new(SampleTime::new(at), EventPayload::Note { slot, edge })
+    // A compiled list names the node on **both** edges — that is how stamping pairs them —
+    // while the stamped event names it on the on edge alone, per `SOUND-INV-017`.
+    let payload = if on {
+        CompiledPayload::NoteOn { slot }
+    } else {
+        CompiledPayload::NoteOff { slot }
+    };
+    OfflineEvent::new(SampleTime::new(at), payload)
 }
 
 /// The first frame whose value is not exactly zero, if any.
@@ -164,7 +173,7 @@ fn a_note_on_takes_effect_at_its_declared_sample() {
     const AT: u64 = 2 * Q + 36;
 
     let plan = common::admit(&gated_constant(), profile(256, ChannelLayout::Mono));
-    let events = [note(&plan, AT, NoteEdge::On)];
+    let events = [note(&plan, AT, true)];
     let rendered =
         render_offline(plan, FrameCount::new(512), PlanPosition::ZERO, &events).expect("renders");
 
@@ -188,10 +197,7 @@ fn a_note_off_takes_effect_at_its_declared_sample() {
     const OFF: u64 = 4 * Q + 51;
 
     let plan = common::admit(&gated_constant(), profile(256, ChannelLayout::Mono));
-    let events = [
-        note(&plan, ON, NoteEdge::On),
-        note(&plan, OFF, NoteEdge::Off),
-    ];
+    let events = [note(&plan, ON, true), note(&plan, OFF, false)];
     let rendered =
         render_offline(plan, FrameCount::new(512), PlanPosition::ZERO, &events).expect("renders");
 
@@ -217,9 +223,9 @@ fn two_note_edges_in_one_quantum_both_take_effect() {
 
     let plan = common::admit(&gated_constant(), profile(256, ChannelLayout::Mono));
     let events = [
-        note(&plan, ON, NoteEdge::On),
-        note(&plan, OFF, NoteEdge::Off),
-        note(&plan, AGAIN, NoteEdge::On),
+        note(&plan, ON, true),
+        note(&plan, OFF, false),
+        note(&plan, AGAIN, true),
     ];
     let rendered =
         render_offline(plan, FrameCount::new(512), PlanPosition::ZERO, &events).expect("renders");
@@ -289,11 +295,12 @@ fn an_edge_mid_ramp_starts_from_the_level_that_frame_would_have_had() {
             (OUTPUT, PortId::FIRST),
             SignalDomain::Audio,
         )
+        .declaring(common::compiled_notes(16))
         .build()
         .expect("a readable plan");
 
     let plan = common::admit(&ir, profile(256, ChannelLayout::Mono));
-    let events = [note(&plan, 0, NoteEdge::On), note(&plan, AT, NoteEdge::Off)];
+    let events = [note(&plan, 0, true), note(&plan, AT, false)];
     let rendered =
         render_offline(plan, FrameCount::new(512), PlanPosition::ZERO, &events).expect("renders");
 
@@ -338,10 +345,7 @@ fn a_note_edge_survives_any_host_block_partition() {
     let mut renders = Vec::new();
     for block in [64_u64, 256, 250] {
         let plan = common::admit(&gated_constant(), profile(block, ChannelLayout::Mono));
-        let events = [
-            note(&plan, ON, NoteEdge::On),
-            note(&plan, OFF, NoteEdge::Off),
-        ];
+        let events = [note(&plan, ON, true), note(&plan, OFF, false)];
         renders.push(
             render_offline(plan, FrameCount::new(1_024), PlanPosition::ZERO, &events)
                 .expect("renders"),
@@ -371,13 +375,13 @@ fn a_gate_addressed_as_a_parameter_lands_on_the_same_sample_as_a_note() {
     const AT: u64 = 3 * Q + 41;
 
     let plan = common::admit(&gated_constant(), profile(256, ChannelLayout::Mono));
-    let as_note = [note(&plan, AT, NoteEdge::On)];
+    let as_note = [note(&plan, AT, true)];
     let slot = plan
         .resolve_parameter(ENVELOPE, parameters::ENVELOPE_GATE)
         .expect("the envelope still declares an addressable gate");
     let as_parameter = [OfflineEvent::new(
         SampleTime::new(AT),
-        EventPayload::SetParameter {
+        CompiledPayload::SetParameter {
             slot,
             value: ParameterValue::new(1.0).expect("finite"),
         },
@@ -429,10 +433,7 @@ fn the_complete_voice_renders_from_a_note_edge() {
     const WINDOW: u64 = 320;
 
     let plan = common::admit(&voice(), profile(256, ChannelLayout::Mono));
-    let events = [
-        note(&plan, ON, NoteEdge::On),
-        note(&plan, OFF, NoteEdge::Off),
-    ];
+    let events = [note(&plan, ON, true), note(&plan, OFF, false)];
     let rendered = render_offline(plan, FrameCount::new(64 * Q), PlanPosition::ZERO, &events)
         .expect("renders");
 

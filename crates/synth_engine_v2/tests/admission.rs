@@ -954,6 +954,50 @@ fn the_scratch_budget_counts_what_preparation_actually_allocates() {
 }
 
 #[test]
+fn the_scratch_budget_counts_the_identity_halves_a_declared_polyphony_allocates() {
+    // The same defect as the test above, one allocation later, and found by an independent
+    // review of the slice that added it. Preparation allocates a minter slot **and** a
+    // live-note entry per admitted index, both sized by the plan's declared producer
+    // ranges — so a plan declaring a large polyphony against a profile near its scratch
+    // ceiling would be reported as fitting and then allocate past it.
+    let host = profile(256, ChannelLayout::Mono);
+
+    let scratch_request = |simultaneous: u32| {
+        let plan = GraphIr::builder()
+            .node(SOURCE, IrNodeKind::Silence, ExecutionScope::Voice)
+            .node(OUTPUT, IrNodeKind::Output, ExecutionScope::Global)
+            .connect(
+                (SOURCE, PortId::FIRST),
+                (OUTPUT, PortId::FIRST),
+                SignalDomain::Audio,
+            )
+            .declaring(PlanDeclarations {
+                note_producers: vec![NoteProducerDeclaration {
+                    compiled: true,
+                    simultaneous_notes: HeldNoteCount::measured(simultaneous),
+                    simultaneous_holds: EventCount::NONE,
+                }],
+                held_notes: HeldNoteCount::measured(simultaneous),
+                ..PlanDeclarations::default()
+            })
+            .build()
+            .expect("a source into an output is a readable plan");
+        compile(&plan, &RenderConfig::new(host))
+            .report()
+            .row(ResourceField::BufferScratchBytes)
+            .map(|row| row.requested().to_string())
+            .expect("the row exists")
+    };
+
+    assert_ne!(
+        scratch_request(1),
+        scratch_request(4_096),
+        "raising a producer's declared polyphony must raise the scratch request, because it \
+         raises what preparation allocates for the identity halves"
+    );
+}
+
+#[test]
 fn an_output_port_this_phase_does_not_render_is_refused_rather_than_dropped() {
     // Lowering reads the first port only, so an edge into any other one used to compile
     // and render silence with nothing said. Phase 2 checks it against the node's
