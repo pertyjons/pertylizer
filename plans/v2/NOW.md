@@ -99,6 +99,29 @@ per-call accounting.
 every later one in the epoch, both carries invalidated, `needs_reprepare` published — belongs to the slice that routes
 the renderer through the arbiter. Nothing here claims it is in force.
 
+### Completed slice — EVD-0017, the arbiter's publication cost
+
+ADR-0046 names this cost as owed: "The one-arbiter design makes publication serial work on the audio thread. Phase 3
+must measure its bounded cost." [EVD-0017](evidence/phase-03/EVD-0017-publication-cost.md) is `Supported`, and its
+method — question, falsifier and acceptance rule — was written and committed to before any figure was taken.
+
+At the admitted maximum the pass takes **0.014 % of the callback budget** against a 10 % falsifier, so publication is
+an accounting problem rather than a design one. Per-event cost is 1.44–1.90 ns across profiles from 64 to 4 096
+frames, with an interquartile range of 2–4 % of the minimum.
+
+**One acceptance criterion is qualified rather than met.** The rule asked for linear per-event cost; the observation
+rises 32 % from the smallest batch to the largest. The algorithm is a linear pass, so this is the working set growing
+past L2 rather than a superlinear term — but it is recorded as a qualification because a reader extrapolating from
+the smallest row would understate the largest by a third.
+
+**It does not reselect `max_events_per_quantum`**, and the host-profile specification's deferred row stays open. That
+reselection needs a measured *partition*, and four of the six producer classes have nothing to measure yet. The figure
+is a floor for the same reason, and a lower bound again because the harness runs with no callback deadline.
+
+One correction is recorded in the evidence rather than quietly fixed: a first reading called the control arm's figure
+"below memset speed" and suspected the ledger clear had been optimised away. That used DRAM bandwidth for an
+L1-resident buffer and was wrong.
+
 ### Completed slice — compiled admission over anchor phases and loops
 
 ADR-0046 clause 4, and it closes a real gap rather than adding a check. `CompiledEventScheduler::prepare` counted
