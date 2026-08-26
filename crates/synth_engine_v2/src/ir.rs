@@ -471,6 +471,25 @@ impl IrProgram {
 /// requests. Phase 1's IR is built directly in tests; the phases that lower a real
 /// project compute these from its content.
 ///
+/// What one note-on source may hold at once.
+///
+/// Two numbers rather than one, because they bound different resources and ADR-0046 gives
+/// them different owners. `simultaneous_notes` sizes the source's **identity range**, which
+/// every note-on consumes; `simultaneous_holds` sizes its **hold entitlement**, which only a
+/// note-on whose release is not already in the same sealed batch consumes. Holds are
+/// therefore at most notes, and a compiled source declares none at all — ADR-0046 clause 6:
+/// "Compiled releases use plan entitlements and need no hold."
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[must_use]
+pub struct NoteProducerDeclaration {
+    /// Whether this source's releases are already in the plan.
+    pub compiled: bool,
+    /// Notes it may have sounding at once. Sizes its identity range.
+    pub simultaneous_notes: HeldNoteCount,
+    /// Release obligations it may hold at once. Zero for a compiled source.
+    pub simultaneous_holds: EventCount,
+}
+
 /// The `Default` is written out rather than derived, because deriving it would
 /// require a `Default` on every quantity type — and a capacity type whose default
 /// is zero is the shape the two-constructor rule exists to prevent. Here the zeros
@@ -478,6 +497,18 @@ impl IrProgram {
 #[derive(Debug, Clone, PartialEq)]
 #[must_use]
 pub struct PlanDeclarations {
+    /// Every source that can start a note, and what each may hold at once.
+    ///
+    /// ADR-0046 partitions hold entitlements "at plan admission" across "every admitted
+    /// non-compiled note-on producer", and ADR-0047 clause 3 partitions identity ranges
+    /// across a **superset** of those — every note-on producer, compiled included, because
+    /// every note-on needs an occurrence while only some need a hold. Neither partition can
+    /// be computed from a plan that does not say who its producers are, which is what this
+    /// field supplies.
+    ///
+    /// An empty list is a plan that starts no notes, which is ordinary: a plan can be pure
+    /// automation.
+    pub note_producers: Vec<NoteProducerDeclaration>,
     /// Voices sounding at once across the plan.
     pub active_voices: VoiceCount,
     /// Notes held at once across the plan.
@@ -523,6 +554,10 @@ pub struct PlanDeclarations {
 impl Default for PlanDeclarations {
     fn default() -> Self {
         Self {
+            // Empty rather than one nominal producer: a plan that declares nothing starts no
+            // notes, and inventing a producer here would give admission something to
+            // partition that the plan never asked for.
+            note_producers: Vec::new(),
             active_voices: VoiceCount::NONE,
             held_notes: HeldNoteCount::NONE,
             mix_channels: MixChannelCount::NONE,

@@ -33,7 +33,7 @@ use std::collections::HashMap;
 
 use crate::diagnostics::{CompileError, CompileWarning};
 use crate::ir::{EdgeId, GraphIr, IrNodeKind, NodeId, PortId, SignalDomain};
-use crate::quantities::{ChannelLayout, NodeCount};
+use crate::quantities::{ChannelLayout, EventCount, NodeCount};
 
 /// Which way a signal crosses a port.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -243,6 +243,28 @@ impl<'a> Index<'a> {
 
 /// Check `ir` against every Phase 2 rule.
 pub(crate) fn validate(ir: &GraphIr, stream: ChannelLayout) -> Result<Validated, CompileError> {
+    // The two per-producer declaration rules, before anything is summed. An aggregate built
+    // from a declaration that contradicts itself would be checked against the profile and
+    // could pass, so the contradiction has to be caught first — and the caller told which
+    // producer it was, which a sum cannot say.
+    for (index, producer) in ir.declarations().note_producers.iter().enumerate() {
+        if producer.compiled && producer.simultaneous_holds > EventCount::NONE {
+            return Err(CompileError::CompiledProducerDeclaresHold {
+                index,
+                holds: producer.simultaneous_holds,
+            });
+        }
+        if u64::from(producer.simultaneous_holds.get())
+            > u64::from(producer.simultaneous_notes.get())
+        {
+            return Err(CompileError::ProducerHoldsExceedNotes {
+                index,
+                holds: producer.simultaneous_holds,
+                notes: producer.simultaneous_notes,
+            });
+        }
+    }
+
     let index = Index::build(ir, stream);
     let mut conversions = Vec::new();
 

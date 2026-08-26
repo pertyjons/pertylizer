@@ -19,8 +19,8 @@ use crate::plan::{
 };
 use crate::profile::HostProfile;
 use crate::quantities::{
-    ChannelLayout, EdgeCount, InstructionCount, NodeCount, PreparedBytes, RecordCount, SlotCount,
-    TapCount,
+    ChannelLayout, EdgeCount, EventCount, HeldNoteCount, InstructionCount, NodeCount,
+    PreparedBytes, RecordCount, SlotCount, TapCount,
 };
 use crate::report::{
     Fit, LatencyAccounting, LatencyContributor, ReportedQuantities, ResourceAmount, ResourceField,
@@ -438,9 +438,24 @@ fn build_rows(
         ResourceAmount::Voices(limits.voices().max_active_voices()),
         IrObject::Plan,
     ));
+    // ADR-0047 clause 3's identity partition covers a **superset** of the hold partition —
+    // every note-on needs an occurrence while only some need a hold — so it sums every
+    // producer, compiled included. The plan's own `held_notes` is the larger of the two
+    // claims it can make about itself, and a producer set that outran it would be a plan
+    // disagreeing with itself before any profile was consulted.
+    let declared_notes = declarations
+        .note_producers
+        .iter()
+        .fold(0_u64, |total, producer| {
+            total.saturating_add(u64::from(producer.simultaneous_notes.get()))
+        });
+    let held = HeldNoteCount::measured(
+        u32::try_from(declared_notes.max(u64::from(declarations.held_notes.get())))
+            .unwrap_or(u32::MAX),
+    );
     rows.push(ResourceRow::new(
         ResourceField::MaxHeldNotes,
-        ResourceAmount::HeldNotes(declarations.held_notes),
+        ResourceAmount::HeldNotes(held),
         ResourceAmount::HeldNotes(limits.voices().max_held_notes()),
         IrObject::Plan,
     ));
@@ -621,14 +636,6 @@ fn build_rows(
             ResourceField::ReleaseEventShare,
             limits.events().shares().release_event_share(),
         ),
-        (
-            ResourceField::ReleaseHoldCapacity,
-            limits.events().shares().release_hold_capacity(),
-        ),
-        (
-            ResourceField::PerformanceIngressCapacity,
-            limits.events().queues().performance_ingress_capacity(),
-        ),
     ] {
         rows.push(ResourceRow::new(
             field,
@@ -637,6 +644,34 @@ fn build_rows(
             IrObject::Plan,
         ));
     }
+
+    // ADR-0046 clause 6's hold partition, summed across the plan's **non-compiled** note-on
+    // producers, and emitted here because `ResourceField::ALL` puts it after the release
+    // share. Checking one source at a time is not admission: two that each fit can together
+    // exceed the capacity, which is the rule the record states for authored envelopes and
+    // which holds here for the same reason. A compiled producer contributes nothing — its
+    // releases use plan entitlements — and one that declared a hold was already refused.
+    let declared_holds = declarations
+        .note_producers
+        .iter()
+        .filter(|producer| !producer.compiled)
+        .fold(0_u64, |total, producer| {
+            total.saturating_add(u64::from(producer.simultaneous_holds.get()))
+        });
+    rows.push(ResourceRow::new(
+        ResourceField::ReleaseHoldCapacity,
+        ResourceAmount::Events(EventCount::measured(
+            u32::try_from(declared_holds).unwrap_or(u32::MAX),
+        )),
+        ResourceAmount::Events(limits.events().shares().release_hold_capacity()),
+        IrObject::Plan,
+    ));
+    rows.push(ResourceRow::new(
+        ResourceField::PerformanceIngressCapacity,
+        ResourceAmount::Events(limits.events().queues().performance_ingress_capacity()),
+        ResourceAmount::Events(limits.events().queues().performance_ingress_capacity()),
+        IrObject::Plan,
+    ));
 
     rows
 }

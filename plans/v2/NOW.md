@@ -318,6 +318,35 @@ workspace's default members, so it has no in-repo consumer outside its own tests
 persisted, manifest, wire or protocol contracts, which `AGENTS.md` treats separately, and it does not reach any other
 crate. ADR-0020 settles the final crate boundaries and names.
 
+### Completed slice — a plan declares its note-on producers
+
+The prerequisite the event half was blocked on. ADR-0046 partitions hold entitlements "at plan admission" across
+"every admitted non-compiled note-on producer", and ADR-0047 clause 3 partitions identity ranges across a **superset**
+of those — but `PlanDeclarations` named no producers, so there was nothing for admission to partition.
+
+`NoteProducerDeclaration` carries two numbers rather than one, because they bound different resources with different
+owners: `simultaneous_notes` sizes the **identity range**, which every note-on consumes, and `simultaneous_holds`
+sizes the **hold entitlement**, which only a note-on whose release is not already in the same sealed batch consumes.
+
+Four rules, and each is checked where it can be answered:
+
+- **Holds are at most notes.** A hold is taken *by* a note-on, so they are a subset rather than a second budget.
+- **A compiled producer declares no hold at all** — ADR-0046 clause 6: "Compiled releases use plan entitlements and
+  need no hold." One that asked would consume capacity the non-compiled producers are entitled to. Both of these are
+  refused **by name**, before anything is summed, so the caller learns which producer rather than reading a total.
+- **The hold partition sums the non-compiled producers** against `release_hold_capacity`. Checking one at a time is
+  not admission: two that each fit can together exceed it, which is the rule the record states for authored envelopes
+  and which holds here for the same reason.
+- **The identity partition sums every producer, compiled included**, against `max_held_notes`. Filtering compiled
+  sources out would admit a plan whose compiled notes alone outrun what an identity can name.
+
+`release_hold_capacity` therefore leaves the not-admission-checked list: a plan can now exceed it, so it is a limit
+rather than a field the report echoes. Twenty-nine fields qualify, twenty-one do not.
+
+Three properties are mutation-verified: filtering compiled producers out of the identity sum, taking the maximum
+instead of the sum for holds, and letting a compiled producer declare one. The row-order test caught the hold row
+being emitted out of `ResourceField::ALL`'s position — the third time that check has earned its place.
+
 ### Completed slice — the identity table
 
 `SOUND-INV-017`'s first half, and the one point 7 was blocked on. `IdentityTable` mints identities from disjoint

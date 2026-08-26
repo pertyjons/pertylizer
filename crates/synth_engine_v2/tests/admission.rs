@@ -13,8 +13,8 @@ use common::{OUTPUT, SOURCE, declaring, profile, source_plan};
 use synth_engine_v2::compile::{RenderConfig, compile};
 use synth_engine_v2::diagnostics::{CompileError, CompileWarning};
 use synth_engine_v2::ir::{
-    ExecutionScope, GraphIr, IrNodeKind, IrObject, IrProgram, NodeId, PlanDeclarations, PortId,
-    ProgramId, SignalDomain, TapId,
+    ExecutionScope, GraphIr, IrNodeKind, IrObject, IrProgram, NodeId, NoteProducerDeclaration,
+    PlanDeclarations, PortId, ProgramId, SignalDomain, TapId,
 };
 use synth_engine_v2::profile::{
     CostBudget, EventLimits, GraphLimits, HostProfile, MemoryLimits, MixingLimits,
@@ -160,6 +160,13 @@ fn assert_refused(field: ResourceField, ir: &GraphIr, host: HostProfile) {
 /// A plan declaring one of everything the profile bounds, so a lowered limit bites.
 fn declared() -> PlanDeclarations {
     PlanDeclarations {
+        // One compiled producer, holding two notes and no obligations — compiled releases
+        // use plan entitlements, so a compiled source declaring a hold is refused outright.
+        note_producers: vec![NoteProducerDeclaration {
+            compiled: true,
+            simultaneous_notes: HeldNoteCount::measured(2),
+            simultaneous_holds: EventCount::NONE,
+        }],
         active_voices: VoiceCount::measured(2),
         held_notes: HeldNoteCount::measured(2),
         mix_channels: MixChannelCount::measured(2),
@@ -388,6 +395,44 @@ fn refusal_cases(host: &HostProfile) -> Vec<(ResourceField, GraphIr, HostProfile
             event_limits(6, 128, 4_096),
         ),
         (
+            // Two non-compiled producers that each fit alone but not together. Checking one
+            // source at a time is not admission — the rule ADR-0046 states for authored
+            // envelopes, and it holds for hold entitlements for the same reason.
+            ResourceField::ReleaseHoldCapacity,
+            declaring(PlanDeclarations {
+                note_producers: vec![
+                    NoteProducerDeclaration {
+                        compiled: false,
+                        simultaneous_notes: HeldNoteCount::measured(64),
+                        simultaneous_holds: EventCount::measured(24),
+                    },
+                    NoteProducerDeclaration {
+                        compiled: false,
+                        simultaneous_notes: HeldNoteCount::measured(64),
+                        simultaneous_holds: EventCount::measured(24),
+                    },
+                ],
+                ..declared()
+            }),
+            {
+                let mut groups = Groups::of(host);
+                let horizon = groups.events.forward_event_horizon();
+                let one = events(1);
+                groups.events = EventLimits::new(
+                    events(64),
+                    events(128),
+                    events(4_096),
+                    horizon,
+                    QueueCapacities::new(one, events(16_384), events(256))
+                        .expect("the overridden capacities are above zero"),
+                    ProducerShares::new(events(8), one, one, one, one, events(40), events(40))
+                        .expect("a valid partition"),
+                )
+                .expect("the overridden capacities are above zero");
+                groups.build(host)
+            },
+        ),
+        (
             ResourceField::MaxNoteExpansionPerTick,
             declares.clone(),
             event_limits(256, 1, 4_096),
@@ -505,7 +550,10 @@ fn every_limit_a_plan_can_exceed_has_a_refusal_case() {
         covered, checked,
         "the refusal cases and the admission-checked set have diverged"
     );
-    assert_eq!(checked.len(), 28, "the admission-checked set changed size");
+    // Twenty-nine, not twenty-eight: `release_hold_capacity` joined when a plan gained the
+    // note-on producers whose entitlements it partitions. A plan can now exceed it, so it is
+    // a limit rather than a field the report merely echoes.
+    assert_eq!(checked.len(), 29, "the admission-checked set changed size");
 }
 
 #[test]
@@ -985,4 +1033,86 @@ fn a_node_id_is_an_identity_and_not_a_position() {
     };
     assert_eq!(of(&forward), of(&reversed));
     assert_eq!(of(&forward), Some(IrObject::Node(NodeId::new(42))));
+}
+
+#[test]
+fn a_compiled_note_producer_may_not_declare_a_hold() {
+    // ADR-0046 clause 6: "Compiled releases use plan entitlements and need no hold." A
+    // compiled source that asked for one would consume `release_hold_capacity` the
+    // non-compiled producers are entitled to, which is the partition this refusal keeps
+    // disjoint. Refused by name rather than summed, so the caller learns which producer.
+    let host = profile(256, ChannelLayout::Mono);
+    let ir = declaring(PlanDeclarations {
+        note_producers: vec![NoteProducerDeclaration {
+            compiled: true,
+            simultaneous_notes: HeldNoteCount::measured(4),
+            simultaneous_holds: events(1),
+        }],
+        ..declared()
+    });
+    match compile(&ir, &RenderConfig::new(host)).into_plan() {
+        Err(CompileError::CompiledProducerDeclaresHold { index, holds }) => {
+            assert_eq!(index, 0);
+            assert_eq!(holds, events(1));
+        }
+        other => panic!("expected a compiled-hold refusal, got {other:?}"),
+    }
+}
+
+#[test]
+fn a_producer_may_not_hold_more_obligations_than_it_has_notes() {
+    // A hold is taken *by* a note-on, so a source cannot hold more obligations than it has
+    // notes sounding — ADR-0046 clause 6 gives a hold only to a note-on whose release is not
+    // already in the same sealed batch, which makes holds a subset of notes rather than a
+    // separate budget.
+    let host = profile(256, ChannelLayout::Mono);
+    let ir = declaring(PlanDeclarations {
+        note_producers: vec![NoteProducerDeclaration {
+            compiled: false,
+            simultaneous_notes: HeldNoteCount::measured(2),
+            simultaneous_holds: events(3),
+        }],
+        ..declared()
+    });
+    match compile(&ir, &RenderConfig::new(host)).into_plan() {
+        Err(CompileError::ProducerHoldsExceedNotes {
+            index,
+            holds,
+            notes,
+        }) => {
+            assert_eq!(index, 0);
+            assert_eq!(holds, events(3));
+            assert_eq!(notes, HeldNoteCount::measured(2));
+        }
+        other => panic!("expected a holds-exceed-notes refusal, got {other:?}"),
+    }
+}
+
+#[test]
+fn the_identity_partition_sums_compiled_producers_too() {
+    // ADR-0047 clause 3: the identity partition covers a **superset** of the hold
+    // partition, because every note-on needs an occurrence while only some need a hold. A
+    // plan whose compiled producers alone outrun `max_held_notes` must be refused, and a
+    // sum that filtered compiled sources out would admit it.
+    let host = profile(256, ChannelLayout::Mono);
+    let over = host
+        .limits()
+        .voices()
+        .max_held_notes()
+        .get()
+        .saturating_add(1);
+    let ir = declaring(PlanDeclarations {
+        note_producers: vec![NoteProducerDeclaration {
+            compiled: true,
+            simultaneous_notes: HeldNoteCount::measured(over),
+            simultaneous_holds: EventCount::NONE,
+        }],
+        ..declared()
+    });
+    match compile(&ir, &RenderConfig::new(host)).into_plan() {
+        Err(CompileError::LimitExceeded { field, .. }) => {
+            assert_eq!(field, ResourceField::MaxHeldNotes);
+        }
+        other => panic!("expected the identity partition to refuse, got {other:?}"),
+    }
 }

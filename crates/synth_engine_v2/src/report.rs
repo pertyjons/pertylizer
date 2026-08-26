@@ -325,7 +325,7 @@ impl ResourceField {
     ///
     /// `HOST-INV-007` binds the limits a plan can exceed, and its conformance row asks
     /// for one refusal case per such limit — so this predicate has to be exactly the
-    /// set those cases can be written for. Twenty-eight fields qualify. The twenty-two
+    /// set those cases can be written for. Twenty-nine fields qualify. The twenty-one
     /// that do not take that refusal fall into seven groups, each excluded for its own
     /// reason:
     ///
@@ -349,7 +349,11 @@ impl ResourceField {
     ///   statically knowable declaration is compiled work and is checked against
     ///   `compiled_event_share`; the cap cannot be exceeded without a share being exceeded
     ///   first, because the shares sum to at most the cap.
-    /// - **Six of ADR-0046's seven producer fields**, for now. Their plan-dependent relations —
+    /// - **Five of ADR-0046's seven producer fields**, for now. `compiled_event_share` and
+    ///   `release_hold_capacity` have left this list: a plan declares statically knowable
+    ///   events and its note-on producers' hold entitlements, so both are things a plan can
+    ///   now exceed.
+    /// - The other five, for now. Their plan-dependent relations —
     ///   the compiled and authored destination envelopes, the session snapshot, the
     ///   internal declarations and the hold entitlements — are checked at plan admission
     ///   by later Phase 3 work. Until that exists, these fields are checked by profile
@@ -361,7 +365,7 @@ impl ResourceField {
     /// `HOST-INV-007`'s conformance row unsatisfiable: six of the remaining fields
     /// compare a value against itself, and no plan can be built that exceeds one.
     ///
-    /// Twenty-two fields are excluded and twenty-eight qualify.
+    /// Twenty-one fields are excluded and twenty-nine qualify.
     #[must_use]
     pub const fn is_admission_checked(self) -> bool {
         !matches!(
@@ -386,7 +390,6 @@ impl ResourceField {
                 | Self::SessionEventShare
                 | Self::InternalEventShare
                 | Self::ReleaseEventShare
-                | Self::ReleaseHoldCapacity
                 | Self::PerformanceIngressCapacity
         )
     }

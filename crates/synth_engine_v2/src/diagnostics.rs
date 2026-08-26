@@ -23,6 +23,38 @@ use crate::time::{FrameCount, TimeError};
 /// Why a plan was not admitted.
 #[derive(Debug, Clone, Copy, PartialEq, Error)]
 pub enum CompileError {
+    /// A note-on producer declared more holds than notes.
+    ///
+    /// A hold is taken *by* a note-on, so a source cannot hold more obligations than it has
+    /// notes sounding. ADR-0046 clause 6 gives a hold only to a note-on "whose complete
+    /// note-on/release pair is not already present in one indivisible materialized
+    /// open-window batch", so holds are a subset of notes rather than a separate budget.
+    #[error("note producer {index} declares {holds} holds against {notes} simultaneous notes")]
+    ProducerHoldsExceedNotes {
+        /// Position in the plan's producer list.
+        index: usize,
+        /// Holds declared.
+        holds: crate::quantities::EventCount,
+        /// Notes declared.
+        notes: crate::quantities::HeldNoteCount,
+    },
+
+    /// A compiled note-on producer declared a hold.
+    ///
+    /// ADR-0046 clause 6: "Compiled releases use plan entitlements and need no hold." A
+    /// compiled source that asked for one would consume `release_hold_capacity` that the
+    /// non-compiled producers are entitled to, which is the partition this refusal keeps
+    /// disjoint.
+    #[error(
+        "compiled note producer {index} declares {holds} holds, but compiled releases need none"
+    )]
+    CompiledProducerDeclaresHold {
+        /// Position in the plan's producer list.
+        index: usize,
+        /// Holds declared.
+        holds: crate::quantities::EventCount,
+    },
+
     /// A plan asked for more than a render limit allows.
     ///
     /// Admission never truncates, clamps, or drops to make a plan fit: exceeding a
