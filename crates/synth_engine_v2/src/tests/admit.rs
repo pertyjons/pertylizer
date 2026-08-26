@@ -259,6 +259,227 @@ fn an_empty_loop_is_refused_rather_than_extended() {
     }
 }
 
+/// The greatest common divisor, for the oracle's alignment cycle below.
+const fn gcd(a: u64, b: u64) -> u64 {
+    let (mut a, mut b) = (a, b);
+    while b != 0 {
+        let next = a % b;
+        a = b;
+        b = next;
+    }
+    a
+}
+
+/// Whether any quantum overruns `share` when the grid's boundaries fall at `phase`.
+///
+/// The oracle for the loop diagnostic, and deliberately not a restatement of the scan: it
+/// materialises the periodic stream over many passes and buckets by absolute quantum index,
+/// which is the definition clause 4's sliding window is an optimisation *of*.
+fn overruns_at_phase(frames: &[u64], start: u64, end: u64, share: u32, phase: u64) -> bool {
+    let length = end - start;
+    let inside: Vec<u64> = frames
+        .iter()
+        .copied()
+        .filter(|frame| *frame >= start && *frame < end)
+        .collect();
+    // **A full alignment cycle, not a handful of passes.** Copy `n` sits `length * n`
+    // frames along, so relative to a fixed grid its phase shifts by `length % Q` each time
+    // and only returns to where it started after `Q / gcd(Q, length)` copies. A bound like
+    // `Q / length + 4` covers a window straddling one wrap and nothing else: with a loop of
+    // 129 frames it materialises four copies, while events at 0 and 63 first share a
+    // phase-10 quantum at copy **10** — so the oracle would answer "no overrun" for a phase
+    // that overruns. Found by an independent review of this test.
+    //
+    // The implementation is unaffected, and the reason is worth keeping: the stream is
+    // periodic, so a window's content depends only on its start modulo `length`, and
+    // sliding over `ceil(Q / length) + 2` copies already covers every residue. The oracle
+    // asks a different question — "does *this* phase overrun" — and that one does need the
+    // cycle.
+    let cycle = Q / gcd(Q, length.max(1));
+    let passes = cycle + (Q / length.max(1)) + 4;
+    let mut counts = std::collections::BTreeMap::new();
+    for pass in 0..passes {
+        for frame in &inside {
+            let placed = frame + length * pass;
+            // The grid whose boundaries fall at `phase`: a frame belongs to the quantum
+            // that starts at the greatest boundary at or below it.
+            //
+            // **Shifted by one whole quantum rather than saturated.** A frame before the
+            // first boundary has a negative index, and `saturating_sub` folded every such
+            // frame into bucket 0 together with the first *complete* quantum — which the
+            // interior trim below then threw away as an edge. Loop `[22, 24)` with an event
+            // at 23 and phase 38 bucketed as `{0: 40, 1: 28}`, left no interior at all, and
+            // answered "no overrun" while `[38, 102)` really held 32 events. Adding `Q`
+            // shifts every index by exactly one, so the grouping is untouched and nothing
+            // merges. Found by an independent review.
+            let bucket = (placed + Q - phase) / Q;
+            *counts.entry(bucket).or_insert(0_u32) += 1;
+        }
+    }
+    // The first and last buckets see only part of the materialised passes, so they can
+    // undercount; the interior is what the periodic stream really does.
+    let interior: Vec<u32> = counts
+        .values()
+        .copied()
+        .skip(1)
+        .take(counts.len().saturating_sub(2))
+        .collect();
+    interior.iter().any(|held| *held > share)
+}
+
+#[test]
+fn the_oracle_sees_a_phase_that_only_aligns_many_copies_later() {
+    // A check on the checker. A loop of 129 frames is coprime with `Q`, so each copy shifts
+    // the grid by one frame and events at 0 and 63 first share a quantum at copy **10**, at
+    // phase 10. An oracle that materialised only a few passes would answer "no overrun"
+    // there and would then be unable to falsify anything about such loops.
+    assert!(
+        overruns_at_phase(&[0, 63], 0, 129, 1, 10),
+        "copy 10 puts frames 1290 and 1353 in the phase-10 quantum [1290, 1354)"
+    );
+    // And the implementation refuses this loop regardless of which copy is looked at,
+    // because the stream is periodic: the window at frame 0 already holds both.
+    assert!(
+        admit_loop(
+            &at(&[0, 63]),
+            PlanPosition::ZERO,
+            PlanPosition::new(129),
+            share(1),
+        )
+        .is_err()
+    );
+}
+
+#[test]
+fn the_oracle_keeps_pre_boundary_frames_out_of_the_first_complete_quantum() {
+    // The second check on the checker. A short loop whose events all precede the phase's
+    // first boundary used to collapse into bucket zero along with the first complete
+    // quantum, which the interior trim then discarded — the oracle inspected nothing and
+    // answered "no overrun".
+    assert!(
+        overruns_at_phase(&[23], 22, 24, 6, 38),
+        "the quantum [38, 102) holds 32 events of a two-frame loop, well over a share of six"
+    );
+}
+
+#[test]
+fn a_loop_refusal_names_the_interval_and_a_phase_that_really_overruns() {
+    // Clause 4: "the diagnostic names the loop interval, phase, requested count and
+    // available count". The interval is the caller's own, so the load-bearing half is the
+    // phase — and this checks it against the definition rather than against the scan.
+    let start = 200_u64;
+    let end = 300_u64;
+    let frames = [200, 299];
+    match admit_loop(
+        &at(&frames),
+        PlanPosition::new(start),
+        PlanPosition::new(end),
+        share(1),
+    ) {
+        Err(AdmissionError::LoopWindowOverShare {
+            start: named_start,
+            end: named_end,
+            phase,
+            requested,
+            share: named_share,
+        }) => {
+            assert_eq!(named_start, PlanPosition::new(start));
+            assert_eq!(named_end, PlanPosition::new(end));
+            assert_eq!(named_share, share(1), "the refusal names both sides");
+            assert!(requested > EventCount::measured(1));
+            // The witness holds: at the named phase, some quantum of the periodic stream
+            // really does hold more than the share.
+            assert!(
+                overruns_at_phase(&frames, start, end, 1, u64::from(phase.as_u16())),
+                "phase {} was named but no quantum overruns there",
+                phase.as_u16()
+            );
+        }
+        other => panic!("expected a loop refusal, got {other:?}"),
+    }
+}
+
+#[test]
+fn an_admitted_loop_overruns_at_no_phase_at_all() {
+    // The control, and the reason the witness is worth anything. Two events a full `Q`
+    // apart inside a loop that is a whole number of quanta long: no grid puts them in one
+    // quantum, so admission must accept and the oracle must agree at every one of the `Q`
+    // phases.
+    let start = 0_u64;
+    let end = 4 * Q;
+    let frames = [0, Q, 2 * Q, 3 * Q];
+    assert!(
+        admit_loop(
+            &at(&frames),
+            PlanPosition::new(start),
+            PlanPosition::new(end),
+            share(1),
+        )
+        .is_ok(),
+        "one event per quantum, and the wrap lands on a boundary"
+    );
+    for phase in 0..Q {
+        assert!(
+            !overruns_at_phase(&frames, start, end, 1, phase),
+            "phase {phase} overruns, so admission should have refused"
+        );
+    }
+}
+
+#[test]
+fn the_named_phase_is_the_only_one_that_overruns_when_only_one_does() {
+    // The witness test above is weak on its own fixture: a wrap puts two events one frame
+    // apart, and 63 of the 64 phases separate nothing, so almost any phase would satisfy
+    // it. This fixture has exactly **one** witnessing phase, so the named value is pinned
+    // rather than merely plausible.
+    //
+    // Two events `Q - 1` apart sit in one quantum only when a boundary falls exactly on
+    // the first of them: a quantum `[p + kQ, p + kQ + Q)` holds both `a` and `a + Q - 1`
+    // iff `p + kQ == a`. The loop is a whole number of quanta long, so no copy shifts it.
+    let start = 0_u64;
+    let end = 100 * Q;
+    let frames = [10, 10 + Q - 1];
+    let witnesses: Vec<u64> = (0..Q)
+        .filter(|phase| overruns_at_phase(&frames, start, end, 1, *phase))
+        .collect();
+    assert_eq!(
+        witnesses,
+        vec![10],
+        "the premise: exactly one phase can overrun"
+    );
+
+    match admit_loop(
+        &at(&frames),
+        PlanPosition::new(start),
+        PlanPosition::new(end),
+        share(1),
+    ) {
+        Err(AdmissionError::LoopWindowOverShare { phase, .. }) => {
+            assert_eq!(u64::from(phase.as_u16()), 10);
+        }
+        other => panic!("expected a loop refusal, got {other:?}"),
+    }
+}
+
+#[test]
+fn a_loop_refusal_is_not_the_linear_one() {
+    // Two variants rather than one, because they answer different questions: a linear
+    // stream fails at a place worth naming, a loop fails at a phase that recurs. Reusing
+    // the linear variant would report a `window_start` in the extension — a frame that can
+    // sit outside the loop entirely.
+    let refusal = admit_loop(
+        &at(&[0, 1]),
+        PlanPosition::ZERO,
+        PlanPosition::new(100),
+        share(1),
+    )
+    .expect_err("two events in one window is over a share of one");
+    assert!(
+        matches!(refusal, AdmissionError::LoopWindowOverShare { .. }),
+        "a loop refusal must not arrive as the linear variant: {refusal:?}"
+    );
+}
+
 #[test]
 fn an_empty_plan_is_admitted() {
     // Nothing to place cannot overrun anything, and a check that refused it would make an

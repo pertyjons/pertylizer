@@ -148,8 +148,9 @@ Nine checks, three mutation-verified: a closed window instead of a half-open one
 version put every event *past* the end, where `<` and `<=` agree, and the mutation passed it. It now places an event
 exactly on the end frame, which is one loop length after the start and would collide with the next pass.
 
-The linear half is now what preparation is built on, through the admitted-stream slice below. The loop half still has
-no caller: a loop interval is transport state, and `SessionScheduler` re-anchors at a wrap without carrying one.
+The linear half is now what preparation is built on, through the admitted-stream slice below, and the loop half's
+diagnostic is complete as of the slice after it. The loop half still has no caller: a loop interval is transport
+state, and `SessionScheduler` re-anchors at a wrap without carrying one.
 
 ### Completed slice — the session anchor
 
@@ -402,6 +403,12 @@ experimental, is not a dependency of the workspace's default members, and has no
 tests. Nothing persisted, manifest, wire or protocol is touched, and no ADR is created — ADR-0046 clause 4 already
 fixes *that* admission happens over every anchor phase; this slice chooses only the shape, and a later producer
 wanting a different one is where that becomes a decision of its own.
+
+**The loop-diagnostic slice breaks one more, approved on 2026-08-26.** `admit::AdmissionError` gains
+`LoopWindowOverShare`; the enum is not `#[non_exhaustive]`, so the addition breaks an exhaustive match, and
+`admit_loop` now returns it for inputs that previously produced `WindowOverShare`. Additive alongside it:
+`time::AnchorPhase` with `of` and `as_u16`. The same bound applies and `admit_loop` still has no caller, so nothing
+in the repository is affected.
 
 ### Completed slice — a plan declares its note-on producers
 
@@ -694,6 +701,134 @@ the consultation found and this slice did not touch. `render_offline` reaches `s
 offline path takes no admitted stream; whether offline compiled events consume the same proof is a decision, not an
 oversight, and it is unmade. And re-anchoring a prepared renderer, above, is owed before a seek or a loop wrap can be
 expressed against a live stream at all.
+
+### Completed slice — a loop's refusal names its interval and a phase
+
+ADR-0046 clause 4's other sentence: "the diagnostic names the loop interval, phase, requested count and available
+count". `AdmissionError::WindowOverShare` named none of the first two, and `admit_loop` reported through it — so a
+loop refusal carried a `window_start` from the periodic extension and nothing identifying the loop. The gap was found
+by the consultation that redirected the admitted-stream slice, and it is closed here rather than left in the record.
+
+**A loop's overrun has no single window to name, and that is why the variant is separate.** A linear stream fails at
+one place, so naming its first over-full window points at it. A loop repeats, so an over-full window recurs at every
+copy — and because a copy sits `length` frames away, the phase moves with each copy unless `Q` divides the loop
+length. The frame is never unique and the phase **need not be** — a loop whose length is a whole number of quanta
+keeps one phase, which is exactly what the single-witness fixture below relies on. An earlier revision of this note
+and of the code's own documentation said "neither is unique", which that fixture contradicts; a review caught the
+contradiction. `LoopWindowOverShare` therefore reports a **witness**: one phase at which one quantum of the periodic
+extension holds more than the share, taken from the earliest over-full window the scan reaches.
+
+A start frame is deliberately not reported beside it. It is a position on the plan's axis that can fall **outside**
+`[start, end)` — two events on the loop's own first frame put it `Q - 1` frames before the loop — so it names no
+place in the looped material.
+
+`Q` is not a field either, where the linear variant carries one. Clause 4's list for a loop is the interval, phase,
+requested and available counts, and `Q` is on none of them — it is a crate constant the message names from
+`FrameCount::QUANTUM`. A review asked for the field to become a `FrameCount` rather than the `u32` its sibling
+carries; dropping it answers the same objection without adding a break, and the two variants then differ because the
+record asks them to rather than by oversight.
+
+**The phase gets its own newtype, and a first draft reused `QuantumOffset` instead.** Both are `0..Q`, and the
+argument for sharing was that a phase *is* the offset at which a window's start sits in the zero-anchored grid. The
+review refused it with a counterexample: anchor plan position 1 to sample 0, and plan position 63 renders at quantum
+offset **62** while its phase is **63**. A quantum offset is where a sample sits in the render quantum carrying it,
+which is an engine-timeline fact; a phase is a property of an anchoring of plan time. They coincide only for the
+identity anchor, so one type for both would let a cross-timeline substitution type-check — the same objection that
+earlier rejected a trait spanning `PlanPosition` and `SampleTime`, and it is right for the same reason.
+
+`AnchorPhase::of` is total, for the argument `SampleTime::quantum_offset` already makes about the same cast: a
+remainder modulo `Q` is below `Q`, and the compile-time assertion keeps `Q` inside `u16`. An earlier draft reached the
+value through two fallible conversions with `unwrap_or(ZERO)` behind them, which would have reported phase zero for an
+unreachable case — a wrong answer where proven arithmetic gives a right one.
+
+**The oracle is the definition, not the algorithm.** The tests bucket the materialised periodic stream by absolute
+quantum under a given phase — which is what the sliding window is an optimisation *of* — and check that the named
+phase really overruns, and that an admitted loop overruns at none of the `Q` phases.
+
+**The oracle was unsound twice, and reviews found both.** The first version materialised `Q / length + 4` passes,
+which covers a window straddling one wrap and nothing else. Copy `n` sits `length * n` frames along, so against a fixed
+grid its phase shifts by `length % Q` each copy and only returns after `Q / gcd(Q, length)` of them: with a
+129-frame loop, events at 0 and 63 first share a phase-10 quantum at copy **10**, and the oracle answered "no
+overrun" there. It now materialises a full alignment cycle, and that counterexample is a test of its own.
+
+The second defect was in the bucketing. A frame before the phase's first boundary has a negative quantum index, and
+`saturating_sub` folded every such frame into bucket zero **together with the first complete quantum**, which the
+interior trim then discarded as an edge: a two-frame loop at phase 38 inspected no interior at all and answered "no
+overrun" while `[38, 102)` held 32 events against a share of six. Shifting by one whole quantum instead of saturating
+moves every index by exactly one and merges nothing. Both counterexamples are now tests of the oracle itself.
+
+The implementation was never affected by either, and the reason is the distinction the first repair turns on: the
+stream is periodic, so a window's content depends only on its start modulo `length` and `ceil(Q / length) + 2` copies
+already cover every residue. The oracle asks a different question — *does **this** phase overrun* — and only that one
+needs the cycle.
+
+That test is weak on a wrap fixture, where two events one frame apart are together under 63 of the 64 phases, so a
+second fixture has exactly **one** witnessing phase: two events `Q - 1` apart sit in one quantum only when a boundary
+falls exactly on the first of them. That is what pins the named value rather than merely making it plausible, and it
+is what catches a hardcoded phase.
+
+**One mutation was attempted and is recorded as not a mutation.** Mapping the window start back into the loop interval
+before taking its phase produces a *different* value — but wherever the start falls outside the interval, the two
+events are less than `Q - 1` apart, so several phases witness and the mapped value is one of them. It is a valid
+answer, not a wrong one. The scan's choice is therefore determinism rather than correctness, and the record says so
+instead of implying a test holds it.
+
+**What this does not do.** `admit_loop` still has no caller: clause 4's other half — the state change failing before
+activation with the prior transport state left in place — needs a loop activation operation, which is transport
+activation and is the ADR named below. This slice completes the diagnostic contract, not the wiring.
+
+### Blocked, with its design review kept — re-anchoring a prepared renderer
+
+The slice the admitted-stream work named as owed. A design was written — a renderer method taking the transport's
+anchor, effective at the current clock, with the schedule refusing a superseded one — and an independent design
+review **blocked it before implementation**. Five findings, each verified here against the code and the accepted
+records. They are kept because the next attempt must not rediscover them.
+
+- **The renderer's plan mapping is quantum-granular.** `render/hot.rs` derives one plan position per quantum, so an
+  anchor at a non-boundary frame skips the head of the plan: anchored at engine sample 1 000, the quantum at 960 maps
+  to nothing and the quantum at 1 024 maps to plan sample 24. A **loop wrap lands where it lands**, mid-quantum, so
+  an anchor swap cannot express one. The master plan's Part III requires sample-exact loop and seek events.
+  Scope, precisely: what quantises is `NodeIo::position`, which **one of the nine kernels** reads. Events are unaffected
+  — they are placed off-thread at full resolution and carry sample offsets. So this is a latent constraint, not a live
+  defect, and it binds when position-aware DSP grows or when a record *promises* quantum-boundary activation.
+- **An anchor value does not identify a timeline.** ADR-0032 clause 26: "a compiled event list is invalidated by a
+  tempo edit and must be recompiled". Replace the tempo map so it differs only after the current tick and the anchor
+  is bit-identical while every future position moves — the old schedule passes both the epoch and the anchor check.
+- **There is no atomic path from a live schedule to its replacement.** A wrap happens during playback, but preparing
+  allocates and stamps, which cannot run in a callback. And a replacement starts with `arbiter: None`, so it can adopt
+  a different arbiter than the stream's, against ADR-0046 clause 2.
+- **The identity table cannot be left alone.** `stamp_compiled` refuses an unpaired release but not a leftover
+  note-on, so a schedule holding one keeps a minter index. Discard the schedule and it is never freed — there is no
+  `Drop` in the crate — and the next suffix is refused as over-emission.
+- **Locate was missing from the design entirely.** ADR-0046: "A locate restores every prepared target at once", with
+  admission checking the largest catch-up batch. An admitted suffix refuses everything before its anchor, so it cannot
+  restore the last automation value preceding a seek target.
+
+**The next step is a decision record, not an implementation.** A second consultation, asked specifically to rank the
+findings by *reversibility* rather than severity, put the effective-activation-point question first: nothing here is
+locked in by persistence or wire — `SampleTime` and `PlanPosition` are non-persisted by ADR-0032 clause 7 — but what
+"takes effect at sample `T`" means while live output is delayed by `Q` is delivered timing behaviour, and changing it
+later changes what a user hears.
+
+It also **withdrew a candidate this note would otherwise have recorded as safe**: a stream revision is not a piece
+every design needs, because serialised activation can make a stale candidate impossible instead. There is no
+structural primitive that cannot be wrong yet — the only universal is the *contract*, that the new mapping and
+everything interpreted under it activate together and that failure leaves the old set active.
+
+A renderer-only `reanchor` was rejected for the same reason it looked attractive: cheap to delete, but it lets the
+mapping move independently of the placed schedule, which is the thing established as inseparable. Naming it
+insufficient in prose does not stop a caller reaching the invalid intermediate state.
+
+The ADR must settle five things **together**, because deciding any one alone is unsafe: the effective point and its
+half-open boundary; what happens to already-rendered carry; the atomic state set and its failure behaviour; the
+policy for note obligations crossing activation; and the freshness rule. It may honestly leave open the sub-quantum
+representation, the revision's width and mechanism, crossfade and voice-state migration, ADR-0048's identity rebuild,
+ADR-0023's same-sample ordering and ADR-0022's hardware mapping — provided a quantum-only first stage is **not**
+claimed to satisfy sample-exact seek and loop.
+
+The cost of the delay is stated rather than assumed: taking unrelated slices lets transport and session work
+accumulate around an undecided activation boundary, which is when reversal cost starts multiplying. The record should
+not wait behind live ingress, session commands, or further position-aware kernels.
 
 ## Paused parallel stream: Phase 0B
 

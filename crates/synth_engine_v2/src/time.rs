@@ -241,6 +241,40 @@ impl QuantumOffset {
     }
 }
 
+/// Which of the `Q` griddings of plan time an anchor establishes.
+///
+/// ADR-0046 clause 4 admits a compiled stream "over all `Q` integer anchor phases": an
+/// anchor fixes where quantum boundaries fall in **plan** time, and a window `[s, s + Q)`
+/// is a quantum exactly when `s` is congruent to that phase modulo `Q`.
+///
+/// **Not a [`QuantumOffset`], though both are `0..Q`.** A quantum offset is where a sample
+/// sits inside the render quantum that carries it, which is an engine-timeline fact; a
+/// phase is a property of an anchoring of plan time. The two disagree numerically whenever
+/// the anchor is not the identity — anchor plan position 1 to sample 0, and plan position
+/// 63 renders at quantum offset 62 while its phase is 63. Sharing one type would let that
+/// substitution type-check, which is exactly what ADR-0032 clause 27 keeps apart by making
+/// the anchor the only crossing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[must_use]
+pub struct AnchorPhase(u16);
+
+impl AnchorPhase {
+    /// The phase at which `position` is a quantum boundary.
+    ///
+    /// Total, and for the reason [`SampleTime::quantum_offset`] gives for the same cast: a
+    /// remainder modulo `Q` is below `Q`, and the compile-time assertion at the top of this
+    /// module keeps `Q` inside `u16`, so it cannot truncate. A fallible constructor would
+    /// make callers handle a case the arithmetic has already ruled out.
+    pub const fn of(position: PlanPosition) -> Self {
+        Self((position.as_u64() % QUANTUM_FRAMES as u64) as u16)
+    }
+
+    /// The raw phase, in frames from a quantum boundary.
+    pub const fn as_u16(self) -> u16 {
+        self.0
+    }
+}
+
 /// The engine's absolute time: input frames consumed since the stream was
 /// prepared.
 ///

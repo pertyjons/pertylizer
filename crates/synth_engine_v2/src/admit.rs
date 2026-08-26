@@ -41,7 +41,7 @@
 use thiserror::Error;
 
 use crate::quantities::EventCount;
-use crate::time::{PlanPosition, QUANTUM_FRAMES};
+use crate::time::{AnchorPhase, FrameCount, PlanPosition, QUANTUM_FRAMES};
 
 /// Why a compiled stream was not admitted.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
@@ -78,6 +78,57 @@ pub enum AdmissionError {
         start: PlanPosition,
         /// The loop's exclusive end.
         end: PlanPosition,
+    },
+
+    /// A loop's periodic extension puts more events in one window than the share admits.
+    ///
+    /// Separate from [`Self::WindowOverShare`] because clause 4 asks a loop's refusal to
+    /// name different things: "the diagnostic names the loop interval, phase, requested
+    /// count and available count".
+    ///
+    /// **A loop's overrun has no single window to name.** A linear stream fails at one
+    /// place, and naming its first over-full window points at it. A loop is a stream that
+    /// repeats, so an over-full window recurs at every copy — and because a copy is
+    /// `length` frames away, its phase moves with each copy unless `Q` divides the loop
+    /// length. The frame is never unique and the phase **need not be**: a loop whose length
+    /// is a whole number of quanta keeps one phase, while any other length spreads the same
+    /// overrun across several. So this reports a **witness**: one phase at which one
+    /// quantum of the periodic extension holds more than the share. That is enough to
+    /// refuse, and it is what clause 4 asks to be told.
+    ///
+    /// The witness is the earliest over-full window of the checked extension. A start frame
+    /// is deliberately not reported beside it: it is a position on the plan's axis that can
+    /// fall outside `[start, end)` entirely, so it names no place in the looped material.
+    ///
+    /// `Q` is not a field either, where [`Self::WindowOverShare`] carries one. Clause 4's
+    /// list for a loop is the interval, phase, requested and available counts, and `Q` is
+    /// on none of them — it is a crate constant the message names from
+    /// [`FrameCount::QUANTUM`]. The two variants therefore differ because the record asks
+    /// them to, not by oversight.
+    #[error(
+        "loop [{start}, {end}) holds {requested} compiled events in one {} window at anchor \
+         phase {} against a share of {share}",
+        FrameCount::QUANTUM, .phase.as_u16()
+    )]
+    LoopWindowOverShare {
+        /// The loop's first frame.
+        start: PlanPosition,
+        /// The loop's exclusive end.
+        end: PlanPosition,
+        /// One anchor phase whose grid makes an over-full window a quantum.
+        ///
+        /// A witness rather than the phase: see the variant's own documentation.
+        ///
+        /// An [`AnchorPhase`] and deliberately not a `QuantumOffset`: both are `0..Q`, but
+        /// one describes a gridding of plan time and the other where a sample sits in the
+        /// render quantum carrying it. They disagree whenever the anchor is not the
+        /// identity, so one type for both would let a cross-timeline substitution
+        /// type-check.
+        phase: AnchorPhase,
+        /// How many events that window holds.
+        requested: EventCount,
+        /// The compiled share.
+        share: EventCount,
     },
 }
 
@@ -197,7 +248,23 @@ pub fn admit_loop(
         }
     }
     extended.sort_unstable();
-    check_window(&extended, share)
+
+    let Some((window_start, count)) = first_window_over(&extended, share) else {
+        return Ok(());
+    };
+    // **The phase, and deliberately not the position.** The extension shares the plan's
+    // origin — a copy sits at `frame + length * copy` — so this residue is a real anchor
+    // phase on the plan's own axis. It is a witness rather than *the* phase: the same
+    // overrun recurs at every copy, at a phase shifted by `length` each time, so a loop
+    // whose length is not a multiple of `Q` fails at several phases and this names the
+    // first the scan reaches.
+    Err(AdmissionError::LoopWindowOverShare {
+        start,
+        end,
+        phase: AnchorPhase::of(PlanPosition::new(window_start)),
+        requested: EventCount::measured(u32::try_from(count).unwrap_or(u32::MAX)),
+        share,
+    })
 }
 
 fn check_window(frames: &[u64], share: EventCount) -> Result<(), AdmissionError> {

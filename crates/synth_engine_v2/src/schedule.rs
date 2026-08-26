@@ -140,7 +140,8 @@ pub enum CompiledStreamError {
     /// Some `Q`-frame window holds more events than the compiled share admits.
     ///
     /// Only [`AdmissionError::WindowOverShare`] is reachable here: a linear stream has no
-    /// loop interval, so the two loop-shaped variants describe a check this path does not
+    /// loop interval, so the three loop-shaped variants — the two malformed-interval ones
+    /// and [`AdmissionError::LoopWindowOverShare`] — describe a check this path does not
     /// run. They are carried rather than flattened so that the loop half, when it arrives,
     /// reports through the same error.
     #[error("the compiled stream is over its share: {0}")]
