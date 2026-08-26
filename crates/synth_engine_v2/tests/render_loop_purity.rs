@@ -488,6 +488,12 @@ fn every_call_the_render_loop_makes_is_inside_the_checked_region() {
         "count_arrival_stamped_event",
         "count_foreign_slot_event",
         "count_oversized_callback",
+        "count_publication_fault",
+        // `PreparedRenderer::diagnostics` and `DiagnosticsReport::needs_reprepare` are
+        // `const fn` field reads. The scheduler consults them before publishing so a dead
+        // epoch is not faulted a second time, which is a read of state the loop already
+        // owns rather than new work.
+        "diagnostics",
         "count_clock_exhaustion",
         // Phase 2's additions: the compiled step's slots, the prepared table, and the
         // one method that moves a control. Each is a field read or an assignment.

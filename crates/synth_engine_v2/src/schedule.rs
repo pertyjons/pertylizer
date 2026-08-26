@@ -3,14 +3,16 @@
 //! Phase 3 starts here, deliberately on the engine side of ADR-0022. A compiled event
 //! already carries the current epoch's [`SampleTime`]; this module does not observe a
 //! host clock, compensate latency, or assign `Hardware`/`Arrival` provenance. It rejects
-//! an over-full absolute quantum during preparation, then turns the sorted compiled list
-//! into a bounded event span for each actual host call. Full compiled-share and
-//! sliding-window admission remain later Phase 3 work.
+//! a quantum over the compiled producer's own share during preparation, then turns the
+//! sorted compiled list into a bounded event span for each actual host call. Sliding-window
+//! admission over every anchor phase remains later Phase 3 work.
 //!
 //! Preparation validates order and plan identity and allocates the stamped list. The
-//! [`CompiledEventScheduler::render`] path only advances a cursor over that storage and
-//! delegates one borrowed slice to the renderer. Its source lives in `schedule/hot.rs`
-//! so the real-time purity test scans it alongside the renderer and node kernels.
+//! [`CompiledEventScheduler::render`] path advances a cursor over that storage and
+//! **publishes** the due span through ADR-0046's arbiter — it does not hand the renderer a
+//! borrowed slice, which would make clause 2's "the only normal path that constructs
+//! renderer input" false for this producer. Its source lives in `schedule/hot.rs` so the
+//! real-time purity test scans it alongside the renderer, the arbiter and node kernels.
 
 use thiserror::Error;
 
@@ -131,6 +133,30 @@ pub enum ScheduledRenderError {
     /// The renderer rejected the selected span or output block.
     #[error("scheduled rendering failed: {0}")]
     Render(#[from] crate::diagnostics::RenderError),
+
+    /// A second arbiter was offered to a schedule already publishing through one.
+    ///
+    /// ADR-0046 clause 2 admits exactly one arbiter per stream. A fresh store each callback
+    /// would satisfy every capacity bound while silently restarting the stream's high-water
+    /// history, which is the measurement Phase 3 exists to take, so the substitution is
+    /// refused rather than tolerated.
+    #[error("this schedule publishes through {latched}, but {offered} was supplied")]
+    ForeignArbiter {
+        /// The arbiter this schedule adopted.
+        latched: crate::publish::ArbiterId,
+        /// The one the call supplied.
+        offered: crate::publish::ArbiterId,
+    },
+
+    /// Publication could not seal this call's input.
+    ///
+    /// **The stream is over when this is returned.** ADR-0046 clause 7 makes a share
+    /// overrun or an over-full batch a contract violation rather than a load condition, so
+    /// the renderer has already taken its terminal response — silence over this callback
+    /// and every later one in the epoch, both carries invalidated, `needs_reprepare`
+    /// published — before the error reaches the caller. Nothing here is retryable.
+    #[error("publication failed and the stream was faulted: {0}")]
+    Publication(#[from] crate::publish::PublicationFault),
 }
 
 /// A prepared, epoch-stamped compiled list and its release cursor.
@@ -138,6 +164,7 @@ pub enum ScheduledRenderError {
 #[must_use]
 pub struct CompiledEventScheduler {
     epoch: StreamEpoch,
+    arbiter: Option<crate::publish::ArbiterId>,
     max_events_per_quantum: EventCount,
     events: Vec<TimedEvent>,
     next: usize,
@@ -156,7 +183,11 @@ impl CompiledEventScheduler {
         events: &[CompiledEvent],
     ) -> Result<Self, SchedulePrepareError> {
         let expected = renderer.plan().id();
-        let max_events_per_quantum = renderer.plan().max_events_per_quantum();
+        // The **compiled share**, not the per-quantum cap. ADR-0046 clause 1 partitions the
+        // cap across six producers, and clause 3 makes a compiled runtime miss a producer
+        // defect rather than a load condition — so a schedule that would overrun its share
+        // at publication has to be refused here, where a caller can still be told.
+        let max_events_per_quantum = renderer.plan().compiled_event_share();
         let mut previous = None;
         let mut current_quantum = None;
         let mut events_in_quantum = 0_u32;
@@ -208,6 +239,7 @@ impl CompiledEventScheduler {
 
         Ok(Self {
             epoch,
+            arbiter: None,
             max_events_per_quantum,
             events: stamped,
             next: 0,

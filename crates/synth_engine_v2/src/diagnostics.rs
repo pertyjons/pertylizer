@@ -498,6 +498,7 @@ pub struct DiagnosticsReport {
     foreign_slot_events: u64,
     oversized_callback_faults: u64,
     clock_exhaustion_faults: u64,
+    publication_faults: u64,
     needs_reprepare: bool,
 }
 
@@ -572,6 +573,19 @@ impl DiagnosticsReport {
         self.clock_exhaustion_faults
     }
 
+    /// Publications the arbiter could not seal.
+    ///
+    /// ADR-0046 clause 7 requires the terminal response to increment an **attributable**
+    /// counter, not merely to silence: a stream that ended for a contract violation and one
+    /// that ended for any other reason are indistinguishable without it, and the violation
+    /// is the only one of the two a producer can be told to fix.
+    ///
+    /// At most one per epoch, because every producer refuses to publish into an epoch that
+    /// has already faulted — a guarantee the producers keep, not one this counter enforces.
+    pub const fn publication_faults(&self) -> u64 {
+        self.publication_faults
+    }
+
     /// Whether the stream is waiting to be re-prepared.
     pub const fn needs_reprepare(&self) -> bool {
         self.needs_reprepare
@@ -603,6 +617,10 @@ impl DiagnosticsReport {
 
     pub(crate) fn count_clock_exhaustion(&mut self) {
         self.clock_exhaustion_faults = self.clock_exhaustion_faults.saturating_add(1);
+    }
+
+    pub(crate) fn count_publication_fault(&mut self) {
+        self.publication_faults = self.publication_faults.saturating_add(1);
     }
 
     pub(crate) fn set_needs_reprepare(&mut self) {

@@ -326,7 +326,7 @@ impl ResourceField {
     /// `HOST-INV-007` binds the limits a plan can exceed, and its conformance row asks
     /// for one refusal case per such limit — so this predicate has to be exactly the
     /// set those cases can be written for. Twenty-eight fields qualify. The twenty-two
-    /// that do not take that refusal fall into six groups, each excluded for its own
+    /// that do not take that refusal fall into seven groups, each excluded for its own
     /// reason:
     ///
     /// - **The three queried capabilities.** A capability describes what the plan is
@@ -345,7 +345,11 @@ impl ResourceField {
     /// - **The advisory cost budget.** `predicted_quantum_cost_ratio` may be exceeded,
     ///   but `HOST-INV-015` makes that a `CompileWarning` rather than a `CompileError`,
     ///   which is the same rule [`Self::is_advisory`] states.
-    /// - **ADR-0046's seven producer fields**, for now. Their plan-dependent relations —
+    /// - **`max_events_per_quantum`**, which a plan no longer requests directly. Its
+    ///   statically knowable declaration is compiled work and is checked against
+    ///   `compiled_event_share`; the cap cannot be exceeded without a share being exceeded
+    ///   first, because the shares sum to at most the cap.
+    /// - **Six of ADR-0046's seven producer fields**, for now. Their plan-dependent relations —
     ///   the compiled and authored destination envelopes, the session snapshot, the
     ///   internal declarations and the hold entitlements — are checked at plan admission
     ///   by later Phase 3 work. Until that exists, these fields are checked by profile
@@ -376,7 +380,7 @@ impl ResourceField {
                 | Self::ModMatrixSlotsPerVoice
                 | Self::ScriptHostSlotsPerVoice
                 | Self::PredictedQuantumCostRatio
-                | Self::CompiledEventShare
+                | Self::MaxEventsPerQuantum
                 | Self::AuthoredRuntimeEventShare
                 | Self::LiveEventShare
                 | Self::SessionEventShare

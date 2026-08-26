@@ -492,6 +492,12 @@ pub struct PlanDeclarations {
     pub taps: Vec<TapId>,
     /// Events the plan is known to place in one quantum.
     ///
+    /// **Compiled work, and admitted against `compiled_event_share`.** Statically knowable
+    /// events are the compiled producer's; ADR-0046 clause 5 admits data-dependent
+    /// expansion separately, against its own declared envelopes. When an authored runtime
+    /// source arrives, this field does not become the aggregate — an aggregate without
+    /// producer attribution could not be checked against any share.
+    ///
     /// Statically knowable only. Phase 1 and Phase 2 reject an over-full caller span
     /// before mutation; Phase 3 admits data-dependent expansion against ADR-0046's
     /// destination, future-storage, and release-hold envelopes.

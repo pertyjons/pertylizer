@@ -145,6 +145,15 @@ pub enum ProfileError {
         capacity: EventCount,
     },
 
+    /// The arbiter identity space is spent.
+    ///
+    /// Named separately rather than folded into an event-total overflow: they fail for
+    /// unrelated reasons and send a reader to different places. Unreachable in any real
+    /// process — it needs 2^64 prepared arbiters — but a refusal that reports the wrong
+    /// cause is worse than one that never fires.
+    #[error("the arbiter identity space is exhausted")]
+    ArbiterIdentitySpaceExhausted,
+
     /// A checked event total that cannot be represented at all.
     ///
     /// ADR-0046 clause 1 requires every multiplication and conversion to be checked.

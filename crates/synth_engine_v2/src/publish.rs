@@ -216,6 +216,54 @@ pub enum PublicationFault {
     },
 }
 
+/// One prepared arbiter's identity.
+///
+/// ADR-0046 clause 2 admits **exactly one** arbiter per stream, and a parameter alone does
+/// not establish that: a caller could hand each callback a fresh, equally sized store and
+/// every bound would still hold while the stream's high-water history silently restarted.
+/// A producer latches the first identity it publishes through and refuses another, which
+/// turns "one arbiter" from a convention into something a caller can be told it broke.
+///
+/// Issued strictly increasing and never reused, like `StreamEpoch`, and refusing on
+/// exhaustion rather than saturating.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[must_use]
+pub struct ArbiterId(u64);
+
+impl ArbiterId {
+    /// The raw identity, for a report.
+    pub const fn as_u64(self) -> u64 {
+        self.0
+    }
+}
+
+impl std::fmt::Display for ArbiterId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "arbiter {}", self.0)
+    }
+}
+
+static NEXT_ARBITER_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+
+/// Issue the next arbiter identity, or `None` once the space is spent.
+///
+/// Refuses **permanently** rather than saturating, for the reason `issue_epoch` does: a
+/// reissued identity would make two arbiters indistinguishable, which is the one thing this
+/// type exists to prevent.
+///
+/// `fetch_add` is wrong here and an earlier revision used it. At `u64::MAX` it wraps the
+/// counter to zero, so the call that refuses is followed by one issuing 0 and another
+/// reissuing 1 — the refusal would be a single hiccup rather than an end.
+/// `fetch_update` leaves the counter at its ceiling instead, so every later call refuses
+/// too. `Relaxed` is sufficient: the identities have to differ, not to order anything.
+fn issue_arbiter_id() -> Option<ArbiterId> {
+    use std::sync::atomic::Ordering::Relaxed;
+    NEXT_ARBITER_ID
+        .fetch_update(Relaxed, Relaxed, |id| id.checked_add(1))
+        .ok()
+        .map(ArbiterId)
+}
+
 /// The preallocated publication store.
 ///
 /// Prepared once per stream and reused by every call. Its extent is exactly clause 1's
@@ -259,6 +307,7 @@ pub struct PublicationArbiter {
     max_events_per_quantum: EventCount,
     max_quanta_per_callback: QuantumCount,
     open_quanta: usize,
+    id: ArbiterId,
 }
 
 impl PublicationArbiter {
@@ -294,7 +343,13 @@ impl PublicationArbiter {
             shares[class.index()] = class.share_of(profile);
         }
 
+        let id =
+            issue_arbiter_id().ok_or(crate::profile::ProfileError::EventTotalUnrepresentable {
+                total: "an arbiter identity",
+            })?;
+
         Ok(Self {
+            id,
             events: vec![fill_event(); capacity],
             len: 0,
             ledger: vec![EventCount::NONE; quanta.saturating_mul(ProducerClass::ALL.len())],
@@ -307,6 +362,11 @@ impl PublicationArbiter {
             max_quanta_per_callback,
             open_quanta: 0,
         })
+    }
+
+    /// This store's identity, which a producer latches to keep clause 2's "exactly one".
+    pub const fn id(&self) -> ArbiterId {
+        self.id
     }
 
     /// How many events the prepared store holds.

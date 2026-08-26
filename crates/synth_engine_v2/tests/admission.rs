@@ -380,7 +380,10 @@ fn refusal_cases(host: &HostProfile) -> Vec<(ResourceField, GraphIr, HostProfile
             voices(1, 128, 512, 1),
         ),
         (
-            ResourceField::MaxEventsPerQuantum,
+            // The **share**, not the cap. A plan's statically knowable per-quantum
+            // declaration is compiled work, and ADR-0046 clause 1 gives that class its own
+            // entitlement; the cap it partitions is no longer something a plan requests.
+            ResourceField::CompiledEventShare,
             declares_seven_events,
             event_limits(6, 128, 4_096),
         ),

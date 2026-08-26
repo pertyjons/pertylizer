@@ -614,6 +614,7 @@ pub struct CompiledPlan {
     sample_rate: SampleRate,
     maximum_block_size: FrameCount,
     max_events_per_quantum: EventCount,
+    compiled_event_share: EventCount,
     forward_event_horizon: FrameCount,
     added_latency: FrameCount,
 }
@@ -638,6 +639,7 @@ impl CompiledPlan {
         sample_rate: SampleRate,
         maximum_block_size: FrameCount,
         max_events_per_quantum: EventCount,
+        compiled_event_share: EventCount,
         forward_event_horizon: FrameCount,
         added_latency: FrameCount,
     ) -> Self {
@@ -654,6 +656,7 @@ impl CompiledPlan {
             sample_rate,
             maximum_block_size,
             max_events_per_quantum,
+            compiled_event_share,
             forward_event_horizon,
             added_latency,
         }
@@ -784,6 +787,19 @@ impl CompiledPlan {
     /// Events one quantum may be presented with.
     pub const fn max_events_per_quantum(&self) -> EventCount {
         self.max_events_per_quantum
+    }
+
+    /// What the **compiled producer** may place in one destination quantum.
+    ///
+    /// Copied in at admission, like every other capacity the renderer's side needs, because
+    /// `HOST-INV-001` keeps the profile away from the audio thread. It is not
+    /// [`Self::max_events_per_quantum`]: ADR-0046 clause 1 partitions that cap across six
+    /// producers, and the compiled class spends only its own share. Validating a schedule
+    /// against the cap would admit a plan that faults at publication, which clause 3 forbids
+    /// — a compiled runtime miss is a producer defect, so it has to be impossible for an
+    /// admitted plan.
+    pub const fn compiled_event_share(&self) -> EventCount {
+        self.compiled_event_share
     }
 
     /// How far ahead an ingress event may be stamped.

@@ -460,9 +460,12 @@ fn build_rows(
         IrObject::Plan,
     ));
 
+    // The cap itself is now reported rather than requested: no plan asks for it directly,
+    // and it cannot be exceeded without a share being exceeded first, since the shares sum
+    // to at most the cap.
     rows.push(ResourceRow::new(
         ResourceField::MaxEventsPerQuantum,
-        ResourceAmount::Events(declarations.events_per_quantum),
+        ResourceAmount::Events(limits.events().max_events_per_quantum()),
         ResourceAmount::Events(limits.events().max_events_per_quantum()),
         IrObject::Plan,
     ));
@@ -579,16 +582,25 @@ fn build_rows(
         IrObject::Plan,
     ));
 
+    // The declaration is **compiled** work — `PlanDeclarations::events_per_quantum` is
+    // statically knowable events, and data-dependent expansion is admitted separately — so
+    // it is checked against the compiled producer's share rather than against the cap the
+    // six shares partition. Checking it against the cap would admit a plan that exceeds its
+    // entitlement and then faults at publication, which ADR-0046 clause 3 forbids: a
+    // compiled runtime miss is a producer defect, so an admitted plan must not reach one.
+    rows.push(ResourceRow::new(
+        ResourceField::CompiledEventShare,
+        ResourceAmount::Events(declarations.events_per_quantum),
+        ResourceAmount::Events(limits.events().shares().compiled_event_share()),
+        IrObject::Plan,
+    ));
+
     // ADR-0046's producer partition. Each row reports the profile's own value on both
     // sides, as the other construction-checked capacities do: a plan does not request a
     // share, so there is no requested amount that could differ. What the rows carry is
     // the partition itself, so a report shows which class a later admission refusal was
     // charged against rather than only the cap it summed to.
     for (field, amount) in [
-        (
-            ResourceField::CompiledEventShare,
-            limits.events().shares().compiled_event_share(),
-        ),
         (
             ResourceField::AuthoredRuntimeEventShare,
             limits.events().shares().authored_runtime_event_share(),
@@ -855,6 +867,7 @@ impl Lowered {
             capabilities.sample_rate(),
             capabilities.maximum_block_size(),
             profile.limits().events().max_events_per_quantum(),
+            profile.limits().events().shares().compiled_event_share(),
             profile.limits().events().forward_event_horizon(),
             FrameCount::QUANTUM,
         )

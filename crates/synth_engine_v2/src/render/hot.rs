@@ -33,6 +33,26 @@ impl PreparedRenderer {
         self.diagnostics.set_needs_reprepare();
     }
 
+    /// Take ADR-0046 clause 7's terminal response from outside the render loop.
+    ///
+    /// The publication arbiter detects a share overrun or an over-full batch *before* the
+    /// renderer is called, so the response has to be reachable from there. It is the same
+    /// [`Self::fault`] the loop's own two terminal cases take, exposed to the crate rather
+    /// than duplicated: a second implementation of "end the stream" is exactly how the two
+    /// would drift.
+    ///
+    /// The counter is not decoration. Clause 7 asks the terminal response to increment an
+    /// **attributable** counter, because a stream that ended for a contract violation and
+    /// one that ended for any other reason are indistinguishable without it — and the
+    /// violation is the only one of the two a producer can be told to fix.
+    ///
+    /// After this the epoch is over. `render`'s first check returns
+    /// [`RenderError::NeedsReprepare`] and silences every later callback.
+    pub(crate) fn terminal_fault(&mut self, output: &mut AudioBlockMut<'_>) {
+        self.diagnostics.count_publication_fault();
+        self.fault(output);
+    }
+
     /// How many quanta a call for `frames` frames will render.
     ///
     /// Public because a caller has to know it: Phase 1's event span covers the quanta

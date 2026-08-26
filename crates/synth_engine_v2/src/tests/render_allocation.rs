@@ -254,13 +254,23 @@ fn selecting_a_compiled_schedule_for_the_first_call_allocates_nothing() {
     )];
     let mut scheduler =
         CompiledEventScheduler::prepare(&renderer, &events).expect("the schedule is valid");
+    // Prepared outside the counted region, like every other store the loop uses.
+    let mut arbiter = crate::publish::PublicationArbiter::prepare(
+        &crate::profile::HostProfile::harness(
+            crate::quantities::SampleRate::new(48_000.0).expect("a valid rate"),
+            crate::time::FrameCount::new(BLOCK as u64),
+            ChannelLayout::Stereo,
+        )
+        .expect("the harness profile is valid"),
+    )
+    .expect("the publication store is preparable");
     let mut samples = vec![0.0_f32; 128 * 2];
 
     let allocs = count_allocs(|| {
         let output = AudioBlockMut::new(&mut samples, 128, ChannelLayout::Stereo)
             .expect("a correctly shaped block");
         scheduler
-            .render(&mut renderer, output)
+            .render(&mut renderer, &mut arbiter, output)
             .expect("the first scheduled call renders");
     });
 

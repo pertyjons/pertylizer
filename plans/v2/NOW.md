@@ -99,6 +99,52 @@ per-call accounting.
 every later one in the epoch, both carries invalidated, `needs_reprepare` published — belongs to the slice that routes
 the renderer through the arbiter. Nothing here claims it is in force.
 
+### Completed slice — the compiled producer publishes through the arbiter
+
+The integration the parked ingress slice was waiting for. `CompiledEventScheduler` no longer hands the renderer a
+borrowed slice of its own list: it charges every due event to `ProducerClass::Compiled`, seals, and the renderer is
+presented the sealed batch. ADR-0046 clause 2's "the only normal path that constructs renderer input" was false for
+the one producer the crate already had, and now is not.
+
+Two consequences follow, and both are contract corrections rather than refactoring:
+
+- **The compiled producer's bound is its share, not the cap — at both levels.** Clause 1 partitions
+  `max_events_per_quantum`, so the compiled class spends `compiled_event_share`. `CompiledEventScheduler::prepare`
+  validates against it, the plan carries it (copied in at admission, since `HOST-INV-001` keeps the profile off the
+  audio thread), and **plan admission checks the declaration against it too**. That last one was a defect an
+  independent review found: moving the scheduler's bound while leaving admission on the cap left a plan that could be
+  admitted and then fault at publication, which is the state clause 3 exists to remove. `PlanDeclarations`'
+  statically knowable per-quantum count is compiled work, and its documentation now says so — an aggregate without
+  producer attribution could not be checked against any share.
+  As a consequence `max_events_per_quantum` is no longer a limit a plan requests: it cannot be exceeded without a
+  share being exceeded first, so the refusal case moves to `compiled_event_share`.
+- **Clause 7's terminal response is enacted, not merely reported.** A publication fault silences the complete current
+  callback and every later one in the epoch, invalidates both carries, publishes `needs_reprepare` and increments an
+  **attributable counter** — the clause asks for that last one because a stream that ended for a contract violation
+  and one that ended otherwise are indistinguishable without it. It reuses the renderer's own `fault`, because a
+  second implementation of "end the stream" is how the two would drift.
+
+Four properties are mutation-verified, each caught by its own check: returning the fault without faulting the
+renderer, on **both** the window and the charge branch, since one test could not see the other; charging to the wrong
+class; and neutralising the fault counter. Both forged cases are clause 7's own third cause — a caller bypassing the
+contract — since no conforming producer can reach either.
+
+**A producer cannot silently change arbiters mid-stream**, which is a weaker property than clause 2's "exactly one
+per stream" and is stated as the weaker one deliberately. A bare parameter established nothing: a caller could hand
+each callback a fresh, equally sized store, satisfy every capacity bound, and restart the high-water history the
+outstanding measurement is going to read. Arbiters now carry a non-reissuing identity — strictly increasing, refusing
+permanently on exhaustion rather than wrapping — and a schedule latches the first it publishes through, refusing a
+second. **What that does not do is make two schedulers on one stream share an arbiter.** Enforcing clause 2 in full
+needs a stream owner that does not exist yet; this latch closes the single-producer case and no more.
+
+A substitution is refused *before* publication and costs the stream nothing: it is a caller error, not a contract
+violation, and the two must not share a response. A retry into an already-faulted epoch is likewise not a second
+violation — the scheduler refuses to publish there, so `publication_faults` keeps saying the stream ended once.
+
+**What remains in this stream:** the renderer-internal arena, which clause 2 keeps on the far side of the seal; and
+`Renderer::render` still accepting a caller-supplied span, which the host-profile specification keeps as Phase 1 and
+Phase 2's contract. Live ingress is the parked slice below.
+
 ### Parked, with its findings kept — simulated-ingress equivalence
 
 An attempt at the exit gate's simulated-ingress bullet was built, independently reviewed, and **discarded before
