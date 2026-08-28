@@ -936,8 +936,8 @@ rather than as an error.
   compares the repeating pass's events against the compiled share and does not check that pass's polyphony, so a
   loop entered after one note opened can be recorded and still over-emit at its first real wrap. An independent
   review raised the loop three times across three shapes of the same code; the maintainer chose on 2026-08-28 to
-  declare the boundary rather than decide, in code, a behaviour no ADR clause describes. The wrap slice inherits
-  both the enforcement and the polyphony check.
+  declare the boundary rather than decide, in code, a behaviour no ADR clause describes. **The polyphony half is
+  since built** — see the slice below — and the enforcement is the wrap's.
 - **The tempo map is not in the activation.** Clause 3 puts it in the atomic set and it belongs there, but
   `SessionScheduler` owns the only one that exists and nothing replaces one during playback yet.
 - **Clause 8's obligations are untouched**, as the record says they are: a non-compiled producer's holds have no
@@ -1302,6 +1302,93 @@ Two consequences are worth stating because they are obligations rather than desc
 - **`SOUND-INV-018` has no coverage yet**, and its conformance row says so rather than being omitted. The record
   precedes the slice deliberately: the five findings are questions, and code written against an unanswered one is what
   the record exists to prevent.
+
+### Completed slice — the repeating pass's polyphony
+
+The first half of the wrap debt the transport-activation slice left, and deliberately only the first half.
+`plan_activation` now judges the pass a wrap would replay against **two** bounds rather than one: ADR-0046 clause 4's
+periodic extension against the compiled share, which it already did, and `SOUND-INV-017`'s producer range against the
+notes that pass holds open at one instant, which nothing did.
+
+**The second bound is not clause 4's, and calling it that would have been the false claim this slice nearly shipped.**
+Clause 4 says a wrap "cannot fail for compiled **capacity**", and capacity is the share. What a pass can also exhaust
+is identity, and the rule bounding that is `SOUND-INV-017`'s admitted range — already enforced on the history the
+anchored walk sees and on the suffix `stamp_into` mints. The pass a wrap replays is a **third timeline the same
+producer emits**, and it had no enforcement point at all.
+
+**Its subject is unreachable from either existing check, which is what makes the gap real rather than theoretical.**
+A pass exceeds while both existing bounds hold only when one note opens before the activation's destination and
+another after it: the first is history, the second is the suffix, neither sees two, and the pass a wrap replays holds
+both. That is the decisive test's construction, and it is exact — one note at `Q`, one at `5Q`, a destination at `4Q`,
+and a producer admitted for one.
+
+**Both quantities come from one walk**, because they are properties of the same events and two walks over one interval
+is how they come to disagree about which events those are. `repeating_pass` returns them together for the reason
+`producer_spans` is one function.
+
+Two rules the walk applies were settled before it was written, both from ADR-0050 and ADR-0051 rather than invented
+here. The pass starts with **nothing sounding**, because clause 5's boundary mass release ends what the previous pass
+opened; inheriting the depth at `loop_start` would charge every note once where it opens and again in every later
+pass. And a release whose on edge lies before the interval is ADR-0051 clause 5's **crossing release** — a bare
+gate-down carrying no note contract — so it lowers nothing.
+
+**A single-slot plan cannot exhibit that second rule**, and the test says so rather than asserting it vacuously: a
+release takes the most recent unclosed on edge for its own slot, so the crossing branch is reachable only when that
+slot holds nothing, and then the count it would lower is zero. It needs two note slots — and two admitted notes, since
+with one the crossing note is open beside every pass note that opens before the destination and the history's own
+bound refuses the stream first.
+
+**Pairing is left to its owners.** A release matching nothing on either side raises the peak rather than refusing
+here: the anchored walk refuses one in history and `stamp_into` refuses one in the suffix, and a third authority is
+how the three come to disagree. Leaving it unpaired can only leave the count higher than the truth, so a malformed
+stream is refused by this check or by its owner and never admitted by both.
+
+**This narrows delivered behaviour, and that is the point rather than a side effect.** A loop whose pass over-emits
+could be recorded before this slice and worked, because nothing replays it. It is now refused at the build, which is
+what ADR-0050 clause 3 means by wanting the interval already admitted when it joins the atomic set.
+
+Six named checks — four in `transport_activation.rs`, two beside `admit.rs` — and every behavioural claim is
+mutation-verified against its own falsifier: neutralising the check fails the two refusal tests and neither of the
+others, seeding the count from the depth at `loop_start` fails only the zero-start test, letting a crossing release
+decrement fails only the crossing test, and removing the no-producer guard fails only the test that names it.
+
+**Two boundary defects the independent reads found, both repaired.** Neither touches the peak; both are about what
+the new path says when its subject does not exist:
+
+- **A plan declaring no compiled note producer was reported as one admitting zero notes.** Those are different facts,
+  and because the comparison runs before stamping it classified one invalid note two ways depending on whether a loop
+  interval was supplied. The comparison is now skipped where there is no producer, and `require_note_producer` and
+  `stamp_into` keep the refusal that is theirs.
+- **`admit_loop_polyphony` took two positions and accepted an inverted pair**, where `admit_loop` answers `EmptyLoop`
+  for one. It takes a `LoopInterval` instead, so the case is removed rather than adjudicated — an `EmptyLoop` branch
+  here would be a rule no caller could reach, which is a rule nobody has checked. The asymmetry with `admit_loop` is
+  recorded at the function rather than left to look like an oversight.
+
+One repair beside it: a doc comment merged into `gate_rows` at the locate catch-up's merge, carrying `repeating_pass`'
+own heading with it.
+
+**API break, approved by the maintainer on 2026-08-28.** `AdmissionError` gains `LoopPolyphonyOverProducer`, which
+breaks an exhaustive match because the enum is not `#[non_exhaustive]`. It was asked for separately rather than
+carried by an earlier approval, and the first draft of this note claimed otherwise: no standing licence covers it, the
+section above says in as many words that a later variant asks again, and the same enum's previous variant
+`LoopWindowOverShare` was itself approved on its own on 2026-08-26. An independent review found the false claim. The
+grounds are the ones every approval here has rested on — the crate is experimental, is not a dependency of the
+workspace's default members, and `crate_boundary.rs` permits one in-repo consumer, `pertylizer` as a dev-dependency
+for the three measurement examples. Making the enum `#[non_exhaustive]` was offered a third time and declined a third
+time, so the next variant asks again. New surface: `admit::admit_loop_polyphony`.
+
+**What this does not do is implement the wrap**, and the reason is a decision rather than an estimate. A design
+consultation taken before any code established that a wrap replays a list whose occurrences were minted **once**, off
+the audio thread, and that replaying them is not the small amendment to `SOUND-INV-017` it looks like: it converts a
+stale-event defect into a wrong-note action, and `LiveNotes::admit` overwrites on an equal generation so the registry
+supplies no second defence. The consultation also refuted a generation displacement returned through `RetiredState`
+— a candidate is stamped before the wraps it must be ahead of — and an off-thread pre-built pass, which contradicts
+clause 4's accepted "once accepted, a wrap cannot fail". It left nine questions the accepted records do not answer,
+among them the first ideal-wrap origin after a late activation, precedence between a wrap and a pending activation,
+and whether several ideal wraps snapping to one boundary coalesce.
+
+**ADR-0052 owes those answers before the wrap is built.** The maintainer chose the split on 2026-08-28, and the
+identity mechanism is left open for that record rather than pre-committed here.
 
 ## Paused parallel stream: Phase 0B
 

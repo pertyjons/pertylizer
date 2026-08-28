@@ -96,15 +96,20 @@ pub struct LoopInterval {
 impl LoopInterval {
     /// A loop, or `None` where the interval is not positive.
     ///
-    /// **An interval carried by an activation is recorded, not enforced.** No wrap is
+    /// **An interval carried by an activation is admitted, but not enforced.** No wrap is
     /// implemented, so nothing repeats it: the candidate's schedule is not bounded by
     /// [`Self::end`], and an event past it plays and reserves an identity where under
-    /// wrapping it would be unreachable. Admission still runs when the candidate is built,
-    /// against the pass a wrap *would* produce — but it checks that pass's **event density**
-    /// against the compiled share and nothing else. It does not check the pass's polyphony,
-    /// so a loop entered after one note opened can be recorded here and still over-emit at
-    /// its first real wrap. An independent review found that claim overstated; the wrap slice
-    /// owes both the enforcement and the check.
+    /// wrapping it would be unreachable. That enforcement is the wrap slice's, and so is the
+    /// identity question it turns on — a wrap replays a list whose occurrences were minted
+    /// once, which ADR-0052 owes an answer before any of it can be built.
+    ///
+    /// What **is** proved when the candidate is built is two bounds on the pass a wrap would
+    /// produce, answering to two records: ADR-0046 clause 4's event density against the
+    /// compiled share, and `SOUND-INV-017`'s producer range against the notes that pass holds
+    /// at once. The second is not clause 4 — a wrap "cannot fail for compiled **capacity**",
+    /// and capacity is the share — and it was missing while the first stood alone, so a loop
+    /// entered after one note opened could be recorded here and still over-emit at its first
+    /// real wrap.
     ///
     /// Checked at construction so that no later caller has to ask. An empty or inverted
     /// loop is not a small loop: it has no periodic extension at all, so every downstream

@@ -34,6 +34,23 @@
 //! fully inside it, plus the one straddling each end. Extending by that many and sliding
 //! over the result is exact rather than approximate.
 //!
+//! # Admitting a loop proves two things, and only one of them is clause 4's
+//!
+//! Clause 4 is the window test: **events per quantum** against the compiled share, so that
+//! "a wrap cannot fail for compiled capacity". It says nothing about how many notes a pass
+//! holds open at once, and it is not the rule that would: that is `SOUND-INV-017`'s producer
+//! range, which ADR-0047 partitions across admitted note-on producers and which a producer
+//! may not out-emit. The two are independent — a pass of two events per second can hold a
+//! thousand notes, and a pass that opens one note can be dense enough to fail the scan.
+//!
+//! That second rule already has two enforcement points, both in
+//! [`StreamControl::plan_activation`](crate::stream::StreamControl::plan_activation): the
+//! history it walks, and the suffix `stamp_into` mints. The pass a wrap replays is a **third
+//! timeline** the same producer emits, and it had none — so a loop needing more identity than
+//! its producer holds could be recorded and would over-emit at its first real wrap.
+//! [`admit_loop_polyphony`] is that refusal, and it sits beside clause 4's because the two
+//! are what admitting a loop has to prove, not because they are one rule.
+//!
 //! # Off the audio thread
 //!
 //! Clause 4 is explicit that this is finite but **not** real-time: its cost scales with the
@@ -44,7 +61,7 @@
 
 use thiserror::Error;
 
-use crate::quantities::EventCount;
+use crate::quantities::{EventCount, HeldNoteCount};
 use crate::time::{AnchorPhase, FrameCount, PlanPosition, QUANTUM_FRAMES};
 
 /// Why a compiled stream was not admitted.
@@ -133,6 +150,40 @@ pub enum AdmissionError {
         requested: EventCount,
         /// The compiled share.
         share: EventCount,
+    },
+
+    /// A loop's repeating pass holds more notes at once than its producer admits.
+    ///
+    /// **Not clause 4**, which is why this variant exists rather than another window one.
+    /// Every variant above compares **events in a window** against the compiled event share;
+    /// this compares **note contracts open at one instant** against the compiled producer's
+    /// admitted simultaneous notes, which is `SOUND-INV-017`'s range and ADR-0047's
+    /// partition. A pass can be sparse enough for every window and still hold more notes than
+    /// the producer has identity indices for, because a note occupies its index from its on
+    /// edge to its release rather than for the quantum it arrives in.
+    ///
+    /// **The subject is the pass a wrap replays, not the one an activation carries.** An
+    /// activation that enters a loop late skips `[loop_start, request.position)`, and every
+    /// wrap after it plays those events; a check against the suffix would therefore admit a
+    /// loop whose skipped prefix opens the notes that collide.
+    ///
+    /// No phase and no window start, unlike [`Self::LoopWindowOverShare`]. Polyphony is not
+    /// a property of a gridding of plan time: the same notes are open at the same instants
+    /// whatever phase the anchor gives the loop, so there is no witness to name and
+    /// reporting one would suggest a dependence that does not exist.
+    #[error(
+        "loop [{start}, {end}) holds {requested} at once against a producer admitting \
+         {admitted}"
+    )]
+    LoopPolyphonyOverProducer {
+        /// The loop's first frame.
+        start: PlanPosition,
+        /// The loop's exclusive end.
+        end: PlanPosition,
+        /// The most notes the repeating pass holds at one instant.
+        requested: HeldNoteCount,
+        /// What the compiled note producer is admitted for.
+        admitted: HeldNoteCount,
     },
 }
 
@@ -268,6 +319,50 @@ pub fn admit_loop(
         phase: AnchorPhase::of(PlanPosition::new(window_start)),
         requested: EventCount::measured(u32::try_from(count).unwrap_or(u32::MAX)),
         share,
+    })
+}
+
+/// Admit a looping compiled stream against its producer's simultaneous notes.
+///
+/// [`admit_loop`] proves ADR-0046 clause 4: no `Q`-frame window of the periodic extension
+/// holds more **events** than the compiled share. This proves a different record's rule —
+/// `SOUND-INV-017`'s, that a producer emits no more simultaneous notes than its admitted
+/// range holds — over the one timeline that had no enforcement point, the pass a wrap
+/// replays. Neither implies the other: a pass of two events per second can hold a thousand
+/// notes open, and a pass that opens one note can be dense enough to fail the window scan.
+///
+/// The peak is derived by the caller rather than here, because deriving it is note-contract
+/// reasoning — which release pairs with which on edge, and which release crosses into the
+/// pass from before it — and that already has an owner in
+/// [`StreamControl::plan_activation`](crate::stream::StreamControl::plan_activation). What
+/// this owns is the comparison and the diagnostic, beside the sibling whose refusal it
+/// stands next to.
+///
+/// **It takes a [`LoopInterval`](crate::transport::LoopInterval) where [`admit_loop`] takes
+/// two positions**, and the asymmetry is deliberate rather than an oversight. `admit_loop`
+/// predates that type and answers [`AdmissionError::EmptyLoop`] for a non-positive interval;
+/// this entry point is new, so the case can be removed instead of adjudicated. A rule no
+/// caller can reach is a rule nobody has checked, and an `EmptyLoop` branch here would be
+/// exactly that. An independent review found the unvalidated pair.
+///
+/// **A caller with no compiled note producer must not reach this.** `admitted` would be zero
+/// and every pass holding a note would be refused as one the producer admits nothing of,
+/// which is a different fact from there being no producer. That refusal has its own owners —
+/// `require_note_producer` for the history and `stamp_into` for the suffix — and
+/// `plan_activation` skips this comparison so they keep it.
+pub fn admit_loop_polyphony(
+    peak: HeldNoteCount,
+    admitted: HeldNoteCount,
+    interval: crate::transport::LoopInterval,
+) -> Result<(), AdmissionError> {
+    if peak.get() <= admitted.get() {
+        return Ok(());
+    }
+    Err(AdmissionError::LoopPolyphonyOverProducer {
+        start: interval.start(),
+        end: interval.end(),
+        requested: peak,
+        admitted,
     })
 }
 

@@ -24,6 +24,8 @@ const SOURCE: NodeId = NodeId::new(1);
 const OUTPUT: NodeId = NodeId::new(2);
 const ENVELOPE: NodeId = NodeId::new(11);
 const AMPLIFIER: NodeId = NodeId::new(12);
+const SECOND_ENVELOPE: NodeId = NodeId::new(13);
+const SECOND_AMPLIFIER: NodeId = NodeId::new(14);
 
 const Q: u64 = QUANTUM_FRAMES as u64;
 const ORIGIN: StreamAnchor = StreamAnchor::new(SampleTime::ZERO, PlanPosition::ZERO);
@@ -2828,5 +2830,339 @@ fn a_crossing_notes_gate_is_cut_whether_or_not_automation_touched_it() {
         automated.iter().all(|sample| sample.abs() < 1e-6),
         "and the note is cut rather than resumed: ADR-0050 clause 5's audible consequence, \
          which a re-attack at the destination would contradict"
+    );
+}
+
+/// Two gated stages in series, so a plan has **two** note slots.
+///
+/// One slot cannot exhibit ADR-0051 clause 5's crossing release at all: a release takes the
+/// most recent unclosed on edge for its own slot, so on a single-slot plan the crossing
+/// branch is reachable only when nothing is open — and then no count it could lower is
+/// non-zero. Two slots let one note be open while the other's release crosses into the pass.
+fn two_gated_stages(simultaneous: u32) -> GraphIr {
+    GraphIr::builder()
+        .node(
+            SOURCE,
+            IrNodeKind::Constant {
+                level: Amplitude::new(1.0).expect("finite"),
+            },
+            ExecutionScope::Voice,
+        )
+        .node(
+            ENVELOPE,
+            IrNodeKind::Envelope {
+                attack: Seconds::new(0.0).expect("not negative"),
+                decay: Seconds::new(0.0).expect("not negative"),
+                sustain: NormalizedLevel::FULL,
+                release: Seconds::new(0.0).expect("not negative"),
+            },
+            ExecutionScope::Voice,
+        )
+        .node(AMPLIFIER, IrNodeKind::Amplifier, ExecutionScope::Voice)
+        .node(
+            SECOND_ENVELOPE,
+            IrNodeKind::Envelope {
+                attack: Seconds::new(0.0).expect("not negative"),
+                decay: Seconds::new(0.0).expect("not negative"),
+                sustain: NormalizedLevel::FULL,
+                release: Seconds::new(0.0).expect("not negative"),
+            },
+            ExecutionScope::Voice,
+        )
+        .node(
+            SECOND_AMPLIFIER,
+            IrNodeKind::Amplifier,
+            ExecutionScope::Voice,
+        )
+        .node(OUTPUT, IrNodeKind::Output, ExecutionScope::Global)
+        .connect(
+            (SOURCE, PortId::FIRST),
+            (AMPLIFIER, PortId::FIRST),
+            SignalDomain::Audio,
+        )
+        .connect(
+            (ENVELOPE, PortId::FIRST),
+            (AMPLIFIER, synth_engine_v2::node::AMPLIFIER_CONTROL),
+            SignalDomain::Control,
+        )
+        .connect(
+            (AMPLIFIER, PortId::FIRST),
+            (SECOND_AMPLIFIER, PortId::FIRST),
+            SignalDomain::Audio,
+        )
+        .connect(
+            (SECOND_ENVELOPE, PortId::FIRST),
+            (SECOND_AMPLIFIER, synth_engine_v2::node::AMPLIFIER_CONTROL),
+            SignalDomain::Control,
+        )
+        .connect(
+            (SECOND_AMPLIFIER, PortId::FIRST),
+            (OUTPUT, PortId::FIRST),
+            SignalDomain::Audio,
+        )
+        .declaring(common::compiled_notes(simultaneous))
+        .build()
+        .expect("a readable plan")
+}
+
+fn note_on_node(plan: &CompiledPlan, node: NodeId, position: u64, on: bool) -> PlanEvent {
+    let slot = plan.resolve_note(node).expect("the node is playable");
+    let payload = if on {
+        CompiledPayload::NoteOn { slot }
+    } else {
+        CompiledPayload::NoteOff { slot }
+    };
+    PlanEvent::new(PlanPosition::new(position), payload)
+}
+
+#[test]
+fn a_loops_repeating_pass_is_admitted_against_the_producers_simultaneous_notes() {
+    // `SOUND-INV-017`'s producer range, applied to the one timeline that had no enforcement
+    // point. ADR-0046 clause 4's window scan bounds a pass's **events per quantum** against
+    // the compiled share and says nothing about how many notes it holds open at once, so a
+    // loop that is sparse everywhere can still need more identity than its producer has. The
+    // history walk and `stamp_into` already apply the range rule to their own timelines; the
+    // pass a wrap replays is a third. Recorded without this check, such a loop over-emits at
+    // its first real wrap. A design consultation for the wrap slice found the gap.
+    //
+    // **The subject is the pass a wrap replays, and this construction is chosen so that
+    // nothing else can see it.** One note opens at `Q`, before the destination, so it is
+    // history: the anchored walk counts one open note there, which is exactly what the
+    // producer admits. A second opens at `5Q`, after the destination, so the suffix carries
+    // one note-on and stamping mints one. Neither check sees two. The pass a wrap replays
+    // starts at the loop's own start and plays both, so it holds two at `5Q` against a
+    // producer admitted for one.
+    let plan = single_note_plan();
+    let (mut control, _renderer) =
+        StreamControl::open(plan.clone(), ORIGIN).expect("the stream opens");
+    let quiet = admitted(&plan, &[]);
+    let _scheduler =
+        CompiledEventScheduler::prepare(&mut control, &quiet).expect("an empty stream prepares");
+
+    let interval =
+        LoopInterval::new(PlanPosition::ZERO, PlanPosition::new(8 * Q)).expect("positive");
+    let entering_late = ActivationRequest {
+        at: SampleTime::new(16 * Q),
+        position: PlanPosition::new(4 * Q),
+        loop_interval: Some(interval),
+    };
+
+    let over = admitted(
+        &plan,
+        &[
+            note(&plan, Q, true),
+            note(&plan, 5 * Q, true),
+            note(&plan, 6 * Q, false),
+            note(&plan, 7 * Q, false),
+        ],
+    );
+    let refusal = control
+        .plan_activation(&over, entering_late)
+        .expect_err("every wrap replays both note-ons, and the producer admits one");
+    match refusal {
+        ActivationBuildError::Loop {
+            start,
+            end,
+            source:
+                AdmissionError::LoopPolyphonyOverProducer {
+                    requested,
+                    admitted: admits,
+                    ..
+                },
+        } => {
+            assert_eq!(start, interval.start());
+            assert_eq!(end, interval.end());
+            assert_eq!(requested.get(), 2, "both note-ons are open at 5Q");
+            assert_eq!(admits.get(), 1, "and the compiled producer admits one");
+        }
+        other => panic!("the loop's polyphony is what refuses this: {other}"),
+    }
+
+    // The same stream without a loop is **built**, which is what makes this the loop's
+    // refusal rather than the stream's: with no interval there is no pass to repeat, the
+    // history holds one note and the suffix mints one.
+    let candidate = control
+        .plan_activation(&over, request(16 * Q, 4 * Q))
+        .expect("neither the history nor the suffix holds more than one");
+    control
+        .withdraw(candidate)
+        .expect("the control withdraws its own candidate");
+
+    // And moving the first note-on inside the second's pairing — so the pass never holds two
+    // at once — is admitted with the loop in force. The refusal is a bound, not a ban.
+    let within = admitted(
+        &plan,
+        &[
+            note(&plan, Q, true),
+            note(&plan, 2 * Q, false),
+            note(&plan, 5 * Q, true),
+            note(&plan, 6 * Q, false),
+        ],
+    );
+    let candidate = control
+        .plan_activation(&within, entering_late)
+        .expect("one at a time repeats within the producer's range");
+    control
+        .withdraw(candidate)
+        .expect("the control withdraws its own candidate");
+}
+
+#[test]
+fn a_repeating_pass_starts_with_nothing_sounding() {
+    // ADR-0050 clause 5's boundary mass release is what makes this true: a wrap ends the
+    // notes the previous pass opened, so the pass a wrap replays begins with nothing
+    // sounding. Seeding the count from the depth at `loop_start` instead would charge every
+    // note twice — once where it opens and once in every later pass — and refuse loops that
+    // hold nothing of their own.
+    //
+    // Eight notes are open where the loop starts, which is exactly what this producer admits,
+    // and the loop's own pass opens one more. Under the rule the pass holds one; under the
+    // inherited depth it would hold nine and be refused.
+    let plan = plan();
+    let (mut control, _renderer) =
+        StreamControl::open(plan.clone(), ORIGIN).expect("the stream opens");
+    let quiet = admitted(&plan, &[]);
+    let _scheduler =
+        CompiledEventScheduler::prepare(&mut control, &quiet).expect("an empty stream prepares");
+
+    let mut events: Vec<PlanEvent> = (0..8).map(|n| note(&plan, 2 * Q * n, true)).collect();
+    events.push(note(&plan, 20 * Q, true));
+    events.push(note(&plan, 22 * Q, false));
+    let stream = admitted(&plan, &events);
+
+    let interval =
+        LoopInterval::new(PlanPosition::new(16 * Q), PlanPosition::new(40 * Q)).expect("positive");
+    let candidate = control
+        .plan_activation(
+            &stream,
+            ActivationRequest {
+                at: SampleTime::new(64 * Q),
+                position: PlanPosition::new(16 * Q),
+                loop_interval: Some(interval),
+            },
+        )
+        .expect("the pass holds the one note it opens, not the eight it inherits");
+    control
+        .withdraw(candidate)
+        .expect("the control withdraws its own candidate");
+}
+
+#[test]
+fn a_crossing_release_lowers_no_note_in_the_repeating_pass() {
+    // ADR-0051 clause 5. A release whose on edge lies before the interval carries a bare
+    // gate-down and **no note contract**, so it ends nothing the pass is holding. Letting it
+    // decrement would hand the pass a note's worth of headroom it never had.
+    //
+    // Two note slots, because one cannot show it: a release takes the most recent unclosed on
+    // edge for its own slot, so on a single-slot plan the crossing branch is reachable only
+    // when that slot holds nothing — and then the count it would lower is already zero.
+    //
+    // **Two admitted notes, for a sharper reason.** With one, the construction is
+    // unbuildable: the crossing note is open where the loop starts, so any pass note opening
+    // before the destination is open beside it in the history, and the history's own bound
+    // refuses the stream before the loop is ever judged.
+    //
+    // The first stage's note opens at `Q`, before the loop, and is released at `10Q` inside
+    // it. The second stage opens at `6Q`, `14Q` and `16Q`. The history never holds more than
+    // two, and the suffix — everything from `12Q` — mints two. The pass holds three at `16Q`
+    // only because the crossing release lowered nothing; if it had, the pass would hold two
+    // and this stream would be admitted.
+    let plan = common::admit(
+        &two_gated_stages(2),
+        common::profile(TOTAL as u64, ChannelLayout::Mono),
+    );
+    let (mut control, _renderer) =
+        StreamControl::open(plan.clone(), ORIGIN).expect("the stream opens");
+    let quiet = admitted(&plan, &[]);
+    let _scheduler =
+        CompiledEventScheduler::prepare(&mut control, &quiet).expect("an empty stream prepares");
+
+    let interval =
+        LoopInterval::new(PlanPosition::new(4 * Q), PlanPosition::new(24 * Q)).expect("positive");
+    let entering_late = ActivationRequest {
+        at: SampleTime::new(64 * Q),
+        position: PlanPosition::new(12 * Q),
+        loop_interval: Some(interval),
+    };
+    let stream = admitted(
+        &plan,
+        &[
+            note_on_node(&plan, ENVELOPE, Q, true),
+            note_on_node(&plan, SECOND_ENVELOPE, 6 * Q, true),
+            note_on_node(&plan, ENVELOPE, 10 * Q, false),
+            note_on_node(&plan, SECOND_ENVELOPE, 14 * Q, true),
+            note_on_node(&plan, SECOND_ENVELOPE, 16 * Q, true),
+            note_on_node(&plan, SECOND_ENVELOPE, 18 * Q, false),
+            note_on_node(&plan, SECOND_ENVELOPE, 20 * Q, false),
+            note_on_node(&plan, SECOND_ENVELOPE, 22 * Q, false),
+        ],
+    );
+
+    let refusal = control
+        .plan_activation(&stream, entering_late)
+        .expect_err("the crossing release ends nothing the pass holds");
+    match refusal {
+        ActivationBuildError::Loop {
+            source: AdmissionError::LoopPolyphonyOverProducer { requested, .. },
+            ..
+        } => assert_eq!(
+            requested.get(),
+            3,
+            "the first stage's note is still counted where the second opens its third"
+        ),
+        other => panic!("the crossing release must not buy the pass headroom: {other}"),
+    }
+}
+
+#[test]
+fn a_loop_does_not_reclassify_a_note_that_has_no_producer_at_all() {
+    // A plan declaring **no** compiled note producer admits nothing because there is nothing
+    // to admit, which is a different fact from a producer whose range is empty. Comparing the
+    // repeating pass against a zero admitted count would report the first as the second, and
+    // — because the comparison runs before stamping — it would classify one invalid note two
+    // ways depending on whether a loop interval was supplied. An independent review found it.
+    //
+    // The note edges sit **after** the destination, so the history's own refusal cannot be
+    // what answers: this is the suffix, and `stamp_into` is what must still refuse it.
+    let plan = playable_without_a_producer();
+    let (mut control, _renderer) =
+        StreamControl::open(plan.clone(), ORIGIN).expect("the stream opens");
+    let quiet = AdmittedCompiledStream::admit(&plan, &[]).expect("an empty stream is admissible");
+    let _scheduler =
+        CompiledEventScheduler::prepare(&mut control, &quiet).expect("an empty stream prepares");
+
+    let slot = plan
+        .resolve_note(ENVELOPE)
+        .expect("the envelope is playable even with no producer declared");
+    let edges = AdmittedCompiledStream::admit(
+        &plan,
+        &[
+            PlanEvent::new(PlanPosition::new(2 * Q), CompiledPayload::NoteOn { slot }),
+            PlanEvent::new(PlanPosition::new(3 * Q), CompiledPayload::NoteOff { slot }),
+        ],
+    )
+    .expect("admission does not check producers");
+
+    let refusal = control
+        .plan_activation(
+            &edges,
+            ActivationRequest {
+                at: SampleTime::new(8 * Q),
+                position: PlanPosition::ZERO,
+                loop_interval: Some(
+                    LoopInterval::new(PlanPosition::ZERO, PlanPosition::new(8 * Q))
+                        .expect("positive"),
+                ),
+            },
+        )
+        .expect_err("a note with no producer is refused whether or not a loop is in force");
+    assert!(
+        matches!(
+            refusal,
+            ActivationBuildError::Stamp(
+                synth_engine_v2::schedule::SchedulePrepareError::NoCompiledNoteProducer { .. }
+            )
+        ),
+        "the missing producer keeps its own diagnostic: {refusal}"
     );
 }

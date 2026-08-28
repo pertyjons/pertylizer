@@ -47,6 +47,19 @@ use crate::schedule::{AdmittedCompiledStream, CompiledPayload, SchedulePrepareEr
 use crate::time::{Located, PlanPosition, SampleTime, StreamAnchor, StreamEpoch, issue_epoch};
 use crate::transport::{ActivationSequence, LoopInterval, TransportActivation};
 
+/// One repeating pass of a loop, as admitting one has to judge it.
+///
+/// Two quantities from one walk of one interval, answering to two records. They are carried
+/// together rather than returned separately because they must describe the **same** pass: a
+/// density refusal computed over one set of events and a polyphony refusal computed over
+/// another would disagree without anything being able to say so.
+struct RepeatingPass {
+    /// Every event position inside the interval, which the window scan slides over.
+    positions: Vec<PlanPosition>,
+    /// The most note contracts the pass holds open at one instant.
+    peak: crate::quantities::HeldNoteCount,
+}
+
 /// What a caller asks an activation to do.
 ///
 /// Grouped because the values are one intent and are checked against each other: a position
@@ -134,21 +147,24 @@ pub enum ActivationBuildError {
         position: PlanPosition,
     },
 
-    /// The loop's periodic extension does not fit the compiled share.
+    /// The loop is not admissible: the pass a wrap would replay exceeds a compiled bound.
     ///
-    /// ADR-0046 clause 4 admits a loop by checking the extension of `[start, end)` against a
-    /// sliding `Q`-frame window, and ADR-0050 clause 3 wants the interval **already
-    /// admitted** when it joins the atomic set. `LoopInterval::new` proves only that the
-    /// interval is positive, so without this a caller could activate a loop whose first wrap
-    /// then faults at publication — which ends the stream rather than refusing the state
-    /// change. An independent review found the gap.
+    /// Two bounds from two records. ADR-0046 clause 4 checks the periodic extension of
+    /// `[start, end)` against a sliding `Q`-frame window; `SOUND-INV-017` bounds the notes
+    /// that pass holds at once by the compiled producer's admitted range. ADR-0050 clause 3
+    /// wants the interval **already admitted** when it joins the atomic set, and
+    /// `LoopInterval::new` proves only that the interval is positive — so without these a
+    /// caller could activate a loop whose first wrap then faults at publication or
+    /// over-emits, either of which ends the stream rather than refusing the state change. An
+    /// independent review found the density gap; a design consultation for the wrap slice
+    /// found the polyphony one.
     #[error("the loop {start}..{end} is not admissible: {source}")]
     Loop {
         /// The loop's first frame.
         start: PlanPosition,
         /// Its exclusive end.
         end: PlanPosition,
-        /// Why the periodic extension was refused.
+        /// Which of the two bounds the repeating pass exceeded.
         source: crate::admit::AdmissionError,
     },
 
@@ -738,10 +754,18 @@ impl StreamControl {
         // before extending it, so history outside the loop cannot reach the window either way.
         // An earlier revision of this comment claimed that history was the discriminator, and
         // built a test on it that could not fail.
+        //
+        // **Two rules from two records, over one derived pass.** ADR-0046 clause 4 bounds the
+        // pass's events per quantum against the compiled share; `SOUND-INV-017` bounds the
+        // notes it holds at once against what the compiled producer is admitted for. Neither
+        // implies the other. The second is the same rule the history walk above and
+        // `stamp_into` below already apply to their own timelines; the pass a wrap replays is
+        // a third, and it had no enforcement point — so a loop needing more identity than the
+        // producer holds could be recorded here and would over-emit at its first real wrap.
         if let Some(interval) = request.loop_interval {
             let repeating = self.repeating_pass(stream, interval);
             crate::admit::admit_loop(
-                &repeating,
+                &repeating.positions,
                 interval.start(),
                 interval.end(),
                 self.plan.compiled_event_share(),
@@ -751,6 +775,25 @@ impl StreamControl {
                 end: interval.end(),
                 source,
             })?;
+            // **Only where a producer exists to be measured against.** With none declared,
+            // `admitted_notes` is zero and a pass holding any note would be refused as one
+            // the producer admits nothing of — which is a different fact from there being no
+            // producer at all, and it would classify one invalid note two ways depending on
+            // whether a loop was supplied. That refusal has owners already:
+            // `require_note_producer` above for a note in the history, and `stamp_into` below
+            // for one in the suffix. An independent review found the misreport.
+            if self.plan.compiled_note_producer().is_some() {
+                crate::admit::admit_loop_polyphony(
+                    repeating.peak,
+                    crate::quantities::HeldNoteCount::measured(admitted_notes),
+                    interval,
+                )
+                .map_err(|source| ActivationBuildError::Loop {
+                    start: interval.start(),
+                    end: interval.end(),
+                    source,
+                })?;
+            }
         }
 
         // ADR-0051 clause 1. A gate held open by a note contract at the destination is owed
@@ -907,14 +950,6 @@ impl StreamControl {
         Ok(())
     }
 
-    /// The plan positions a wrapped pass of `interval` carries.
-    ///
-    /// A wrap is a locate at the loop's start, so the pass it produces is derived the same
-    /// way the first one is — the events from that anchor, with a release whose note-on
-    /// precedes it omitted under clause 5 — and bounded to the loop. It is **not** the first
-    /// pass: an activation that enters the loop late skips events every later wrap plays, and
-    /// admitting the loop against the first pass would let a dense skipped prefix through. An
-    /// independent review found that.
     /// Which prepared rows each note slot's gate is, resolved by **physical** target.
     ///
     /// ADR-0051 clause 3. A note edge and a `SetParameter` can address one `(node, control)`,
@@ -983,35 +1018,108 @@ impl StreamControl {
         batch
     }
 
-    /// The positions a wrap replays: every event the loop interval contains.
+    /// What a wrap replays: every event the loop interval contains, and how many notes it
+    /// holds open at once.
     ///
-    /// It carries no note bookkeeping, and that is ADR-0051's doing rather than an omission.
-    /// An earlier shape tracked open depth so it could decide whether a release whose note-on
-    /// lies before the interval carried an event at all — under the bare omission it did not.
-    /// Clause 5 keeps that release's gate write at its own position, so **every** event inside
-    /// the interval carries one and the question the bookkeeping answered no longer has two
-    /// answers. Keeping the state would have been a check that cannot fail, and an independent
-    /// review of the merge is what exposed the version that still skipped the position.
+    /// **One walk for both, because they are one pass.** The two quantities answer to
+    /// different records — ADR-0046 clause 4 and `SOUND-INV-017` — but they are properties of
+    /// the same events, and two walks over one interval is how they come to disagree about
+    /// which events those are. The same reason `producer_spans` is one function, and here the
+    /// disagreement would be silent: the density check would refuse against one set of
+    /// positions while the polyphony check admitted against another.
     ///
-    /// The polyphony of this pass is a different question and is not asked here: `admit_loop`
-    /// is a density check, and the wrap slice owns the rest.
+    /// # Which events the positions carry
+    ///
+    /// Every event inside the interval, with **no note bookkeeping applied**, and that is
+    /// ADR-0051's doing rather than an omission. An earlier shape tracked open depth so it
+    /// could decide whether a release whose note-on lies before the interval carried an event
+    /// at all — under the bare omission it did not. Clause 5 keeps that release's gate write
+    /// at its own position, so **every** event inside the interval carries one and the
+    /// question the bookkeeping answered no longer has two answers. Keeping the state would
+    /// have been a check that cannot fail, and an independent review of the merge is what
+    /// exposed the version that still skipped the position.
+    ///
+    /// # How the peak is counted
+    ///
+    /// The pass starts at **zero** open notes rather than inheriting the depth at
+    /// `loop_start`. ADR-0050 clause 5's boundary mass release is what makes that true: a
+    /// wrap ends the notes the previous pass opened, so the pass a wrap replays begins with
+    /// nothing sounding. Inheriting a depth would count notes twice — once where they open
+    /// and once in every later pass — and refuse loops that hold nothing.
+    ///
+    /// A release inside the interval closes the most recent unclosed on edge for its slot,
+    /// which is the pairing `stamp_into` performs. A release whose on edge lies **before**
+    /// the interval is ADR-0051 clause 5's crossing release: it carries a bare gate-down and
+    /// no note contract, so it lowers nothing here. Its own depth is spent, so a second
+    /// release for that slot cannot claim to cross too.
+    ///
+    /// **A release that pairs with nothing on either side raises the peak rather than
+    /// refusing.** Pairing has an owner — the anchored walk refuses one in history, and
+    /// `stamp_into` refuses one in the suffix — and a second authority here is how the two
+    /// come to disagree. Leaving it unpaired can only leave `live` higher than the truth, so
+    /// a malformed stream is refused by this check or by its owner, never admitted by both.
     fn repeating_pass(
         &self,
         stream: &AdmittedCompiledStream,
         interval: LoopInterval,
-    ) -> Vec<PlanPosition> {
+    ) -> RepeatingPass {
         let mut positions = Vec::with_capacity(stream.events().len());
+        // Open on edges per slot, on each side of the loop's start. Two tables rather than
+        // one, because a release consults them in order and a shared counter could not say
+        // which side the note it pairs with is on.
+        let mut before = vec![0_u32; self.plan.note_targets().len()];
+        let mut inside = vec![0_u32; self.plan.note_targets().len()];
+        let mut live = 0_u32;
+        let mut peak = 0_u32;
         for event in stream.events().iter().copied() {
             let position = event.position();
             if position < interval.start() {
+                match event.payload() {
+                    CompiledPayload::NoteOn { slot } => {
+                        if let Some(depth) = before.get_mut(slot.index()) {
+                            *depth = depth.saturating_add(1);
+                        }
+                    }
+                    CompiledPayload::NoteOff { slot } => {
+                        if let Some(depth) = before.get_mut(slot.index()) {
+                            *depth = depth.saturating_sub(1);
+                        }
+                    }
+                    CompiledPayload::SetParameter { .. } => {}
+                }
                 continue;
             }
             if position >= interval.end() {
                 break;
             }
             positions.push(position);
+            match event.payload() {
+                CompiledPayload::NoteOn { slot } => {
+                    if let Some(depth) = inside.get_mut(slot.index()) {
+                        *depth = depth.saturating_add(1);
+                    }
+                    live = live.saturating_add(1);
+                    peak = peak.max(live);
+                }
+                CompiledPayload::NoteOff { slot } => {
+                    if inside.get(slot.index()).copied().unwrap_or(0) > 0 {
+                        if let Some(depth) = inside.get_mut(slot.index()) {
+                            *depth = depth.saturating_sub(1);
+                        }
+                        live = live.saturating_sub(1);
+                    } else if before.get(slot.index()).copied().unwrap_or(0) > 0
+                        && let Some(depth) = before.get_mut(slot.index())
+                    {
+                        *depth = depth.saturating_sub(1);
+                    }
+                }
+                CompiledPayload::SetParameter { .. } => {}
+            }
         }
-        positions
+        RepeatingPass {
+            positions,
+            peak: crate::quantities::HeldNoteCount::measured(peak),
+        }
     }
 
     /// The producer whose schedule this activation replaces, which is the release's scope.

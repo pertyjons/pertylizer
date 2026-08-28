@@ -1,6 +1,7 @@
 //! Compiled admission's checks.
 
 use super::*;
+use crate::quantities::HeldNoteCount;
 
 const Q: u64 = QUANTUM_FRAMES as u64;
 
@@ -486,4 +487,62 @@ fn an_empty_plan_is_admitted() {
     // empty plan unloadable.
     assert!(admit_linear(&[], share(1)).is_ok());
     assert!(admit_loop(&[], PlanPosition::ZERO, PlanPosition::new(Q), share(1)).is_ok());
+}
+
+fn held(n: u32) -> HeldNoteCount {
+    HeldNoteCount::measured(n)
+}
+
+fn interval(start: u64, end: u64) -> crate::transport::LoopInterval {
+    crate::transport::LoopInterval::new(PlanPosition::new(start), PlanPosition::new(end))
+        .expect("a positive interval")
+}
+
+#[test]
+fn a_pass_holding_exactly_what_the_producer_admits_is_admitted() {
+    // The bound is inclusive on both sides of the same reading: a producer admitted for `n`
+    // simultaneous notes can hold `n`, and the note that makes it `n + 1` is the one with no
+    // identity left to take. An exclusive comparison would refuse the last note the producer
+    // was admitted for, which is a whole voice of usable range thrown away.
+    let loop_ = interval(0, 4 * Q);
+    assert!(admit_loop_polyphony(held(0), held(0), loop_).is_ok());
+    assert!(admit_loop_polyphony(held(8), held(8), loop_).is_ok());
+
+    let refusal = admit_loop_polyphony(held(9), held(8), loop_)
+        .expect_err("one more than the producer admits has no identity to take");
+    match refusal {
+        AdmissionError::LoopPolyphonyOverProducer {
+            start: reported_start,
+            end: reported_end,
+            requested,
+            admitted,
+        } => {
+            // The refusal names the interval and both counts, for the reason clause 4 gives
+            // its own: it is the interval that identifies the loop, and a frame inside it
+            // would not, because the same overrun recurs at every pass.
+            assert_eq!(reported_start, loop_.start());
+            assert_eq!(reported_end, loop_.end());
+            assert_eq!(requested.get(), 9);
+            assert_eq!(admitted.get(), 8);
+        }
+        other => panic!("polyphony must not refuse as a window overrun: {other:?}"),
+    }
+}
+
+#[test]
+fn a_producer_admitting_nothing_refuses_the_first_note() {
+    // A plan may **declare** a note producer with an empty range, and `note_producers`
+    // already treats one as admitting no index. A pass that opens a note against it has
+    // nowhere to put the occurrence, so the refusal belongs here rather than at the first
+    // wrap.
+    //
+    // A plan declaring **no** producer is a different fact and does not reach here at all:
+    // `plan_activation` skips this comparison, so `require_note_producer` and `stamp_into`
+    // keep their own refusal rather than having it reported as a range of zero.
+    let refusal = admit_loop_polyphony(held(1), held(0), interval(0, Q))
+        .expect_err("an empty range holds no note");
+    assert!(matches!(
+        refusal,
+        AdmissionError::LoopPolyphonyOverProducer { .. }
+    ));
 }
