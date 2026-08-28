@@ -101,8 +101,9 @@ use synth_engine_v2::quantities::{
     Resonance, SampleRate, Seconds,
 };
 use synth_engine_v2::render::{
-    AudioBlockMut, EventEnvelope, EventPayload, PreparedRenderer, Renderer, TimedEvent, TimedEvents,
+    AudioBlockMut, EventEnvelope, EventPayload, Renderer, TimedEvent, TimedEvents,
 };
+use synth_engine_v2::stream::StreamControl;
 use synth_engine_v2::time::{
     FrameCount, PlanPosition, QUANTUM_FRAMES, QuantumOffset, SampleTime, StreamAnchor, TimeSource,
 };
@@ -1536,7 +1537,7 @@ fn main() {
 
     // The renderer arm: the real plan through the real renderer, gated on once and prepared
     // once, so no round times an allocation.
-    let mut renderer = PreparedRenderer::prepare(
+    let (_control, mut renderer) = StreamControl::open(
         stereo.clone(),
         StreamAnchor::new(SampleTime::ZERO, PlanPosition::ZERO),
     )

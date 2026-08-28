@@ -25,8 +25,9 @@ use synth_engine_v2::quantities::{
     Amplitude, ChannelLayout, Frequency, GainFactor, ParameterValue,
 };
 use synth_engine_v2::render::{
-    AudioBlockMut, EventEnvelope, EventPayload, PreparedRenderer, Renderer, TimedEvent, TimedEvents,
+    AudioBlockMut, EventEnvelope, EventPayload, Renderer, TimedEvent, TimedEvents,
 };
+use synth_engine_v2::stream::StreamControl;
 use synth_engine_v2::time::{FrameCount, PlanPosition, SampleTime, StreamAnchor, TimeSource};
 
 fn sine(frequency: f32) -> IrNodeKind {
@@ -38,7 +39,7 @@ fn sine(frequency: f32) -> IrNodeKind {
 
 /// Render one block of `frames` from a freshly prepared stream.
 fn render(plan: &CompiledPlan, frames: usize) -> Vec<f32> {
-    let mut renderer = PreparedRenderer::prepare(
+    let (_control, mut renderer) = StreamControl::open(
         plan.clone(),
         StreamAnchor::new(SampleTime::ZERO, PlanPosition::ZERO),
     )
@@ -64,7 +65,7 @@ fn rendering_a_plan_does_not_change_the_plan() {
     );
     let before = plan.prepared_nodes().to_vec();
 
-    let mut renderer = PreparedRenderer::prepare(
+    let (_control, mut renderer) = StreamControl::open(
         plan.clone(),
         StreamAnchor::new(SampleTime::ZERO, PlanPosition::ZERO),
     )
@@ -103,12 +104,12 @@ fn one_plan_serves_two_independent_states() {
         profile(256, ChannelLayout::Mono),
     );
 
-    let mut first = PreparedRenderer::prepare(
+    let (_first_control, mut first) = StreamControl::open(
         plan.clone(),
         StreamAnchor::new(SampleTime::ZERO, PlanPosition::ZERO),
     )
     .expect("prepares");
-    let second = PreparedRenderer::prepare(
+    let (_second_control, second) = StreamControl::open(
         plan.clone(),
         StreamAnchor::new(SampleTime::ZERO, PlanPosition::ZERO),
     )
@@ -173,7 +174,7 @@ fn a_control_event_moves_one_node_state_and_leaves_the_other_alone() {
 
     // Moving the *unpatched* node's frequency changes nothing that reaches the output.
     let untouched = render(&plan, 256);
-    let mut renderer = PreparedRenderer::prepare(
+    let (_control, mut renderer) = StreamControl::open(
         plan.clone(),
         StreamAnchor::new(SampleTime::ZERO, PlanPosition::ZERO),
     )

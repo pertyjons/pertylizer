@@ -393,6 +393,21 @@ fn every_call_the_render_loop_makes_is_inside_the_checked_region() {
     let std_calls = [
         "get",
         "get_mut",
+        // `Result::is_ok` and `Result::is_err`: a discriminant read on a value the caller
+        // owns. Clause 4's split path uses them to sequence its two sub-calls and to decide
+        // whether the callback must be silenced whole, without moving the outcome it
+        // returns. Neither allocates, locks or can panic.
+        "is_ok",
+        "is_err",
+        // `core::mem::take` and `core::mem::swap`: moves between values the caller already
+        // owns. ADR-0050 clause 3's adoption exchanges the candidate's vectors with the
+        // scheduler's live ones rather than building a second value, which is what keeps the
+        // audio thread from allocating a retired container. Neither call touches the
+        // allocator, and the counting-allocator test covers that behaviourally.
+        // `Option::take`: a move out plus a `None` write, on storage the caller already
+        // holds. It is how the live-note registry's scoped mass release ends a note without
+        // reading the slot twice, and it neither allocates nor can panic.
+        "take",
         "fill",
         "len",
         "is_empty",
@@ -460,6 +475,39 @@ fn every_call_the_render_loop_makes_is_inside_the_checked_region() {
     // or a saturating add.
     let crate_accessors = [
         "new",
+        // ADR-0050's adoption path, all `const fn` field reads or saturating counters.
+        //
+        // `carry_frames` is how clause 4 finds where a crossing host block is cut, and
+        // `split_at_frame` is the cut itself — one `split_at_mut` over the caller's own
+        // buffer, describing the same samples as two spans rather than copying them.
+        // `requested` is the candidate's immutable stamp. `count_late_activation` is a
+        // saturating add on the diagnostics report, exactly like the counters already here.
+        "carry_frames",
+        "split_at_frame",
+        "requested",
+        "count_late_activation",
+        // `count_displacement_fault` is the same saturating add on the diagnostics report,
+        // on the terminal path an activation displacement takes. It exists apart from the
+        // publication counter so the two terminal conditions stay attributable.
+        "count_displacement_fault",
+        // `reborrow` and `silence` are the other half of clause 4's split. A crossing block
+        // is handed to two renderer calls, and the terminal contract is silence over the
+        // **complete** callback rather than over the span a fault happened in — so the split
+        // path has to keep both halves after lending them. `reborrow` is a shorter borrow of
+        // a slice the caller already holds; `silence` is one `fill(0.0)` over it. Neither
+        // allocates, locks or can panic, and the block was shape-checked at construction.
+        "reborrow",
+        "silence",
+        // `charge_operation` is ADR-0046 clause 6's bounded mass release charged as **one**
+        // unit of the session share. It is defined in `publish/hot.rs`, inside the scanned
+        // region, and does the same index-checked ledger arithmetic `charge` does without
+        // writing an event into the batch.
+        "charge_operation",
+        // `release_all` is the registry's scoped mass release: a bounded walk over one
+        // producer's span, clearing slots and reporting their nodes into storage the
+        // candidate carries. It grows nothing and its bound is checked before it writes.
+        "release_all",
+        "note_targets",
         "channel_layout",
         "forward_event_horizon",
         "max_events_per_quantum",
@@ -569,7 +617,17 @@ fn every_call_the_render_loop_makes_is_inside_the_checked_region() {
     //
     // Justified on its own terms as well as by not being reached: it compares two
     // function addresses. It cannot allocate, lock, panic, or reach a device.
-    let pointer_comparison = ["std::ptr::fn_addr_eq"];
+    let pointer_comparison = [
+        "std::ptr::fn_addr_eq",
+        // ADR-0050's adoption exchanges the candidate's vectors with the scheduler's live
+        // ones rather than building a second value, which is what keeps the audio thread
+        // from allocating a container for the retired state. Both are moves between values
+        // the caller already owns: no allocator call, no lock, no panic. They are justified
+        // by their full paths rather than by the bare-name list, so `take` and `swap` on
+        // some other receiver would still have to answer for themselves.
+        "core::mem::take",
+        "core::mem::swap",
+    ];
 
     let mut unresolved: Vec<String> = Vec::new();
     let bytes: Vec<char> = source.chars().collect();

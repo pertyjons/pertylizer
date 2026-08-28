@@ -55,6 +55,110 @@ impl PreparedRenderer {
         self.fault(output);
     }
 
+    /// The same terminal response for an activation displacement that leaves engine time.
+    ///
+    /// **Its own counter**, because publication did not fail — the condition is detected
+    /// before a window is even opened, and reporting it as a publication fault would tell a
+    /// reader to look for a share overrun that never happened. An independent review found
+    /// the misattribution. The counter is attributable for the reason clause 7 gives, and
+    /// the condition is terminal because the shift is fixed at adoption and the event is
+    /// fixed in the list: nothing a caller can do clears it.
+    pub(crate) fn terminal_displacement_fault(&mut self, output: &mut AudioBlockMut<'_>) {
+        self.diagnostics.count_displacement_fault();
+        self.fault(output);
+    }
+
+    /// Adopt an activation at `effective`, which must be a quantum boundary at or after the
+    /// clock.
+    ///
+    /// ADR-0050 clause 3: **an infallible move**. Everything that can refuse happened at the
+    /// offer, so there is no branch here that can fail — a refusal discovered at the boundary
+    /// would have to roll back a partly applied state set or fault the stream, and the atomic
+    /// set exists to avoid the first while the second would turn a caller mistake into a
+    /// terminal fault.
+    ///
+    /// Two things move: the anchor, which every quantum's plan position is derived from, and
+    /// the notes the replaced producers are sounding. Neither carry is touched (clause 2):
+    /// the output carry holds audio for engine samples strictly before the clock, and
+    /// `effective` is at or after it, so that audio was rendered under the mapping that was
+    /// in force when it was rendered.
+    ///
+    /// The mass release is clause 5's, and its registry half is here. It ends what is
+    /// **sounding**; the allocator's own set is different and the control handled it before
+    /// this candidate was stamped. Scoping the clear to a producer range is safe because the
+    /// incoming schedule's events have reached no render call yet — not because of any order
+    /// inside a call, which is a claim an earlier revision of this contract made and which is
+    /// false.
+    pub(crate) fn adopt(
+        &mut self,
+        activation: &mut crate::transport::TransportActivation,
+        effective: SampleTime,
+        late: bool,
+        cursor: usize,
+        loop_interval: Option<crate::transport::LoopInterval>,
+        shift: crate::time::FrameCount,
+    ) {
+        // The scalars of clause 3's atomic set, which have no storage to be swapped into.
+        // Taken before the anchor moves, because the anchor is one of them.
+        activation.retired = Some(crate::transport::RetiredState {
+            anchor: self.anchor,
+            cursor,
+            loop_interval,
+            shift,
+        });
+        self.anchor = crate::time::StreamAnchor::new(effective, activation.position);
+        // Clause 1's lateness, decided by the caller from `requested < clock` at the call
+        // that adopts. **Not** `effective > requested`, which is true of every request that
+        // does not land on a quantum boundary and would make the counter report snapping.
+        if late {
+            self.diagnostics.count_late_activation();
+        }
+
+        self.adoption_gate_len = 0;
+        for index in 0..activation.producers.len() {
+            let Some(producer) = activation.producers.get(index).copied() else {
+                break;
+            };
+            // **No range lookup here.** `note_producers` omits the empty producers off-thread,
+            // which is what bounds this walk by the admitted identity span rather than by the
+            // declaration count. A defensive re-check kept here indexed the range table by
+            // the loop counter — and once the list is compacted that counter is a *position*,
+            // not a `ProducerId`, so it could read a different producer's range and skip a
+            // real release, leaving that producer's notes sounding across the activation. An
+            // independent review found it. One authority on the scope is the fix; a second
+            // one that has to be kept in step is how they come to disagree.
+            let ended = self.live_notes.release_all(
+                crate::identity::ReleaseScope::Producer(producer),
+                &mut activation.ended,
+            );
+            let mut reported = 0_u32;
+            while reported < ended.get() {
+                let Some(Some(note)) = activation.ended.get(reported as usize).copied() else {
+                    break;
+                };
+                reported = reported.saturating_add(1);
+                let Some(target) = self.plan.note_targets().get(note.index()).copied() else {
+                    continue;
+                };
+                let Some(slot) = self.adoption_gates.get_mut(self.adoption_gate_len) else {
+                    break;
+                };
+                *slot = TimedControl {
+                    // The boundary itself. A gate lowered here is lowered at the first
+                    // sample the new mapping governs, which is what "at the boundary" means
+                    // for a sample-positioned effect.
+                    offset: crate::time::QuantumOffset::ZERO,
+                    control: target.control,
+                    value: crate::quantities::ParameterValue::ZERO,
+                };
+                self.adoption_gate_len = self.adoption_gate_len.saturating_add(1);
+                if let Some(entry) = self.adoption_gate_nodes.get_mut(self.adoption_gate_len - 1) {
+                    *entry = target.node.index();
+                }
+            }
+        }
+    }
+
     /// How many quanta a call for `frames` frames will render.
     ///
     /// Public because a caller has to know it: Phase 1's event span covers the quanta
@@ -290,6 +394,19 @@ impl PreparedRenderer {
         self.control_starts.fill(0);
         self.control_fill.fill(0);
 
+        // An adopted activation's gate-downs belong to the quantum at its boundary, which is
+        // this one: adoption runs between renderer calls, so the first collection after it is
+        // the first quantum the new mapping governs. They are counted with the quantum's own
+        // changes so that the prefix sum sizes every node's run once.
+        for index in 0..self.adoption_gate_len {
+            let Some(node) = self.adoption_gate_nodes.get(index).copied() else {
+                break;
+            };
+            if let Some(count) = self.control_starts.get_mut(node + 1) {
+                *count = count.saturating_add(1);
+            }
+        }
+
         let Ok(end) = self.clock.checked_add(FrameCount::QUANTUM) else {
             // The clock is one quantum from exhausting, so this call is about to fail on
             // the advance. Nothing is collected, and the refusal happens where it can be
@@ -322,6 +439,35 @@ impl PreparedRenderer {
             running = running.saturating_add(*start);
             *start = running;
         }
+
+        // The adoption gates first, because they sit at offset zero and a run has to come out
+        // ascending by offset. Every event in this quantum is at or after that boundary.
+        for index in 0..self.adoption_gate_len {
+            let (Some(node), Some(gate)) = (
+                self.adoption_gate_nodes.get(index).copied(),
+                self.adoption_gates.get(index).copied(),
+            ) else {
+                break;
+            };
+            let (Some(base), Some(filled)) = (
+                self.control_starts.get(node).copied(),
+                self.control_fill.get(node).copied(),
+            ) else {
+                continue;
+            };
+            let Some(slot) = self
+                .timed_controls
+                .get_mut(base.saturating_add(filled) as usize)
+            else {
+                continue;
+            };
+            *slot = gate;
+            if let Some(fill) = self.control_fill.get_mut(node) {
+                *fill = fill.saturating_add(1);
+            }
+        }
+        // Spent: they belong to the boundary quantum and to no other.
+        self.adoption_gate_len = 0;
 
         // Pass two: each change written where its node's run has room. Within a node the
         // writes happen in the order the scratch holds them, which is ascending position,

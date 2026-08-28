@@ -630,10 +630,50 @@ fn build_rows(
             ResourceField::LiveEventShare,
             limits.events().shares().live_event_share(),
         ),
-        (
-            ResourceField::SessionEventShare,
-            limits.events().shares().session_event_share(),
-        ),
+    ] {
+        rows.push(ResourceRow::new(
+            field,
+            ResourceAmount::Events(amount),
+            ResourceAmount::Events(amount),
+            IrObject::Plan,
+        ));
+    }
+
+    // ADR-0051 clause 1's catch-up batch, which `HOST-INV-022` makes the session share's
+    // bounded contributor. A locate restores **every** prepared target at once, so the
+    // batch's size *is* the plan's prepared-target count at every legal locate position —
+    // one row per control per node, which is exactly how `parameter_targets` is lowered
+    // below. That is why the row has one number to report rather than a worst case to search
+    // for, which is what a plan-dependent admission of this share will compare when it
+    // lands. See the note on that row below for why it does not refuse yet.
+    let catch_up = ir.nodes().iter().fold(0_u64, |total, node| {
+        total.saturating_add(
+            crate::node::descriptor(node.kind()).map_or(0, |descriptor| descriptor.controls.len())
+                as u64,
+        )
+    });
+    // Plus **one** for ADR-0050 clause 5's boundary mass release, which ADR-0046 clause 6
+    // charges to the same share as a single bounded operation rather than as one event per
+    // voice. It is published into the same quantum as the batch, so a plan whose catch-up
+    // exactly filled the share would overrun at the first seek — and a share overrun is a
+    // contract violation that ends the stream, not a load condition it recovers from.
+    //
+    // Like the compiled row above, this one reports a plan-derived request rather than the
+    // profile's value on both sides. Unlike it, the request is **not** refused:
+    // `SessionEventShare` is excluded from `ResourceField::is_admission_checked`, so a plan
+    // whose catch-up exceeds the share compiles and faults at its first locate instead. The
+    // row exists so that admission work has the number to check when it lands.
+    let session = catch_up.saturating_add(1);
+    rows.push(ResourceRow::new(
+        ResourceField::SessionEventShare,
+        ResourceAmount::Events(EventCount::measured(
+            u32::try_from(session).unwrap_or(u32::MAX),
+        )),
+        ResourceAmount::Events(limits.events().shares().session_event_share()),
+        IrObject::Plan,
+    ));
+
+    for (field, amount) in [
         (
             ResourceField::InternalEventShare,
             limits.events().shares().internal_event_share(),
@@ -831,9 +871,14 @@ fn scratch_bytes(
     // And the sample-positioned control scratch, for the same reason and from the same
     // module: it is sized by the per-quantum event capacity and by how many nodes the plan
     // schedules, neither of which this function is the authority on.
+    let mut identity_indices: u32 = 0;
+    for range in note_producer_ranges {
+        identity_indices = identity_indices.saturating_add(range.get());
+    }
     let controls = crate::render::timed_control_scratch_bytes(
         profile.limits().events().max_events_per_quantum(),
         scheduled_records,
+        crate::quantities::HeldNoteCount::measured(identity_indices),
     );
 
     // And ADR-0047's two identity halves, both sized by the producer partition this plan

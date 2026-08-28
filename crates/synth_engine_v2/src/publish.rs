@@ -379,6 +379,15 @@ impl PublicationArbiter {
     /// Recorded on **every** stream rather than only after a fault, because a partition
     /// that is never approached and one that is repeatedly grazed look identical in a
     /// green run, and clause 1's numbers are exactly what Phase 3 has to measure.
+    ///
+    /// **The ledger counts charges, not batch entries.** ADR-0046 clause 6 charges a bounded
+    /// operation — clause 5's boundary mass release — to its class's share without expanding
+    /// it into one event per voice, so an operation occupies the share while adding nothing
+    /// the renderer is handed. A window can therefore report occupancy against an empty
+    /// batch. That is the share's own quantity: it is what clause 7 makes an overrun of a
+    /// contract violation, and a ledger that counted only batch entries would leave part of
+    /// the load it governs invisible. An independent review raised the divergence and the
+    /// maintainer approved the redefinition on 2026-08-28.
     pub const fn high_water(&self, class: ProducerClass) -> EventCount {
         self.high_water[class.index()]
     }

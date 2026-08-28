@@ -58,6 +58,7 @@ use synth_engine_v2::quantities::{
 };
 use synth_engine_v2::render::{AudioBlockMut, PreparedRenderer, Renderer, TimedEvent, TimedEvents};
 use synth_engine_v2::schedule::CompiledPayload;
+use synth_engine_v2::stream::StreamControl;
 use synth_engine_v2::time::{FrameCount, PlanPosition, QUANTUM_FRAMES, SampleTime, StreamAnchor};
 
 // ---------------------------------------------------------------------------
@@ -402,7 +403,7 @@ fn v2_settled(carry: Option<&mut InputCarry>) -> (PreparedRenderer, Vec<f32>) {
     let slot = plan
         .resolve_note(ENVELOPE)
         .expect("the envelope is playable");
-    let mut renderer = PreparedRenderer::prepare(
+    let (mut control, mut renderer) = StreamControl::open(
         plan,
         StreamAnchor::new(SampleTime::ZERO, PlanPosition::ZERO),
     )
@@ -436,7 +437,7 @@ fn v2_settled(carry: Option<&mut InputCarry>) -> (PreparedRenderer, Vec<f32>) {
     // plan's own admitted partition can mint one.
     let _epoch = renderer.epoch();
     let played = synth_engine_v2::schedule::stamp_compiled(
-        &mut renderer,
+        &mut control,
         &[synth_engine_v2::schedule::CompiledEvent::new(
             SampleTime::ZERO,
             CompiledPayload::NoteOn { slot },

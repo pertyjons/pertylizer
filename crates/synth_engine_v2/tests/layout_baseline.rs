@@ -61,8 +61,9 @@ use synth_engine_v2::quantities::{
     ParameterValue, Resonance, SampleRate, Seconds,
 };
 use synth_engine_v2::render::{
-    AudioBlockMut, EventEnvelope, EventPayload, PreparedRenderer, Renderer, TimedEvent, TimedEvents,
+    AudioBlockMut, EventEnvelope, EventPayload, Renderer, TimedEvent, TimedEvents,
 };
+use synth_engine_v2::stream::StreamControl;
 use synth_engine_v2::time::{FrameCount, PlanPosition, SampleTime, StreamAnchor, TimeSource};
 
 /// The quantum, and the harness profile's maximum block, so one call is one quantum.
@@ -426,7 +427,7 @@ fn render_fixture(fixture: &Fixture) -> Vec<(String, Vec<f32>)> {
             .unwrap_or_else(|| panic!("fixture {} declares an envelope gate", fixture.name))
     });
 
-    let mut renderer = PreparedRenderer::prepare(
+    let (_control, mut renderer) = StreamControl::open(
         plan,
         StreamAnchor::new(SampleTime::ZERO, PlanPosition::ZERO),
     )

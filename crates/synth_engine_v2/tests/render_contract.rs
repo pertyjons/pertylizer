@@ -22,6 +22,7 @@ use synth_engine_v2::render::{
     AudioBlockMut, EventEnvelope, EventPayload, PreparedRenderer, Renderer, TimedEvent, TimedEvents,
 };
 use synth_engine_v2::schedule::{CompiledEvent, CompiledPayload};
+use synth_engine_v2::stream::StreamControl;
 use synth_engine_v2::time::{
     FrameCount, PlanPosition, QUANTUM_FRAMES, SampleTime, StreamAnchor, StreamEpoch, TimeSource,
 };
@@ -30,7 +31,7 @@ use synth_engine_v2::time::{
 fn render_live(plan: CompiledPlan, frames: usize, block: usize) -> Vec<f32> {
     let layout = plan.channel_layout();
     let channels = layout.channels();
-    let mut renderer = PreparedRenderer::prepare(
+    let (_control, mut renderer) = StreamControl::open(
         plan,
         StreamAnchor::new(SampleTime::ZERO, PlanPosition::ZERO),
     )
@@ -276,7 +277,7 @@ fn a_prepared_plan_renders_after_its_profile_is_dropped() {
         plan
     };
 
-    let mut renderer = PreparedRenderer::prepare(
+    let (_control, mut renderer) = StreamControl::open(
         plan,
         StreamAnchor::new(SampleTime::ZERO, PlanPosition::ZERO),
     )
@@ -297,7 +298,7 @@ fn an_oversized_callback_is_a_terminal_stream_fault() {
     let ir = source_plan(IrNodeKind::Constant {
         level: Amplitude::new(1.0).expect("finite"),
     });
-    let mut renderer = PreparedRenderer::prepare(
+    let (_control, mut renderer) = StreamControl::open(
         admit(&ir, host),
         StreamAnchor::new(SampleTime::ZERO, PlanPosition::ZERO),
     )
@@ -338,7 +339,7 @@ fn a_wrongly_shaped_output_block_is_refused_before_anything_is_rendered() {
     let ir = source_plan(IrNodeKind::Constant {
         level: Amplitude::new(0.5).expect("finite"),
     });
-    let mut renderer = PreparedRenderer::prepare(
+    let (_control, mut renderer) = StreamControl::open(
         admit(&ir, host),
         StreamAnchor::new(SampleTime::ZERO, PlanPosition::ZERO),
     )
@@ -358,7 +359,7 @@ fn sine_renderer(block: u64) -> (PreparedRenderer, StreamEpoch) {
         frequency: Frequency::new(440.0).expect("finite"),
         amplitude: Amplitude::new(0.5).expect("finite"),
     });
-    let renderer = PreparedRenderer::prepare(
+    let (_control, renderer) = StreamControl::open(
         admit(&ir, host),
         StreamAnchor::new(SampleTime::ZERO, PlanPosition::ZERO),
     )
@@ -565,7 +566,7 @@ fn a_late_note_edge_takes_effect_at_its_clamped_render_position() {
     let slot = plan
         .resolve_note(ENVELOPE)
         .expect("an envelope is a node a note can be sent to");
-    let mut renderer = PreparedRenderer::prepare(
+    let (mut control, mut renderer) = StreamControl::open(
         plan,
         StreamAnchor::new(SampleTime::ZERO, PlanPosition::ZERO),
     )
@@ -615,7 +616,7 @@ fn a_late_note_edge_takes_effect_at_its_clamped_render_position() {
     // Stamped rather than hand-built: a note event carries an occurrence now, and only the
     // plan's own partition can mint one.
     let events = synth_engine_v2::schedule::stamp_compiled(
-        &mut renderer,
+        &mut control,
         &[
             CompiledEvent::new(SampleTime::new(0), CompiledPayload::NoteOn { slot }),
             CompiledEvent::new(
@@ -707,7 +708,7 @@ fn a_quantum_over_its_event_capacity_is_rejected_before_anything_is_mutated() {
     let plan = compile(&ir, &RenderConfig::new(host))
         .into_plan()
         .expect("the plan fits");
-    let mut renderer = PreparedRenderer::prepare(
+    let (_control, mut renderer) = StreamControl::open(
         plan,
         StreamAnchor::new(SampleTime::ZERO, PlanPosition::ZERO),
     )
@@ -762,7 +763,7 @@ fn a_parameter_change_takes_effect_at_the_next_quantum_boundary() {
     });
     let quantum = QUANTUM_FRAMES as usize;
 
-    let mut renderer = PreparedRenderer::prepare(
+    let (_control, mut renderer) = StreamControl::open(
         admit(&ir, host),
         StreamAnchor::new(SampleTime::ZERO, PlanPosition::ZERO),
     )
@@ -851,7 +852,7 @@ fn an_event_inside_a_calls_final_quantum_takes_effect_in_the_next_call() {
     });
     let quantum = QUANTUM_FRAMES as usize;
 
-    let mut renderer = PreparedRenderer::prepare(
+    let (_control, mut renderer) = StreamControl::open(
         admit(&ir, host),
         StreamAnchor::new(SampleTime::ZERO, PlanPosition::ZERO),
     )
@@ -1019,7 +1020,7 @@ fn the_carry_latency_is_a_constant_quantum() {
     let plan = admit(&source_plan(IrNodeKind::Silence), host);
     assert_eq!(plan.added_latency().as_u64(), u64::from(QUANTUM_FRAMES));
 
-    let renderer = PreparedRenderer::prepare(
+    let (_control, renderer) = StreamControl::open(
         plan,
         StreamAnchor::new(SampleTime::ZERO, PlanPosition::ZERO),
     )
@@ -1035,12 +1036,12 @@ fn the_carry_latency_is_a_constant_quantum() {
 fn two_streams_get_different_epochs() {
     let host = profile(256, ChannelLayout::Mono);
     let ir = source_plan(IrNodeKind::Silence);
-    let first = PreparedRenderer::prepare(
+    let (_first_control, first) = StreamControl::open(
         admit(&ir, host),
         StreamAnchor::new(SampleTime::ZERO, PlanPosition::ZERO),
     )
     .expect("preparation succeeds");
-    let second = PreparedRenderer::prepare(
+    let (_second_control, second) = StreamControl::open(
         admit(&ir, host),
         StreamAnchor::new(SampleTime::ZERO, PlanPosition::ZERO),
     )

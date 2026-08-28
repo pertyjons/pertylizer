@@ -14,11 +14,12 @@ use synth_engine_v2::plan::CompiledPlan;
 use synth_engine_v2::profile::{EventLimits, HostProfile, ProducerShares, RenderLimits};
 use synth_engine_v2::publish::{ProducerClass, PublicationArbiter};
 use synth_engine_v2::quantities::{Amplitude, ChannelLayout, EventCount, NormalizedLevel, Seconds};
-use synth_engine_v2::render::{AudioBlockMut, PreparedRenderer, Renderer, TimedEvents};
+use synth_engine_v2::render::{AudioBlockMut, Renderer, TimedEvents};
 use synth_engine_v2::schedule::{
     AdmittedCompiledStream, CompiledEventScheduler, CompiledPayload, CompiledStreamError,
     PlanEvent, SchedulePrepareError, ScheduledRenderError,
 };
+use synth_engine_v2::stream::StreamControl;
 use synth_engine_v2::time::{PlanPosition, QUANTUM_FRAMES, SampleTime, StreamAnchor};
 
 const SOURCE: NodeId = NodeId::new(1);
@@ -127,15 +128,14 @@ fn render_partition(plan: &CompiledPlan, partition: &[usize]) -> Vec<f32> {
         "every callback family covers the same output duration"
     );
 
-    let mut renderer =
-        PreparedRenderer::prepare(plan.clone(), ORIGIN).expect("preparation succeeds");
+    let (mut control, mut renderer) =
+        StreamControl::open(plan.clone(), ORIGIN).expect("preparation succeeds");
     let events = [
         compiled_note(plan, ON, true),
         compiled_note(plan, OFF, false),
     ];
-    let mut scheduler =
-        CompiledEventScheduler::prepare(&mut renderer, ORIGIN, &admitted(plan, &events))
-            .expect("the schedule is valid");
+    let mut scheduler = CompiledEventScheduler::prepare(&mut control, &admitted(plan, &events))
+        .expect("the schedule is valid");
     let mut publication = arbiter(TOTAL_FRAMES as u64);
     let mut rendered = Vec::with_capacity(TOTAL_FRAMES);
 
@@ -232,17 +232,17 @@ fn admission_rejects_a_slot_from_another_plan() {
 #[test]
 fn preparation_refuses_a_stream_admitted_against_another_plan() {
     // The stream-level counterpart of the check above. An admitted stream already proved
-    // every slot belongs to *its* plan, so the renderer compares one identity rather than
+    // every slot belongs to *its* plan, so preparation compares one identity rather than
     // re-walking the list.
     let plan = common::admit(&gated_constant(), common::profile(256, ChannelLayout::Mono));
     let foreign = common::admit(&gated_constant(), common::profile(256, ChannelLayout::Mono));
-    let mut renderer =
-        PreparedRenderer::prepare(plan.clone(), ORIGIN).expect("preparation succeeds");
+    let (mut control, _renderer) =
+        StreamControl::open(plan.clone(), ORIGIN).expect("preparation succeeds");
     let events = [compiled_note(&foreign, 0, true)];
     let stream = admitted(&foreign, &events);
 
     assert_eq!(
-        CompiledEventScheduler::prepare(&mut renderer, ORIGIN, &stream)
+        CompiledEventScheduler::prepare(&mut control, &stream)
             .expect_err("the stream belongs to another plan"),
         SchedulePrepareError::ForeignStream {
             expected: plan.id(),
@@ -336,8 +336,8 @@ fn preparation_refuses_a_position_before_the_anchor() {
     // every window of a suffix is a window of the whole.
     let plan = common::admit(&gated_constant(), common::profile(256, ChannelLayout::Mono));
     let anchor = StreamAnchor::new(SampleTime::ZERO, PlanPosition::new(4 * Q));
-    let mut renderer =
-        PreparedRenderer::prepare(plan.clone(), anchor).expect("preparation succeeds");
+    let (mut control, _renderer) =
+        StreamControl::open(plan.clone(), anchor).expect("preparation succeeds");
     let events = [
         compiled_note(&plan, Q, true),
         compiled_note(&plan, 8 * Q, false),
@@ -345,7 +345,7 @@ fn preparation_refuses_a_position_before_the_anchor() {
     let stream = admitted(&plan, &events);
 
     assert_eq!(
-        CompiledEventScheduler::prepare(&mut renderer, anchor, &stream)
+        CompiledEventScheduler::prepare(&mut control, &stream)
             .expect_err("the first event is behind the anchor"),
         SchedulePrepareError::BeforeAnchor {
             event_index: 0,
@@ -362,42 +362,17 @@ fn preparation_tells_an_unrepresentable_time_from_a_pre_anchor_one() {
     // overflows a signed frame delta. Reporting it as `BeforeAnchor` would send someone
     // looking for a seek that never happened.
     let plan = common::admit(&gated_constant(), common::profile(256, ChannelLayout::Mono));
-    let mut renderer =
-        PreparedRenderer::prepare(plan.clone(), ORIGIN).expect("preparation succeeds");
+    let (mut control, _renderer) =
+        StreamControl::open(plan.clone(), ORIGIN).expect("preparation succeeds");
     let events = [compiled_note(&plan, u64::MAX, true)];
     let stream = admitted(&plan, &events);
 
     assert_eq!(
-        CompiledEventScheduler::prepare(&mut renderer, ORIGIN, &stream)
+        CompiledEventScheduler::prepare(&mut control, &stream)
             .expect_err("the engine time does not fit"),
         SchedulePrepareError::TimeUnrepresentable {
             event_index: 0,
             position: PlanPosition::new(u64::MAX),
-        }
-    );
-}
-
-#[test]
-fn preparation_refuses_a_placement_the_renderer_is_not_anchored_at() {
-    // The two timelines have to be one. The renderer's hot path derives every quantum's
-    // plan position from its own anchor, so a stream placed at a different pairing would
-    // move the notes while an `Impulse` kept sounding where the old anchor says. Seek and
-    // loop wrap re-anchor without re-preparing the renderer, so this disagreement is
-    // reachable — and re-anchoring a prepared renderer, which is what would resolve it,
-    // does not exist yet. Refused rather than silently decided.
-    let plan = common::admit(&gated_constant(), common::profile(256, ChannelLayout::Mono));
-    let mut renderer =
-        PreparedRenderer::prepare(plan.clone(), ORIGIN).expect("preparation succeeds");
-    let moved = StreamAnchor::new(SampleTime::ZERO, PlanPosition::new(4 * Q));
-    let events = [compiled_note(&plan, 4 * Q + 17, true)];
-    let stream = admitted(&plan, &events);
-
-    assert_eq!(
-        CompiledEventScheduler::prepare(&mut renderer, moved, &stream)
-            .expect_err("the renderer is anchored elsewhere"),
-        SchedulePrepareError::AnchorMismatch {
-            renderer: ORIGIN,
-            supplied: moved,
         }
     );
 }
@@ -410,14 +385,14 @@ fn preparation_places_an_admitted_stream_at_the_anchor() {
     // anchor-independent in the first place.
     let plan = common::admit(&gated_constant(), common::profile(256, ChannelLayout::Mono));
     let anchor = StreamAnchor::new(SampleTime::ZERO, PlanPosition::new(4 * Q));
-    let mut renderer =
-        PreparedRenderer::prepare(plan.clone(), anchor).expect("preparation succeeds");
+    let (mut control, mut renderer) =
+        StreamControl::open(plan.clone(), anchor).expect("preparation succeeds");
     let events = [
         compiled_note(&plan, 4 * Q + 17, true),
         compiled_note(&plan, 6 * Q + 3, false),
     ];
     let stream = admitted(&plan, &events);
-    let mut scheduler = CompiledEventScheduler::prepare(&mut renderer, anchor, &stream)
+    let mut scheduler = CompiledEventScheduler::prepare(&mut control, &stream)
         .expect("the stream starts at the anchor");
 
     let mut samples = [0.0_f32; 256];
@@ -445,8 +420,8 @@ fn one_multi_quantum_host_call_accepts_the_full_share_of_each_quantum() {
     // any single quantum admits — but the per-quantum bound is now the class's own.
     let host = common::profile(256, ChannelLayout::Mono);
     let plan = common::admit(&gated_constant(), host);
-    let mut renderer =
-        PreparedRenderer::prepare(plan.clone(), ORIGIN).expect("preparation succeeds");
+    let (mut control, mut renderer) =
+        StreamControl::open(plan.clone(), ORIGIN).expect("preparation succeeds");
     let admissible = host
         .limits()
         .events()
@@ -460,9 +435,8 @@ fn one_multi_quantum_host_call_accepts_the_full_share_of_each_quantum() {
             events.push(compiled_note(&plan, quantum * Q, true));
         }
     }
-    let mut scheduler =
-        CompiledEventScheduler::prepare(&mut renderer, ORIGIN, &admitted(&plan, &events))
-            .expect("every quantum fits");
+    let mut scheduler = CompiledEventScheduler::prepare(&mut control, &admitted(&plan, &events))
+        .expect("every quantum fits");
     let mut samples = [0.0_f32; 256];
     let output = AudioBlockMut::new(&mut samples, 256, ChannelLayout::Mono)
         .expect("the output block is shaped correctly");
@@ -479,13 +453,14 @@ fn one_multi_quantum_host_call_accepts_the_full_share_of_each_quantum() {
 #[test]
 fn a_schedule_cannot_cross_a_reprepared_epoch() {
     let plan = common::admit(&gated_constant(), common::profile(256, ChannelLayout::Mono));
-    let mut first =
-        PreparedRenderer::prepare(plan.clone(), ORIGIN).expect("first preparation succeeds");
+    let (mut first_control, first) =
+        StreamControl::open(plan.clone(), ORIGIN).expect("first preparation succeeds");
     let event = [compiled_note(&plan, 0, true)];
     let mut scheduler =
-        CompiledEventScheduler::prepare(&mut first, ORIGIN, &admitted(&plan, &event))
+        CompiledEventScheduler::prepare(&mut first_control, &admitted(&plan, &event))
             .expect("the schedule is valid");
-    let mut second = PreparedRenderer::prepare(plan, ORIGIN).expect("second preparation succeeds");
+    let (_second_control, mut second) =
+        StreamControl::open(plan, ORIGIN).expect("second preparation succeeds");
     let mut samples = [0.0_f32; 64];
     let output = AudioBlockMut::new(&mut samples, 64, ChannelLayout::Mono)
         .expect("the output block is shaped correctly");
@@ -504,12 +479,11 @@ fn a_schedule_cannot_cross_a_reprepared_epoch() {
 #[test]
 fn bypassing_the_scheduler_cannot_make_a_compiled_event_late_silently() {
     let plan = common::admit(&gated_constant(), common::profile(256, ChannelLayout::Mono));
-    let mut renderer =
-        PreparedRenderer::prepare(plan.clone(), ORIGIN).expect("preparation succeeds");
+    let (mut control, mut renderer) =
+        StreamControl::open(plan.clone(), ORIGIN).expect("preparation succeeds");
     let event = [compiled_note(&plan, 0, true)];
-    let mut scheduler =
-        CompiledEventScheduler::prepare(&mut renderer, ORIGIN, &admitted(&plan, &event))
-            .expect("the schedule is valid");
+    let mut scheduler = CompiledEventScheduler::prepare(&mut control, &admitted(&plan, &event))
+        .expect("the schedule is valid");
 
     let mut first = [0.0_f32; 128];
     let output = AudioBlockMut::new(&mut first, 128, ChannelLayout::Mono)
@@ -541,15 +515,14 @@ fn compiled_events_are_charged_to_the_compiled_share() {
     // partition was true of every producer except the one the crate already had.
     let host = common::profile(256, ChannelLayout::Mono);
     let plan = common::admit(&gated_constant(), host);
-    let mut renderer =
-        PreparedRenderer::prepare(plan.clone(), ORIGIN).expect("preparation succeeds");
+    let (mut control, mut renderer) =
+        StreamControl::open(plan.clone(), ORIGIN).expect("preparation succeeds");
     let events = [
         compiled_note(&plan, 1, true),
         compiled_note(&plan, 3, false),
     ];
-    let mut scheduler =
-        CompiledEventScheduler::prepare(&mut renderer, ORIGIN, &admitted(&plan, &events))
-            .expect("the schedule is valid");
+    let mut scheduler = CompiledEventScheduler::prepare(&mut control, &admitted(&plan, &events))
+        .expect("the schedule is valid");
     let mut publication = arbiter(256);
 
     // 256 frames, not 64: the stream starts with a full quantum of primed carry, so a
@@ -593,12 +566,11 @@ fn a_forged_publication_fault_ends_the_stream_rather_than_the_call() {
     // implementation that recovered on the next call.
     let host = common::profile(256, ChannelLayout::Mono);
     let plan = common::admit(&gated_constant(), host);
-    let mut renderer =
-        PreparedRenderer::prepare(plan.clone(), ORIGIN).expect("preparation succeeds");
+    let (mut control, mut renderer) =
+        StreamControl::open(plan.clone(), ORIGIN).expect("preparation succeeds");
     let events = [compiled_note(&plan, 1, true)];
-    let mut scheduler =
-        CompiledEventScheduler::prepare(&mut renderer, ORIGIN, &admitted(&plan, &events))
-            .expect("the schedule is valid");
+    let mut scheduler = CompiledEventScheduler::prepare(&mut control, &admitted(&plan, &events))
+        .expect("the schedule is valid");
 
     // Prepared for a single quantum; the call below needs four.
     let mut undersized = arbiter(64);
@@ -656,15 +628,14 @@ fn a_forged_charge_overrun_ends_the_stream_on_its_own_branch() {
     // prepared from a profile whose compiled share is one event. No conforming caller pairs
     // a plan with an arbiter from a different profile.
     let plan = common::admit(&gated_constant(), common::profile(256, ChannelLayout::Mono));
-    let mut renderer =
-        PreparedRenderer::prepare(plan.clone(), ORIGIN).expect("preparation succeeds");
+    let (mut control, mut renderer) =
+        StreamControl::open(plan.clone(), ORIGIN).expect("preparation succeeds");
     let events = [
         compiled_note(&plan, 65, true),
         compiled_note(&plan, 70, false),
     ];
-    let mut scheduler =
-        CompiledEventScheduler::prepare(&mut renderer, ORIGIN, &admitted(&plan, &events))
-            .expect("two events fit the share");
+    let mut scheduler = CompiledEventScheduler::prepare(&mut control, &admitted(&plan, &events))
+        .expect("two events fit the share");
 
     let mut narrow =
         PublicationArbiter::prepare(&narrow_compiled_share()).expect("the store is preparable");
@@ -740,12 +711,11 @@ fn a_schedule_refuses_a_second_arbiter() {
     // silently restart the high-water history that Phase 3's measurement is going to read.
     // The schedule latches the first identity it publishes through.
     let plan = common::admit(&gated_constant(), common::profile(256, ChannelLayout::Mono));
-    let mut renderer =
-        PreparedRenderer::prepare(plan.clone(), ORIGIN).expect("preparation succeeds");
+    let (mut control, mut renderer) =
+        StreamControl::open(plan.clone(), ORIGIN).expect("preparation succeeds");
     let events = [compiled_note(&plan, 65, true)];
-    let mut scheduler =
-        CompiledEventScheduler::prepare(&mut renderer, ORIGIN, &admitted(&plan, &events))
-            .expect("the schedule is valid");
+    let mut scheduler = CompiledEventScheduler::prepare(&mut control, &admitted(&plan, &events))
+        .expect("the schedule is valid");
 
     let mut first = arbiter(256);
     let mut second = arbiter(256);
@@ -786,12 +756,11 @@ fn a_faulted_epoch_is_not_faulted_a_second_time() {
     // that, because the existing tests retried through `PreparedRenderer::render`, which has
     // its own guard, and never through the scheduler.
     let plan = common::admit(&gated_constant(), common::profile(256, ChannelLayout::Mono));
-    let mut renderer =
-        PreparedRenderer::prepare(plan.clone(), ORIGIN).expect("preparation succeeds");
+    let (mut control, mut renderer) =
+        StreamControl::open(plan.clone(), ORIGIN).expect("preparation succeeds");
     let events = [compiled_note(&plan, 1, true)];
-    let mut scheduler =
-        CompiledEventScheduler::prepare(&mut renderer, ORIGIN, &admitted(&plan, &events))
-            .expect("the schedule is valid");
+    let mut scheduler = CompiledEventScheduler::prepare(&mut control, &admitted(&plan, &events))
+        .expect("the schedule is valid");
     let mut undersized = arbiter(64);
 
     let mut samples = [9.0_f32; 256];

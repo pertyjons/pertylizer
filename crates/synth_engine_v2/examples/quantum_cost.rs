@@ -38,6 +38,7 @@ use synth_engine_v2::quantities::{
     SampleRate, Seconds,
 };
 use synth_engine_v2::render::{AudioBlockMut, PreparedRenderer, Renderer, TimedEvent, TimedEvents};
+use synth_engine_v2::stream::StreamControl;
 use synth_engine_v2::time::{FrameCount, PlanPosition, QUANTUM_FRAMES, SampleTime, StreamAnchor};
 
 /// This build's quantum, in frames.
@@ -307,7 +308,7 @@ fn settled(shape: Shape, carry: Option<&mut InputCarry>) -> (PreparedRenderer, V
             .expect("the envelope is playable")
     });
 
-    let mut renderer = PreparedRenderer::prepare(
+    let (mut control, mut renderer) = StreamControl::open(
         plan,
         StreamAnchor::new(SampleTime::ZERO, PlanPosition::ZERO),
     )
@@ -343,7 +344,7 @@ fn settled(shape: Shape, carry: Option<&mut InputCarry>) -> (PreparedRenderer, V
             // plan's admitted partition, and a hand-built event cannot have one.
             let _epoch = renderer.epoch();
             synth_engine_v2::schedule::stamp_compiled(
-                &mut renderer,
+                &mut control,
                 &[synth_engine_v2::schedule::CompiledEvent::new(
                     SampleTime::ZERO,
                     synth_engine_v2::schedule::CompiledPayload::NoteOn { slot },

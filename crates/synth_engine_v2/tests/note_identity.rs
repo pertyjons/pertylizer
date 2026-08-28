@@ -23,11 +23,16 @@ use synth_engine_v2::ir::{
 };
 use synth_engine_v2::offline::{OfflineEvent, render_offline};
 use synth_engine_v2::plan::CompiledPlan;
+use synth_engine_v2::publish::PublicationArbiter;
 use synth_engine_v2::quantities::{
     Amplitude, ChannelLayout, EventCount, HeldNoteCount, NormalizedLevel, Seconds,
 };
-use synth_engine_v2::render::{AudioBlockMut, PreparedRenderer, Renderer, TimedEvents};
-use synth_engine_v2::schedule::{CompiledEvent, CompiledPayload, SchedulePrepareError};
+use synth_engine_v2::render::{AudioBlockMut, Renderer, TimedEvents};
+use synth_engine_v2::schedule::{
+    AdmittedCompiledStream, CompiledEvent, CompiledEventScheduler, CompiledPayload, PlanEvent,
+    SchedulePrepareError, ScheduledRenderError,
+};
+use synth_engine_v2::stream::StreamControl;
 use synth_engine_v2::time::{FrameCount, PlanPosition, QUANTUM_FRAMES, SampleTime, StreamAnchor};
 
 const Q: u64 = QUANTUM_FRAMES as u64;
@@ -256,7 +261,7 @@ fn a_release_replayed_after_its_note_ended_moves_no_node() {
     // implementation that resolved a release by node would cut the chain to silence here;
     // one that resolves through the occurrence leaves it sounding.
     let plan = common::admit(&two_voices(), profile(256, ChannelLayout::Mono));
-    let mut renderer = PreparedRenderer::prepare(
+    let (mut control, mut renderer) = StreamControl::open(
         plan,
         StreamAnchor::new(SampleTime::ZERO, PlanPosition::ZERO),
     )
@@ -273,7 +278,7 @@ fn a_release_replayed_after_its_note_ended_moves_no_node() {
 
     // Quantum 0: the fast note opens and closes. Its index is free afterwards.
     let first = synth_engine_v2::schedule::stamp_compiled(
-        &mut renderer,
+        &mut control,
         &[
             CompiledEvent::new(SampleTime::new(0), CompiledPayload::NoteOn { slot: fast }),
             CompiledEvent::new(SampleTime::new(1), CompiledPayload::NoteOff { slot: fast }),
@@ -294,7 +299,7 @@ fn a_release_replayed_after_its_note_ended_moves_no_node() {
 
     // Quantum 1: both notes open, and the spent release is replayed on time alongside them.
     let opened = synth_engine_v2::schedule::stamp_compiled(
-        &mut renderer,
+        &mut control,
         &[
             CompiledEvent::new(SampleTime::new(Q), CompiledPayload::NoteOn { slot: fast }),
             CompiledEvent::new(SampleTime::new(Q), CompiledPayload::NoteOn { slot: slow }),
@@ -337,12 +342,12 @@ fn an_occurrence_from_another_plan_is_refused_rather_than_applied() {
     // only thing that can tell the renderer this event is not its own is the occurrence's
     // table — which is why the foreign filter compares tables and not slots.
     let host = profile(256, ChannelLayout::Mono);
-    let mut mine = PreparedRenderer::prepare(
+    let (_mine_control, mut mine) = StreamControl::open(
         common::admit(&two_voices(), host),
         StreamAnchor::new(SampleTime::ZERO, PlanPosition::ZERO),
     )
     .expect("preparation succeeds");
-    let mut theirs = PreparedRenderer::prepare(
+    let (mut theirs_control, theirs) = StreamControl::open(
         common::admit(&two_voices(), host),
         StreamAnchor::new(SampleTime::ZERO, PlanPosition::ZERO),
     )
@@ -354,7 +359,7 @@ fn an_occurrence_from_another_plan_is_refused_rather_than_applied() {
         .expect("an envelope can be played");
     let _epoch = theirs.epoch();
     let foreign = synth_engine_v2::schedule::stamp_compiled(
-        &mut theirs,
+        &mut theirs_control,
         &[CompiledEvent::new(
             SampleTime::new(0),
             CompiledPayload::NoteOn { slot },
@@ -394,7 +399,7 @@ fn a_compiled_release_with_no_matching_note_on_is_refused_at_stamping() {
     // Pairing happens at stamping or nowhere: after it, a release carries only an
     // occurrence. A list whose release opens nothing therefore has to be refused here,
     // because no later stage can tell it from an orphan the renderer must ignore.
-    let mut renderer = PreparedRenderer::prepare(
+    let (mut control, renderer) = StreamControl::open(
         common::admit(&two_voices(), profile(256, ChannelLayout::Mono)),
         StreamAnchor::new(SampleTime::ZERO, PlanPosition::ZERO),
     )
@@ -406,7 +411,7 @@ fn a_compiled_release_with_no_matching_note_on_is_refused_at_stamping() {
     let _epoch = renderer.epoch();
 
     let refused = synth_engine_v2::schedule::stamp_compiled(
-        &mut renderer,
+        &mut control,
         &[CompiledEvent::new(
             SampleTime::new(0),
             CompiledPayload::NoteOff { slot },
@@ -428,7 +433,7 @@ fn a_plan_that_declares_no_note_producer_cannot_stamp_a_note() {
     // for an occurrence to come from. Minting one anyway would put it outside the partition
     // every disjointness check relies on.
     let ir = two_voices_declaring(PlanDeclarations::default());
-    let mut renderer = PreparedRenderer::prepare(
+    let (mut control, renderer) = StreamControl::open(
         common::admit(&ir, profile(256, ChannelLayout::Mono)),
         StreamAnchor::new(SampleTime::ZERO, PlanPosition::ZERO),
     )
@@ -440,7 +445,7 @@ fn a_plan_that_declares_no_note_producer_cannot_stamp_a_note() {
     let _epoch = renderer.epoch();
 
     let refused = synth_engine_v2::schedule::stamp_compiled(
-        &mut renderer,
+        &mut control,
         &[CompiledEvent::new(
             SampleTime::new(0),
             CompiledPayload::NoteOn { slot },
@@ -510,7 +515,7 @@ fn the_compiled_producer_is_looked_up_rather_than_assumed_to_be_the_first() {
         ..PlanDeclarations::default()
     };
     let ir = two_voices_declaring(declarations);
-    let mut renderer = PreparedRenderer::prepare(
+    let (mut control, renderer) = StreamControl::open(
         common::admit(&ir, profile(256, ChannelLayout::Mono)),
         StreamAnchor::new(SampleTime::ZERO, PlanPosition::ZERO),
     )
@@ -529,13 +534,13 @@ fn the_compiled_producer_is_looked_up_rather_than_assumed_to_be_the_first() {
             )
         })
         .collect();
-    synth_engine_v2::schedule::stamp_compiled(&mut renderer, &opens)
+    synth_engine_v2::schedule::stamp_compiled(&mut control, &opens)
         .expect("eight simultaneous notes fit the compiled producer's eight admitted indices");
 
     // And the range really is that producer's eight rather than something unbounded: the
     // ninth has nowhere to go, and the error names the producer it was charged to.
     let refused = synth_engine_v2::schedule::stamp_compiled(
-        &mut renderer,
+        &mut control,
         &[CompiledEvent::new(
             SampleTime::new(u64::from(COMPILED_RANGE)),
             CompiledPayload::NoteOn { slot },
@@ -574,14 +579,14 @@ fn a_note_slot_from_another_plan_is_refused_at_stamping() {
         "two admissions are two plans, or this test proves nothing"
     );
 
-    let mut renderer = PreparedRenderer::prepare(
+    let (mut control, renderer) = StreamControl::open(
         mine,
         StreamAnchor::new(SampleTime::ZERO, PlanPosition::ZERO),
     )
     .expect("preparation succeeds");
     let _epoch = renderer.epoch();
     let refused = synth_engine_v2::schedule::stamp_compiled(
-        &mut renderer,
+        &mut control,
         &[CompiledEvent::new(
             SampleTime::ZERO,
             CompiledPayload::NoteOn { slot: foreign },
@@ -615,7 +620,7 @@ fn a_producers_range_bounds_its_polyphony_rather_than_a_pieces_note_count() {
         ..PlanDeclarations::default()
     };
     let ir = two_voices_declaring(declarations);
-    let mut renderer = PreparedRenderer::prepare(
+    let (mut control, renderer) = StreamControl::open(
         common::admit(&ir, profile(256, ChannelLayout::Mono)),
         StreamAnchor::new(SampleTime::ZERO, PlanPosition::ZERO),
     )
@@ -636,13 +641,13 @@ fn a_producers_range_bounds_its_polyphony_rather_than_a_pieces_note_count() {
             CompiledPayload::NoteOff { slot },
         ));
     }
-    let stamped = synth_engine_v2::schedule::stamp_compiled(&mut renderer, &events)
+    let stamped = synth_engine_v2::schedule::stamp_compiled(&mut control, &events)
         .expect("one note at a time fits a one-note producer, however many times it is played");
     assert_eq!(stamped.len(), events.len(), "every edge is stamped");
 
     // Two at once is what the range actually refuses.
     let refused = synth_engine_v2::schedule::stamp_compiled(
-        &mut renderer,
+        &mut control,
         &[
             CompiledEvent::new(SampleTime::ZERO, CompiledPayload::NoteOn { slot }),
             CompiledEvent::new(SampleTime::new(1), CompiledPayload::NoteOn { slot }),
@@ -664,7 +669,7 @@ fn a_producers_range_bounds_its_polyphony_rather_than_a_pieces_note_count() {
     // second failed, so a stamping that was not all-or-nothing would have left the range
     // spent and this retry would fail as over-emission with one note in flight.
     synth_engine_v2::schedule::stamp_compiled(
-        &mut renderer,
+        &mut control,
         &[
             CompiledEvent::new(SampleTime::ZERO, CompiledPayload::NoteOn { slot }),
             CompiledEvent::new(SampleTime::new(1), CompiledPayload::NoteOff { slot }),
@@ -739,7 +744,7 @@ fn a_refused_list_leaves_the_minter_as_it_found_it() {
         }],
         ..PlanDeclarations::default()
     };
-    let mut renderer = PreparedRenderer::prepare(
+    let (mut control, renderer) = StreamControl::open(
         common::admit(
             &two_voices_declaring(declarations),
             profile(256, ChannelLayout::Mono),
@@ -753,7 +758,7 @@ fn a_refused_list_leaves_the_minter_as_it_found_it() {
         .expect("an envelope can be played");
 
     let refused = synth_engine_v2::schedule::stamp_compiled(
-        &mut renderer,
+        &mut control,
         &[
             CompiledEvent::new(SampleTime::ZERO, CompiledPayload::NoteOn { slot }),
             CompiledEvent::new(SampleTime::new(1), CompiledPayload::NoteOff { slot }),
@@ -771,7 +776,7 @@ fn a_refused_list_leaves_the_minter_as_it_found_it() {
 
     // The retry is the falsifier: it needs the index the refused list would have kept.
     synth_engine_v2::schedule::stamp_compiled(
-        &mut renderer,
+        &mut control,
         &[
             CompiledEvent::new(SampleTime::ZERO, CompiledPayload::NoteOn { slot }),
             CompiledEvent::new(SampleTime::new(1), CompiledPayload::NoteOff { slot }),
@@ -787,7 +792,7 @@ fn an_orphan_names_the_occurrence_it_refused() {
     // producer's position in the declaration is its `ProducerId`, so the index falls in
     // exactly one range. A bare count would say a release was refused and nothing about which.
     let plan = common::admit(&two_voices(), profile(256, ChannelLayout::Mono));
-    let mut renderer = PreparedRenderer::prepare(
+    let (mut control, mut renderer) = StreamControl::open(
         plan,
         StreamAnchor::new(SampleTime::ZERO, PlanPosition::ZERO),
     )
@@ -799,7 +804,7 @@ fn an_orphan_names_the_occurrence_it_refused() {
         .expect("an envelope can be played");
 
     let first = synth_engine_v2::schedule::stamp_compiled(
-        &mut renderer,
+        &mut control,
         &[
             CompiledEvent::new(SampleTime::ZERO, CompiledPayload::NoteOn { slot }),
             CompiledEvent::new(SampleTime::new(1), CompiledPayload::NoteOff { slot }),
@@ -852,7 +857,7 @@ fn an_orphan_release_is_counted_rather_than_silently_skipped() {
     // deliberately not a drop — `HOST-INV-009` licenses drops for a shortage, and this is a
     // release for a note that does not exist.
     let plan = common::admit(&two_voices(), profile(256, ChannelLayout::Mono));
-    let mut renderer = PreparedRenderer::prepare(
+    let (mut control, mut renderer) = StreamControl::open(
         plan,
         StreamAnchor::new(SampleTime::ZERO, PlanPosition::ZERO),
     )
@@ -864,7 +869,7 @@ fn an_orphan_release_is_counted_rather_than_silently_skipped() {
         .expect("an envelope can be played");
 
     let first = synth_engine_v2::schedule::stamp_compiled(
-        &mut renderer,
+        &mut control,
         &[
             CompiledEvent::new(SampleTime::ZERO, CompiledPayload::NoteOn { slot }),
             CompiledEvent::new(SampleTime::new(1), CompiledPayload::NoteOff { slot }),
@@ -912,13 +917,20 @@ fn an_orphan_release_is_counted_rather_than_silently_skipped() {
 }
 
 #[test]
-fn stamping_uses_the_renderers_own_epoch() {
+fn stamping_uses_the_streams_own_epoch_and_a_foreign_renderer_refuses_the_schedule() {
     // Taking the epoch from the caller would let a list be stamped against another stream's:
     // it would succeed, reserve this producer's occurrences, and then be discarded event by
     // event as stale — a producer's whole range spent on a render that never happens. The
-    // signature no longer admits the mistake, and this pins that.
+    // signature no longer admits the mistake.
+    //
+    // The second half is what an earlier version of this test could not establish. Since
+    // ADR-0050 clause 9 the two halves of a stream are separate values, so a caller **can**
+    // pair a control with another stream's renderer. That pairing is refused where it becomes
+    // wrong rather than at preparation: the stamp carries the control's epoch, and the
+    // renderer refuses the whole schedule instead of silently discarding every event as
+    // stale, which is the difference between a diagnosable error and a silent nothing.
     let plan = common::admit(&two_voices(), profile(256, ChannelLayout::Mono));
-    let mut renderer = PreparedRenderer::prepare(
+    let (mut control, renderer) = StreamControl::open(
         plan,
         StreamAnchor::new(SampleTime::ZERO, PlanPosition::ZERO),
     )
@@ -930,7 +942,7 @@ fn stamping_uses_the_renderers_own_epoch() {
     let epoch = renderer.epoch();
 
     let stamped = synth_engine_v2::schedule::stamp_compiled(
-        &mut renderer,
+        &mut control,
         &[CompiledEvent::new(
             SampleTime::ZERO,
             CompiledPayload::NoteOn { slot },
@@ -940,6 +952,45 @@ fn stamping_uses_the_renderers_own_epoch() {
     assert_eq!(
         stamped[0].envelope().epoch(),
         epoch,
-        "the stamp carries this renderer's epoch and no other"
+        "the stamp carries this stream's epoch and no other"
+    );
+
+    // A second stream over the same plan. Its renderer is a legitimate value and the pairing
+    // compiles, which is exactly why the refusal has to exist at render.
+    let (other_control, mut other_renderer) = StreamControl::open(
+        renderer.plan().clone(),
+        StreamAnchor::new(SampleTime::ZERO, PlanPosition::ZERO),
+    )
+    .expect("a second stream over the same plan prepares");
+    assert_ne!(
+        other_renderer.epoch(),
+        epoch,
+        "two streams never share an epoch"
+    );
+    let stream = AdmittedCompiledStream::admit(
+        other_control.plan(),
+        &[PlanEvent::new(
+            PlanPosition::ZERO,
+            CompiledPayload::NoteOn { slot },
+        )],
+    )
+    .expect("one note fits the compiled share");
+    let mut schedule = CompiledEventScheduler::prepare(&mut control, &stream)
+        .expect("the first control prepares its own schedule");
+
+    let mut arbiter = PublicationArbiter::prepare(&profile(256, ChannelLayout::Mono))
+        .expect("the publication store is preparable");
+    let mut block = vec![0.0_f32; 64];
+    let output =
+        AudioBlockMut::new(&mut block, 64, ChannelLayout::Mono).expect("a well-shaped block");
+    assert_eq!(
+        schedule
+            .render(&mut other_renderer, &mut arbiter, output)
+            .expect_err("a schedule from another stream is refused"),
+        ScheduledRenderError::EpochMismatch {
+            schedule: epoch,
+            renderer: other_renderer.epoch(),
+        },
+        "the whole schedule is refused rather than each of its events discarded as stale"
     );
 }

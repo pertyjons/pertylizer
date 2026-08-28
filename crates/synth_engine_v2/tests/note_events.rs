@@ -481,3 +481,58 @@ fn a_note_addressed_to_a_node_that_cannot_be_played_does_not_resolve() {
         "and the one playable node in this plan is its envelope"
     );
 }
+
+#[test]
+fn every_event_of_a_sorted_list_is_presented_across_an_uneven_partition() {
+    // ADR-0043's named offline obligation, which `NOW.md` assigns to Phase 3's exit work:
+    // *prove the stamp-window selector cannot present a late event, or window by clamped
+    // render position.*
+    //
+    // `offline.rs`'s `events_for` selects the slice by the event's **stamp** quantum while
+    // the renderer admits by **position**, and its `start` predicate skips anything whose
+    // quantum precedes the call's first. Its premise is that the offline path — a sorted
+    // list walked with a monotone clock — cannot produce such an event. That premise is what
+    // this test discharges, and it is a premise about **tiling**: consecutive calls must
+    // cover contiguous quantum ranges with no gap and no overlap, or an event falls between
+    // two windows and is skipped with nothing reporting it.
+    //
+    // The block size is what puts the premise under strain. `render_offline` renders in
+    // blocks of the plan's maximum block size, and 200 is deliberately **not** a multiple of
+    // `Q`, so the carry leaves a different number of quanta due on successive calls and the
+    // window is a different width each time. A tiling that only works on an aligned
+    // partition fails here.
+    //
+    // The falsifier is the output itself: `gated_constant` renders exactly 1.0 while held and
+    // 0.0 otherwise, so a single skipped edge is a visible run of wrong samples rather than a
+    // statistical difference.
+    const FRAMES: u64 = 2048;
+    let edges: [(u64, u64); 6] = [
+        (0, 37),
+        (Q + 1, Q + 63),
+        (2 * Q + 63, 3 * Q),
+        (5 * Q + 11, 9 * Q + 12),
+        (17 * Q, 17 * Q + 1),
+        (23 * Q + 60, 31 * Q + 3),
+    ];
+
+    let plan = common::admit(&gated_constant(), profile(200, ChannelLayout::Mono));
+    let mut events = Vec::new();
+    for (on, off) in edges {
+        events.push(note(&plan, on, true));
+        events.push(note(&plan, off, false));
+    }
+    let rendered = render_offline(plan, FrameCount::new(FRAMES), PlanPosition::ZERO, &events)
+        .expect("renders");
+
+    for (frame, sample) in rendered.iter().enumerate() {
+        let held = edges
+            .iter()
+            .any(|(on, off)| (*on..*off).contains(&(frame as u64)));
+        let expected = if held { 1.0 } else { 0.0 };
+        assert_eq!(
+            *sample, expected,
+            "frame {frame} is {sample} rather than {expected}: an edge was lost between two \
+             selection windows, so the offline selector does not tile the quantum range"
+        );
+    }
+}

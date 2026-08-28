@@ -5,8 +5,8 @@
 | Status           | Current                                |
 | Phase            | 00A                                    |
 | Created          | 2026-08-13                             |
-| Last reviewed    | 2026-08-25                             |
-| Based on         | ADR-0021, ADR-0001, ADR-0032, ADR-0037, ADR-0038, ADR-0043, ADR-0046 |
+| Last reviewed    | 2026-08-27 |
+| Based on         | ADR-0021, ADR-0001, ADR-0032, ADR-0037, ADR-0038, ADR-0043, ADR-0046, ADR-0050 |
 | Invariant prefix | HOST                                   |
 | Supersedes       | —                                      |
 | Superseded by    | —                                      |
@@ -111,6 +111,7 @@ A limit that is reported and never enforced. Exceeding it produces a `CompileWar
 | [ADR-0043](../decisions/ADR-0043-event-deferral-and-late-clamp.md) | The preserving late clamp: a late event moves to the first not-yet-rendered boundary, its envelope `time` is immutable, the late condition is asked once, and its control-rate response follows the clamped render position. ADR-0046 supersedes the record's capacity-deferral half |
 | [ADR-0046](../decisions/ADR-0046-destination-quantum-admission.md) | That one publication arbiter constructs renderer input from six checked producer shares; compiled and authored-runtime work is admitted before playback; releases use end-to-end holds; and the renderer never moves an event for capacity |
 | [ADR-0037](../decisions/ADR-0037-render-quantum-value.md) | That no field here may be sized by `Q`'s value, which ADR-0037 now fixes finally at 64 |
+| [ADR-0050](../decisions/ADR-0050-transport-activation.md) | That the activation exchange is a fixed single-slot non-dropping session store whose full-slot refusal happens at the caller boundary, and that the locate catch-up batch is the bounded quantity the session share's plan-admission check compares against |
 
 Several fields carry values owned by decisions that are still `Proposed`. They appear with the owning ADR named in the
 field tables and are repeated under [*Unresolved questions*](#unresolved-questions). A value carried from V1 with an
@@ -506,6 +507,54 @@ open owner is a starting point recorded honestly, not a rule invented here.
     Phase 1 and Phase 2 keep their current pre-mutation `RenderError` for a caller-supplied over-full span. Phase 3
     replaces that open caller boundary with sealed external batches and the terminal invariant response above. Every
     stream reports high-water occupancy per quantum and per share, whether or not a fault occurs.
+
+22. **HOST-INV-022 — the activation exchange is a non-dropping session store, and the catch-up batch is what
+    bounds it.** [ADR-0050](../decisions/ADR-0050-transport-activation.md) supplies it, and it names the concrete
+    store `HOST-INV-021`'s session clause has so far described only in the abstract.
+
+    A rendering stream moves to a new plan mapping through one activation value, built off the audio thread and
+    exchanged with the audio-thread half through a **fixed single-slot store**. That store is distinct from
+    `command_queue_capacity`, whose *Live bounded queue* classification licenses a drop; this one is
+    **non-dropping**. An activation offered while the slot is full is refused at the caller boundary before
+    timestamped acceptance, which is `HOST-INV-021`'s own session rule for a non-critical command and not a loss.
+    It therefore takes **no row** in the renderer-ingress source-store registry, which registers live input that may
+    drop and states that non-dropping session/transport stores do not belong there.
+
+    The exchange is two-way: adoption moves **every** piece the activation replaced — anchor, schedule, loop, tempo
+    map and catch-up batch — back into the slot for the off-thread half to collect and deallocate, so no allocation
+    is freed on the audio thread. Naming a subset would be worse than naming none: the omitted pieces are the ones
+    that own allocations.
+
+    The slot is therefore occupied in two distinguishable ways — by a candidate not yet adopted, or by a retired
+    value not yet collected — and an offer is refused either way. Only the second means the off-thread half has not
+    collected, and a diagnostic reports which, because the two need different fixes.
+
+    **The locate catch-up batch is the session share's bounded contributor.** `HOST-INV-021` already requires plan
+    admission to check "the largest catch-up batch over every legal locate position"; what that batch *is* is fixed
+    here. It covers **every** prepared target: the last value established before the new plan position where there is
+    one, and the value the target was prepared with where there is not. It is built with the activation, charged to
+    the session share, and publishes completely.
+
+    Covering every target is what makes the bound exact rather than approximate — the batch's size **is** the plan's
+    prepared-target count, at every locate position, so admission compares one number against the share instead of
+    searching for a worst case. A physical `(node, control)` gate held open by an
+    **in-scope** note contract — the replaced producer's, as the boundary release scope is — carries `ZERO` rather
+    than its last pre-destination value, under
+    [ADR-0051](../decisions/ADR-0051-locate-catch-up-gate-exception.md). A contract belonging to a producer the
+    activation does not replace is outside that substitution — but **the substitution is not the whole row**, and
+    saying only this much would promise more than the batch delivers: every prepared target still receives a row, so
+    a gate an out-of-scope producer holds would be moved by the row itself, carrying the plan history. That is
+    `SOUND-INV-018`'s third obligation, and it is why a gate reached by two producers is forbidden rather than
+    described here. The rule decides a row's **value** and never whether the row exists, so the count this bound
+    rests on is unchanged. It is also the
+    correctness half: a control value survives an activation in node
+    state, so a target the batch skipped would keep whatever the pre-seek position left it at. A plan whose
+    catch-up does not fit is refused at admission rather than at a seek.
+
+    Without the batch an admitted suffix is not a correct seek: compiled admission refuses every position before the
+    stream's anchor, so nothing in the new stream carries the automation value that was in force when the transport
+    passed it. That is a correctness rule and not an optimisation.
+
 
 ## Deferred to Phase 3
 

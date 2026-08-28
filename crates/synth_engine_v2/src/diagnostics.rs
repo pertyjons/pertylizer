@@ -561,6 +561,9 @@ pub struct DiagnosticsReport {
     oversized_callback_faults: u64,
     clock_exhaustion_faults: u64,
     publication_faults: u64,
+    displacement_faults: u64,
+    late_activations: u64,
+    refused_activations: u64,
     needs_reprepare: bool,
 }
 
@@ -688,6 +691,47 @@ impl DiagnosticsReport {
         self.publication_faults
     }
 
+    /// Streams ended because an activation's displacement left engine time.
+    ///
+    /// Separate from [`Self::publication_faults`] because publication did not fail: the
+    /// condition is found before a window is opened, and a reader sent to look for a share
+    /// overrun would find none. Both are terminal; only one is a producer's contract
+    /// violation.
+    pub const fn displacement_faults(&self) -> u64 {
+        self.displacement_faults
+    }
+
+    /// Activations offered after the engine time they named had already passed.
+    ///
+    /// ADR-0050 clause 1. Building a candidate is off-thread work of unbounded duration, so
+    /// one can be finished too late; it then activates at the clock, and this counter is what
+    /// makes a seek that felt sluggish attributable rather than leaving a delay no one can
+    /// see.
+    ///
+    /// **The condition is `requested < clock` at the offer, and it is not "took effect later
+    /// than requested".** Every request that does not fall on a quantum boundary takes effect
+    /// later than it named, because the effective point snaps forward — a `T` of 65 offered
+    /// against a clock of zero activates at 128 and is **not** counted here, correctly, since
+    /// nothing was slow. Lateness and displacement are independent and neither implies the
+    /// other: an off-grid request offered against a clock already standing on its own snapped
+    /// boundary is late and displaced by nothing at all.
+    pub const fn late_activations(&self) -> u64 {
+        self.late_activations
+    }
+
+    /// Activations refused at the offer.
+    ///
+    /// A stream that has already faulted, a stale epoch, a superseded sequence, or an occupied
+    /// exchange slot. **A schedule paired with another stream's renderer refuses too and is
+    /// deliberately not counted here**: these counters belong to the stream that was offered
+    /// to, and that refusal has no such stream. None of the counted ones is a
+    /// fault — ADR-0050 clause 3 puts every refusal at the offer precisely so that adoption
+    /// has no branch that can fail — but a stream that silently refuses every seek and one
+    /// that adopts them are indistinguishable without this.
+    pub const fn refused_activations(&self) -> u64 {
+        self.refused_activations
+    }
+
     /// Whether the stream is waiting to be re-prepared.
     pub const fn needs_reprepare(&self) -> bool {
         self.needs_reprepare
@@ -728,6 +772,18 @@ impl DiagnosticsReport {
 
     pub(crate) fn count_publication_fault(&mut self) {
         self.publication_faults = self.publication_faults.saturating_add(1);
+    }
+
+    pub(crate) fn count_displacement_fault(&mut self) {
+        self.displacement_faults = self.displacement_faults.saturating_add(1);
+    }
+
+    pub(crate) fn count_late_activation(&mut self) {
+        self.late_activations = self.late_activations.saturating_add(1);
+    }
+
+    pub(crate) fn count_refused_activation(&mut self) {
+        self.refused_activations = self.refused_activations.saturating_add(1);
     }
 
     pub(crate) fn set_needs_reprepare(&mut self) {

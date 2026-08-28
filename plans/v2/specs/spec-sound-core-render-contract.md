@@ -5,8 +5,8 @@
 | Status | Current |
 | Phase | 1–2 |
 | Created | 2026-08-19 |
-| Last reviewed | 2026-08-25 |
-| Based on | ADR-0001, ADR-0004, ADR-0005, ADR-0021, ADR-0032, ADR-0037, ADR-0040, ADR-0041, ADR-0043, ADR-0046 |
+| Last reviewed | 2026-08-27 |
+| Based on | ADR-0001, ADR-0004, ADR-0005, ADR-0021, ADR-0032, ADR-0037, ADR-0040, ADR-0041, ADR-0043, ADR-0046, ADR-0047, ADR-0050 |
 | Invariant prefix | `SOUND` |
 | Supersedes | — |
 | Superseded by | — |
@@ -51,6 +51,8 @@ storage assigned to compiled signal lifetimes.
 | [ADR-0041](../decisions/ADR-0041-interleaved-internal-channel-layout.md) | One signal is one interleaved arena region of `Q` frames of `c` channels, at a recorded offset and length |
 | [ADR-0043](../decisions/ADR-0043-event-deferral-and-late-clamp.md) | A late event is clamped forward without rewriting its stamp; its sample and control effects follow the clamped render position |
 | [ADR-0046](../decisions/ADR-0046-destination-quantum-admission.md) | Capacity is admitted before rendering; the renderer never moves an event to make a quantum fit |
+| [ADR-0047](../decisions/ADR-0047-note-identity-in-the-event-contract.md) | A note-on names an occurrence as well as its node; a release names the occurrence alone |
+| [ADR-0050](../decisions/ADR-0050-transport-activation.md) | A rendering stream moves to a new mapping through one activation value adopted whole at a quantum boundary |
 
 ## Invariants
 
@@ -233,9 +235,322 @@ storage assigned to compiled signal lifetimes.
     an accepted obligation is never refused later, and stranding it would leave a note
     nothing can release. Lifting that limit is ADR-0048's, for Phase 9.
 
+    **A transport activation advances the allocator's generations earlier than an
+    applied mass release does, and that is an amendment rather than an exception.**
+    [ADR-0050](../decisions/ADR-0050-transport-activation.md) clause 5 makes it: for a
+    schedule replaced at an activation boundary, the index generations move at stamping
+    or at candidate build, and the authoritative table takes them when the retired value
+    is collected — none of which is "at application". What is preserved is what the mass
+    release is *for*: a release arriving after one resolves as an **orphan**, which the
+    live-note registry delivers because it is cleared at the boundary. The protection
+    against a stale identity matching a newly started note is this invariant's own
+    never-reused generation, not the timing of any one release. The window in which the
+    allocator lags is unobserved only while the control is the sole minter, which is
+    ADR-0050 clause 8's second obligation.
+
     **What this invariant does not fix is pitch or velocity.** Those remain
     [REV-P02](../reviews/phase-02-exit-review.md)'s open deviation row, owned by
     Phase 3 and owed before ingress; ADR-0047 adds identity and discharges neither.
+
+18. **SOUND-INV-018 — Transport activation.** Moving a rendering stream to a new
+    plan mapping — a seek, a loop wrap, a tempo-map replacement — happens through
+    **one activation value**, built off the audio thread and adopted whole.
+    [ADR-0050](../decisions/ADR-0050-transport-activation.md) supplies it.
+
+    **The effective point is a quantum boundary.** An activation names a requested
+    engine time `T`; it takes effect at the first quantum boundary at or after
+    `max(T, clock)`, and the new mapping governs the half-open engine-time interval
+    from there. `T` is immutable, exactly as SOUND-INV-016 keeps an event's stamp
+    immutable, and an activation whose `T` precedes the clock **at the offer** is
+    **late**: it activates at the clock and is counted, so the delay is reportable.
+    The offer is the moment the question is asked, because it is the moment the rule
+    is about — the candidate was finished after the time it named had passed. Asked
+    at adoption the answer is worthless: the clock stands on the boundary by then, so
+    every request that does not fall on one would answer yes. A late activation is
+    **not** the same as one displaced beyond its own snapped boundary, and neither
+    implies the other: a request one frame past a boundary offered against a clock
+    already at the next one is late and displaced by nothing.
+
+    The **loop interval** in the atomic set is admitted when the candidate is built and
+    is **recorded rather than enforced**: no wrap is implemented, so nothing repeats it
+    and the candidate's schedule is not bounded by its end. An event past that end plays
+    and reserves an identity, where under wrapping it would be unreachable. The wrap
+    slice inherits that, and the conformance row does not claim it.
+
+    The **catch-up batch** below is part of this invariant and is built.
+
+    **The adopted anchor is `(effective, requested position)`.** The engine-time half
+    is snapped; the plan-position half is not, because moving it would seek somewhere
+    other than where the caller asked. A candidate is stamped against `T`, so when the
+    effective point differs from `T` every placed event is displaced by the same
+    `effective - T`, and the stream carries that as **one offset applied at
+    publication** rather than as a rewrite of the stamped list — the shift is uniform,
+    so no per-event pass runs on the audio thread. This is a placement rather than a
+    clamp: an event's engine time is a function of its plan position and the anchor,
+    and the anchor moved.
+
+    The effective point is a function of `T`, `Q` and the clock alone, so it does
+    not depend on how the host partitions its callbacks. Where the boundary falls
+    strictly inside the quanta a host block would render, the stream renders that
+    block as two renderer calls and adopts between them, which SOUND-INV-005's
+    carry behaviour already makes free.
+
+    **This is not sample-exact seek or loop.** Placement error is up to `Q - 1`
+    frames, 1.33 ms at 48 kHz; what a listener hears is that plus the stream's
+    existing `Q`-frame output latency, so an on-time request can be heard as much as
+    `Q + (Q - 1)` = 127 frames late, about 2.65 ms at 48 kHz. Only the first `Q - 1`
+    of those is new. The master plan's sample-exact loop and seek requirement is not
+    satisfied by this rule, and no gate may be read as closing it on this rule's
+    strength.
+
+    **A repeating wrap keeps its ideal phase.** The requested time of the `k`-th wrap
+    is derived from the ideal timeline and never from the previous wrap's effective
+    point. Under the ideal derivation each wrap's error is an independent value in
+    `[0, Q)`, so the audible period jitters by under one quantum and returns; deriving
+    it from the last actual wrap accumulates the errors and makes the loop
+    permanently longer than the one the user set.
+
+    What quantum granularity buys beyond implementability is admission. Shares are
+    charged per destination quantum, so a boundary-aligned activation puts the old
+    stream's last events and the new stream's first events in **different quanta**;
+    the junction is admissible under the two admissions the streams already passed
+    and needs no third rule. A sample-exact activation would need a junction check
+    in the shape of ADR-0046 clause 4's periodic loop extension.
+
+    **Neither carry is touched.** The output carry holds audio for engine samples
+    strictly before the clock, and the effective point is at or after the clock, so
+    that audio was rendered under the mapping in force when it was rendered. That
+    holds because adoption happens **between** renderer calls: a call spanning several
+    quanta accumulates them in the carry before copying out, so an adoption inside one
+    would leave the carry holding audio from both sides of the boundary.
+
+    Between calls the live carry never exceeds `Q` frames — a call renders the fewest
+    quanta that cover its request, so the remainder is under one quantum, and the
+    stream starts with exactly `Q`. The `maximum_block_size + Q` the buffer is sized
+    to is the peak reached **inside** a call, which is another way of seeing why
+    adoption belongs between them. Discarding it would therefore deliver a gap of up
+    to `Q` frames for no correctness gain. A listener therefore observes an activation `Q` frames
+    after its effective engine time, which is the stream's declared added latency
+    and nothing more. An operation that must silence already-rendered audio is a
+    **fault** under ADR-0021, not an activation.
+
+    **One value carries the whole state set**: the anchor, the placed and stamped
+    compiled schedule with its cursor, the loop interval, the tempo map where one is
+    replaced, and the locate catch-up batch. The stream's arbiter is neither carried
+    nor swapped — ADR-0046 clause 2 admits exactly one per stream, so an adopted
+    schedule inherits the latched identity of the schedule it replaces. The identity
+    table is not swapped either: both schedules mint from the one table, which is
+    what makes an occurrence resolvable across an activation.
+
+    **Failure leaves the stream exactly as it was, and refusal happens at the offer
+    rather than at adoption.** Most checks run while the candidate is built: admission
+    of the stream and of the loop, placement against the new anchor, and stamping.
+    **Offering** the candidate can refuse for exactly five further reasons — a schedule
+    paired with another stream's renderer, a stream that has already faulted, a stale
+    epoch, a superseded sequence, and an occupied exchange slot — and each leaves the
+    state in force. **Four of the five increment the refusal counter; the pairing does
+    not**, and the exception is the reason it is checked first: the counters belong to
+    the stream that was offered to, so attributing this refusal to a renderer that is
+    not this schedule's half would put a diagnostic on a stream nobody asked anything.
+    The occupied slot is backpressure and not a fault, and it is occupied in two
+    distinguishable ways: by a candidate not yet adopted, or by a retired value not yet
+    collected. A diagnostic reports which. The faulted stream and the pairing were both
+    found by the implementation and are listed here rather than left implicit: after a
+    terminal fault no later call advances toward a boundary, so a candidate accepted
+    then would never be adopted, never be collected, and never be withdrawable.
+
+    **A candidate is stamped against a copy of the minter.** Stamping is not reversible
+    by releasing what it minted — a note-on paired inside the list already advanced its
+    index's generation and may have retired it — so the control takes a working copy
+    for the build and, before stamping, releases the outgoing schedule's outstanding
+    occurrences into it — a schedule records that set, the note-ons its own list never
+    paired, when it is stamped. The candidate is therefore minted against the table as it
+    will be **after** the activation.
+
+    Withdrawal, including of a candidate returned refused at the offer, drops the copy:
+    nothing is consumed, neither an index nor a generation. The copy is promoted when
+    the **retired value is collected**, not when the offer is accepted — an accepted
+    offer makes adoption infallible *if reached*, and the renderer can end the epoch
+    first, in which case no later call advances toward the boundary and the activation
+    never happens. A faulted epoch needs no reclamation: re-preparation issues new
+    tables. **No candidate built while an activation is outstanding can be adopted**,
+    which removes the window between acceptance and collection. *Outstanding* means
+    accepted at the offer and not yet collected: the freshness rule below deliberately
+    allows two candidates to be **built** against one in-force sequence and refuses the
+    loser, and it is acceptance rather than building that closes the door. The control
+    does not forbid the build, because it cannot see an acceptance — ADR-0050 clause 6's
+    amendment replaces the prohibition with what a candidate *is*: the control issues
+    what a candidate supersedes from the sequence it last promoted, so one built in that
+    window carries a superseded value necessarily and the offer refuses it.
+
+    The set the copy releases is what the outgoing schedule still **reserves in the
+    allocator**, and that is not the set the boundary ends. They overlap without
+    containing each other: a note-on paired later in the outgoing list is sounding at
+    the boundary but freed its index at stamping, while an unpaired note-on beyond the
+    boundary is reserved but never sounded. Each half deals with its own set. The two
+    schedules also never compete for a producer's range, which a reclaim performed only
+    at retirement could not deliver: a producer whose declared polyphony the outgoing
+    schedule already uses would otherwise be unable to build any replacement.
+
+    **Adoption itself is an infallible move.** Nothing between an accepted offer and
+    the boundary can invalidate it, and the swap has no branch that can fail. A
+    refusal discovered at the boundary would have to roll back a partly applied state
+    set or fault the stream, and the atomic set exists to avoid the first while the
+    second would turn a caller mistake into a terminal fault. A violation detected
+    after adoption is ADR-0046 clause 7's terminal response rather than a rollback.
+    Adoption **exchanges** rather than replaces: **every** piece the activation
+    replaces — anchor, schedule, loop, tempo map and catch-up batch — moves into the
+    return slot the off-thread half collects, so nothing is dropped on the audio
+    thread. Naming a subset would be worse than naming none, because the omitted
+    pieces are the ones that own allocations.
+
+    **A note sounding at the effective point that a replaced producer started is
+    ended there**, as ADR-0046 clause 6's bounded mass-release operation: one
+    operation scoped to those producers, charged to the session share, never expanded
+    into one event per voice. A **compiled** producer has no hold to redeem — clause 6
+    gives its releases a plan entitlement instead — so ending a compiled note frees an
+    identity and nothing else, and that is the whole of what this rule covers. What the
+    operation must do when its scope reaches a non-compiled producer is named below as
+    unsupported rather than described loosely. The scope is the retired schedule's producers and not
+    everything: a seek moves plan time, it does not lift a performer's finger.
+
+    **The operation has two halves and only one is on the audio thread.** There,
+    adoption clears the retired producers' entries from the live-note registry and
+    lowers the gates they name; the registry needs that scoped release and the producer
+    ranges it names. Scoping the clear to a producer range is safe, and the reason has
+    to be stated exactly because a plausible version of it is false: it is **not** that
+    an occurrence enters the registry when its event is applied — the renderer admits
+    occurrences during resolution, before the call's first quantum renders. It is that
+    the candidate's events reach no render call until after adoption, so at adoption
+    the registry can hold none of them whatever the order inside a call.
+
+    The allocator half is the copy above, and it ran earlier. That is an **amendment**
+    to SOUND-INV-017's mass-release rule and is recorded there: the generations move at
+    stamping or at build rather than at application. What the rule is *for* is
+    preserved — a later release for one of those notes resolves as an orphan, delivered
+    by the registry being cleared at the boundary — and what keeps a stale identity from
+    matching a note the incoming schedule started is the never-reused generation.
+
+    **This rule covers a stream whose note producers are compiled.** Three things it
+    does not close are named in ADR-0050 clause 8, as ADR-0051 raised it, and belong
+    to later slices: a non-compiled producer's release holds have no redemption
+    authority at the boundary, so replacing such a producer's schedule is unsupported
+    until holds exist; while an activation is outstanding the control must be the
+    **only** minter, since a second producer minting into the authoritative table
+    would be erased by promotion; and **one scalar gate reached by two producers has
+    no ownership law** — a compiled note and a surviving live note can address the
+    same `(node, control)`, so ending the compiled one writes `ZERO` to the gate they
+    share and cuts the live note with it. The scope predicate alone does not close
+    that third one, because a gate carries neither producer attribution nor depth, and
+    neither does excluding an out-of-scope contract from the substitution: every
+    prepared target still receives a catch-up row, so a gate a live producer holds
+    would be moved by the row itself. Before multiple producers may emit onto one
+    gate, target sharing across release scopes must be refused at admission, or a
+    voice's gate made producer-exclusive, or a depth-and-ownership aggregation law
+    designed — and with it what the catch-up row does for a gate the activation does
+    not own. The first two hold today
+    because the compiled producer is the only one that **mints** — a plan may already
+    *declare* a non-compiled producer, so the weaker fact is the one they rest on —
+    and the third holds because it is the only producer that **emits**.
+
+    Neither half is *replaced*: both keep the identity they were opened with, so an
+    occurrence stays resolvable across an activation and the registry identity the
+    renderer's foreign filter compares against does not move under it.
+
+    **A suffix omits a release whose note-on lies before its anchor.** Seek between a
+    compiled note's edges and the suffix holds a release with nothing to pair it with,
+    which stamping refuses — so without this rule the commonest seek could not produce
+    a schedule at all. The omission is correct rather than lenient: the boundary mass
+    release ended that note and the new stream never started it. It happens where the
+    suffix is built, off the audio thread, and is **counted**, so it is a named
+    transformation rather than a renderer-side drop SOUND-INV-016 forbids. Note
+    chasing — restarting such a note at the destination — is a different product
+    choice and is not made here. The audible consequence is stated rather than hidden:
+    a note sustaining across a loop wrap or a seek is cut, and not resumed.
+
+    **What is omitted is the note contract, not the gate write.** The suffix keeps a
+    bare `SetParameter` of `ZERO` on the release's physical gate target, at the
+    release's own position and carrying no note identity, so the authored gate
+    timeline survives the locate intact.
+    [ADR-0051](../decisions/ADR-0051-locate-catch-up-gate-exception.md) clause 5 owns
+    this. Without it a gate raised by automation at or after the destination has
+    nothing left in the stream that can lower it, and the seek leaves a note sounding
+    that playing through would have ended. The write takes the release's place one for
+    one, so the candidate never carries more events at a position than the admitted
+    stream it came from and admission needs no change. A note slot whose gate has no
+    prepared parameter row is refused when the activation is built, rather than
+    silently losing its gate-down.
+
+    **Freshness is a sequence, not a value comparison.** The off-thread half issues a
+    strictly increasing activation sequence; a candidate names the sequence it
+    supersedes and is adopted only when that equals the sequence in force. An anchor
+    value cannot serve: a tempo map replaced so that it differs only after the current
+    tick leaves the anchor bit-identical while every future position moves. The
+    candidate also carries the stream epoch and one from another epoch is refused as
+    stale, exactly as an event is under SOUND-INV-006.
+
+    The value in force starts at the sequence the stream was opened with and changes
+    at **adoption alone**, never at issue. So an abandoned candidate consumes no
+    sequence — the identities it reserved are the paragraph above's — and cannot wedge
+    the stream, and two candidates built against one in-force value
+    are ordered rather than raced: the first adopted moves the value and the other is
+    refused. Because building is off-thread work of unbounded duration, a candidate
+    can be finished after its requested time has passed; it then activates at the
+    clock and the late counter is what makes that attributable.
+
+    **An activation that relocates carries a catch-up batch, and it covers every
+    prepared target rather than only the automated ones.** For a target with a value
+    established before the new plan position the batch carries the last such value;
+    for a target with none it carries the value that target was **prepared** with.
+    The second half is not a detail: a control value lives in node state across an
+    activation, so seeking back to before a parameter's first automation point would
+    otherwise leave the value that automation set — the stale value being the one the
+    seek was supposed to leave behind. Covering every target also makes the batch's
+    size exactly the plan's prepared-target count, which is the quantity admission
+    checks. It is built with the rest of the candidate, charged to the
+    session share, and publishes completely.
+
+    **A physical `(node, control)` gate held open by an in-scope note contract
+    immediately before the destination carries `ZERO`**, whatever the last write
+    before that position was. Note edges write the history like any other write, so
+    a note-off before the destination lowers the gate there; this rule decides the
+    remaining case, where the contract is still open.
+    [ADR-0051](../decisions/ADR-0051-locate-catch-up-gate-exception.md) owns it. The
+    reason is that a gate is **edge-triggered** — the kernel treats a re-asserted
+    level as no edge — so automation raising a gate a note already holds is inert
+    while playing through, and restoring that value after the boundary mass release
+    lowered the gate is a **rising edge** that restarts an envelope no note contract
+    stands behind. That is the note chasing this invariant's release rule declines.
+
+    **The predicate is the destination-open contract and not the mass release's
+    scope**, which are different sets: a forward seek can land inside a note the
+    retired stream never sounded, and that gate must still be low. **In scope** means
+    the replaced producer's, as the release scope is, so a seek does not lift a
+    performer's finger. The substitution aggregates by **physical target**, because
+    two prepared parameter slots aliasing one gate would otherwise disagree and
+    whichever published last would win. Open-contract depth is tracked separately
+    from the gate history, which reproduces the renderer: every resolving note-off
+    writes `ZERO` even where another occurrence on that slot is still open. The rule
+    decides a row's **value** and never whether the row exists, so the batch's size
+    is still the prepared-target count. Without it an admitted suffix is not a
+    correct seek: a suffix refuses every position before its anchor, so nothing in
+    the new stream carries the automation value that was in force when the user
+    seeked past it. **The catch-up applies before the new stream's events at the same
+    sample**, which is what a catch-up is rather than a general same-sample policy:
+    the batch is the state already in force at the destination and the stream is what
+    happens from there, so the other order would let a stale restoration overwrite the
+    new timeline's first event.
+
+    **The retired schedule's unpublished events are not dropped events.** A seek or a
+    wrap ends the timeline they belong to, so SOUND-INV-016's prohibition on silently
+    discarding an event does not reach them and no counter records them.
+
+    **The stream has two owners.** The off-thread half owns the tempo map, the
+    current anchor and loop, the admitted streams, the identity **minter** and the
+    building of candidates; the audio-thread half owns the clock, the carries, node
+    state, the **live-note registry** and adoption. That split is what lets a
+    candidate be built while the stream renders, without a lock the real-time rules
+    forbid.
 
 ## Types and ownership
 
@@ -283,6 +598,7 @@ excess is a preparation refusal rather than runtime truncation.
 | SOUND-INV-009, 010, 014 | `layout_baseline` for ADR-0041 clause 16's per-quantum digest comparison over its five fixtures, `arena_reuse` for the structural check over physical sample ranges and for `reuse_renders_bit_identically_to_no_reuse`, and `lowering`'s `a_mono_source_into_a_stereo_stream_widens_into_one_wider_region`, `a_mono_stream_compiles_exactly_one_output_operation` and `an_inserted_conversion_is_reported_and_not_only_scheduled` |
 | SOUND-INV-015 | `graph_validation`'s `every_kernel_admits_exactly_one_channel_on_every_port` over the macro-generated catalog, and `kernels`' `the_widening_writes_every_channel_of_every_frame` for the one kernel with two admitted counts |
 | SOUND-INV-017 | Two files, and the split is the invariant's own. **The minting table** is covered by `identity`: the three orphan branches separately — a free index, a live index at a superseded generation, and a retired one — along with disjoint producer ranges asserted by minting each producer's **whole** range rather than one index, the foreign-table resolution, counted retirement, over-emission distinguished from retirement erosion, a scoped mass release that leaves other producers alone, the refusal to rebuild while an obligation is outstanding, and the index-space relation at its boundary — enforced at `HostProfile` construction, as the invariant requires, not only where a table is built. Three are mutation-verified: resolving without comparing the generation, restarting a generation instead of retiring the index, and overlapping the producer ranges. **The event side** is covered by `note_identity`, over the compiled path. A release carries no node, so the fixture is two gates in series whose releases differ in *shape* — one instantaneous, one a ramp — because two sustain levels would render the same product and hide a release resolved to the wrong note. Sixteen cases: a release resolved through its occurrence; the same list with the other release rendering the other shape; two releases interleaved so the first names the **older** outstanding note; a producer's range bounding its *polyphony* rather than a piece's note count, with a one-note producer playing eight notes in sequence, refusing two at once, and stamping a valid list afterwards — a mint that failed part-way through having left nothing reserved; a reissued index still resolving **both** of the notes that used it, which is why the renderer keeps a registry the events write rather than reading the minter; a refused list leaving the minter as it found it, whose falsifier is the valid retry that follows; a spent release replayed against a node that has since been replayed, moving nothing and counted as an orphan rather than silently skipped, with the report **naming the occurrence** it refused; an occurrence from another plan's table refused and counted with the epoch equal, so the stale-epoch filter cannot be what caught it; a node address from another plan refused at stamping, which the renderer can no longer catch because its foreign filter compares the occurrence's table; the stamp carrying the renderer's own epoch; a compiled release that opens nothing refused at stamping; a plan declaring no producer unable to stamp a note at all; a second compiled producer refused at admission; and the compiled producer looked up rather than assumed to be producer 0, checked by declaring a one-wide runtime producer first so an assumed producer 0 exhausts on its second mint. `admission` adds the identity halves' memory to the scratch budget. Fifteen properties are mutation-verified: pairing by recency, resolving without the generation, dropping the table comparison, dropping the second-compiled-producer refusal, swallowing an unmatched release, assuming producer 0, never freeing a released occurrence, dropping the note-slot provenance check, not freeing an index at the paired release, resolving a release through the minter instead of the registry, minting during validation so a refused list keeps its indices, committing a partial mint instead of discarding it, refusing an orphan without counting it, refusing an orphan without naming it, and leaving the identity halves out of the scratch budget. **What is still not covered is the live half**, and two things are owed to the ingress slice rather than to nobody. No producer yet acquires a hold, so nothing asserts that a hold is acquired atomically with minting. And clause 4's orphan attribution is carried by one named identity plus an aggregate count rather than by per-producer counts: naming the identity does name the producer, since the ranges are disjoint, but the *count* is unambiguous only because `stamp_compiled` is the sole path that mints into a renderer's table and it mints only from the plan's compiled producer — so every occurrence a renderer can see is that producer's. A plan may already declare several note producers; what does not exist yet is one that **emits**, and that is ingress. An earlier revision of this row justified the same gap by the producer count instead, which `note_identity`'s own two-producer fixture contradicts; an independent review caught it. The generation ceiling remains a construction parameter for the reason this row gave before: walking a `u32` by minting is unreachable, and a rule no test can reach is a rule nobody has checked |
+| SOUND-INV-018 | `transport_activation.rs` and `transport.rs`: the effective point invariant to the four host partitions `2048`, `256`, `64` and `37`; a superseded candidate refused and counted; a stale-epoch candidate refused; both exchange occupancies refusing and told apart; an offer paired with another stream's renderer touching no counter; an offer into a faulted stream refused rather than trapping the candidate; a note cut at the boundary, asserted per frame on both sides; a seek between a note's edges buildable with the omission counted; a release with no note-on at all refused; a history note edge needing a producer, and a history holding more notes than that producer admits refused; an activation needing a schedule to replace; the schedule in force releasing its index to the replacement, and a withdrawn candidate's reservations released, both falsified by over-emission at a partition of one; every committed stamping keeping its reservations reclaimable; the minter standing still while a candidate holds a snapshot of it; a stream having one schedule and a second refused; a loop whose periodic extension does not fit refused at the build; the pass that is judged being the one a wrap replays rather than the suffix the candidate carries, falsified by a late entry whose skipped events are the ones that collide at the wrap; and a crossing release counting in that pass, because clause 5 keeps its gate write where the bare omission dropped the event; the release scope being the compiled producer alone, and an empty producer declared before a sounding one not hiding the compaction; an adoption never happening in a call that renders no quantum; the boundary mass release charged as one session operation; a refused call adopting nothing when the boundary is the clock; a block the renderer cannot serve adopting nothing; a fault in **each** half of a split silencing the whole callback; a late activation taking effect at the clock and counted, an off-grid request that snaps forward without being late, and a late one displaced by nothing; a loop interval taking force at adoption and the control keeping it; the retired schedule coming back with the cursor, loop, anchor and displacement it replaced; a retirement from another stream refused rather than promoted; withdrawal refusing a foreign candidate and a retirement and returning both; and a repeating wrap at a non-quantum loop length whose period returns rather than drifting. the catch-up restoring every prepared target with the boundary release charged beside it; a crossing note's gate cut whether or not automation touched it after its note-on, the equality falsifying a last-write restore and the silence falsifying no substitution at all, mutation-verified against both; and an omitted crossing release carrying its gate-down in place of the note contract, counted, with the pair that lies wholly after the destination placed untouched beside it. **One of the invariant's clauses is not covered, and it is not deferred silently**: a live ingress note left sounding across an activation needs a producer that can emit, which ADR-0050 clause 8 puts out of scope |
 | Node arithmetic and preparation | `voice_nodes`, internal kernel tests |
 
 ## Unresolved questions

@@ -23,9 +23,10 @@ use crate::plan::CompiledPlan;
 use crate::profile::HostProfile;
 use crate::quantities::{Amplitude, ChannelLayout, Frequency, ParameterValue, SampleRate};
 use crate::render::{
-    AudioBlockMut, EventEnvelope, EventPayload, PreparedRenderer, Renderer, TimedEvent, TimedEvents,
+    AudioBlockMut, EventEnvelope, EventPayload, Renderer, TimedEvent, TimedEvents,
 };
 use crate::schedule::CompiledEventScheduler;
+use crate::stream::StreamControl;
 use crate::time::{FrameCount, PlanPosition, SampleTime, StreamAnchor, TimeSource};
 
 thread_local! {
@@ -137,8 +138,8 @@ fn sine_plan() -> CompiledPlan {
 #[test]
 fn the_first_render_after_preparation_allocates_nothing() {
     let anchor = StreamAnchor::new(SampleTime::ZERO, PlanPosition::ZERO);
-    let mut renderer =
-        PreparedRenderer::prepare(sine_plan(), anchor).expect("preparation succeeds");
+    let (_control, mut renderer) =
+        StreamControl::open(sine_plan(), anchor).expect("preparation succeeds");
     let mut samples = vec![0.0_f32; BLOCK * 2];
 
     // Armed before the first call, not after a warm-up: lazy first-use allocation is
@@ -160,7 +161,7 @@ fn the_first_render_after_preparation_allocates_nothing() {
 
 #[test]
 fn repeated_renders_at_varying_block_sizes_allocate_nothing() {
-    let mut renderer = PreparedRenderer::prepare(
+    let (_control, mut renderer) = StreamControl::open(
         sine_plan(),
         StreamAnchor::new(SampleTime::ZERO, PlanPosition::ZERO),
     )
@@ -187,7 +188,7 @@ fn repeated_renders_at_varying_block_sizes_allocate_nothing() {
 
 #[test]
 fn resolving_and_applying_events_allocates_nothing() {
-    let mut renderer = PreparedRenderer::prepare(
+    let (_control, mut renderer) = StreamControl::open(
         sine_plan(),
         StreamAnchor::new(SampleTime::ZERO, PlanPosition::ZERO),
     )
@@ -235,8 +236,8 @@ fn resolving_and_applying_events_allocates_nothing() {
 #[test]
 fn selecting_a_compiled_schedule_for_the_first_call_allocates_nothing() {
     let anchor = StreamAnchor::new(SampleTime::ZERO, PlanPosition::ZERO);
-    let mut renderer =
-        PreparedRenderer::prepare(sine_plan(), anchor).expect("preparation succeeds");
+    let (mut control, mut renderer) =
+        StreamControl::open(sine_plan(), anchor).expect("preparation succeeds");
     let slot = renderer
         .plan()
         .resolve_parameter(SOURCE, parameters::SINE_FREQUENCY)
@@ -250,8 +251,8 @@ fn selecting_a_compiled_schedule_for_the_first_call_allocates_nothing() {
     )];
     let stream = crate::schedule::AdmittedCompiledStream::admit(renderer.plan(), &events)
         .expect("one event fits the compiled share");
-    let mut scheduler = CompiledEventScheduler::prepare(&mut renderer, anchor, &stream)
-        .expect("the schedule is valid");
+    let mut scheduler =
+        CompiledEventScheduler::prepare(&mut control, &stream).expect("the schedule is valid");
     // Prepared outside the counted region, like every other store the loop uses.
     let mut arbiter = crate::publish::PublicationArbiter::prepare(
         &crate::profile::HostProfile::harness(

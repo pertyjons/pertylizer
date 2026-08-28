@@ -3,9 +3,13 @@
 //! The window scan itself. Its linear half is what
 //! [`AdmittedCompiledStream`](crate::schedule::AdmittedCompiledStream) is built on, and that
 //! type — not this module — is what preparation accepts, so the proof travels with the
-//! stream instead of being repeated per call. The loop half has no caller yet: a loop
-//! interval is transport state, and [`SessionScheduler`](crate::session::SessionScheduler)
-//! re-anchors at a wrap without carrying one.
+//! stream instead of being repeated per call. The loop half's caller is
+//! [`StreamControl::plan_activation`](crate::stream::StreamControl::plan_activation): an
+//! interval joins ADR-0050's atomic set only by passing through it, so "already admitted" is
+//! a fact about the value rather than a rule someone has to remember.
+//! [`SessionScheduler`](crate::session::SessionScheduler) still re-anchors at a wrap without
+//! carrying one, because a wrap is not implemented — the activation records the interval in
+//! force and nothing repeats it yet.
 //!
 //! ADR-0046 clause 4. A compiled plan is admitted against the compiled share, and the check
 //! is not "how many events land in each absolute quantum" — that is the wrong question,

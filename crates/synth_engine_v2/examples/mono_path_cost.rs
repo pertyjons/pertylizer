@@ -42,8 +42,9 @@ use synth_engine_v2::quantities::{
     Resonance, SampleRate, Seconds,
 };
 use synth_engine_v2::render::{
-    AudioBlockMut, EventEnvelope, EventPayload, PreparedRenderer, Renderer, TimedEvent, TimedEvents,
+    AudioBlockMut, EventEnvelope, EventPayload, Renderer, TimedEvent, TimedEvents,
 };
+use synth_engine_v2::stream::StreamControl;
 use synth_engine_v2::time::{
     FrameCount, PlanPosition, QUANTUM_FRAMES, SampleTime, StreamAnchor, TimeSource,
 };
@@ -134,7 +135,7 @@ fn arm(iterations: u32) -> f64 {
     let gate = plan
         .resolve_parameter(ENVELOPE, parameters::ENVELOPE_GATE)
         .expect("the envelope declares a gate");
-    let mut renderer = PreparedRenderer::prepare(
+    let (_control, mut renderer) = StreamControl::open(
         plan,
         StreamAnchor::new(SampleTime::ZERO, PlanPosition::ZERO),
     )

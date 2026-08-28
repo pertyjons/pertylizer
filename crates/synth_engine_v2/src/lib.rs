@@ -33,6 +33,8 @@
 //! | The buffer arena | `arena` (private) | ADR-0005 |
 //! | Rendering | [`render`] | ADR-0001 clauses 4-9, 11-14, 16 |
 //! | Compiled scheduling | [`schedule`] | ADR-0001 clause 16; ADR-0032 clauses 17-21 |
+//! | The stream's off-thread half | [`stream`] | ADR-0050 clause 9 |
+//! | Transport activation | [`transport`] | ADR-0050 |
 //! | Offline rendering | [`offline`] | ADR-0001 clauses 9-10 |
 //!
 //! # The quantum
@@ -100,8 +102,10 @@ pub mod render;
 pub mod report;
 pub mod schedule;
 pub mod session;
+pub mod stream;
 pub mod tempo;
 pub mod time;
+pub mod transport;
 pub mod validate;
 
 #[cfg(test)]

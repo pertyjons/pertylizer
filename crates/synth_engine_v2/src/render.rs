@@ -19,11 +19,9 @@ use crate::diagnostics::{CompileError, DiagnosticsReport, RenderError};
 use crate::node::kernels::{NodeState, TimedControl};
 use crate::plan::{CompiledPlan, PlanOp};
 use crate::quantities::{ChannelLayout, EventCount, ParameterValue, RecordCount};
-use crate::time::{
-    FrameCount, QUANTUM_FRAMES, SampleTime, StreamAnchor, StreamEpoch, TimeSource, issue_epoch,
-};
+use crate::time::{FrameCount, QUANTUM_FRAMES, SampleTime, StreamAnchor, StreamEpoch, TimeSource};
 
-/// How many bytes [`PreparedRenderer::prepare`] will allocate for one call's event
+/// How many bytes preparing a renderer will allocate for one call's event
 /// resolution, given a plan's capacities.
 ///
 /// It lives next to the allocation it describes and is called by admission, so the two
@@ -46,13 +44,16 @@ pub fn event_scratch_bytes(
         .saturating_add(quanta_per_call.saturating_mul(size_of::<u32>() as u64))
 }
 
-/// How many bytes [`PreparedRenderer::prepare`] will allocate for the note-identity halves,
+/// How many bytes preparing a renderer will allocate for the note-identity halves,
 /// given a plan's admitted producer partition.
 ///
-/// Both halves are sized by the same partition: the minter holds one slot per admitted index
-/// and one range per producer, and the live-note registry holds one entry per index. It lives
-/// next to the allocation it describes for the reason [`event_scratch_bytes`] does — a
-/// budget computed anywhere else drifts from what preparation takes.
+/// Both halves are sized by the same partition, and **both hold the ranges**: the minter has
+/// one slot and the registry one entry per admitted index, and each keeps its own copy of the
+/// per-producer spans. The registry needs them because ADR-0050 clause 5 scopes its mass
+/// release by producer, and a budget that charged one copy would report a ceiling preparation
+/// then allocates past. It lives next to the allocation it describes for the reason
+/// [`event_scratch_bytes`] does — a budget computed anywhere else drifts from what
+/// preparation takes.
 #[must_use]
 pub fn identity_bytes(producer_ranges: &[crate::quantities::HeldNoteCount]) -> u64 {
     let mut indices = 0_u64;
@@ -61,12 +62,14 @@ pub fn identity_bytes(producer_ranges: &[crate::quantities::HeldNoteCount]) -> u
     }
     let per_index = (size_of::<crate::identity::Slot>()
         + size_of::<Option<crate::identity::LiveNote>>()) as u64;
-    indices.saturating_mul(per_index).saturating_add(
-        (producer_ranges.len() as u64).saturating_mul(size_of::<crate::identity::Range>() as u64),
-    )
+    // Two range tables, one per half.
+    let spans = (producer_ranges.len() as u64)
+        .saturating_mul(size_of::<crate::identity::Range>() as u64)
+        .saturating_mul(2);
+    indices.saturating_mul(per_index).saturating_add(spans)
 }
 
-/// How many bytes [`PreparedRenderer::prepare`] will allocate for the sample-positioned
+/// How many bytes preparing a renderer will allocate for the sample-positioned
 /// control scratch, given a plan's per-quantum event capacity and how many records it
 /// schedules.
 ///
@@ -78,14 +81,32 @@ pub fn identity_bytes(producer_ranges: &[crate::quantities::HeldNoteCount]) -> u
 pub fn timed_control_scratch_bytes(
     max_events_per_quantum: EventCount,
     scheduled_records: RecordCount,
+    identity_indices: crate::quantities::HeldNoteCount,
 ) -> u64 {
-    let controls =
-        u64::from(max_events_per_quantum.get()).saturating_mul(size_of::<TimedControl>() as u64);
+    // One quantum's events, **plus** the notes an activation can end at a boundary.
+    //
+    // ADR-0050 clause 5's mass release lowers a gate per note it ends, and a gate reaches a
+    // kernel only as a sample-positioned control — so those changes land in this scratch
+    // beside the quantum's own. They are not events and are charged to no share, which is
+    // exactly why they need room here rather than there: an activation that ended more
+    // notes than a quantum admits events would otherwise have nowhere to put them.
+    let controls = u64::from(max_events_per_quantum.get())
+        .saturating_add(u64::from(identity_indices.get()))
+        .saturating_mul(size_of::<TimedControl>() as u64);
+    // And the queue those gate-downs wait in between adoption and the boundary quantum: one
+    // control and one node index per identity the partition holds. Preparation allocates
+    // both, so a budget that charged only the scratch above would report a ceiling
+    // preparation then allocates past — which is admission passing a plan it should refuse.
+    // An independent review found the two vectors uncharged.
+    let adoption_gates = u64::from(identity_indices.get())
+        .saturating_mul((size_of::<TimedControl>() + size_of::<usize>()) as u64);
     let index = u64::from(scheduled_records.get())
         .saturating_mul(2)
         .saturating_add(1)
         .saturating_mul(size_of::<u32>() as u64);
-    controls.saturating_add(index)
+    controls
+        .saturating_add(adoption_gates)
+        .saturating_add(index)
 }
 
 /// A caller's output block: interleaved samples the renderer writes.
@@ -98,6 +119,68 @@ pub struct AudioBlockMut<'a> {
 }
 
 impl<'a> AudioBlockMut<'a> {
+    /// Split the block at a frame, giving two blocks over the same buffer.
+    ///
+    /// ADR-0050 clause 4's mechanism. A host block whose quanta straddle an activation
+    /// boundary is rendered as two calls, adopting between them, and this is what makes the
+    /// two calls possible without copying: the same samples, described as two spans.
+    ///
+    /// That the audio is unchanged by the split is not an assumption — it is ADR-0001's
+    /// partition invariance, which the four-partition test already asserts and which this
+    /// only reuses.
+    ///
+    /// A split outside the block gives the block **back** rather than consuming it, because
+    /// a zero-length half is not a call: the renderer would be asked to serve nothing while
+    /// the caller still had its whole block to fill. Returning `Err(self)` is what lets the
+    /// one caller fall through to rendering it whole without a second borrow.
+    pub fn split_at_frame(self, frames: usize) -> Result<(Self, Self), Self> {
+        if frames == 0 || frames >= self.frames {
+            return Err(self);
+        }
+        let channels = self.layout.channels();
+        let Some(cut) = frames.checked_mul(channels) else {
+            return Err(self);
+        };
+        let rest = self.frames - frames;
+        let layout = self.layout;
+        let (head, tail) = self.samples.split_at_mut(cut);
+        Ok((
+            Self {
+                samples: head,
+                frames,
+                layout,
+            },
+            Self {
+                samples: tail,
+                frames: rest,
+                layout,
+            },
+        ))
+    }
+
+    /// Borrow the same block again, for a caller that must keep it after lending it.
+    ///
+    /// ADR-0050 clause 4's split path needs both: it hands each half to a renderer call and
+    /// must still be able to silence both if either call faults, because the terminal
+    /// contract is silence over the **complete** callback rather than over the span the
+    /// fault happened in.
+    pub fn reborrow(&mut self) -> AudioBlockMut<'_> {
+        AudioBlockMut {
+            samples: self.samples,
+            frames: self.frames,
+            layout: self.layout,
+        }
+    }
+
+    /// Write silence over the whole block.
+    ///
+    /// A fill rather than a loop, and no allocation: this is reachable from the audio
+    /// thread's terminal path, where the alternative to silence is playing whatever the
+    /// caller's buffer happened to hold.
+    pub fn silence(&mut self) {
+        self.samples.fill(0.0);
+    }
+
     /// Wrap a caller's buffer, checking that its shape is what it claims.
     ///
     /// The check is here rather than in the render loop so that the loop can index
@@ -397,7 +480,14 @@ struct PendingCounts {
 #[derive(Debug)]
 #[must_use]
 pub struct PreparedRenderer {
-    plan: CompiledPlan,
+    /// Shared with [`crate::stream::StreamControl`] rather than copied.
+    ///
+    /// A compiled plan is immutable for the life of a stream (`SOUND-INV-003`), and both
+    /// halves read it: the control to build and place a schedule, the renderer to run one.
+    /// One allocation shared is what keeps the resource report honest — a second copy would
+    /// be memory admission never accounted for — and the `Arc` is cloned once at
+    /// preparation, never on the audio thread.
+    plan: std::sync::Arc<CompiledPlan>,
     epoch: StreamEpoch,
     anchor: StreamAnchor,
     clock: SampleTime,
@@ -408,18 +498,13 @@ pub struct PreparedRenderer {
     output_carry: Vec<f32>,
     /// How many frames of [`Self::output_carry`] are live.
     carry_frames: usize,
-    /// The occurrences this stream can mint, and their producers' disjoint ranges.
-    ///
-    /// **Off the audio thread.** A producer's position in the plan's declaration is its
-    /// `ProducerId`. This models *occupancy* — an index is taken at a note-on and freed at
-    /// the release that pairs with it — so what `simultaneous_notes` has to cover is a
-    /// producer's polyphony rather than the note count of a whole piece.
-    minter: crate::identity::IdentityTable,
     /// Which occurrences are sounding right now, and on which node.
     ///
     /// **The audio thread's half**, and separate from the minter for the reason
     /// [`crate::identity::LiveNotes`] gives: stamping runs ahead of the render, so the
-    /// minter's state is not what is sounding when an event is applied.
+    /// minter's state is not what is sounding when an event is applied. The minter itself
+    /// is [`crate::stream::StreamControl`]'s — ADR-0050 clause 9 gives the two halves
+    /// different owners so that a schedule can be built while this one renders.
     live_notes: crate::identity::LiveNotes,
     /// ADR-0001 clause 5's input carry.
     ///
@@ -443,10 +528,27 @@ pub struct PreparedRenderer {
     quantum_counts: Vec<u32>,
     /// One quantum's sample-positioned control changes, grouped by the node they move.
     ///
-    /// Rebuilt before each quantum renders and never grown: one quantum's declared event
-    /// capacity bounds how many of these it can carry, so the length admission approved is
-    /// the length this holds for the life of the stream.
+    /// Rebuilt before each quantum renders and never grown. Its length is one quantum's
+    /// declared event capacity **plus** the identity partition, because an activation's mass
+    /// release adds a gate-down per note it ends and those are not events.
     timed_controls: Vec<TimedControl>,
+    /// The gate-downs an adopted activation owes, waiting for the quantum at its boundary.
+    ///
+    /// ADR-0050 clause 5 applies the mass release as one bounded operation rather than as
+    /// one event per voice, so these never reach the arbiter and are charged to no share.
+    /// They are written here at adoption and merged into the next quantum's controls, which
+    /// is the only place a kernel reads a gate.
+    ///
+    /// Preallocated to the identity partition — the most notes that can be sounding at once
+    /// — and written by index. `adoption_gate_len` says how much is live.
+    adoption_gates: Vec<TimedControl>,
+    /// Which node each queued gate-down moves, in the same order.
+    ///
+    /// Beside the control rather than inside it because [`TimedControl`] is what a kernel is
+    /// handed and a kernel already knows which node it is: adding a node field there would
+    /// put a value in the hot slice that nothing reads.
+    adoption_gate_nodes: Vec<usize>,
+    adoption_gate_len: usize,
     /// Where each node's run of [`Self::timed_controls`] starts, plus a terminator.
     ///
     /// `control_starts[n] .. control_starts[n + 1]` is node `n`'s slice, which is what
@@ -459,14 +561,24 @@ pub struct PreparedRenderer {
 }
 
 impl PreparedRenderer {
-    /// Prepare an admitted plan, issuing a stream epoch.
+    /// Prepare an admitted plan for one already-issued stream epoch.
     ///
     /// Everything the render loop touches is allocated here. The output carry is
     /// primed with `Q` frames of silence, which is ADR-0001 clause 6 and the reason
     /// clause 5's loop can serve any `N` — including `N < Q` and any irregular
     /// sequence — without rendering a quantum whose input has not arrived.
-    pub fn prepare(plan: CompiledPlan, anchor: StreamAnchor) -> Result<Self, CompileError> {
-        let epoch = issue_epoch()?;
+    ///
+    /// **Crate-private, and it takes the epoch and the table identity rather than issuing
+    /// them.** [`crate::stream::StreamControl::open`] is the public door, and it is what
+    /// keeps the two halves of one stream from being mismatched: the registry built here
+    /// must answer to the minter the control holds, because the renderer's foreign filter
+    /// compares an occurrence's table against this registry's.
+    pub(crate) fn prepare(
+        plan: std::sync::Arc<CompiledPlan>,
+        anchor: StreamAnchor,
+        epoch: StreamEpoch,
+        minter: crate::identity::TableId,
+    ) -> Result<Self, CompileError> {
         let quantum = QUANTUM_FRAMES as usize;
         let channels = plan.channel_layout().channels();
 
@@ -494,16 +606,24 @@ impl PreparedRenderer {
         // one state per — so the two cannot be counted differently.
         let records = node_states.len();
 
+        // The identity partition, which bounds how many notes one activation can end and so
+        // how many gate-downs a boundary can owe. Summed from the same declaration both
+        // identity halves are sized by.
+        let identity_indices: usize = plan
+            .note_producer_ranges()
+            .iter()
+            .map(|range| range.get() as usize)
+            .sum();
+
         let mut output_carry = vec![0.0; carry_frames_capacity.saturating_mul(channels)];
         output_carry.fill(0.0);
 
         // ADR-0047 clause 3's identity partition, from what admission copied in. A plan with
         // no note-on producers gets an empty partition, which is right: nothing can start a
-        // note, so nothing can name an occurrence.
-        let minter =
-            crate::identity::IdentityTable::from_admitted_ranges(plan.note_producer_ranges())?;
+        // note, so nothing can name an occurrence. The minting half is the control's; this
+        // is the registry that answers to it.
         let live_notes =
-            crate::identity::LiveNotes::for_ranges(minter.id(), plan.note_producer_ranges())?;
+            crate::identity::LiveNotes::for_ranges(minter, plan.note_producer_ranges())?;
 
         let has_output = plan
             .ops()
@@ -518,7 +638,6 @@ impl PreparedRenderer {
             output_carry,
             // Primed: `Q` frames of silence are already available to serve.
             carry_frames: quantum,
-            minter,
             live_notes,
             input_carry: vec![0.0; carry_frames_capacity.saturating_mul(channels)],
             node_states,
@@ -528,7 +647,10 @@ impl PreparedRenderer {
             quantum_counts: vec![0; quanta_per_call],
             // ADR-0001 clause 14's storage. One quantum at a time, because an edge is
             // applied inside the quantum it falls in and nothing outlives that.
-            timed_controls: vec![TimedControl::FILL; events_per_quantum],
+            timed_controls: vec![TimedControl::FILL; events_per_quantum + identity_indices],
+            adoption_gates: vec![TimedControl::FILL; identity_indices],
+            adoption_gate_nodes: vec![0; identity_indices],
+            adoption_gate_len: 0,
             control_starts: vec![0; records.saturating_add(1)],
             control_fill: vec![0; records],
             plan,
@@ -550,24 +672,55 @@ impl PreparedRenderer {
         self.clock
     }
 
-    /// The anchor this stream was prepared with.
+    /// How many rendered frames are waiting to be served.
     ///
-    /// Crate-private on purpose. It is **not** a placement source: it is fixed at
-    /// preparation while the transport's anchor moves, so a caller reaching for it would
-    /// place a post-seek stream at the pre-seek pairing. Its one use here is the opposite
-    /// one — refusing a placement that disagrees with the timeline `plan_position_of`
-    /// gives the position-aware kernels.
-    pub(crate) const fn anchor(&self) -> StreamAnchor {
-        self.anchor
+    /// Crate-private, and its one caller is ADR-0050 clause 4's split: the frame a crossing
+    /// host block is cut at is `carry + kQ`, which is the largest request that renders
+    /// exactly `k` quanta. Between calls this is at most `Q` — a call renders the fewest
+    /// quanta that cover its request, so the remainder is under one quantum, and the stream
+    /// starts with exactly `Q`. The `maximum_block_size + Q` the buffer is sized to is the
+    /// peak reached *inside* a call, which is why adoption belongs between them.
+    pub(crate) const fn carry_frames(&self) -> usize {
+        self.carry_frames
     }
 
-    /// The minting half, for a producer that mints off the audio thread.
+    /// Count an activation the scheduler refused at its offer.
     ///
-    /// `&mut` because minting is a write, and crate-private because a producer outside this
-    /// crate has no admitted range: the partition is the plan's, and reaching it from
-    /// elsewhere would put occurrences outside what admission checked.
-    pub(crate) const fn minter_mut(&mut self) -> &mut crate::identity::IdentityTable {
-        &mut self.minter
+    /// The refusal itself belongs to the scheduler, which owns the exchange; the counters
+    /// belong to the renderer, which owns the report. Exposing the increment rather than the
+    /// report keeps that split intact.
+    pub(crate) fn count_refused_activation(&mut self) {
+        self.diagnostics.count_refused_activation();
+    }
+
+    /// How many scheduled records preparation sized its index tables for.
+    ///
+    /// The other input to [`timed_control_scratch_bytes`], read back so a budget check has
+    /// both of them from the object rather than one from the object and one from a guess.
+    pub fn prepared_record_count(&self) -> RecordCount {
+        RecordCount::measured(u32::try_from(self.control_fill.len()).unwrap_or(u32::MAX))
+    }
+
+    /// What the sample-positioned control scratch actually holds, in bytes.
+    ///
+    /// The symmetric reader of [`timed_control_scratch_bytes`], which is what admission
+    /// charges a plan for it. The two are written apart on purpose: a test that compared the
+    /// budget with a restatement of its own formula would pass however wrong the formula was,
+    /// and both terms this covers were once missing from it — the identity extension, and
+    /// then the two buffers an adopted activation's gate-downs wait in.
+    #[must_use]
+    pub fn control_scratch_bytes(&self) -> usize {
+        self.timed_controls
+            .len()
+            .saturating_add(self.adoption_gates.len())
+            .saturating_mul(size_of::<TimedControl>())
+            .saturating_add(self.adoption_gate_nodes.len() * size_of::<usize>())
+            .saturating_add(
+                self.control_starts
+                    .len()
+                    .saturating_add(self.control_fill.len())
+                    * size_of::<u32>(),
+            )
     }
 
     /// The counters this stream has accumulated.
@@ -576,12 +729,12 @@ impl PreparedRenderer {
     }
 
     /// The latency this stream adds, which is a constant `Q` frames.
-    pub const fn added_latency(&self) -> FrameCount {
+    pub fn added_latency(&self) -> FrameCount {
         self.plan.added_latency()
     }
 
     /// The plan being rendered.
-    pub const fn plan(&self) -> &CompiledPlan {
+    pub fn plan(&self) -> &CompiledPlan {
         &self.plan
     }
 }
@@ -594,3 +747,7 @@ impl PreparedRenderer {
 /// which the counting-allocator test can see for the three that do not allocate.
 #[path = "render/hot.rs"]
 mod hot;
+
+#[cfg(test)]
+#[path = "tests/render_scratch.rs"]
+mod scratch_tests;

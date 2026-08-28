@@ -332,6 +332,49 @@ impl NodeState {
         }
     }
 
+    /// What a control holds, for a caller that must restore it.
+    ///
+    /// The symmetric reader of [`Self::set_control`], and it exists for ADR-0051's catch-up
+    /// batch: a locate restores **every** prepared target, and a target with no write before
+    /// the destination is restored to the value it was prepared with. A batch that skipped
+    /// those would leave whatever the pre-seek position set, which is exactly the value the
+    /// seek was supposed to leave behind.
+    ///
+    /// **An envelope's gate answers here even though [`Self::set_control`] ignores it**, and
+    /// the asymmetry is the point rather than an oversight. A gate is sample-positioned, so
+    /// the edge law belongs to the kernel and nothing quantum-rate may move it — but a gate
+    /// can be *raised* by automation rather than by a note, and such a gate has no live-note
+    /// entry for the boundary mass release to find. If the batch skipped it, seeking back
+    /// past the automation that raised it would leave it high with nothing able to lower it.
+    ///
+    /// Off the audio thread. `None` only where the kind has no such control.
+    ///
+    /// Crate-private: the one caller is `StreamControl::catch_up`, and a restoration hook this
+    /// specific is not a commitment worth making to a downstream reader.
+    #[must_use]
+    pub(crate) fn control_value(&self, control: ControlIndex) -> Option<ParameterValue> {
+        match self {
+            Self::Sine {
+                frequency,
+                amplitude,
+                ..
+            } => match control {
+                SINE_FREQUENCY => ParameterValue::new(frequency.as_f32()).ok(),
+                SINE_AMPLITUDE => ParameterValue::new(amplitude.as_f32()).ok(),
+                _ => None,
+            },
+            Self::Envelope { held, .. } => match control {
+                ENVELOPE_GATE => Some(if *held {
+                    ParameterValue::ONE
+                } else {
+                    ParameterValue::ZERO
+                }),
+                _ => None,
+            },
+            Self::Filter { .. } | Self::Stateless => None,
+        }
+    }
+
     /// Move one of this node's **quantum-rate** controls.
     ///
     /// The index is the node kind's own, resolved at admission from the parameter

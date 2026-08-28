@@ -11,6 +11,7 @@ use super::{
     IdentityTable, LiveNote, LiveNotes, NoteIdentity, OrphanCause, ReleaseScope, Resolution, Slot,
 };
 use crate::plan::NoteSlot;
+use crate::quantities::HeldNoteCount;
 
 impl IdentityTable {
     /// The node an identity's note plays, if it names a live one.
@@ -87,12 +88,12 @@ impl IdentityTable {
     /// **Scoped**, because clause 6 applies the operation "to owned voices within the source
     /// event". A panic or a transport stop reaches everything; a sustain lift or a
     /// script-driven mass release reaches one producer and must not end another's notes.
-    pub fn release_all(&mut self, scope: ReleaseScope) -> u32 {
+    pub fn release_all(&mut self, scope: ReleaseScope) -> HeldNoteCount {
         let (first, last) = match scope {
             ReleaseScope::Everything => (0_usize, self.slots.len()),
             ReleaseScope::Producer(producer) => {
                 let Some(range) = self.ranges.get(usize::from(producer.as_u16())) else {
-                    return 0;
+                    return HeldNoteCount::NONE;
                 };
                 let start = range.start as usize;
                 (start, start.saturating_add(range.len as usize))
@@ -116,7 +117,7 @@ impl IdentityTable {
             }
         }
         self.live = self.live.saturating_sub(ended);
-        ended
+        HeldNoteCount::measured(ended)
     }
 }
 
@@ -170,5 +171,65 @@ impl LiveNotes {
             *slot = None;
         }
         Some(note)
+    }
+
+    /// End every note in `scope`, writing each one's node into `ended`.
+    ///
+    /// The registry half of ADR-0046 clause 6's bounded mass release, and the half
+    /// [ADR-0050](../../../plans/v2/decisions/ADR-0050-transport-activation.md) clause 5
+    /// puts on the audio thread. The allocator half is the control's and runs elsewhere,
+    /// against a different set: this clears what is **sounding**, while the table releases
+    /// what a retired schedule still **reserves**, and ADR-0050 clause 3 is explicit that
+    /// those two sets overlap without containing each other.
+    ///
+    /// Returns how many notes it ended, and writes their nodes into `ended` so the caller can
+    /// lower those gates without a second walk. `ended` is filled by index into storage the
+    /// caller already owns and is never grown.
+    ///
+    /// **All or nothing.** A buffer too short to name the scope ends **nothing** and returns
+    /// zero. Clearing what it cannot name would strand those notes: their registry entries
+    /// would be gone, so no later release could reach them and no caller could learn which
+    /// gates were left raised — a note sounding forever with nothing able to end it. An
+    /// independent review found the first version doing exactly that. Refusing leaves every
+    /// note where it was, which a conforming caller can retry and a non-conforming one can
+    /// at least detect.
+    ///
+    /// The bound is the **scope's span**, not its live count, because that is what a caller
+    /// can size against a declaration: a producer's span is its admitted
+    /// `simultaneous_notes`, known at admission and preallocated. So the refusal branch is
+    /// unreachable for a conforming caller and exists to make the failure safe rather than
+    /// to be relied on.
+    pub fn release_all(
+        &mut self,
+        scope: ReleaseScope,
+        ended: &mut [Option<crate::plan::NoteSlot>],
+    ) -> HeldNoteCount {
+        let (first, last) = match scope {
+            ReleaseScope::Everything => (0_usize, self.slots.len()),
+            ReleaseScope::Producer(producer) => {
+                let Some(range) = self.ranges.get(usize::from(producer.as_u16())) else {
+                    return HeldNoteCount::NONE;
+                };
+                let start = range.start as usize;
+                (start, start.saturating_add(range.len as usize))
+            }
+        };
+        if ended.len() < last.saturating_sub(first) {
+            return HeldNoteCount::NONE;
+        }
+        let mut count = 0_u32;
+        for index in first..last {
+            let Some(slot) = self.slots.get_mut(index) else {
+                break;
+            };
+            let Some(live) = slot.take() else {
+                continue;
+            };
+            if let Some(out) = ended.get_mut(count as usize) {
+                *out = Some(live.note);
+            }
+            count = count.saturating_add(1);
+        }
+        HeldNoteCount::measured(count)
     }
 }

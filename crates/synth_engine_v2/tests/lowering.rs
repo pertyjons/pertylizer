@@ -19,8 +19,9 @@ use synth_engine_v2::offline::{OfflineEvent, render_offline};
 use synth_engine_v2::plan::{BufferSlot, ParameterSlot, PlanOp};
 use synth_engine_v2::quantities::{Amplitude, ChannelLayout, Frequency, ParameterValue};
 use synth_engine_v2::render::{
-    AudioBlockMut, EventEnvelope, EventPayload, PreparedRenderer, Renderer, TimedEvent, TimedEvents,
+    AudioBlockMut, EventEnvelope, EventPayload, Renderer, TimedEvent, TimedEvents,
 };
+use synth_engine_v2::stream::StreamControl;
 use synth_engine_v2::time::{
     FrameCount, PlanPosition, QUANTUM_FRAMES, SampleTime, StreamAnchor, TimeSource,
 };
@@ -305,7 +306,7 @@ fn a_refused_foreign_slot_is_counted_rather_than_only_ignored() {
         .resolve_parameter(SOURCE, parameters::SINE_AMPLITUDE)
         .expect("the sine declares an amplitude");
 
-    let mut renderer = PreparedRenderer::prepare(
+    let (_control, mut renderer) = StreamControl::open(
         plan,
         StreamAnchor::new(SampleTime::ZERO, PlanPosition::ZERO),
     )
@@ -446,7 +447,7 @@ fn foreign_slots_do_not_consume_a_quantum_capacity() {
         .resolve_parameter(SOURCE, parameters::SINE_FREQUENCY)
         .expect("the sine declares a frequency");
 
-    let mut renderer = PreparedRenderer::prepare(
+    let (_control, mut renderer) = StreamControl::open(
         plan,
         StreamAnchor::new(SampleTime::ZERO, PlanPosition::ZERO),
     )

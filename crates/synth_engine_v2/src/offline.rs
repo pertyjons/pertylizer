@@ -18,6 +18,7 @@
 
 use crate::plan::CompiledPlan;
 use crate::render::{AudioBlockMut, PreparedRenderer, Renderer, TimedEvent, TimedEvents};
+use crate::stream::StreamControl;
 use crate::time::{FrameCount, PlanPosition, QUANTUM_FRAMES, SampleTime, StreamAnchor};
 
 /// An offline render that could not be produced.
@@ -110,7 +111,11 @@ pub fn render_offline(
         .max(1);
     let priming = QUANTUM_FRAMES as usize;
 
-    let mut renderer = PreparedRenderer::prepare(plan, StreamAnchor::new(SampleTime::ZERO, start))?;
+    // Both halves of the stream, from the one constructor that pairs them. An offline
+    // render drives both itself, which is what an offline render is: there is no audio
+    // thread to hand the renderer to.
+    let (mut control, mut renderer) =
+        StreamControl::open(plan, StreamAnchor::new(SampleTime::ZERO, start))?;
 
     // Stamped only now, with the epoch this stream actually has — and through the same
     // helper the compiled scheduler uses, so a note-on's occurrence and its release's pairing
@@ -119,7 +124,7 @@ pub fn render_offline(
         .iter()
         .map(|event| crate::schedule::CompiledEvent::new(event.time(), event.payload()))
         .collect();
-    let stamped = crate::schedule::stamp_compiled(&mut renderer, &compiled)?;
+    let stamped = crate::schedule::stamp_compiled(&mut control, &compiled)?;
 
     // Render the requested frames plus the priming head, then drop the head. The
     // drained tail is the same fact seen from the other end: the last `Q` frames of

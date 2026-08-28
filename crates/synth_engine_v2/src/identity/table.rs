@@ -10,6 +10,24 @@ use super::{
 };
 use crate::quantities::HeldNoteCount;
 
+/// The disjoint index spans a producer list implies, in declaration order.
+///
+/// Shared by both identity halves rather than written twice. They must agree exactly —
+/// [`IdentityTable`] mints inside a producer's span and [`LiveNotes`] clears inside the same
+/// one — and two loops computing one partition is how they come to disagree.
+fn producer_spans(producer_ranges: &[HeldNoteCount]) -> Vec<Range> {
+    let mut ranges = Vec::with_capacity(producer_ranges.len());
+    let mut start = 0_u32;
+    for range in producer_ranges {
+        ranges.push(Range {
+            start,
+            len: range.get(),
+        });
+        start = start.saturating_add(range.get());
+    }
+    ranges
+}
+
 impl IdentityTable {
     /// Build a table whose producers get disjoint ranges, in the order given.
     ///
@@ -78,15 +96,7 @@ impl IdentityTable {
         // and fail every mint, which is worse than a construction that says it cannot.
         let total =
             usize::try_from(needed).map_err(|_| IdentityError::ExtentUnallocatable { needed })?;
-        let mut ranges = Vec::with_capacity(producer_ranges.len());
-        let mut start = 0_u32;
-        for range in producer_ranges {
-            ranges.push(Range {
-                start,
-                len: range.get(),
-            });
-            start = start.saturating_add(range.get());
-        }
+        let ranges = producer_spans(producer_ranges);
 
         Ok(Self {
             id,
@@ -256,11 +266,29 @@ impl LiveNotes {
         Ok(Self {
             id,
             slots: vec![None; total],
+            ranges: producer_spans(producer_ranges),
         })
     }
 
     /// How many bytes its storage occupies, for the resource report.
+    ///
+    /// Both allocations, not only the slots: the registry keeps its own copy of the producer
+    /// spans so a scoped mass release can resolve a producer on the audio thread, and a
+    /// figure that omitted them would understate the registry by exactly that table.
     pub const fn storage_bytes(&self) -> usize {
         self.slots.len() * size_of::<Option<super::LiveNote>>()
+            + self.ranges.len() * size_of::<Range>()
+    }
+}
+
+impl IdentityTable {
+    /// How many bytes its storage occupies, for the resource report.
+    ///
+    /// The twin of [`LiveNotes::storage_bytes`], and it exists so that admission's budget has
+    /// something to be checked *against*. `render::identity_bytes` predicts what the two
+    /// halves take; these two report what they took. Without both, the prediction can only be
+    /// tested by restating its own formula, which is not a test.
+    pub const fn storage_bytes(&self) -> usize {
+        self.slots.len() * size_of::<Slot>() + self.ranges.len() * size_of::<Range>()
     }
 }

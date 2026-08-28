@@ -356,6 +356,14 @@ pub(crate) struct LiveNote {
 pub struct LiveNotes {
     pub(super) id: TableId,
     pub(super) slots: Vec<Option<LiveNote>>,
+    /// The same disjoint per-producer ranges [`IdentityTable`] holds.
+    ///
+    /// Carried rather than derived, because a scope names a producer and this is the only
+    /// thing on the audio thread that can turn one into a span of indices.
+    /// [`ADR-0050`](../../../plans/v2/decisions/ADR-0050-transport-activation.md) clause 5
+    /// clears a retired schedule's producers here at an activation boundary, and a registry
+    /// that could not resolve a producer would have to clear everything or nothing.
+    pub(super) ranges: Vec<Range>,
 }
 
 #[path = "identity/table.rs"]

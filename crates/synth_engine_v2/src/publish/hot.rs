@@ -100,8 +100,14 @@ impl PublicationArbiter {
 
     /// Which row of the open window an event's own destination falls in.
     fn row_of(&self, event: TimedEvent) -> Option<WindowRow> {
-        let index = event.envelope().time().quantum_index();
-        let offset = index.checked_sub(self.start.quantum_index())?;
+        self.row_of_time(event.envelope().time())
+    }
+
+    /// The same, for a charge whose destination is a time rather than an event.
+    fn row_of_time(&self, time: SampleTime) -> Option<WindowRow> {
+        let offset = time
+            .quantum_index()
+            .checked_sub(self.start.quantum_index())?;
         let offset = usize::try_from(offset).ok()?;
         if offset < self.open_quanta {
             Some(WindowRow::new(offset))
@@ -214,10 +220,95 @@ impl<'a> Publication<'a> {
         Ok(())
     }
 
-    /// How many events one class has charged to one quantum of the window so far.
+    /// Charge one **operation** to one class, in the quantum `at` falls in.
+    ///
+    /// The same accounting as [`Self::charge`] and no batch entry: it spends a unit of the
+    /// class's share for work the renderer performs itself rather than for an event the
+    /// batch carries.
+    ///
+    /// Its one caller is ADR-0050 clause 5's boundary mass release, which clause 6 of
+    /// ADR-0046 requires to be "one operation ... charged to the session share, never
+    /// expanded into one event per voice". Expanding it would make a seek's cost depend on
+    /// how many notes happened to be sounding, which is exactly the unbounded quantity the
+    /// bounded operation exists to replace; charging nothing at all would leave the share's
+    /// occupancy and its high-water mark blind to it.
+    ///
+    /// The destination is taken from `at` rather than from a row the caller names, for the
+    /// reason [`Self::charge`] reads it from the event: a charge that chose its own row
+    /// could overrun a share without ever tripping it.
+    pub fn charge_operation(
+        &mut self,
+        class: ProducerClass,
+        at: SampleTime,
+    ) -> Result<(), PublicationFault> {
+        if class == ProducerClass::Internal {
+            return Err(PublicationFault::InternalIntoExternalBatch);
+        }
+
+        let Some(quantum) = self.arbiter.row_of_time(at) else {
+            return Err(PublicationFault::DestinationOutsideWindow {
+                time: at,
+                start: self.arbiter.start,
+                quanta: self.arbiter.open_quanta,
+            });
+        };
+
+        let row = quantum.offset().saturating_mul(ProducerClass::ALL.len());
+        let index = row.saturating_add(class.index());
+        let (Some(spent), Some(total)) = (
+            self.arbiter.ledger.get(index).copied(),
+            self.arbiter.totals.get(quantum.offset()).copied(),
+        ) else {
+            return Err(PublicationFault::DestinationOutsideWindow {
+                time: at,
+                start: self.arbiter.start,
+                quanta: self.arbiter.open_quanta,
+            });
+        };
+
+        let share = self.arbiter.shares[class.index()];
+        let one = EventCount::measured(1);
+        let Some(requested) = spent.checked_add(one) else {
+            return Err(PublicationFault::ShareOverrun {
+                class,
+                quantum,
+                requested: spent,
+                share,
+            });
+        };
+        if requested > share {
+            return Err(PublicationFault::ShareOverrun {
+                class,
+                quantum,
+                requested,
+                share,
+            });
+        }
+
+        if let Some(slot) = self.arbiter.ledger.get_mut(index) {
+            *slot = requested;
+        }
+        let quantum_total = total.checked_add(one).unwrap_or(total);
+        if let Some(slot) = self.arbiter.totals.get_mut(quantum.offset()) {
+            *slot = quantum_total;
+        }
+        if requested > self.arbiter.high_water[class.index()] {
+            self.arbiter.high_water[class.index()] = requested;
+        }
+        if quantum_total > self.arbiter.high_water_external_total {
+            self.arbiter.high_water_external_total = quantum_total;
+        }
+        Ok(())
+    }
+
+    /// How much of one class's share one quantum of the window has spent so far.
     ///
     /// Bounded by the **open** window rather than by the prepared store, so a query past
     /// the window reads nothing rather than whatever a larger previous pass left there.
+    ///
+    /// **Charges, not batch entries** — see [`Publication::charge_operation`]: a bounded
+    /// operation spends the share without adding an entry, so this can exceed what
+    /// [`SealedBatch::len`] reports.
     pub fn spent(&self, quantum: WindowRow, class: ProducerClass) -> EventCount {
         self.arbiter.spent_in(quantum, class)
     }
@@ -248,6 +339,10 @@ impl SealedBatch<'_> {
     }
 
     /// How many events the batch holds.
+    ///
+    /// **Not the same as what its quanta spent.** A bounded operation charges a share without
+    /// adding an entry, so [`Self::spent`] and [`Self::external_total`] can exceed this — see
+    /// [`Publication::charge_operation`].
     pub const fn len(&self) -> usize {
         self.arbiter.len
     }
@@ -257,15 +352,18 @@ impl SealedBatch<'_> {
         self.arbiter.len == 0
     }
 
-    /// How many events one class charged to one quantum of the window.
+    /// How much of one class's share one quantum of the window spent.
+    ///
+    /// Charges rather than entries: an operation spends without adding one.
     pub fn spent(&self, quantum: WindowRow, class: ProducerClass) -> EventCount {
         self.arbiter.spent_in(quantum, class)
     }
 
-    /// How many **external** events one quantum of the window holds.
+    /// How much of one quantum's **external** share was spent.
     ///
     /// External because the renderer-internal arena is not part of this batch; see
-    /// [`PublicationArbiter::high_water_external_total`].
+    /// [`PublicationArbiter::high_water_external_total`]. Charges rather than entries, for
+    /// the reason [`Self::len`] gives.
     pub fn external_total(&self, quantum: WindowRow) -> EventCount {
         self.arbiter.external_total_in(quantum)
     }

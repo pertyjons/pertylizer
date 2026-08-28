@@ -259,7 +259,7 @@ fn a_scoped_mass_release_leaves_other_producers_alone() {
 
     assert_eq!(
         table.release_all(ReleaseScope::Producer(A)),
-        3,
+        HeldNoteCount::measured(3),
         "only A's obligations end"
     );
     assert_eq!(
@@ -307,7 +307,7 @@ fn a_mass_release_ends_every_live_note_and_leaves_orphans_behind() {
 
     assert_eq!(
         table.release_all(ReleaseScope::Everything),
-        4,
+        HeldNoteCount::measured(4),
         "a panic or transport stop reaches every producer"
     );
     assert_eq!(table.live(), 0);
@@ -430,4 +430,175 @@ fn the_occurrence_remembers_the_node_so_a_release_need_not_carry_one() {
         None,
         "and neither does a foreign table pretend to know"
     );
+}
+
+#[test]
+fn the_registry_scopes_a_mass_release_to_one_producer_and_names_what_it_ended() {
+    // The audio-thread half of ADR-0046 clause 6's bounded mass release, which ADR-0050
+    // clause 5 puts at an activation boundary. It clears what is **sounding**; the table
+    // clears what a retired schedule still **reserves**, and clause 3 is explicit that the
+    // two sets overlap without containing each other.
+    let minter = table();
+    let mut registry =
+        LiveNotes::for_ranges(minter.id(), &[held(4), held(4)]).expect("a valid registry");
+    let mut table = table();
+
+    // Admitted with the *minter's* table id, because the registry accepts only its own —
+    // and building a second table here is what would silently make every event foreign.
+    let mut mine = Vec::new();
+    for index in 0..3 {
+        let identity = table.mint(A, node()).expect("room");
+        // The registry answers to `minter`, so the occurrence has to carry that id.
+        let identity = rekey(identity, minter.id());
+        registry.admit(identity, slot(index));
+        mine.push(identity);
+    }
+    let theirs = rekey(table.mint(B, node()).expect("room"), minter.id());
+    registry.admit(theirs, slot(9));
+
+    let mut ended = [None; 8];
+    assert_eq!(
+        registry.release_all(ReleaseScope::Producer(A), &mut ended),
+        HeldNoteCount::measured(3),
+        "only A's sounding notes end"
+    );
+    assert_eq!(
+        &ended[..3],
+        &[Some(slot(0)), Some(slot(1)), Some(slot(2))],
+        "and it names each one's node, so the caller can lower those gates without a second walk"
+    );
+    assert_eq!(
+        registry.note_of(theirs),
+        Some(slot(9)),
+        "B's note is untouched: a seek moves plan time, it does not lift a performer's finger"
+    );
+    for identity in mine {
+        assert_eq!(
+            registry.note_of(identity),
+            None,
+            "an occurrence the mass release took resolves through nothing afterwards"
+        );
+    }
+}
+
+#[test]
+fn the_registrys_mass_release_ends_nothing_it_cannot_name() {
+    // All or nothing, and the alternative is the reason. Clearing what a short buffer cannot
+    // name would leave those notes with no registry entry and no reported node: nothing could
+    // release them and nothing could lower their gates, so they would sound forever. Refusing
+    // leaves every one of them exactly where it was.
+    //
+    // The bound is the scope's **span**, not its live count, because that is what a caller can
+    // size against an admitted declaration — so this branch is unreachable for a conforming
+    // caller and exists to make the failure safe rather than to be relied on.
+    let minter = table();
+    let mut registry =
+        LiveNotes::for_ranges(minter.id(), &[held(4), held(4)]).expect("a valid registry");
+    let mut table = table();
+    let mut mine = Vec::new();
+    for index in 0..3 {
+        let identity = rekey(table.mint(A, node()).expect("room"), minter.id());
+        registry.admit(identity, slot(index));
+        mine.push(identity);
+    }
+
+    // Three notes are sounding, but A's span is four, so three slots is short.
+    let mut ended = [None; 3];
+    assert_eq!(
+        registry.release_all(ReleaseScope::Producer(A), &mut ended),
+        HeldNoteCount::NONE,
+        "a buffer too short for the span ends nothing"
+    );
+    assert_eq!(ended, [None; 3], "and names nothing");
+    for identity in &mine {
+        assert_eq!(
+            registry.note_of(*identity),
+            Some(slot(
+                mine.iter()
+                    .position(|other| other == identity)
+                    .expect("present")
+            )),
+            "every note is still sounding and still reachable"
+        );
+    }
+
+    // The same call with a buffer sized to the span succeeds, which is what makes the
+    // refusal a refusal rather than a permanent failure.
+    let mut ended = [None; 4];
+    assert_eq!(
+        registry.release_all(ReleaseScope::Producer(A), &mut ended),
+        HeldNoteCount::measured(3)
+    );
+}
+
+#[test]
+fn the_registry_ignores_a_producer_it_has_no_range_for() {
+    // A scope naming a producer outside the partition ends nothing rather than clearing the
+    // whole registry. The audio thread cannot report a bad scope, so the safe answer is the
+    // empty one.
+    let minter = table();
+    let mut registry = LiveNotes::for_ranges(minter.id(), &[held(4)]).expect("a valid registry");
+    let mut table = IdentityTable::new(held(512), &[held(4)]).expect("a valid table");
+    let identity = rekey(table.mint(A, node()).expect("room"), minter.id());
+    registry.admit(identity, slot(0));
+
+    let mut ended = [None; 4];
+    assert_eq!(
+        registry.release_all(ReleaseScope::Producer(ProducerId::new(7)), &mut ended),
+        HeldNoteCount::NONE
+    );
+    assert_eq!(registry.note_of(identity), Some(slot(0)));
+}
+
+/// A note slot that is distinguishable from its neighbours.
+///
+/// The registry stores the node a note plays, and a mass release reports it; fixtures that
+/// used one slot everywhere could not tell a correct report from a constant.
+fn slot(index: usize) -> crate::plan::NoteSlot {
+    crate::plan::NoteSlot::new(crate::plan::PlanId::FILL, index)
+}
+
+/// The same occurrence, attributed to another table.
+///
+/// Only the tests need this: they mint from one table and admit into a registry built for
+/// another, which production never does — `StreamControl::open` pairs the two halves. It
+/// exists so a fixture can exercise the registry without also exercising the minter's
+/// allocation policy.
+fn rekey(identity: NoteIdentity, table: TableId) -> NoteIdentity {
+    NoteIdentity {
+        table,
+        index: identity.index,
+        generation: identity.generation,
+    }
+}
+
+#[test]
+fn the_admission_budget_covers_what_both_identity_halves_actually_allocate() {
+    // `render::identity_bytes` is what admission charges a plan for its identity partition,
+    // and preparation is what spends it. The two are written apart, so this compares the
+    // prediction against what the objects report holding rather than restating the formula.
+    //
+    // The producer **count** is varied independently of the index count, because that is the
+    // term an earlier revision got wrong: both halves keep their own copy of the per-producer
+    // spans, and the budget charged one table. A fixture that only varied polyphony moves the
+    // per-index term and cannot see it.
+    for partition in [
+        vec![held(4)],
+        vec![held(2), held(2)],
+        vec![held(1), held(1), held(1), held(1)],
+        vec![held(64), held(1)],
+    ] {
+        let minter = IdentityTable::from_admitted_ranges(&partition).expect("a valid table");
+        let registry = LiveNotes::for_ranges(minter.id(), &partition).expect("a valid registry");
+        let held_by_both = minter.storage_bytes() + registry.storage_bytes();
+
+        assert!(
+            crate::render::identity_bytes(&partition) >= held_by_both as u64,
+            "a partition of {} producers over {} indices is charged {} bytes but holds {}",
+            partition.len(),
+            partition.iter().map(|range| range.get()).sum::<u32>(),
+            crate::render::identity_bytes(&partition),
+            held_by_both
+        );
+    }
 }
