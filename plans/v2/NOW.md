@@ -1408,8 +1408,8 @@ Observable completion check, copied from the master plan's first Phase 0B exit b
 - the ledger's own status rule is satisfied, so entries reach `Classified` only once an `EVD` record carries the
   audit's coverage claim.
 
-The first two bullets are met. The third is the remaining work: no `EVD` exists yet, so every entry is still
-`Investigating` and the task is **not** closed.
+**All three are met, and P00B-T001 is `Complete`.** The ledger holds 64 entries, every one `Classified`, and the
+coverage check that the documentation gate runs is what keeps the first and third bullets true rather than asserted.
 
 ### Completed slice — the eleven contested owners
 
@@ -1508,11 +1508,43 @@ its migration question or record an explicit `N/A` with a reason. That is the ta
 
 One repair beside it: `evidence/README.md` still advertised `EVD-0017` as free after that record was written.
 
+### Completed slice — the last 27 migration cells, and what filling them found
+
+The remaining bar was a required column, not evidence: 27 entries had a blank `Migration` cell, which inventory rule 6
+reads as "not yet investigated". Each now states its migration question, or records an explicit `N/A` with a reason
+where there genuinely is none — five rows take that branch: three user-settings rows with no project meaning, one
+in-memory field that is never written at all, and STATE-0022's two velocity sensitivities, which *are*
+project-document state but carry no identity, mirror or shape question.
+
+Filling them was not a formality, and four rows changed what the ledger knows:
+
+- **A module description is `graph`-dirty** (STATE-0028), which the ledger had recorded as "`graph` or `ui` — not
+  established which". Settling it took two attempts, and the first was wrong in a way worth keeping: the one function
+  that bumps the version has no *direct* caller, so a search for callers said no term observes the field, and the
+  slice nearly shipped a second instance of STATE-0004's class on that basis. `EngineCommandSender::send` calls
+  `control_snapshot::publish` before enqueueing, and its `SetModuleDescription` arm calls exactly that function. An
+  independent review caught it, and a focused reread then narrowed it again: the command names an instrument, so
+  what is established covers a **patch** module and not the master or return chains the same entry spans. A caller
+  reached through a generic publication step is invisible to a search for direct callers, which is the method limit
+  this ledger keeps rediscovering.
+- **One concept has three colour encodings** in one document (STATE-0013): a hex `Option<String>` for an instrument,
+  patch and module group; `TrackColor { r, g, b }` for a track, return bus and graph; and
+  `SectionColor { red, green, blue }` for a section. V2 needs one, and converting the other two is the migration.
+- **A user's group templates embed the project's own shapes** (STATE-0055): `Vec<ModuleState>`, `Vec<ConnectionState>`
+  and `Vec<ExposedPortState>`, in files that live outside the project where no format migration reaches them. Changing
+  those shapes silently breaks every template a user has saved.
+- **A section holds no reference to the placements it spans** (STATE-0042); `Song` keeps the list sorted by `start` and
+  nothing else, so moving a placement neither moves nor invalidates the section around it.
+
+Method limit, recorded in the audit-pass row: every path was traced by reading rather than executing. Whether a module
+description survives an actual save and reload is **not** established — the existing test exercises set, read and clear
+through the bridge, not a project write — and is owed to P00B-T005.
+
 ### Remaining Phase 0B tasks
 
 | Task           | State       | Resume boundary                                                            |
 |----------------|-------------|----------------------------------------------------------------------------|
-| P00B-T001      | Active      | Fill the 27 blank `Migration` cells; the other 37 entries are `Classified` |
+| P00B-T001      | Complete    | Closed 2026-08-29; 64 entries, all `Classified`, coverage gate-enforced   |
 | P00B-T002      | Paused      | Assign reachability and migration dispositions in the capability inventory |
 | P00B-T003      | Paused      | Resolve the two format questions that block ADR-0014 review                |
 | P00B-T004–T007, P00B-T009 | Not started | Follow the decomposition in the frozen execution record       |
