@@ -1461,11 +1461,58 @@ before the cell was written.
 Method limit, recorded in the ledger's audit-pass row: consumers were **read, not executed**, so no cell is yet
 verified by a round-trip fixture. That is P00B-T005.
 
+### Completed slice — EVD-0018, the coverage claim made falsifiable
+
+The ledger has asserted since its first pass that every persisted field appears exactly once, and asserted it from a
+count. The inventory rules say in as many words that a matching count is not coverage, and a count cannot tell a field
+nobody claimed from a field two entries claim — which is precisely the defect the previous slice's review found in
+`pattern.next_note_id`, by reading rather than by counting.
+
+[EVD-0018](evidence/phase-00b/EVD-0018-state-ownership-coverage.md) is `Supported`. The claim is now enforced by
+`scripts/check_state_ownership_coverage.py`, which walks every leaf-valued path in the persisted schema and requires
+each to be claimed by exactly one entry through a coverage map **the ledger itself carries**, so the ledger stays the
+authority for what it covers and the script only enforces it. Longest matching prefix wins, which is what lets a
+field-level entry sit inside its container.
+
+**The record turns on the mutations, not on the pass.** A check that has only ever passed establishes nothing, so both
+failure modes were introduced into the *real* schema and observed to fire: adding a property reports an unclaimed
+field, deleting a claimed one reports a rule matching nothing. Thirteen unit tests cover the seven failures the
+checker distinguishes, plus the prefix rule, the container rule, and recursion termination.
+
+**`check_v2_docs.py` runs it**, so the claim is enforced by the gate every Core V2 change already runs and by the
+quality workflow behind it, rather than by remembering a script. The hook was verified the same way as the checker:
+a stale rule in the ledger makes the whole documentation gate exit non-zero.
+
+**Two independent reads found five defects in the checker and its record, and every one of them was a claim the
+artifact could not support.** A map naming the same prefix twice was accepted — the exact double claim the check
+exists to falsify. The scan for which entries the ledger *defines* accepted any row starting with an entry id, so
+the two reference tables defined the entries they merely referenced and the two checks against an undefined entry
+could never fire. That one took three passes to close: shape alone admits a ten-column row anywhere, scoping by the
+ledger's table header still carried across a blank line into the next table, and a row now counts only between
+that header and the first line which is not a table row. The module-parameter
+subtotal was 1,116 rather than 1,128, the larger figure having swept in the position, description and scripts
+leaves — and one occurrence of it survived the first correction.
+
+**The fifth was a rule that contradicted itself, and it is the one worth keeping.** This slice first held the whole
+ledger at `Investigating` until the last entry was complete, on the reasoning that a half-classified ledger reports
+an unusable distinction. That is not what the register vocabulary says: `Classified` is **row-level**, so withholding
+37 complete rows because 27 others are not is a rule with no basis, and it sat beside a claim that filling the
+`Migration` cells alone would classify everything — which contradicted the sentence above it. The rule is now stated
+row-level and, more usefully, **enforced**: an entry marked `Classified` with a blank required cell fails the gate,
+which is precisely the defect that downgraded every status in this ledger once before. **37 entries are
+`Classified`**; 27 are not.
+
+**P00B-T001 still does not close, and the reason is a required column rather than the evidence.** Inventory rule 6
+reads a blank field as "not yet investigated", and **27 entries have a blank `Migration` cell**. Each must state
+its migration question or record an explicit `N/A` with a reason. That is the task's remaining work.
+
+One repair beside it: `evidence/README.md` still advertised `EVD-0017` as free after that record was written.
+
 ### Remaining Phase 0B tasks
 
 | Task           | State       | Resume boundary                                                            |
 |----------------|-------------|----------------------------------------------------------------------------|
-| P00B-T001      | Active      | An `EVD` carrying the ledger's coverage claim, after which entries classify |
+| P00B-T001      | Active      | Fill the 27 blank `Migration` cells; the other 37 entries are `Classified` |
 | P00B-T002      | Paused      | Assign reachability and migration dispositions in the capability inventory |
 | P00B-T003      | Paused      | Resolve the two format questions that block ADR-0014 review                |
 | P00B-T004–T007, P00B-T009 | Not started | Follow the decomposition in the frozen execution record       |
