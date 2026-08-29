@@ -6,7 +6,7 @@
 | Status        | Proposed                                                     |
 | Phase         | 0B                                                           |
 | Created       | 2026-08-13                                                   |
-| Last reviewed | 2026-08-15                                                   |
+| Last reviewed | 2026-08-29                                                   |
 | Related       | P00B-T003, P00A-T001, ADR-0008, ADR-0016, ADR-0017, ADR-0034 |
 | Supersedes    | —                                                            |
 | Superseded by | —                                                            |
@@ -55,8 +55,10 @@ references (`IDN-0019`..`IDN-0023`), one load-time heuristic repair
 (`IDN-0031`).
 
 **Outside this decision.** Parameter and port names (`IDN-0015`, `IDN-0017`,
-`IDN-0018`) are a *closed vocabulary declared by a node type*, not entity
-identities; ADR-0007 and the node contract own them. Asset and sample identity
+`IDN-0018`) are a *vocabulary declared by a node type*, not entity identities;
+ADR-0007 and the node contract own them. It is closed for 73 of the 75 module
+types and open for `script` and `audio_script`, whose knobs the user declares —
+see the uncertainty section below, which is where that was established. Asset and sample identity
 (`IDN-0010`, `IDN-0030`) is ADR-0017's. What a track or bus *is* (`IDN-0002`,
 `IDN-0005`, `IDN-0021`) is ADR-0034's; this record decides only how such a thing
 is named. Unknown-field and enum-ordinal policy (`IDN-0014`) is ADR-0016's. How
@@ -160,12 +162,36 @@ the original note, and its comment states the reason. The entry needs
 correcting, and this record does not depend on it either way.
 
 **Uncertainty that remains.** No option here has been prototyped, and nothing
-has been measured. Two questions the inventory itself leaves open bear directly
-on the migration and are not answered here: whether module ids in
-`global.master_effects` can collide with a patch's (`IDN-0021` records the
-namespaces as different and the overlap as unchecked), and what the closed set
-of parameter-name strings actually is (`IDN-0015`). Both are format-review work
-that Phase 0B owes before this record is accepted.
+has been measured.
+
+The two format questions this record owed Phase 0B are **answered**, on
+2026-08-29, and neither changes the option selected.
+
+*Can a master or return chain's module id collide with a patch's* (`IDN-0021`)?
+**Yes.** Three counters allocate independently — a patch graph's, the master
+chain's, and one per return bus — so any two owners that each hold a module of
+the same type give it the same id: a reverb in a patch and one in the master
+chain are both `rev-1`. It is harmless in V1 only because every reference is
+qualified by its owner. What it adds here is a **conversion requirement**: the V1
+mapping must be keyed by `(owner, id string)`. Keyed by the string alone it
+merges those modules into one identity and re-points every reference at whichever
+survives — the dropped-reference risk below, in its worst form, because nothing
+would report it.
+
+*What is the closed set of parameter-name strings* (`IDN-0015`)? **Closed for 73
+of the 75 module types, and open for the other two.** For the 73 it is derived
+rather than authored: the published schema models a module as a `oneOf` over
+every type, each declaring its own parameter object with
+`additionalProperties: false`, 372 distinct names in all, generated from the
+module descriptors. For `script` and `audio_script` the set is **per instance and
+user-authored** — one knob per `param` declaration in the module's own program,
+installed into a rebuilt descriptor and saved into the same parameter map.
+
+That bounds what a conversion can verify, and it is the half that matters here: a
+parameter name can be checked against the descriptor set for 73 types, and for
+the other two the descriptor does not exist until the script is compiled, so the
+conversion must carry the program before it can validate the knobs. Enforcement
+of the name itself belongs to ADR-0016, not to this record.
 
 ## Decision
 
@@ -354,9 +380,10 @@ generates, and clause 10 is the backstop if one slips through.
 | Task                                                                                          | Phase | Status      |
 |-----------------------------------------------------------------------------------------------|-------|-------------|
 | Correct `IDN-0027`: undo restores a note under its own id at `e2a05028`                       | 0B    | Complete    |
-| Answer `IDN-0021`: can a master/return chain's module id collide with a patch's?              | 0B    | Not started |
-| Establish the closed parameter-name set `IDN-0015` leaves open                                | 0B    | Not started |
-| Fill the ledger's `Proposed V2 newtype/rule` and `Migration` columns from this record          | 0B    | Blocked on acceptance |
+| Answer `IDN-0021`: can a master/return chain's module id collide with a patch's?              | 0B    | Complete    |
+| Establish the closed parameter-name set `IDN-0015` leaves open                                | 0B    | Complete    |
+| Fill the ledger's `Proposed V2 newtype/rule` column from this record                           | 0B    | Active      |
+| Fill the ledger's `Migration` column, which needs the conversion mapping below                 | 10A   | Not started |
 | Specify the conversion mapping per identity class, driven from the inventory                  | 10A   | Not started |
 | Round-trip fixture: delete the highest ordinal, reload, allocate, assert no reuse             | 10A   | Not started |
 | Fork-and-merge fixture: same-origin collision is refused, naming both ordinals                | 10A   | Not started |

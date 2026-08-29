@@ -440,6 +440,19 @@ knobs through the GUI, Mod Matrix, automation, persistence, and cross-script rea
   grammar addition (a bare `in1 "label"` statement) + carrying the label onto the port
   descriptor (it must NOT change the port id, so no cable churn). **S–M**, purely cosmetic.
 
+- [ ] **A project with a script knob is invalid against its own published schema.** The
+  generated `schemas/project.schema.json` gives the `script` and `audio_script` branches
+  `"parameters": {"properties": {}, "additionalProperties": false}` — zero declared keys and
+  no extras allowed — while a declared `param drive = 0.5` is saved into exactly that map and
+  restored from it (`session.rs:1273-1288`). Every other module type's branch is generated from
+  its descriptor, but a script module's knobs do not exist until its program compiles, so
+  `gen_schemas.rs` has nothing to emit. Options: relax those two branches to
+  `additionalProperties: {...}` for the knob value type, or declare the map open and validate
+  knobs after compilation. Found by the Phase 0B identity audit (`IDN-0015`). The
+  fixture set cannot reach the branch: `assets/examples/projects/` has five script modules
+  across three projects and **none declares a `param`**, so `schemas_validate_examples`
+  passes. Adding a knob to one of them is the regression test. **S**.
+
 ### 2.6 Per-oscillator glide (portamento)
 
 The eight pitched oscillators have shipped with an opt-in `glide_time` parameter.

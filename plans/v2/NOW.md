@@ -1540,13 +1540,70 @@ Method limit, recorded in the audit-pass row: every path was traced by reading r
 description survives an actual save and reload is **not** established — the existing test exercises set, read and clear
 through the bridge, not a project write — and is owed to P00B-T005.
 
+### Selected task — P00B-T003, the identity and reference audit
+
+Observable completion check, from the master plan's third Phase 0B exit bullet: every identity and cross-boundary
+reference appears once in the [identity ledger](inventories/identities.md) with a **proposed V2 rule**. The `Proposed
+V2 newtype/rule` column is blank for all 31 entries, so the task is open; its resume boundary named the two format
+questions first, because [ADR-0014](decisions/ADR-0014-persistent-id-generation-and-encoding.md) is where that rule
+comes from and the record says in as many words that it owes them before acceptance.
+
+### Completed slice — the two format questions ADR-0014 owed
+
+Both are answered, and neither changes the option ADR-0014 proposes. Their value is elsewhere: one turned into a
+conversion requirement, and the other into two enforcement holes that belong to a different record.
+
+**Can a master or return chain's module id collide with a patch's?** `IDN-0021` recorded the namespaces as different
+and the overlap as unchecked. **It is real, and conditional.** Three counters allocate independently: a patch graph's
+`instance_counters` keyed by module type, the master chain's `master_effect_hw`, and each return bus's
+`return_effect_hw` keyed by bus *and* type. Any two owners that each hold a module of one type therefore give it the
+same id — a reverb in a patch and one in the master chain are both `rev-1`. It does not follow that every project has
+such a pair, and a first draft of this note claimed it did.
+
+**It is harmless in V1 for one reason: every reference is qualified by its owner**, an `Option<InstrumentId>` or a
+`ReturnBusId` on the engine commands and an `instrument` inside `AutomationTarget::Module`. The same qualification is
+why **no automation lane can address a master or return-chain module at all** — there is no representable target for
+one. For ADR-0014 the answer is a conversion requirement rather than a contradiction: identity is document-scoped and
+every module is re-minted, so the three become three *provided* the V1 mapping is keyed by `(owner, id string)`. Keyed
+by the string alone it merges them into one and silently re-points every reference at whichever survives.
+
+**What is the closed set of parameter-name strings?** `IDN-0015` recorded it as not established. It is closed for
+**73 of the 75** module types and **open for the other two**, and getting that wrong is the most useful thing this
+slice did. For the 73 the set is derived rather than authored: the schema models a module as a `oneOf` per type, each
+declaring its own parameter object with `additionalProperties: false`, 372 names in all, generated from the module
+descriptors. For `script` and `audio_script` the names are **declared in the user's own program** — one knob per
+`param`, installed into a descriptor rebuilt at load time and saved into the same parameter map.
+
+**This slice first reported a flat closed set of 372, and an independent review refuted it.** The method is why: a
+mechanical walk of the published schema cannot see a descriptor that does not exist until a script compiles. The same
+correction turned up a **schema defect** — those two variants declare zero properties *and*
+`additionalProperties: false`, so a project carrying any script knob is invalid against its own published schema.
+
+Enforcement is a second question, and it belongs to ADR-0016 rather than ADR-0014. It is **not uniform**:
+
+- **Exactly one path reports an unknown key**: the engine apply in `SynthSession::apply_patch`, on both the
+  ordinary and the script-knob pass, as a `ParameterRejected` warning. **At least three skip silently** — the
+  master and return chains, the GUI patch-editor restoration, and visualizer and `SignalMonitor` modules, which
+  are skipped before a parameter is looked at. Two rounds of review narrowed this: the slice first said the loader
+  always drops silently, then that only the two global chains do, and neither was right.
+- **A lane whose `param_id` no longer resolves is a no-op** on the audio thread, which correctly cannot report it, and
+  nothing reports it on the ordinary load or playback path. `rebuild_instrument_preserve_automation` **does** catch it:
+  its descriptor lookup errors and the rebuild classifies any such error as an orphaned lane.
+
+**The three rows stay `Investigating`.** Their `Known problem` cells are now answered, but the `Proposed V2
+newtype/rule` column is blank, and classifying a row whose disposition is blank is exactly what downgraded the
+state-ownership ledger's statuses once. That column is the rest of this task. ADR-0014 stays `Proposed`: its first
+dependent implementation slice is Phase 10A, and answering what it owed is not a reason to accept it early. Its
+follow-up table is updated, and its one blocked row is split: filling the ledger's **proposed-rule** column needs only
+a proposed record and is `Active`, while the `Migration` column needs the conversion mapping and waits for Phase 10A.
+
 ### Remaining Phase 0B tasks
 
 | Task           | State       | Resume boundary                                                            |
 |----------------|-------------|----------------------------------------------------------------------------|
 | P00B-T001      | Complete    | Closed 2026-08-29; 64 entries, all `Classified`, coverage gate-enforced   |
 | P00B-T002      | Paused      | Assign reachability and migration dispositions in the capability inventory |
-| P00B-T003      | Paused      | Resolve the two format questions that block ADR-0014 review                |
+| P00B-T003      | Active      | Fill the `Proposed V2 newtype/rule` column for all 31 entries               |
 | P00B-T004–T007, P00B-T009 | Not started | Follow the decomposition in the frozen execution record       |
 | P00B-T008      | Not started | Re-scope the frozen all-ADR task under `PROCESS.md`'s decision-timing rule  |
 
