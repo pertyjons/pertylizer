@@ -1,6 +1,6 @@
 # Core V2: Current Work
 
-Last updated: 2026-08-28
+Last updated: 2026-08-29
 
 This is the only authority for active Core V2 task state, blockers, and next actions. Durable reasoning and measurements
 live in the linked ADRs, specs, and EVDs rather than being repeated here.
@@ -1390,26 +1390,88 @@ and whether several ideal wraps snapping to one boundary coalesce.
 **ADR-0052 owes those answers before the wrap is built.** The maintainer chose the split on 2026-08-28, and the
 identity mechanism is left open for that record rather than pre-committed here.
 
-## Paused parallel stream: Phase 0B
+## Second active stream: Phase 0B
 
 Outcome: complete the V1 migration inventories and the durable Project and Application Core contracts required before
 Phase 10.
 
-This phase remains active in the roadmap, and its execution stream is paused.
-It was paused for the Phase 2 slice, which has now closed, so **nothing is
-holding it any longer** — resuming it is a choice rather than a wait. On
-resumption, select exactly one task, copy its observable completion check here,
-and only then mark it `Active`.
+**Resumed on 2026-08-29** at the maintainer's request; nothing was holding it. One task is selected at a time, as this
+section required at the pause.
+
+### Selected task — P00B-T001, the persisted-state ownership audit
+
+Observable completion check, copied from the master plan's first Phase 0B exit bullet and the register vocabulary:
+
+- every currently persisted field appears **exactly once** in the
+  [state-ownership ledger](inventories/state-ownership.md) with a proposed V2 owner or an explicit removal decision;
+- every owner is supported by a named consumer in the code or by a recorded maintainer product choice; and
+- the ledger's own status rule is satisfied, so entries reach `Classified` only once an `EVD` record carries the
+  audit's coverage claim.
+
+The first two bullets are met. The third is the remaining work: no `EVD` exists yet, so every entry is still
+`Investigating` and the task is **not** closed.
+
+### Completed slice — the eleven contested owners
+
+Every `Intended V2 owner` cell the audit had left blank is now filled. The blanks were not arbitrary: they are the
+cases the master plan names as borderline, which "must not remain in a project merely because the current save path
+can reach them".
+
+**Seven were settled by tracing the consumer rather than by choosing.** Two of those traces **refuted a claim an
+earlier pass had recorded**, and in both the wrong claim was what kept the cell blank:
+
+- **`global.glide_time` is not the master plan's "preview glide"** (STATE-0009). Project load sends it to the engine
+  and a voice falls back to it at every note start when the note carries no glide of its own, so it is audible on
+  sequenced playback. It is authored project data.
+- **`patch.settings.octave_offset` is not a duplicate of the keyboard octave** (STATE-0035's "duplicates of
+  STATE-0007..0009"). It is a per-patch field that the standalone-patch path mirrors through the GUI keyboard in
+  **both** directions, and that a separate engine map carries to the preview path; the keyboard octave is that
+  widget's own base note on the project path, which reaches the patch field's mirror on neither side. It is split
+  out as STATE-0062, which also records what the mirror costs: the keyboard holds one value while the field is per
+  patch, so loading a second instrument's patch overwrites what the first one set.
+
+**Four are product choices and the maintainer decided them on 2026-08-29**: `active_instrument_id` stays in the
+document as editor metadata; the keyboard octave becomes user settings; `solo` becomes runtime session for
+instruments, tracks and return buses alike; and the transport loop stays in the document. The ledger's
+*Contested-case decisions* section is the register for these and is not repeated here. **Two of them break delivered
+behavior** — a V1 project's keyboard octave and its solo states would not come back — and the ledger records that
+against each entry, because **ADR-0013** carries the breaks when it is drafted. Three of the four are named in the
+master plan's list for that record and `solo` is not, but the list is not closed and `solo` is the same boundary
+question; the ledger records that rather than claiming the list already covers it. ADR-0018 governs which layout
+and organization data is shared project content, not where a contested field belongs.
+
+**No ADR was drafted, and that is the decision-timing rule rather than an omission.** The exit gate asks for a
+*proposed* owner, no implementation slice depends on the classification before Phase 10A, and `PROCESS.md` times a
+decision by its first dependent slice rather than by a register entry's phase label. The ledger names ADR-0013 and
+ADR-0018 as the records that will make the classification durable.
+
+**Splitting is what keeps "exactly once" true.** `solo` and `patch.settings.octave_offset` no longer share an owner
+with the fields they were bundled with, so four entries were added (STATE-0061 to STATE-0064) and the rows they came
+from had those fields removed from their own field lists. The ledger holds 64 entries; next free is `STATE-0065`.
+
+**An independent review found four defects and all four were repaired**, three of them factual rather than
+editorial. The octave mirror above was recorded in one direction when it runs in two. `pattern.next_note_id` was
+enumerated under STATE-0040 *and* STATE-0046, which made the exactly-once claim in this slice's completion check
+false. STATE-0046 was classified `Removed` against ADR-0014, which **replaces** the seven per-kind cursors with
+one validated `AllocationRecord` and refuses to derive the next ordinal from surviving content precisely because
+that reissues a deleted entity's ordinal — so persisted allocation state stays in the document and the cell is
+`Project document`. That one was avoidable: the coupled record already answered the question and was not read
+before the cell was written.
+
+Method limit, recorded in the ledger's audit-pass row: consumers were **read, not executed**, so no cell is yet
+verified by a round-trip fixture. That is P00B-T005.
+
+### Remaining Phase 0B tasks
 
 | Task           | State       | Resume boundary                                                            |
 |----------------|-------------|----------------------------------------------------------------------------|
-| P00B-T001      | Paused      | Assign evidenced dispositions in the state-ownership inventory             |
+| P00B-T001      | Active      | An `EVD` carrying the ledger's coverage claim, after which entries classify |
 | P00B-T002      | Paused      | Assign reachability and migration dispositions in the capability inventory |
 | P00B-T003      | Paused      | Resolve the two format questions that block ADR-0014 review                |
 | P00B-T004–T007, P00B-T009 | Not started | Follow the decomposition in the frozen execution record       |
 | P00B-T008      | Not started | Re-scope the frozen all-ADR task under `PROCESS.md`'s decision-timing rule  |
 
-This stream does not block Phase 2. Its detailed audit chronology remains in
+This stream does not block Phase 3. Its detailed audit chronology remains in
 the [historical Phase 0B execution record](phases/phase-00b-inventories-and-project-contracts.md); new operational state
 is recorded only here.
 
