@@ -368,6 +368,67 @@ violation — the scheduler refuses to publish there, so `publication_faults` ke
 `Renderer::render` still accepting a caller-supplied span, which the host-profile specification keeps as Phase 1 and
 Phase 2's contract. Live ingress is the parked slice below.
 
+### Proposed — ADR-0052, and why the loop wrap is not decidable yet
+
+[ADR-0052](decisions/ADR-0052-loop-wrap-note-identity.md) exists and takes **no decision**. Three designs were put
+to independent design consultation and all three were refuted against the accepted contract and the code; the record
+carries fifteen verified constraints, four closed options and one left open with its cost stated, so the next
+attempt starts where this one stopped.
+
+**The result is a coupled boundary, not a missing idea.** A wrap must be a transport activation — ADR-0050 clause 3,
+`SOUND-INV-018` and ADR-0032 all say so — and an activation is quantum-granular by ADR-0050 clause 1. ADR-0046
+clause 4's guarantee is narrower than two drafts of the record read it as: an accepted wrap cannot fail **for
+compiled capacity**, which does not reach a superseded sequence or an occupied exchange. The record now carries the
+qualifier, and the option it used to close by citation is closed by its own cost instead. But a
+quantum-granular wrap **truncates or overruns the pass** whenever the loop's length is not a whole number of quanta:
+with `Q` = 64, a 65-frame loop whose first wrap is congruent to 1 modulo 64 snaps its first two wraps to frames 64
+and 128 — 64 frames apart for a 65-frame loop — so an event at `loop_end - 1` is retired unpublished, and at other
+phases the pass instead runs 128 frames and the position-aware kernels play past `loop_end`. Either way the pass that
+plays is not the pass `admit_loop` and `admit_loop_polyphony` judged.
+
+**The restriction that would avoid it is not musically available**, which is what makes this a boundary rather than a
+tuning choice: at 48 kHz, of the 281 integer tempi from 20 to 300 BPM, **30** give a one-bar 4/4 loop that is a whole
+number of quanta. 120 BPM is one; 128, 140 and 174 BPM are not. So the wrap is where the master plan's sample-exact
+loop requirement and ADR-0050 clause 1's deferral of it actually meet, and `PROCESS.md` forbids accepting an option
+that cannot be implemented safely until the coupled boundary is resolved.
+
+Four other structural constraints the rounds established, each one a thing an implementer would have hit on day one:
+the scheduler owns the **suffix** from the activation's requested position, so nothing on the audio thread can
+reconstruct the pass; the renderer resolves a whole call's note events and mutates the live-note registry **before**
+rendering its first quantum, so two boundaries in one call cannot each scope a mass release; the prepared control
+storage holds **one** boundary release at offset zero; and ADR-0046 clause 4's periodic extension repeats compiled
+positions only, so several wraps in one quantum would multiply a session-share contribution nothing admitted.
+
+The loop's **admission** is built and is unaffected — both refusals still fire at the build.
+
+### Accepted — ADR-0053, what a simulated ingress producer stamps
+
+[ADR-0053](decisions/ADR-0053-simulated-ingress-provenance.md) is `Accepted` and **amends ADR-0032 clause 18** from
+three provenances to four. It closes the fourth of the findings the parked slice below left for its next attempt.
+
+All three existing values are wrong for a deterministic simulated producer, and each is wrong in its own way.
+`Compiled` is exempt from the forward horizon by clause 21, so a fixture using it would assert a boundary it never
+crosses — the exit gate's equivalence test would stay green with the horizon check missing entirely. `Hardware`
+means a driver's timestamp bridged through clause 13, and EVD-0016's **F11** makes labelling an unbridged clock that
+way a named defect. `Arrival` means the adapter had no timestamp, which clause 19 admits "only where the source
+genuinely has no timestamp" — a simulated producer's is exact by construction, and reporting it would put a fallback
+measurement in the report for a fallback that does not exist.
+
+`Simulated` says both true things at once: engine-external, so the horizon binds, and exact, so nothing declares an
+uncertainty or moves an arrival counter. **No live adapter may stamp one**, and the record is careful about what
+enforces that: a source scan can establish one construction site in this repository, and cannot establish that a
+release build never *calls* the producer or constrain a downstream consumer of a public enum. The first of those is
+closable by a visibility or feature boundary and the choice is the ingress slice's; the second is closable by
+nothing this crate has, and is a contractual prohibition stated as one. Independent reviews found an earlier draft
+claiming the scan did all three, and the next one offering a single mechanism for the two that remained.
+
+**The variant lands with the producer, not with the record.** Nothing constructs one until the ingress slice exists,
+and this repository builds the reachable branch. The API break — the variant breaks every exhaustive match — was
+approved by the maintainer on 2026-08-31, asked for separately because no earlier approval covers it. Acceptance
+updates `HOST-INV-013`, whose enumeration of the provenances the horizon binds becomes `Hardware`, `Arrival` or
+`Simulated`. Clause 21 is amended with it: its enumeration of the provenances the horizon binds is explicit, and
+naming only clause 18 would have left two accepted rules in conflict.
+
 ### Parked, with its findings kept — simulated-ingress equivalence
 
 An attempt at the exit gate's simulated-ingress bullet was built, independently reviewed, and **discarded before
@@ -394,11 +455,13 @@ Four other findings the next attempt inherits:
   blocks a due entry behind it, so an accepted entry would wait for *another* entry's destination.
 - **An off-thread producer and an on-thread drain need split handles**, not one `&mut self` over a `Vec`. Anything
   else is either single-threaded or a lock the real-time rules forbid.
-- **`TimeSource` has no value for a simulated producer**, and the choice stops being provisional once a public
-  component ships it with tests asserting it. ADR-0032 clause 18 fixes three: `Hardware` means a driver's timestamp
-  bridged through clause 13 and [EVD-0016](evidence/phase-03/EVD-0016-host-time-mapping.md)'s **F11** names labelling
-  one without that bridge as a defect; `Compiled` is exempt from the horizon; `Arrival` understates exactness. This
-  needs a decision before ingress is public, not at Phase 9.
+- **`TimeSource` had no value for a simulated producer**, and the choice would have stopped being provisional once
+  a public component shipped it with tests asserting it. **Closed by
+  [ADR-0053](decisions/ADR-0053-simulated-ingress-provenance.md)**, which adds a fourth.
+  `Hardware` means a driver's timestamp bridged through clause 13 and
+  [EVD-0016](evidence/phase-03/EVD-0016-host-time-mapping.md)'s **F11** names labelling one without that bridge as a
+  defect; `Compiled` is exempt from the horizon, which would make this very fixture vacuous; `Arrival` understates
+  exactness. The slice that builds the producer adds the variant.
 
 One methodological finding is worth keeping on its own: an earlier draft of that test moved a **sine's frequency**,
 and displacing every ingress event by one frame did not fail it. A frequency is control-rate, so ADR-0001 clause 14

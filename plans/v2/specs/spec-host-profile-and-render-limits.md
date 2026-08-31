@@ -6,7 +6,7 @@
 | Phase            | 00A                                    |
 | Created          | 2026-08-13                             |
 | Last reviewed    | 2026-08-27 |
-| Based on         | ADR-0021, ADR-0001, ADR-0032, ADR-0037, ADR-0038, ADR-0043, ADR-0046, ADR-0050 |
+| Based on         | ADR-0021, ADR-0001, ADR-0032, ADR-0037, ADR-0038, ADR-0043, ADR-0046, ADR-0050, ADR-0053 |
 | Invariant prefix | HOST                                   |
 | Supersedes       | —                                      |
 | Superseded by    | —                                      |
@@ -108,6 +108,7 @@ A limit that is reported and never enforced. Exceeding it produces a `CompileWar
 | [ADR-0021](../decisions/ADR-0021-host-profile-and-admission-policy.md) | That `HostProfile` is an immutable preparation input holding render-preparation capacity; that its capability fields come from queried capability; that only profile-owned entries participate in admission; that a node declares its intrinsic capacity into admission without becoming a profile field; that exceeding a limit never rewrites authored data; that runtime *dropping* is reserved for live bounded queues while limits under other boundaries are enforced at their own admission, retention, or presentation point — the sentence HOST-INV-019 and HOST-INV-020 rest on; that the `Lossy retention/presentation budget` class exists and what it may never bound; that compilation returns a `ResourceReport` with requested, available, and dominant contributors; that P00A-T005 owns the numbers |
 | [ADR-0001](../decisions/ADR-0001-internal-render-quantum.md) | That the quantum is a compile-time constant and **not** a profile field (clause 1); that both carries are sized `maximum_block_size + Q` and preallocated at preparation (clause 5); that the output carry is primed with `Q` frames of silence so that any `N` can be served, including `N < Q` (clause 6) — which is why HOST-INV-012 has no lower bound on `maximum_block_size`; that added latency is a constant `Q` frames and a named contributor in the latency accounting (clause 7); that a late event is clamped forward and counted (clause 16, as ADR-0043 superseded it) |
 | [ADR-0032](../decisions/ADR-0032-sample-time-and-event-timestamps.md) | The time types the profile's frame-denominated fields are expressed in — `FrameCount` for a horizon, a latency contribution, and a quantum (clause 2); that the forward event horizon is a single profile field binding ingress provenance only (clause 21); that the backward direction has no budget; that a profile's sample rate, layout, and capacity are fixed for the life of a stream epoch (clause 12) |
+| [ADR-0053](../decisions/ADR-0053-simulated-ingress-provenance.md) | A deterministic simulated ingress producer stamps its own provenance, which the forward horizon binds like any other ingress |
 | [ADR-0043](../decisions/ADR-0043-event-deferral-and-late-clamp.md) | The preserving late clamp: a late event moves to the first not-yet-rendered boundary, its envelope `time` is immutable, the late condition is asked once, and its control-rate response follows the clamped render position. ADR-0046 supersedes the record's capacity-deferral half |
 | [ADR-0046](../decisions/ADR-0046-destination-quantum-admission.md) | That one publication arbiter constructs renderer input from six checked producer shares; compiled and authored-runtime work is admitted before playback; releases use end-to-end holds; and the renderer never moves an event for capacity |
 | [ADR-0037](../decisions/ADR-0037-render-quantum-value.md) | That no field here may be sized by `Q`'s value, which ADR-0037 now fixes finally at 64 |
@@ -305,8 +306,14 @@ open owner is a starting point recorded honestly, not a rule invented here.
     quantum whose input has not arrived. A profile requiring `maximum_block_size >= Q` would refuse a host the render
     model was built for.
 13. **HOST-INV-013** — `forward_event_horizon >= maximum_block_size + Q`, and it binds only events whose provenance is
-    `Hardware` or `Arrival` (ADR-0032 clause 21). It never measures the scheduler's own releases of compiled events, and
-    there is no backward horizon.
+    `Hardware`, `Arrival` or `Simulated` (ADR-0032 clause 21, as ADR-0053 amends it alongside clause 18). It never
+    measures the scheduler's own releases of compiled events, and there is no backward horizon.
+
+    **`Simulated` is ingress for this rule and exact for every other.** ADR-0053 gives a deterministic in-engine
+    producer its own provenance because none of the other three fits: its timestamp is exact by construction, like
+    `Compiled`'s, while its origin is outside the renderer, like the other two. Exempting it — which naming it
+    `Compiled` would do — is what would make the equivalence fixture that proves this boundary unable to reach it. It
+    declares no arrival uncertainty and moves no arrival counter, and no live adapter may produce one.
 
     **It is evaluated exactly once, at ingress admission, against the timestamp as stamped.** Nothing that happens to
     an event after it is admitted re-triggers the check. The clause is here because the horizon's penalty is
