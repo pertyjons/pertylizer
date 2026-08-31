@@ -6,7 +6,7 @@
 | Phase | 1–2 |
 | Created | 2026-08-19 |
 | Last reviewed | 2026-08-27 |
-| Based on | ADR-0001, ADR-0004, ADR-0005, ADR-0021, ADR-0032, ADR-0037, ADR-0040, ADR-0041, ADR-0043, ADR-0046, ADR-0047, ADR-0050 |
+| Based on | ADR-0001, ADR-0004, ADR-0005, ADR-0021, ADR-0032, ADR-0037, ADR-0040, ADR-0041, ADR-0043, ADR-0046, ADR-0047, ADR-0049, ADR-0050 |
 | Invariant prefix | `SOUND` |
 | Supersedes | — |
 | Superseded by | — |
@@ -52,6 +52,7 @@ storage assigned to compiled signal lifetimes.
 | [ADR-0043](../decisions/ADR-0043-event-deferral-and-late-clamp.md) | A late event is clamped forward without rewriting its stamp; its sample and control effects follow the clamped render position |
 | [ADR-0046](../decisions/ADR-0046-destination-quantum-admission.md) | Capacity is admitted before rendering; the renderer never moves an event to make a quantum fit |
 | [ADR-0047](../decisions/ADR-0047-note-identity-in-the-event-contract.md) | A note-on names an occurrence as well as its node; a release names the occurrence alone |
+| [ADR-0049](../decisions/ADR-0049-tempo-ramp-law.md) | A tempo ramp interpolates the beat's length, not the tempo number, so the conversion stays inside the four operations |
 | [ADR-0050](../decisions/ADR-0050-transport-activation.md) | A rendering stream moves to a new mapping through one activation value adopted whole at a quantum boundary |
 
 ## Invariants
@@ -561,6 +562,60 @@ storage assigned to compiled signal lifetimes.
     state, the **live-note registry** and adoption. That split is what lets a
     candidate be built while the stream renders, without a lock the real-time rules
     forbid.
+19. **SOUND-INV-019 — Tempo conversion law.** The tempo map converts a musical
+    position into a `PlanPosition` and never into an engine time. Its law uses only
+    the four IEEE-754 arithmetic operations, comparison, and rounding, per
+    SOUND-INV-006's timing model and the record it rests on, and it rounds to a
+    frame exactly once, half away from zero, over the sum of the stored segment
+    prefix and the offset inside the segment.
+
+    **A step segment lasts its length in beats times `60 / bpm`.** A **ramp**
+    segment interpolates the **period** — seconds per beat — linearly between its
+    declared endpoints: with `p0 = 60 / b0`, `p1 = 60 / b1`, `B` the segment's
+    length in beats and `beta` the beats elapsed from its start,
+    `seconds(beta) = beta * 60 / b0 + (p1 - p0) * beta * beta / (2 * B)`. The
+    linear term is the step law's own value, shared rather than recomputed, which is
+    what makes the equal-endpoint case below exact. A segment's total duration is
+    therefore `B * (p0 + p1) / 2`, but the map stores the next segment's prefix by
+    evaluating the same expression at the segment's end rather than that one, so a
+    boundary cannot disagree with a query inside the segment. A tick at or past a
+    ramp's end belongs to the next segment, so `beta` never exceeds `B`.
+
+    A ramp declares its destination as the **next** change's tempo and reaches it
+    exactly there; a ramp with no following change is a step at `b0`. A ramp whose
+    two endpoints are equal is bit-identical to that step, and the law has **no
+    near-flat branch** — the quadratic term vanishes continuously rather than
+    cancelling, which is the property that removes the special case rather than
+    hiding it.
+
+    **The rounded conversion is non-decreasing over the domain music reaches, and
+    that is a checked property rather than a guarantee.** The step law is
+    non-decreasing by composition: every operation in it is monotone in its argument,
+    so rounding can merge two ticks onto one frame but never reverse them. The
+    accepted ramp evaluation subtracts a positive quadratic from a positive linear
+    term whenever the tempo rises, and inherits that subtraction; adjacent ticks can
+    therefore convert to decreasing positions once the position's own rounding exceeds
+    the per-tick increment. **No threshold is stated**: three were, and each was
+    refuted by a better search than the one that produced it. What is stable is that
+    both a position decades of audio out **and** a tempo ratio in the thousands are
+    needed. A form that is monotone by composition exists and is rejected on
+    measurement, not overlooked; the decision record carries that trade. The property
+    checked is a sampled one — adjacent ticks in windows of steep ramps — and a
+    consumer needing a guarantee must obtain a tighter position bound rather than
+    assume one.
+
+    The tempo **reported** inside a ramp is `60 / p(beta)`, with `p(beta)` formed as
+    the weighted combination `p0 * (1 - beta / B) + p1 * (beta / B)` and then clamped
+    to the interval `[min(p0, p1), max(p0, p1)]` its endpoints define — where the
+    convex combination mathematically lies, and where rounding alone can take it out
+    of. Its reciprocal is then bounded by the two tempi the caller declared. What is
+    linear is the beat's length, not the tempo number, so a display drawing a ramp as
+    a straight line between two BPM values draws something the engine does not play.
+
+    A tempo whose **period** is not finite — below `60 / f64::MAX` — is refused where
+    every tempo is validated, alongside the non-finite and non-positive values. Its
+    period would otherwise reach a position and a reported tempo without passing
+    through that validation.
 
 ## Types and ownership
 
@@ -609,6 +664,7 @@ excess is a preparation refusal rather than runtime truncation.
 | SOUND-INV-015 | `graph_validation`'s `every_kernel_admits_exactly_one_channel_on_every_port` over the macro-generated catalog, and `kernels`' `the_widening_writes_every_channel_of_every_frame` for the one kernel with two admitted counts |
 | SOUND-INV-017 | Two files, and the split is the invariant's own. **The minting table** is covered by `identity`: the three orphan branches separately — a free index, a live index at a superseded generation, and a retired one — along with disjoint producer ranges asserted by minting each producer's **whole** range rather than one index, the foreign-table resolution, counted retirement, over-emission distinguished from retirement erosion, a scoped mass release that leaves other producers alone, the refusal to rebuild while an obligation is outstanding, and the index-space relation at its boundary — enforced at `HostProfile` construction, as the invariant requires, not only where a table is built. Three are mutation-verified: resolving without comparing the generation, restarting a generation instead of retiring the index, and overlapping the producer ranges. **The event side** is covered by `note_identity`, over the compiled path. A release carries no node, so the fixture is two gates in series whose releases differ in *shape* — one instantaneous, one a ramp — because two sustain levels would render the same product and hide a release resolved to the wrong note. Sixteen cases: a release resolved through its occurrence; the same list with the other release rendering the other shape; two releases interleaved so the first names the **older** outstanding note; a producer's range bounding its *polyphony* rather than a piece's note count, with a one-note producer playing eight notes in sequence, refusing two at once, and stamping a valid list afterwards — a mint that failed part-way through having left nothing reserved; a reissued index still resolving **both** of the notes that used it, which is why the renderer keeps a registry the events write rather than reading the minter; a refused list leaving the minter as it found it, whose falsifier is the valid retry that follows; a spent release replayed against a node that has since been replayed, moving nothing and counted as an orphan rather than silently skipped, with the report **naming the occurrence** it refused; an occurrence from another plan's table refused and counted with the epoch equal, so the stale-epoch filter cannot be what caught it; a node address from another plan refused at stamping, which the renderer can no longer catch because its foreign filter compares the occurrence's table; the stamp carrying the renderer's own epoch; a compiled release that opens nothing refused at stamping; a plan declaring no producer unable to stamp a note at all; a second compiled producer refused at admission; and the compiled producer looked up rather than assumed to be producer 0, checked by declaring a one-wide runtime producer first so an assumed producer 0 exhausts on its second mint. `admission` adds the identity halves' memory to the scratch budget. Fifteen properties are mutation-verified: pairing by recency, resolving without the generation, dropping the table comparison, dropping the second-compiled-producer refusal, swallowing an unmatched release, assuming producer 0, never freeing a released occurrence, dropping the note-slot provenance check, not freeing an index at the paired release, resolving a release through the minter instead of the registry, minting during validation so a refused list keeps its indices, committing a partial mint instead of discarding it, refusing an orphan without counting it, refusing an orphan without naming it, and leaving the identity halves out of the scratch budget. **What is still not covered is the live half**, and two things are owed to the ingress slice rather than to nobody. No producer yet acquires a hold, so nothing asserts that a hold is acquired atomically with minting. And clause 4's orphan attribution is carried by one named identity plus an aggregate count rather than by per-producer counts: naming the identity does name the producer, since the ranges are disjoint, but the *count* is unambiguous only because `stamp_compiled` is the sole path that mints into a renderer's table and it mints only from the plan's compiled producer — so every occurrence a renderer can see is that producer's. A plan may already declare several note producers; what does not exist yet is one that **emits**, and that is ingress. An earlier revision of this row justified the same gap by the producer count instead, which `note_identity`'s own two-producer fixture contradicts; an independent review caught it. The generation ceiling remains a construction parameter for the reason this row gave before: walking a `u32` by minting is unreachable, and a rule no test can reach is a rule nobody has checked |
 | SOUND-INV-018 | `transport_activation.rs` and `transport.rs`: the effective point invariant to the four host partitions `2048`, `256`, `64` and `37`; a superseded candidate refused and counted; a stale-epoch candidate refused; both exchange occupancies refusing and told apart; an offer paired with another stream's renderer touching no counter; an offer into a faulted stream refused rather than trapping the candidate; a note cut at the boundary, asserted per frame on both sides; a seek between a note's edges buildable with the omission counted; a release with no note-on at all refused; a history note edge needing a producer, and a history holding more notes than that producer admits refused; an activation needing a schedule to replace; the schedule in force releasing its index to the replacement, and a withdrawn candidate's reservations released, both falsified by over-emission at a partition of one; every committed stamping keeping its reservations reclaimable; the minter standing still while a candidate holds a snapshot of it; a stream having one schedule and a second refused; a loop whose periodic extension does not fit refused at the build, and the same pass judged a second time against the compiled producer's admitted simultaneous notes, falsified by a late entry whose history and suffix each hold what the producer admits while the pass they straddle holds one more, by a pass that inherits the depth open where the loop starts, and by a crossing release lowering a count it ends nothing of; the pass that is judged being the one a wrap replays rather than the suffix the candidate carries, falsified by a late entry whose skipped events are the ones that collide at the wrap; and a crossing release counting in that pass, because clause 5 keeps its gate write where the bare omission dropped the event; the release scope being the compiled producer alone, and an empty producer declared before a sounding one not hiding the compaction; an adoption never happening in a call that renders no quantum; the boundary mass release charged as one session operation; a refused call adopting nothing when the boundary is the clock; a block the renderer cannot serve adopting nothing; a fault in **each** half of a split silencing the whole callback; a late activation taking effect at the clock and counted, an off-grid request that snaps forward without being late, and a late one displaced by nothing; a loop interval taking force at adoption and the control keeping it; the retired schedule coming back with the cursor, loop, anchor and displacement it replaced; a retirement from another stream refused rather than promoted; withdrawal refusing a foreign candidate and a retirement and returning both; and a repeating wrap at a non-quantum loop length whose period returns rather than drifting. the catch-up restoring every prepared target with the boundary release charged beside it; a crossing note's gate cut whether or not automation touched it after its note-on, the equality falsifying a last-write restore and the silence falsifying no substitution at all, mutation-verified against both; and an omitted crossing release carrying its gate-down in place of the note contract, counted, with the pair that lies wholly after the destination placed untouched beside it. **One of the invariant's clauses is not covered, and it is not deferred silently**: a live ingress note left sounding across an activation needs a producer that can emit, which ADR-0050 clause 8 puts out of scope |
+| SOUND-INV-019 | `tempo.rs`: a beat's exact frame at a constant tempo; a step holding the old tempo up to its change; a half-frame position rounding away from zero rather than truncating; a position being the stored prefix plus its own offset, and independent of what was asked before it; a tick past exact integer range refused rather than answered; and the ramp's own nine — an equal-endpoint ramp equal to a step bit for bit, falsified by the ramp recomputing the shared linear term; a ramp lasting its beats times the mean of its two periods, asserted as the corpus fixture's exact 48 000 frames and explicitly not V1's 44 361, falsified by the quadratic term's sign and by treating every change as a ramp; positions non-decreasing across steep ramps in both directions over adjacent ticks in four sampled windows, falsified by that same sign; a tempo whose period overflows refused at construction, and a 6000-to-`1e100` BPM ramp reporting a real tempo one tick before its end, falsified separately by dropping the period check and by either rejected interpolation form; chained ramps each reaching the next declared tempo with a continuous junction, falsified by pointing a ramp at the last one; a trailing ramp behaving as a step, falsified by giving it a degenerate destination; and the reported tempo being the reciprocal of the interpolated period rather than a straight line between two tempo numbers, falsified by reporting the declared tempo. The standing source scan covers the five functions the law reaches **and is closed under calls**: every call those bodies make must be to one of the five or to a named arithmetic or accessor method, and no allowlisted name may itself be a function this module defines — so a transcendental can hide neither in an unfollowed helper nor behind an allowlisted name, both mutation-verified. It strips comments and attributes but not a line holding a quote, and that exemption is checked directly, since the module's own source cannot exercise it |
 | Node arithmetic and preparation | `voice_nodes`, internal kernel tests |
 
 ## Unresolved questions

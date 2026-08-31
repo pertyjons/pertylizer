@@ -202,7 +202,9 @@ Clause 15 leaves two ways out — state the exact evaluation, or use a shape the
 durable choices: the first is a numeric law to specify and test, the second changes delivered musical behaviour (a
 60→120 ramp over four beats runs 2.77 s under V1's shape and 3.00 s under a period-linear one). **The maintainer chose
 to defer ramps rather than pick one under time pressure.** `TempoChange::ramp` does not exist; a map cannot be built
-with one. No project in this repository sets a ramp, so steps are what the corpus actually uses.
+with one. That note also said no project in this repository sets a ramp; **it was false**, and ADR-0049's evidence
+is where it was found. `CORPUS-0001`'s `tempo-map-arrangement` ramps 90 to 180 BPM over two beats. The narrower true
+statement is that no project under `assets/examples/` sets one.
 
 **One rounding, and the error is bounded rather than absent.** Clause 15 rounds musical time to a frame exactly once,
 half away from zero. `position_of` sums the stored per-segment prefix and the offset inside the segment in seconds and
@@ -221,7 +223,104 @@ built for it — every other value in the suite lands on an exact frame, so trun
 scan in the spirit of the render loop's purity check, so a ramp cannot arrive later by quietly calling a library.
 
 Still owed in this stream: anchoring `PlanPosition` to `SampleTime` at play, seek, loop wrap and offline range start;
-recompiling and re-admitting entitlements before a tempo-map replacement activates; and the ramp law itself.
+and recompiling and re-admitting entitlements before a tempo-map replacement activates. The ramp law itself is closed
+by the slice below.
+
+### Accepted — ADR-0049 the tempo-ramp law, with the ramp built
+
+[ADR-0049](decisions/ADR-0049-tempo-ramp-law.md) is `Accepted` and `TempoChange::ramp` exists. A ramp interpolates
+the **period** — seconds per beat — so elapsed time is a quadratic the four operations express exactly. The
+maintainer chose it on 2026-08-31 over stating a bit-exact evaluation of V1's logarithm, and chose it **again** after
+the corpus finding below, in the knowledge that the fixture's timing moves.
+
+**The deferral rested partly on a false sentence, and finding that out is what changed the question.** The tempo
+slice recorded that no project in this repository sets a ramp. `CORPUS-0001`'s `tempo-map-arrangement` sets one: 90
+to 180 BPM over two beats. Under the accepted law that segment lasts 1.000 s against V1's 0.924 s, so everything
+after tick 1920 moves by 75.8 ms — 3 639 frames at 48 kHz. That is an **intentional V1-to-V2 semantic change**, which
+`REV-P00A`'s rule requires to map to a comparison category rather than to generic error, and Phase 4's A/B owns
+creating it. ADR-0042's envelope shape is the precedent.
+
+**One near-branch removed rather than reproduced.** V1 switches to a constant tempo at the endpoint average when
+`|b1 - b0| < 1e-5`, to avoid a `0/0` cancellation its logarithm has. The quadratic has no cancellation: an
+equal-endpoint ramp's second term is exactly zero and the answer is the step law's own, bit for bit. That identity
+comes from the two laws **sharing** one linear term rather than from any particular evaluation order.
+
+**A draft of this record claimed the order itself was load-bearing, and a mutation refuted it.** Rewriting the linear
+term as `period * beats` passed all eighteen checks; four million random musical `(tempo, tick)` pairs then produced
+no case where the two orders reach different frames. The claim was withdrawn from the ADR, the specification, the
+module documentation and the test's own comment. It is recorded because the mutation is what caught it — rereading
+the sentence would not have.
+
+**The independent review found two P2 defects; a focused reread of the repairs found four more, and one of them
+turned a repair into a withdrawal.** The chronology matters because the outcome is a *smaller* contract than the
+first draft claimed, arrived at by being unable to defend the larger one.
+
+- **An accelerating ramp could move a position backwards.** A 20-to-6000 BPM ramp ending at tick
+  `100_000_000_000_000` converted two adjacent ticks to *decreasing* frames, both inside the `2^53` guard and both
+  tempi ones this suite already uses. The first repair rewrote the accelerating case as
+  `p1 * beta + (p0 - p1) * beta * (2B - beta) / (2B)`, whose terms are both non-negative. The reread constructed a
+  counterexample against **that** too, at a different tick in the same ramp.
+- **So the guarantee is withdrawn, and the reason is a measured trade rather than an inability to find a form.** A
+  third draft claimed no algebraic form could be a composition of monotone operations; **the reviewer refuted that
+  by writing one** — the rising case taken relative to the segment's end, whose bracket is non-increasing. Measuring
+  it is what settled the question: near the segment start it subtracts two large quantities the accepted form never
+  forms, and over random ramps that cancellation placed a segment's own start as much as **128 seconds before its
+  own prefix**. Trading a one-frame artefact at forty-two years of audio for a two-minute artefact at the start of
+  every steep ramp is the wrong direction. **How often that alternative errs is not claimed either**: the
+  128-second case is a ramp between two very slow tempi over the whole tick range, while an ordinary 20-to-6000 BPM
+  ramp errs by about `1.8e-15` seconds and the ratio-five-thousand construction by nothing at all. What decides the
+  trade is bounded-and-sampled against unbounded, not a frequency. ADR-0049 clause 6 now claims a **sampled**
+  property — adjacent ticks in four windows of steep ramps, since a stride of 97 steps straight over the one-frame
+  inversion it was supposed to catch, which the reviewer also found — and records both revisit routes.
+- **Every threshold I named was wrong, so the records now name none.** Three drafts said inversions need a position
+  above `2^53`, then `2^49`, then `2^45.85` frames; the reviewer refuted each with a better search than the one that
+  produced it. A bound that moves every time someone looks harder is not a bound. What the records state instead is
+  the shape of the domain — a position decades of audio out **and** a tempo ratio in the thousands, both needed —
+  which no counterexample can falsify because every counterexample so far confirms it.
+- **A ramp could build a `Bpm` its own constructor refuses, four ways.** A tempo below `60 / f64::MAX` has a period
+  that overflows, so the ramp evaluated `infinity * 0` and produced `NaN`; closing that at the newtype exposed an
+  intermediate overflow in the interpolation; forming the fraction first exposed a third — for a 6000-to-`1e100` BPM
+  ramp the fraction reaches exactly `1.0` one tick before the end, `(p1 - p0)` rounds to `-p0`, and the sum is
+  exactly zero; and the weighted form alone can round one unit in the last place below the endpoint period, whose
+  reciprocal overflows for a tempo near `f64::MAX`. A positive finite denominator does not imply a finite
+  reciprocal. The interpolation now weights the two periods **and clamps to the interval they define**, which is
+  where a convex combination lies and where only rounding can take it out of. The narrowing of `Bpm::new` is a
+  behaviour change, named rather than left to be found; the refused range is one beat per far longer than the age of
+  the universe, and the diagnostic now names the period as the reason.
+- **The source scan could hide a real call, two ways.** Stripping `//` comments — added because the word "rising"
+  contains `sin` and failed a correct implementation — truncates a line at a `//` inside a string literal, so
+  `("https://x", beats.sin()).1` would lose its call; a line holding a quote is now scanned whole. And the scan
+  **did not follow calls at all**, so `segment_seconds` could have called a harmlessly named `curve(x)` whose body
+  held `x.ln()`. It is now closed under calls **and under names**: every call the scanned bodies make
+  must be to one of the five functions the law reaches or to a named arithmetic or accessor method, and no
+  allowlisted name may itself be a function this module defines — otherwise `fn min(x) { x.ln() }` called as
+  `min(beats)` passes, which the reviewer pointed out about the first version of the closure. Adding those
+  assertions immediately pulled `segment_for` and a newtype accessor into the scanned set, which is the check doing
+  its job rather than a nuisance. Both holes are mutation-verified.
+
+**Two checks were written vacuous and are recorded that way**, because the mutation is what found them and reading
+them would not have: a four-beat fixture cannot make the elapsed fraction reach exactly `1.0` inside a ramp, and the
+module's own source holds no line where a `//` hides inside a string, so neither check could fail for the reason it
+named. Both now reach their case, and both fail under their own mutation and no other.
+
+Ten ramp checks in all, each mutation-verified against its own falsifier: the equal-endpoint identity against a ramp
+that recomputes the shared term; the corpus fixture's exact 48 000 frames, and explicitly not V1's 44 361, against
+the quadratic's sign and against treating every change as a ramp; monotonicity in both directions over an hour,
+tick by tick, against that same sign; the period refusal and the steep ramp's reported tempo against dropping the
+check and against any of the three rejected interpolation forms; chained ramps each reaching the **next** declared
+tempo against pointing one at the last; a trailing ramp behaving as a step against a degenerate destination; the
+reported tempo being the reciprocal of the interpolated period — 120 BPM halfway through a 90-to-180 ramp, not the
+135 a straight line would give — against reporting the declared tempo; and the scan's call closure against a
+transcendental hidden in a helper it does not follow.
+
+**Six review rounds, and the slice is smaller at the end than at the start.** That is the outcome, not an
+apology: what shipped is a law whose musical behaviour was never in question, a set of claims narrowed until each
+one is checkable, and four numerical defects that only existed because the first draft claimed more than it could
+support.
+
+Acceptance creates `SOUND-INV-019`. The **inverse** conversion is deliberately not defined: nothing on the render
+path needs it, and inverting this law needs a square root, which clause 15's listed set does not carry. Phase 11 asks
+for that amendment if a musical playhead readout wants one.
 
 ### Completed slice — the compiled producer publishes through the arbiter
 
