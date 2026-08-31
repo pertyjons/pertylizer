@@ -418,8 +418,20 @@ fn an_event_from_another_epoch_is_discarded_and_counted() {
 }
 
 #[test]
-fn an_ingress_event_beyond_the_forward_horizon_is_rejected_and_counted() {
-    // ADR-0032 clause 21, and it binds ingress provenance only.
+fn the_renderer_no_longer_evaluates_the_forward_horizon() {
+    // **This test asserts a retirement, and that is the point of keeping it.**
+    //
+    // `HOST-INV-013` evaluates the horizon exactly once, at the boundary admitting into
+    // bounded source storage. Until Phase 3 that boundary did not exist and this loop was
+    // the only candidate; `PerformanceIngress::admit` is now it, and the maintainer settled
+    // the reading on 2026-09-01. Keeping both sites was tried four ways in the ingress slice
+    // and refused each time; keeping only *this* one was then shown not to work at all,
+    // because the drain releases an entry only once the publication reaches it — so a
+    // far-future event never arrives here while it is still far-future.
+    //
+    // The accepted cost, asserted rather than described: a caller-assembled span carrying
+    // ingress provenance is **no longer** measured against the horizon. It is still bounded,
+    // by the window an event must land in, but the count stays at zero.
     let (mut renderer, epoch) = sine_renderer(256);
     let horizon = renderer.plan().forward_event_horizon().as_u64();
     let events = [set_frequency(
@@ -432,10 +444,21 @@ fn an_ingress_event_beyond_the_forward_horizon_is_rejected_and_counted() {
 
     let mut samples = vec![0.0_f32; 256];
     let output = AudioBlockMut::new(&mut samples, 256, ChannelLayout::Mono).expect("shaped block");
-    renderer
+    let refused = renderer
         .render(output, TimedEvents::new(&events))
-        .expect("a rejected ingress event does not fail the call");
-    assert_eq!(renderer.diagnostics().out_of_horizon_events(), 1);
+        .expect_err("the span check still refuses it");
+    // **The span check, not the horizon check** — and the distinction is the whole point.
+    // The old behaviour counted this event and carried on; the caller now learns its span
+    // was wrong, which is a different and more actionable answer for a caller-assembled span.
+    assert!(
+        matches!(refused, RenderError::EventOutsideCallSpan { .. }),
+        "expected the span refusal, got {refused:?}"
+    );
+    assert_eq!(
+        renderer.diagnostics().out_of_horizon_events(),
+        0,
+        "the renderer's evaluation is retired; the count now belongs to the ingress boundary"
+    );
 }
 
 #[test]
@@ -660,10 +683,13 @@ fn a_quantum_over_its_event_capacity_is_rejected_before_anything_is_mutated() {
     // partially render, or grow to absorb it.
     let host = profile(256, ChannelLayout::Mono);
     let mut limits = common::defaults_for(&host);
-    // Six, not four: ADR-0046 clause 1 partitions the cap into six positive producer
-    // shares, so no profile can represent a per-quantum cap below six. The test's point
-    // is a cap the span exceeds, and six is the smallest one that now exists.
-    let capacity = 6;
+    // Eight, not six and not four. ADR-0046 clause 1 partitions the cap into six positive
+    // producer shares, so no profile can represent a per-quantum cap below six — and since
+    // the session snapshot became admission-checked, the share it is checked against must
+    // cover this plan's prepared-target count plus the boundary mass release, which for a
+    // sine is `2 + 1`. So the smallest cap this fixture can use is five ones plus a session
+    // share of three. The test's point is unchanged: a cap the presented span exceeds by one.
+    let capacity = 8;
     limits = synth_engine_v2::profile::RenderLimits::new(
         limits.stream(),
         limits.graph(),
@@ -683,7 +709,10 @@ fn a_quantum_over_its_event_capacity_is_rejected_before_anything_is_mutated() {
                 synth_engine_v2::quantities::EventCount::limit(1).expect("positive"),
                 synth_engine_v2::quantities::EventCount::limit(1).expect("positive"),
                 synth_engine_v2::quantities::EventCount::limit(1).expect("positive"),
-                synth_engine_v2::quantities::EventCount::limit(1).expect("positive"),
+                // The session share alone is above one, and it is why the cap is eight: this
+                // fixture exercises the per-quantum event capacity, and the session snapshot
+                // is now admitted against a sine's prepared-target count plus one.
+                synth_engine_v2::quantities::EventCount::limit(3).expect("positive"),
                 synth_engine_v2::quantities::EventCount::limit(1).expect("positive"),
                 synth_engine_v2::quantities::EventCount::limit(1).expect("positive"),
                 synth_engine_v2::quantities::EventCount::limit(1).expect("positive"),
@@ -730,8 +759,8 @@ fn a_quantum_over_its_event_capacity_is_rejected_before_anything_is_mutated() {
     assert!(matches!(
         error,
         RenderError::QuantumEventOverflow {
-            requested: 7,
-            available: 6,
+            requested: 9,
+            available: 8,
             ..
         }
     ));

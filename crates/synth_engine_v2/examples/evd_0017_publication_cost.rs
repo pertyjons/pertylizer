@@ -120,6 +120,51 @@ fn empty_pass(arbiter: &mut PublicationArbiter, quanta: usize, iterations: u32) 
     start.elapsed()
 }
 
+/// EVD-0019's arm: every **publishable** class filled to its own share, in every quantum.
+///
+/// That is the admitted maximum of the external batch — the partition — rather than of one
+/// class, which is what EVD-0017's `full_pass` measures and what its own conclusion calls a
+/// floor. The `charge` path is producer-independent — it does the same work whichever class
+/// it is given — so charging each share directly exercises that path at the partition's
+/// admitted maximum.
+///
+/// **It is the charge path and not the whole arbiter interaction.** A live or release drain
+/// calls `Publication::reaches` before each charge, and the session boundary release uses
+/// `charge_operation`, which writes no batch entry. So this is a synthetic charge-path
+/// workload at full occupancy, which EVD-0019 states as its scope; an earlier revision of
+/// this comment claimed it reproduced exactly what conforming producers cause, and an
+/// independent review refuted that.
+///
+/// `Internal` is absent because ADR-0046 clause 2 keeps it on the far side of the seal and
+/// `charge` refuses it by name; its share and the partition's unusable slack are capacity
+/// this pass cannot spend.
+fn partition_pass(
+    arbiter: &mut PublicationArbiter,
+    slot: ParameterSlot,
+    quanta: usize,
+    shares: &[(ProducerClass, u32)],
+    iterations: u32,
+) -> Duration {
+    let start = Instant::now();
+    for _ in 0..iterations {
+        let mut publication = arbiter
+            .open(SampleTime::ZERO, quanta)
+            .expect("the window fits the prepared store");
+        for quantum in 0..quanta as u64 {
+            for (class, share) in shares {
+                for _ in 0..*share {
+                    publication
+                        .charge(*class, event(slot, quantum))
+                        .expect("inside this class's own share");
+                }
+            }
+        }
+        let batch = publication.seal();
+        let _ = std::hint::black_box(batch.spent(WindowRow::FIRST, ProducerClass::Compiled));
+    }
+    start.elapsed()
+}
+
 fn full_pass(
     arbiter: &mut PublicationArbiter,
     slot: ParameterSlot,
@@ -182,10 +227,26 @@ fn main() {
         .and_then(|value| value.parse().ok())
         .unwrap_or(2_000);
 
-    println!("EVD-0017 publication cost: {rounds} rounds x {iterations} iterations");
     println!(
-        "{:>6}  {:>6}  {:>7}  {:>12}  {:>12}  {:>12}  {:>12}  {:>9}",
-        "block", "quanta", "events", "empty/pass", "full/pass", "full IQR", "per event", "% budget"
+        "EVD-0017 publication cost and EVD-0019 partition cost: {rounds} rounds x \
+         {iterations} iterations"
+    );
+    println!(
+        "{:>6}  {:>6}  {:>7}  {:>12}  {:>12}  {:>12}  {:>12}  {:>9}  {:>9}  {:>12}  {:>12}  \
+         {:>12}  {:>9}",
+        "block",
+        "quanta",
+        "events",
+        "empty/pass",
+        "full/pass",
+        "full IQR",
+        "per event",
+        "% budget",
+        "part evts",
+        "part/pass",
+        "part IQR",
+        "part/evt",
+        "part %"
     );
 
     for block in [64_u64, 256, 1_024, 4_096] {
@@ -201,8 +262,24 @@ fn main() {
         let slot = parameter_slot(host);
         let mut arbiter = PublicationArbiter::prepare(&host).expect("preparable");
 
+        // EVD-0019's partition: the five publishable classes at their own shares.
+        let shares = host.limits().events().shares();
+        let partition = [
+            (ProducerClass::Compiled, shares.compiled_event_share().get()),
+            (
+                ProducerClass::AuthoredRuntime,
+                shares.authored_runtime_event_share().get(),
+            ),
+            (ProducerClass::Live, shares.live_event_share().get()),
+            (ProducerClass::Session, shares.session_event_share().get()),
+            (ProducerClass::Release, shares.release_event_share().get()),
+        ];
+        let partition_events =
+            quanta as u32 * partition.iter().map(|(_, share)| share).sum::<u32>();
+
         let mut empties: Vec<Duration> = Vec::with_capacity(rounds as usize);
         let mut fulls: Vec<Duration> = Vec::with_capacity(rounds as usize);
+        let mut partitions: Vec<Duration> = Vec::with_capacity(rounds as usize);
         for _ in 0..rounds {
             // Interleaved within the round, so drift lands on both arms.
             empties.push(empty_pass(&mut arbiter, quanta, iterations));
@@ -213,6 +290,13 @@ fn main() {
                 per_quantum,
                 iterations,
             ));
+            partitions.push(partition_pass(
+                &mut arbiter,
+                slot,
+                quanta,
+                &partition,
+                iterations,
+            ));
         }
 
         let empty_per = minimum(&empties).as_secs_f64() / f64::from(iterations);
@@ -221,14 +305,23 @@ fn main() {
         let per_event = (full_per - empty_per) / f64::from(events);
         let budget = block as f64 / f64::from(RATE);
         let share_of_budget = full_per / budget * 100.0;
+        // EVD-0019's row: the whole publishable partition rather than the compiled share.
+        let partition_per = minimum(&partitions).as_secs_f64() / f64::from(iterations);
+        let partition_iqr = interquartile_range(&partitions) / f64::from(iterations);
+        let partition_share = partition_per / budget * 100.0;
+        let partition_per_event = (partition_per - empty_per) / f64::from(partition_events);
 
         println!(
             "{block:>6}  {quanta:>6}  {events:>7}  {:>10.3} us  {:>10.3} us  {:>10.3} us  \
-             {:>10.2} ns  {share_of_budget:>8.3}%",
+             {:>10.2} ns  {share_of_budget:>8.3}%  {partition_events:>9}  {:>10.3} us  \
+             {:>10.3} us  {:>10.2} ns  {partition_share:>8.3}%",
             empty_per * 1e6,
             full_per * 1e6,
             full_iqr * 1e6,
-            per_event * 1e9
+            per_event * 1e9,
+            partition_per * 1e6,
+            partition_iqr * 1e6,
+            partition_per_event * 1e9
         );
     }
 }

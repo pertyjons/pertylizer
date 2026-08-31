@@ -79,6 +79,42 @@ impl IdentityTable {
         resolution
     }
 
+    /// Release the note an identity names, **only if that identity is the producer's**.
+    ///
+    /// `SOUND-INV-017` gives every producer a disjoint index range, and ADR-0046 clause 6
+    /// partitions hold entitlements so that "no producer borrows another's unused holds".
+    /// [`Self::release`] enforces the first through the occurrence but not the second
+    /// through the producer: a live source presenting a **compiled** occurrence releases a
+    /// note it never opened, spends its own hold on it, and leaves its own note occupied —
+    /// so its next note-on finds the range full with a hold still free, which is the
+    /// identity shortage that is otherwise unreachable. An independent review found it.
+    ///
+    /// Refusing by range rather than by minter bookkeeping keeps the rule where the
+    /// invariant puts it: the ranges are disjoint by construction, so an index names exactly
+    /// one producer and no second record has to agree.
+    pub fn release_for(
+        &mut self,
+        producer: super::ProducerId,
+        identity: NoteIdentity,
+    ) -> Resolution {
+        if identity.table != self.id {
+            return Resolution::ForeignTable {
+                minted_by: identity.table,
+            };
+        }
+        let Some(range) = self.ranges.get(usize::from(producer.as_u16())) else {
+            return Resolution::Orphan(OrphanCause::FreeIndex);
+        };
+        let index = u32::from(identity.index);
+        if index < range.start || index >= range.start.saturating_add(range.len) {
+            // Not this producer's occurrence. Reported as an orphan rather than a distinct
+            // cause because that is what it is *to this producer*: an identity naming no note
+            // it holds open. The caller counts it against the producer that offered it.
+            return Resolution::Orphan(OrphanCause::FreeIndex);
+        }
+        self.release(identity)
+    }
+
     /// Release every live note, as a panic, transport stop or sustain lift does.
     ///
     /// One bounded operation rather than one event per voice, per ADR-0046 clause 6. Every

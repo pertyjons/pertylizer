@@ -21,7 +21,7 @@ use common::{OUTPUT, SOURCE, profile};
 use synth_engine_v2::ir::{
     ExecutionScope, GraphIr, IrNodeKind, NodeId, PortId, SignalDomain, parameters,
 };
-use synth_engine_v2::offline::{OfflineEvent, render_offline};
+use synth_engine_v2::offline::{OfflineEvent, render_offline, render_offline_reporting};
 use synth_engine_v2::plan::CompiledPlan;
 use synth_engine_v2::quantities::{
     Amplitude, ChannelLayout, CutoffFrequency, Frequency, NormalizedLevel, ParameterValue,
@@ -496,6 +496,16 @@ fn every_event_of_a_sorted_list_is_presented_across_an_uneven_partition() {
     // cover contiguous quantum ranges with no gap and no overlap, or an event falls between
     // two windows and is skipped with nothing reporting it.
     //
+    // **Rendered samples alone cannot discharge it, and that was this test's own gap.**
+    // They catch a *gap* — an event that falls between two windows is never applied, and the
+    // audio says so. They do not catch an *overlap*: a selector re-presenting a quantum it
+    // already covered would apply those events twice, and a repeated gate edge is
+    // idempotent, so the samples can be identical. The instrument for an overlap is the
+    // renderer's **late** counter, because a re-presented event is behind the clock by then
+    // and takes ADR-0043's preserving clamp. An independent review found the omission; the
+    // assertion below is what closes it, and `render_offline_reporting` exists because the
+    // counters were otherwise unobservable on this path.
+    //
     // The block size is what puts the premise under strain. `render_offline` renders in
     // blocks of the plan's maximum block size, and 200 is deliberately **not** a multiple of
     // `Q`, so the carry leaves a different number of quanta due on successive calls and the
@@ -521,9 +531,11 @@ fn every_event_of_a_sorted_list_is_presented_across_an_uneven_partition() {
         events.push(note(&plan, on, true));
         events.push(note(&plan, off, false));
     }
-    let rendered = render_offline(plan, FrameCount::new(FRAMES), PlanPosition::ZERO, &events)
-        .expect("renders");
+    let (rendered, report) =
+        render_offline_reporting(plan, FrameCount::new(FRAMES), PlanPosition::ZERO, &events)
+            .expect("renders");
 
+    // The gap half: an edge lost between two windows never sounds.
     for (frame, sample) in rendered.iter().enumerate() {
         let held = edges
             .iter()
@@ -535,4 +547,18 @@ fn every_event_of_a_sorted_list_is_presented_across_an_uneven_partition() {
              selection windows, so the offline selector does not tile the quantum range"
         );
     }
+
+    // **The overlap half, which the samples above cannot see.** A selector re-presenting a
+    // quantum it already covered applies those events a second time, behind the clock, so
+    // ADR-0043's preserving clamp moves and counts them — while the audio stays identical,
+    // because a repeated gate edge is idempotent. A zero here is therefore the direct
+    // statement of the bullet's first branch: over a partition that strains the tiling, the
+    // selector presented nothing late.
+    assert_eq!(
+        report.late_events(),
+        0,
+        "the offline selector presented {} late events, so it does not window by clamped \
+         render position and its premise does not hold either",
+        report.late_events()
+    );
 }

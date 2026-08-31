@@ -39,11 +39,17 @@ use std::path::{Path, PathBuf};
 /// `src/publish/hot.rs` joined when the publication arbiter did. It runs on the audio
 /// thread ahead of the renderer, so leaving it out would have left the one path that
 /// *writes* renderer input unscanned while the path that reads it was covered.
-const REGION: [&str; 5] = [
+///
+/// `src/ingress/hot.rs` joined with the live ingress store, for the same reason and one
+/// more: it is the only file in the region that **writes back** into a producer's own
+/// storage while the call runs, so an allocation there would be one the producing half
+/// never sees.
+const REGION: [&str; 6] = [
     "src/render/hot.rs",
     "src/schedule/hot.rs",
     "src/publish/hot.rs",
     "src/identity/hot.rs",
+    "src/ingress/hot.rs",
     "src/node/kernels.rs",
 ];
 
@@ -422,6 +428,40 @@ fn every_call_the_render_loop_makes_is_inside_the_checked_region() {
         "map_or",
         "ok",
         "is_some_and",
+        // The live boundary's counters and the report they reach. `diagnostics_mut` hands
+        // back a `&mut` to a field of the renderer; `mirror_ingress_boundary` writes four
+        // `u64`s into it; and `dropped_slot`, `dropped_hold`, `dropped_identity`,
+        // `orphan_releases` and `beyond_horizon` read five `u64`s out of a `Copy` struct.
+        // `HOST-INV-009` requires the counts to reach the structured report, and the drain is
+        // the only point at which the producing and rendering halves meet — so this crossing
+        // is contractual rather than convenient. `beyond_horizon` joined when `HOST-INV-013`'s
+        // single evaluation moved to the ingress boundary, which is the same crossing for the
+        // same reason. None of the seven allocates, locks or can panic, and the
+        // counting-allocator test covers the drain behaviourally.
+        "diagnostics_mut",
+        "mirror_ingress_boundary",
+        "dropped_slot",
+        "dropped_hold",
+        "dropped_identity",
+        "orphan_releases",
+        "beyond_horizon",
+        // `Option::is_some` and `Option::as_deref_mut`: a discriminant read, and a
+        // reborrow of a `&mut` the caller already holds. The second is what lets one
+        // optional ingress store be drained by **both** halves of a split render call —
+        // moving the reference instead would serve only the first half, which is a
+        // correctness bug rather than a real-time one, but neither call reaches the
+        // allocator either way.
+        "is_some",
+        "as_deref_mut",
+        // `Option::as_deref`: the shared-reference twin, used to read the ingress store's
+        // identity for the latch before the store is moved into the drain. A discriminant
+        // read and a reborrow; it reaches no allocator.
+        "as_deref",
+        // `PerformanceIngress::adopted_by`: an `Option<StreamEpoch>` copied out of the
+        // store. It is what lets the drain read the **one** adoption mark the off-thread
+        // half set, instead of keeping a second latch that could disagree with it. A field
+        // read; it reaches no allocator.
+        "adopted_by",
         "try_from",
         "from",
         "ok_or",

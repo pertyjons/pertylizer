@@ -2,7 +2,7 @@
 
 use super::*;
 use crate::quantities::SampleRate;
-use crate::tempo::{Bpm, TICKS_PER_QUARTER};
+use crate::tempo::{Bpm, TICKS_PER_QUARTER, TempoChange};
 
 const Q: u64 = TICKS_PER_QUARTER as u64;
 
@@ -40,6 +40,68 @@ fn later_musical_time_advances_engine_time_by_the_same_frames() {
             .engine_time_of(MusicalTick::new(4 * Q))
             .expect("inside the stream"),
         SampleTime::new(500 + 96_000)
+    );
+}
+
+#[test]
+fn a_step_and_a_ramp_reach_stable_engine_times_through_the_anchor() {
+    // **Phase 3's exit gate asks for tempo steps and ramps at stable *sample* positions**,
+    // and until this test nothing carried either across the anchor. `tempo.rs` proves the
+    // conversion law thoroughly — and only to [`PlanPosition`], which is the module's whole
+    // point: ADR-0032 clause 27 keeps engine time out of it. The session tests that do reach
+    // engine time all used a **constant** map, so neither a step nor a ramp had ever been
+    // anchored. The gate's two halves met nowhere.
+    //
+    // The figures are the conversion law's own, computed here rather than read back from it.
+    // The map is 120 BPM, ramping to 240 BPM over the two beats from tick `2Q`, and holding
+    // 240 from `4Q`.
+    //
+    // - Beat 2 is two beats of 120 BPM: `2 * 0.5 s` = 48 000 frames.
+    // - Beat 4 ends the ramp, which lasts its beats times the **mean of its two periods**
+    //   (`SOUND-INV-019`): `2 * (0.5 + 0.25) / 2` = 0.75 s = 36 000 frames.
+    // - Beat 6 is two further beats at 240 BPM: `2 * 0.25 s` = 24 000 frames.
+    //
+    // The ramp's mean-period duration is what makes this more than a plumbing test: a
+    // conversion that interpolated the *tempo number* rather than the period would put beat
+    // 4 at a different frame, which is the difference ADR-0049 decided and V1 gets the other
+    // way.
+    let ramped = TempoMap::new(
+        Bpm::new(120.0).expect("a valid tempo"),
+        &[
+            TempoChange::ramp(MusicalTick::new(2 * Q), Bpm::new(120.0).expect("valid")),
+            TempoChange::step(MusicalTick::new(4 * Q), Bpm::new(240.0).expect("valid")),
+        ],
+        rate(),
+    )
+    .expect("a valid map");
+
+    let anchor = SampleTime::new(7_000);
+    let session = SessionScheduler::play(ramped, MusicalTick::ZERO, anchor).expect("a valid start");
+    let at = |tick: u64| {
+        session
+            .engine_time_of(MusicalTick::new(tick))
+            .expect("inside the stream")
+    };
+
+    assert_eq!(at(0), anchor, "the anchor itself");
+    assert_eq!(at(2 * Q), SampleTime::new(7_000 + 48_000), "the step's end");
+    assert_eq!(at(4 * Q), SampleTime::new(7_000 + 84_000), "the ramp's end");
+    assert_eq!(at(6 * Q), SampleTime::new(7_000 + 108_000), "past the ramp");
+
+    // **Stable** means the same tick answers the same frame however it is asked for, which
+    // is what a caller stepping through a timeline depends on. `position_of` sums a stored
+    // prefix, so an implementation that accumulated per call would drift here.
+    for tick in [2 * Q, 4 * Q, 6 * Q, 2 * Q, 6 * Q, 4 * Q] {
+        assert_eq!(
+            at(tick),
+            at(tick),
+            "tick {tick} answers the same frame twice"
+        );
+    }
+    assert_eq!(
+        at(4 * Q),
+        SampleTime::new(7_000 + 84_000),
+        "and after the walk"
     );
 }
 

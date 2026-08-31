@@ -83,6 +83,58 @@ pub enum CompileError {
         second: usize,
     },
 
+    /// An authored runtime source named a note producer the plan does not declare.
+    ///
+    /// ADR-0046 clause 5 admits an authored source against envelopes, and clause 6 gives its
+    /// note-ons holds from a producer entitlement. A source whose `ProducerId` resolves to
+    /// nothing has no entitlement to spend, so its declared holds would be checked against
+    /// an absent partition rather than a disjoint one.
+    #[error(
+        "authored source {index} names note producer {producer}, which the plan does not \
+         declare"
+    )]
+    AuthoredSourceProducerUnknown {
+        /// Position in the plan's authored-source list.
+        index: usize,
+        /// The producer it named.
+        producer: crate::identity::ProducerId,
+    },
+
+    /// An authored runtime source named the plan's compiled note producer.
+    ///
+    /// ADR-0046 clause 6: "Compiled releases use plan entitlements and need no hold." A
+    /// compiled producer therefore holds an entitlement of zero, so routing an authored
+    /// source through it would spend holds the partition never granted — the same
+    /// disjointness [`Self::CompiledProducerDeclaresHold`] keeps on the declaring side.
+    #[error("authored source {index} names compiled note producer {producer}, which holds none")]
+    AuthoredSourceProducerCompiled {
+        /// Position in the plan's authored-source list.
+        index: usize,
+        /// The compiled producer it named.
+        producer: crate::identity::ProducerId,
+    },
+
+    /// An authored runtime source declared more holds than its producer is entitled to.
+    ///
+    /// The producer's `simultaneous_holds` is its whole entitlement under ADR-0046 clause 6's
+    /// disjoint partition. A source claiming more would be spending another producer's unused
+    /// holds, which that clause forbids by name, and the overrun would surface as an
+    /// exhausted entitlement at runtime rather than as a plan that was never admissible.
+    #[error(
+        "authored source {index} declares {holds} holds against note producer {producer}'s \
+         entitlement of {entitlement}"
+    )]
+    AuthoredSourceHoldsAboveEntitlement {
+        /// Position in the plan's authored-source list.
+        index: usize,
+        /// The producer whose entitlement it names.
+        producer: crate::identity::ProducerId,
+        /// Holds the source declared.
+        holds: crate::quantities::EventCount,
+        /// The entitlement the producer declared.
+        entitlement: crate::quantities::EventCount,
+    },
+
     /// A plan asked for more than a render limit allows.
     ///
     /// Admission never truncates, clamps, or drops to make a plan fit: exceeding a
@@ -558,6 +610,10 @@ pub struct DiagnosticsReport {
     foreign_slot_events: u64,
     orphan_note_events: u64,
     last_orphan_note: Option<crate::identity::NoteIdentity>,
+    ingress_dropped_slot: u64,
+    ingress_dropped_hold: u64,
+    ingress_dropped_identity: u64,
+    ingress_orphan_releases: u64,
     oversized_callback_faults: u64,
     clock_exhaustion_faults: u64,
     publication_faults: u64,
@@ -587,11 +643,19 @@ impl DiagnosticsReport {
         self.stale_epoch_events
     }
 
-    /// Ingress events rejected for being stamped beyond the forward horizon.
+    /// Ingress offers refused for being stamped beyond the forward horizon.
     ///
-    /// ADR-0032 clause 21. Holding one would pin a queue slot for an unbounded time.
-    /// It binds ingress provenance only: a compiled list spans the whole piece, and
-    /// measuring it against this horizon would reject most of a song.
+    /// ADR-0032 clause 21. Holding one would pin a queue slot — and a note-on's hold — for an
+    /// unbounded time. It binds ingress provenance only: a compiled list spans the whole
+    /// piece, and measuring it against this horizon would reject most of a song.
+    ///
+    /// **This counts offers the ingress boundary never accepted, and that is a change of
+    /// meaning rather than of implementation.** Until 2026-09-01 the renderer evaluated the
+    /// horizon and this counted events *it* refused from a span it had been handed;
+    /// `HOST-INV-013` evaluates it exactly once, and the maintainer settled that the one site
+    /// is `PerformanceIngress::admit`. The renderer's evaluation is retired, so a reader
+    /// comparing this figure across that boundary compares two different populations: a
+    /// caller-assembled span is no longer measured against the horizon at all.
     pub const fn out_of_horizon_events(&self) -> u64 {
         self.out_of_horizon_events
     }
@@ -616,6 +680,53 @@ impl DiagnosticsReport {
     /// compensate its own unmeasured error.
     pub const fn arrival_stamped_events(&self) -> u64 {
         self.arrival_stamped_events
+    }
+
+    /// Live events dropped at the ingress boundary because the queue was full.
+    ///
+    /// `HOST-INV-009` licenses a drop at the one registered live renderer-ingress store and
+    /// requires the count to reach this report with **the exhausted resource named**, "so
+    /// the three causes stay distinguishable". They need different fixes: a full queue is a
+    /// producer outrunning the render callback, while the two below are a plan admitted for
+    /// fewer notes than the performer plays.
+    ///
+    /// Mirrored from the store rather than incremented here, because the drop happens on the
+    /// producing half **before acceptance**, which is where `HOST-INV-009` puts it and where
+    /// this report cannot reach. The drain copies the store's running totals into it.
+    pub const fn ingress_dropped_slot(&self) -> u64 {
+        self.ingress_dropped_slot
+    }
+
+    /// Live note-ons dropped because the producer's release-hold entitlement was outstanding.
+    pub const fn ingress_dropped_hold(&self) -> u64 {
+        self.ingress_dropped_hold
+    }
+
+    /// Live note-ons dropped because the producer's identity range was exhausted.
+    pub const fn ingress_dropped_identity(&self) -> u64 {
+        self.ingress_dropped_identity
+    }
+
+    /// Releases refused at the live boundary for naming no note this producer holds open.
+    ///
+    /// Distinct from [`Self::orphan_note_events`], and the distinction is the refusal
+    /// **point**: this one never entered a queue or spent a share, while that one was
+    /// published and reached the renderer. A producer whose releases are refused at the
+    /// boundary and one whose releases arrive at notes already gone need different fixes.
+    /// Neither consumes `HOST-INV-009`'s drop licence: an orphan is a release for a note
+    /// that does not exist, not a shortage.
+    pub const fn ingress_orphan_releases(&self) -> u64 {
+        self.ingress_orphan_releases
+    }
+
+    /// Every drop at the live boundary, whatever the resource.
+    ///
+    /// Offered beside the three causes rather than instead of them: a report carrying only
+    /// the total could not tell a starved producer from an under-admitted plan.
+    pub const fn ingress_dropped(&self) -> u64 {
+        self.ingress_dropped_slot
+            .saturating_add(self.ingress_dropped_hold)
+            .saturating_add(self.ingress_dropped_identity)
     }
 
     /// Events whose parameter slot belongs to another compiled plan.
@@ -652,18 +763,23 @@ impl DiagnosticsReport {
     /// producer tag is needed and none is carried.
     ///
     /// One identity rather than all of them, because this report is a fixed-size value the
-    /// audio thread writes with no allocation. **Per-producer counts are owed to the ingress
-    /// slice**, and the reason the aggregate is unambiguous meanwhile is about *emission*,
-    /// not about how many producers a plan declares: a plan may declare several today — a
-    /// runtime source alongside the compiled one — but `stamp_compiled` is the only thing
-    /// that mints into a renderer's table, and it mints only from the plan's compiled
-    /// producer. Every occurrence a renderer can see is therefore that producer's, so
-    /// [`Self::orphan_note_events`] *is* its count. A producer that emits without going
-    /// through compiled stamping is what makes the aggregate ambiguous, and that is ingress.
+    /// audio thread writes with no allocation. **Per-producer counts are owed**, and the
+    /// count beside the identity is what cannot be attributed: two producers orphaning in one
+    /// call are reported as one identity and a total. That is a property of this report's
+    /// shape, not of how many producers emit.
     ///
-    /// An earlier revision of this comment justified it by the producer *count* instead, and
-    /// a test in the same commit admits a two-producer plan — an independent review caught
-    /// the contradiction.
+    /// **It is not reachable here yet**, and the reason is a check rather than a habit:
+    /// `PerformanceIngress::prepare` refuses a plan that also declares a compiled producer,
+    /// because ADR-0051 clause 6 leaves a gate reached by more than one with no ownership
+    /// law. Plans declaring both do exist in this crate's fixtures and are harmless — none
+    /// builds a live store, and without one a non-compiled declaration cannot emit.
+    ///
+    /// Three earlier revisions justified the gap by the producer *count*, then by
+    /// `stamp_compiled` being the only path that mints into a renderer's table, then by the
+    /// disjoint ranges. Independent reviews refuted all three — the second because the live
+    /// boundary mints too, through `StreamControl::offer_note_on`, and the third because
+    /// disjoint ranges identify the **named** occurrence's producer and say nothing about
+    /// the count beside it.
     pub const fn last_orphan_note(&self) -> Option<crate::identity::NoteIdentity> {
         self.last_orphan_note
     }
@@ -745,10 +861,6 @@ impl DiagnosticsReport {
         self.stale_epoch_events = self.stale_epoch_events.saturating_add(1);
     }
 
-    pub(crate) fn count_out_of_horizon_event(&mut self) {
-        self.out_of_horizon_events = self.out_of_horizon_events.saturating_add(1);
-    }
-
     pub(crate) fn count_arrival_stamped_event(&mut self) {
         self.arrival_stamped_events = self.arrival_stamped_events.saturating_add(1);
     }
@@ -784,6 +896,40 @@ impl DiagnosticsReport {
 
     pub(crate) fn count_refused_activation(&mut self) {
         self.refused_activations = self.refused_activations.saturating_add(1);
+    }
+
+    /// Mirror an ingress store's running boundary counts into this report.
+    ///
+    /// **Assignment, not accumulation**, and the two are not interchangeable: the store's
+    /// counters are cumulative over the stream, so adding them each pass would count every
+    /// earlier drop again on every callback. One store per report is what makes assignment
+    /// correct; a second live store needs its own registry row under `HOST-INV-009`, and
+    /// this method would need to name which store it is carrying.
+    pub(crate) const fn mirror_ingress_boundary(
+        &mut self,
+        slot: u64,
+        hold: u64,
+        identity: u64,
+        orphans: u64,
+        beyond_horizon: u64,
+    ) {
+        self.ingress_dropped_slot = slot;
+        self.ingress_dropped_hold = hold;
+        self.ingress_dropped_identity = identity;
+        // **The horizon count moved halves rather than disappearing.** It used to be the
+        // renderer's, counting events it refused from a span it was handed; `HOST-INV-013`'s
+        // single evaluation is now at ingress admission, so the boundary is what counts and
+        // the public accessor keeps its name. A reader of an older report saw refusals of
+        // events that had already been assembled; this one sees offers that were never
+        // accepted.
+        self.out_of_horizon_events = beyond_horizon;
+        // **The orphan keeps its own field, because that condition has two sites.** This one
+        // refused before acceptance, where nothing entered a queue and no share was spent;
+        // the renderer's refused an event it was handed. Adding them together would leave a
+        // reader unable to tell a producer whose releases never enter the stream from one
+        // whose releases arrive at notes that are already gone, and those need different
+        // fixes.
+        self.ingress_orphan_releases = orphans;
     }
 
     pub(crate) fn set_needs_reprepare(&mut self) {

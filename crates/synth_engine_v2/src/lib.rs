@@ -91,6 +91,18 @@ mod arena;
 pub mod compile;
 pub mod diagnostics;
 pub mod identity;
+// Without the `simulated-ingress` feature the store has no constructor, so everything it
+// owns is unreachable — which is exactly what ADR-0053 clause 5's boundary is for. The code
+// stays compiled rather than gated wholesale, because gating the module spread `cfg` through
+// the scheduler and the stream to re-express one thing the constructors already say.
+#[cfg_attr(
+    not(feature = "simulated-ingress"),
+    allow(
+        dead_code,
+        reason = "ADR-0053 clause 5's boundary: no constructor, so the producer is unreachable"
+    )
+)]
+pub mod ingress;
 pub mod ir;
 pub mod node;
 pub mod offline;

@@ -200,10 +200,6 @@ impl PreparedRenderer {
         let first_quantum = self.clock.quantum_index();
         // With no quantum to render, there is no quantum an event could belong to.
         let last_quantum = first_quantum.saturating_add(quanta.max(1) as u64) - 1;
-        let horizon_end = self
-            .clock
-            .checked_add(self.plan.forward_event_horizon())
-            .ok();
         let capacity = self.plan.max_events_per_quantum().get();
 
         for (index, event) in events.as_slice().iter().enumerate() {
@@ -234,15 +230,23 @@ impl PreparedRenderer {
                 continue;
             }
 
-            // ADR-0032 clause 21: the forward horizon binds ingress provenance only.
-            // A compiled list spans the whole piece, and measuring it against a
-            // horizon meant for live input would reject most of a song.
-            if envelope.source().is_ingress()
-                && horizon_end.is_some_and(|end| envelope.time() > end)
-            {
-                pending.out_of_horizon = pending.out_of_horizon.saturating_add(1);
-                continue;
-            }
+            // **The forward horizon is no longer evaluated here.** `HOST-INV-013` says it is
+            // evaluated exactly once, at the boundary admitting into bounded source storage,
+            // and the maintainer settled on 2026-09-01 that the boundary is
+            // `PerformanceIngress::admit` rather than this loop. Four ways of having both
+            // sites were tried in the ingress slice and each was refused by independent
+            // review; a merge-gate review then found that keeping only *this* one cannot
+            // work, because the drain releases an entry only once the publication reaches it,
+            // so a far-future event never arrives here while it is still far-future.
+            //
+            // The accepted cost is stated rather than implied: a caller-assembled span whose
+            // events carry ingress provenance now meets only the span check. It is still
+            // bounded — an event outside the callback's window has no row to land in — but it
+            // is not measured against the horizon.
+            //
+            // ADR-0032 clause 21 is unaffected and is why the check was never applied to
+            // compiled provenance: a compiled list spans the whole piece, and measuring it
+            // against a horizon meant for live input would reject most of a song.
 
             if envelope.source() == TimeSource::Arrival {
                 pending.arrival_stamped = pending.arrival_stamped.saturating_add(1);
@@ -741,9 +745,6 @@ impl Renderer for PreparedRenderer {
             for _ in 0..pending.orphan_note {
                 self.diagnostics.count_orphan_note_event(identity);
             }
-        }
-        for _ in 0..pending.out_of_horizon {
-            self.diagnostics.count_out_of_horizon_event();
         }
         for _ in 0..pending.arrival_stamped {
             self.diagnostics.count_arrival_stamped_event();

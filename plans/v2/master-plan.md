@@ -669,26 +669,91 @@ irregular host blocks with the same total frames
 
 ### Exit gate
 
-- [ ] A note starting inside a host block begins at the exact requested sample
+- [x] A note starting inside a host block begins at the exact requested sample
       for every admitted on-time event. A genuinely late event begins at
       ADR-0043's first not-yet-rendered boundary, with the immutable stamp and
       late counter exposing that displacement. Capacity never changes the render
       position.
-- [ ] A note ending inside the same host block produces the expected non-empty
+      *Evidence:* `compiled_schedule`'s exact-and-bit-identical note across four
+      actual host partitions; `render_contract`'s clamped-and-counted late event
+      and its clamped-render-position note edge, whose warm-up block is
+      deliberately not a multiple of `Q` so the clamp cannot be mistaken for
+      "applied at the callback head". The stamp's immutability is structural —
+      `EventEnvelope` exposes no setter and the renderer derives the render
+      position separately — rather than a separate assertion. Capacity moves
+      nothing because ADR-0046 removed that mechanism: an over-share is
+      `compiled_schedule`'s terminal fault on its own branch, not a displacement.
+- [x] A note ending inside the same host block produces the expected non-empty
       duration rather than being released before the block renders.
-- [ ] A named offline late-clamp test proves that the stamp-window selector
+      *Evidence:* the same `compiled_schedule` fixture asserts the sounding span
+      per frame, both edges off a quantum boundary, across all four partitions.
+- [x] A named offline late-clamp test proves that the stamp-window selector
       cannot present a late event, or the selector windows by clamped render
       position. This closes ADR-0043's surviving offline obligation without
       adding an entry prerequisite.
-- [ ] Tempo steps and ramps map to stable sample positions.
-- [ ] Equivalent simulated-ingress and precompiled events carrying the same
+      *Evidence:* `note_events`' every-event-across-an-uneven-partition test
+      takes the first branch, proving the selector's premise as a **tiling**
+      property under a block size that is not a multiple of `Q`. Tiling has two
+      failure directions and they need different instruments, which an
+      independent review found the fixture missing half of: a **gap** shows in
+      the rendered samples, while an **overlap** does not — a re-presented gate
+      edge is idempotent, so the audio can be identical — and shows instead in
+      the renderer's late counter, because a re-presented event is behind the
+      clock and takes ADR-0043's preserving clamp. The test now asserts both,
+      reading the counter through `render_offline_reporting`, which exists
+      because an offline render's diagnostics were otherwise unobservable. Both
+      directions are mutation-verified: a `start` predicate that skips the
+      boundary quantum, and a window that re-presents the previous one.
+- [x] Tempo steps and ramps map to stable sample positions.
+      *Evidence:* `session`'s step-and-ramp-through-the-anchor test, which is
+      where the gate's two halves finally meet — `tempo`'s twenty-odd checks
+      prove the conversion law and stop at `PlanPosition` by design, so until
+      that test nothing carried a step or a ramp across an anchor to a frame.
+      Mutation-verified against a ramp degraded to a step and against an ignored
+      anchor.
+- [x] Equivalent simulated-ingress and precompiled events carrying the same
       engine-epoch `SampleTime` reach the same sample offsets. This proves the
       scheduler boundary, not a physical adapter's hardware-clock mapping;
       ADR-0022 and Phase 9 own that later claim.
+      *Evidence:* `simulated_ingress`' equivalence render, bit-identical across
+      the four partitions with both edges off a quantum boundary, and
+      mutation-verified against a one-frame displacement of every ingress stamp.
+      The fixture uses note edges deliberately: a control-rate payload takes
+      effect at the next quantum boundary either way and would measure nothing.
 - [ ] Play/stop/seek, count-in, metronome, preview, loop transition, and panic
       have declared ordering against note/controller/automation events at the
       same sample.
-- [ ] The reference V2 renders are invariant to host block partitioning.
+      *Status:* the **ordering is declared** — ADR-0023 and `SOUND-INV-020` give
+      each kind a drain position, assigned by the producer that can emit it:
+      stop, count-in, metronome, preview and recording state take the session
+      block; panic and sustain lift take the live block under ADR-0046 clause 6;
+      play, seek and the loop wrap are activations, adopted between two renderer
+      sub-calls, contributing the boundary release and the locate catch-up.
+      **It stays unticked on ADR-0052's own words.** That record states that the
+      exit gate's loop-transition limb cannot close until it does, and that
+      identity cannot be separated from activation granularity — a
+      quantum-granular wrap truncates or overruns the pass whenever the loop is
+      not a whole number of quanta, which 251 of 281 integer tempi at 48 kHz are.
+      A draft of this line argued that ordering and identity are separable
+      questions; an independent review refuted it, because ADR-0052 is `Proposed`
+      and makes no specification update, so nothing has reconciled the two. The
+      limb closes with that record.
+
+- [x] The reference V2 renders are invariant to host block partitioning.
+      *Evidence:* `reference_render` drives the phase's own deliverable voice —
+      a sine through a **filter**, an envelope and an amplifier — through the
+      live scheduler across `1 x 4096`, `16 x 256`, `64 x 64` and a predeclared
+      irregular partition, and the four renders are bit-identical.
+      The stateful nodes are what make it a claim: a biquad carries history and
+      an envelope carries its phase, so a boundary falling mid-ring or
+      mid-attack is where a renderer that reset or double-advanced anything
+      diverges. Mutation-verified by clearing the filter's history at every
+      call, which the fixture catches at frame 256 — the first block boundary of
+      the second partition. The earlier partition test in `note_events` cannot
+      carry this: it renders a **constant** through a gate, which has no state
+      for a partition to disturb, and it renders offline rather than through the
+      caller's actual blocks. The reference render is also checked for shape
+      before it is compared, so two silences cannot pass as agreement.
 - [ ] Every renderer-ingress stream has a declared capacity, all six producer
       shares and `release_hold_capacity` satisfy ADR-0046's checked sum and lower
       bounds, every share is a positive `EventCount`, authored declarations are
@@ -698,13 +763,53 @@ irregular host blocks with the same total frames
       takes the terminal fault; no correct producer can reach it. Every live
       renderer-ingress store has exactly one *Live bounded queue* row in the
       host-profile specification's closed renderer-ingress source-store registry.
-      Construction rejects zero `release_hold_capacity` and a release share one
-      below it, while accepting equality and any larger value that still fits the
-      total share sum.
-- [x] The preserving late-clamp contract is `Accepted`. ADR-0043 supplies it and
-      ADR-0046 leaves it in force while superseding capacity deferral.
-- [x] ADR-0046 is `Accepted`; the two deferral-induced causal-order obligations
-      are dissolved because the renderer no longer moves events for capacity.
+      *Status:* the capacity, registry, checked-relation, positive-share,
+      hold-disjointness and terminal-fault clauses are met and evidenced, and so
+      is *session snapshot admission*: the share left `is_admission_checked`'s
+      exclusion list, so a plan whose locate catch-up exceeds it is refused at
+      admission instead of compiling and faulting at its first locate. That
+      number needed no searching — a locate restores every prepared target at
+      once, so the largest batch over every legal position *is* the
+      prepared-target count, plus one for ADR-0050 clause 5's boundary mass
+      release — and it was already being reported; only the refusal was missing.
+      Mutation-verified by re-excluding the field and by dropping each term of
+      the count.
+      *Authored composition* and *internal declarations* are **also met now**,
+      and both became possible the same way: `PlanDeclarations` gained
+      `AuthoredSourceDeclaration` and `InternalProducerDeclaration`, so a plan can
+      state what those two shares bound. Until it could, each share was reported
+      against itself and no plan could exceed it — which is why `HOST-INV-007`'s
+      conformance row had no refusal case to ask for and both fields sat in
+      `is_admission_checked`'s exclusion list. Clause 5's aggregate is **summed**
+      across every declared source, with no mutual-exclusion proof built and none
+      claimed; clause 1's internal relation is the sum of admitted per-quantum
+      maxima, complete only because clause 2 confines an internal emission to the
+      quantum that generates it. An authored source also names the
+      `note_producers` entry carrying its `ProducerId` and hold entitlement, and
+      may not exceed that entitlement or route through a compiled producer —
+      which closes the contract hole an independent review found in the first
+      attempt at this work, the reason that attempt was backed out.
+      **One clause is not met.** Earlier status lines here miscounted this set
+      twice, first naming two and then four, which is why it is now named singly.
+      *The measured partition* is that clause, and this bullet was ticked twice on
+      readings of that clause that an independent review refuted both times.
+      [EVD-0019](evidence/phase-03/EVD-0019-partition-publication-cost.md)
+      measures what a full partition **costs to publish** — 0.034 % to 0.052 %
+      of the callback budget — which no record had. That is not what the clause
+      asks. This section of the master plan says Phase 3 must reselect
+      `max_events_per_quantum` "from the measured partition before enabling the
+      contract, **even if that partition fits within 256**", and the
+      host-profile specification's deferred row says the same: the required
+      result is measured producer *values* and a reselected partition, cap and
+      ingress depth. A cost that fits is exactly the argument those words
+      anticipate and reject.
+      **So this closes when the partition's occupancy can be measured**, which
+      needs producers for the classes that have none — authored runtime
+      expansion and renderer-internal emission. Both are Phase 3 Work-list
+      items. That a plan can now *declare* those two producers does not supply
+      them: a declaration is a bound admission compares against, while occupancy
+      is what a running producer turns out to use, and the two clauses above are
+      met by the first without touching the second.
 
 [Phase 7](#phase-7-yams-mod-grid-and-unified-modulation) may not begin before
 this gate passes. Modulation and script timing are meaningless until the event

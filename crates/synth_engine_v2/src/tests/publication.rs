@@ -249,9 +249,22 @@ fn a_window_that_does_not_start_at_zero_places_events_by_offset() {
         EventCount::NONE
     );
 
+    // **The two directions are not symmetric, and that is ADR-0032 clause 21.** Only
+    // forward has a budget. A destination past the window is refused and waits for the
+    // call that can reach it. A destination *behind* the window is not outside it: ADR-0043's
+    // preserving late clamp puts its render position at the first not-yet-rendered
+    // boundary, which is this window's own first quantum, so row zero is where it belongs.
+    // Refusing it instead would drop an event ADR-0001 clause 16 forbids dropping and
+    // would strand a live producer's late entry in its queue forever, because the window
+    // only ever moves further away from it.
     publication
         .charge(ProducerClass::Live, in_quantum(99))
-        .expect_err("a destination before the window is refused");
+        .expect("a late destination takes the window's first row under the late clamp");
+    assert_eq!(
+        publication.spent(WindowRow::new(0), ProducerClass::Live),
+        EventCount::measured(1),
+        "quantum 99 is late for a window starting at 100, so it spends row 0's share"
+    );
     publication
         .charge(ProducerClass::Live, in_quantum(102))
         .expect_err("a destination past the window is refused");

@@ -602,3 +602,39 @@ fn the_admission_budget_covers_what_both_identity_halves_actually_allocate() {
         );
     }
 }
+
+#[test]
+fn a_release_scoped_to_a_producer_refuses_another_producers_occurrence() {
+    // `SOUND-INV-017` gives every producer a disjoint index range, and ADR-0046 clause 6
+    // partitions holds so that "no producer borrows another's unused holds".
+    // `IdentityTable::release` enforces the first through the occurrence but not the
+    // second through the producer: one source presenting another's live occurrence ends
+    // a note it never opened and spends its own hold on it, leaving its own note
+    // occupied — so its next note-on finds the range full with a hold still free, which
+    // is the identity shortage otherwise unreachable. An independent review found it in
+    // the live boundary.
+    //
+    // **Checked over a bare table rather than through a plan**, and that is not a
+    // convenience: the end-to-end fixture would need one plan declaring two note
+    // producers, which is ADR-0051 clause 6's shared-gate construction, and
+    // `PROCESS.md` forbids building on an undecided coupled policy. A table's producer
+    // ranges reach no gate.
+    let partition = [HeldNoteCount::measured(2), HeldNoteCount::measured(2)];
+    let mut table = IdentityTable::from_admitted_ranges(&partition).expect("a valid table");
+    let first = ProducerId::new(0);
+    let second = ProducerId::new(1);
+    let note = crate::plan::NoteSlot::new(crate::plan::PlanId::FILL, 0);
+
+    let theirs = table.mint(first, note).expect("the first producer mints");
+    let mine = table.mint(second, note).expect("and so does the second");
+
+    // The second producer may not end the first's occurrence, and the refusal is an
+    // orphan **to it** — an identity naming no note it holds open.
+    assert!(matches!(
+        table.release_for(second, theirs),
+        Resolution::Orphan(_)
+    ));
+    // And the refusal took nothing: the first producer's own release still resolves.
+    assert_eq!(table.release_for(first, theirs), Resolution::Live);
+    assert_eq!(table.release_for(second, mine), Resolution::Live);
+}

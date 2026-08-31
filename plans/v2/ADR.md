@@ -3,7 +3,7 @@
 This is the compact status index for durable Core V2 decisions. Individual ADRs own rationale and evidence; current
 specifications own implementation semantics. Do not copy review history or measurement results into this file.
 
-Next free identifier: `ADR-0052`.
+Next free identifier: `ADR-0054`.
 
 ## Status vocabulary
 
@@ -72,7 +72,7 @@ the durable-decision test in `PROCESS.md` and normally do not need an ADR.
 | ADR-0020 | Final crate boundaries and names            | Proposed | After vertical slices | —                                                                  | —                                        |
 | ADR-0021 | Host profile and admission policy           | Accepted | 0A/1                  | [ADR](decisions/ADR-0021-host-profile-and-admission-policy.md)     | —                                        |
 | ADR-0022 | Hardware time mapping and latency ownership | Deferred | 0A/9                  | [ADR](decisions/ADR-0022-hardware-time-mapping.md)                 | Phase 3 consumes already mapped `SampleTime`; physical mapping and latency ownership gate Phase 9 exit |
-| ADR-0023 | Same-sample session event ordering          | Proposed | 3                     | —                                                                  | —                                        |
+| ADR-0023 | Same-sample event ordering                  | Accepted | 3                     | [ADR](decisions/ADR-0023-same-sample-event-ordering.md)            | Same-sample order is the **declared drain order** of one publication pass, with the **producer** as the unit of order: session and transport, compiled, authored runtime in plan declaration order, live ingress in queue order; each producer drained in one contiguous block in its own emission order; a renderer-internal emission applies after every external event at that position. Ranking by ADR-0046 capacity class is recorded as **refuted** — a class partitions who pays, not what happens first, and it splits one live producer's note pair across `Live` and `Release`. ADR-0051 clause 6's missing gate-ownership law is named as the coupled boundary that bounds what may be built on this record; a narrower reading of it was tried and withdrawn. Creates `SOUND-INV-020` on acceptance |
 | ADR-0024 | Recording take and commit semantics         | Proposed | 0B/9/10B              | —                                                                  | —                                        |
 | ADR-0025 | Tuning representation and ownership         | Proposed | 0B/6/10A              | —                                                                  | —                                        |
 | ADR-0026 | Minimum SampleMap and SampleZone model      | Proposed | 6/10A/10D             | —                                                                  | —                                        |

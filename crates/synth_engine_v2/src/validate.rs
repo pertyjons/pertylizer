@@ -275,6 +275,58 @@ pub(crate) fn validate(ir: &GraphIr, stream: ChannelLayout) -> Result<Validated,
         }
     }
 
+    // ADR-0046 clause 5's authored sources, linked to clause 6's hold partition. A source's
+    // envelopes are summed against the shares further down; these three rules are what make
+    // that sum meaningful, and they run here for the same reason the producer rules above do
+    // — a declaration that contradicts itself must not reach an aggregate that could pass.
+    //
+    // **The link is the point.** An earlier attempt at this type carried the envelopes and
+    // no producer reference, and an independent review found the hole: nothing tied a source
+    // to the `note_producers` entry holding its entitlement, so a source could declare holds
+    // that no partition had granted and the compiler could not tell.
+    let mut holds_by_producer: std::collections::BTreeMap<u16, u64> =
+        std::collections::BTreeMap::new();
+    for (index, source) in ir.declarations().authored_sources.iter().enumerate() {
+        // A producer's position in the declaration *is* its `ProducerId`, which is the same
+        // numbering the identity ranges and hold entitlements are carried in.
+        let Some(producer) = ir
+            .declarations()
+            .note_producers
+            .get(source.producer.as_u16() as usize)
+        else {
+            return Err(CompileError::AuthoredSourceProducerUnknown {
+                index,
+                producer: source.producer,
+            });
+        };
+        if producer.compiled {
+            return Err(CompileError::AuthoredSourceProducerCompiled {
+                index,
+                producer: source.producer,
+            });
+        }
+        // **Accumulated, not compared one at a time.** Several authored sources may name the
+        // same producer, and ADR-0046 clause 6 partitions entitlements per *producer*, not
+        // per source: two sources that each fit could together spend more holds than the one
+        // entitlement they share. This is the same rule the destination aggregate below
+        // follows, and checking it per source instead was a hole in this function's first
+        // draft — a plan with two three-hold sources against a four-hold producer passed.
+        let spent = holds_by_producer
+            .entry(source.producer.as_u16())
+            .or_insert(0_u64);
+        *spent = spent.saturating_add(u64::from(source.simultaneous_holds.get()));
+        if *spent > u64::from(producer.simultaneous_holds.get()) {
+            return Err(CompileError::AuthoredSourceHoldsAboveEntitlement {
+                index,
+                producer: source.producer,
+                holds: crate::quantities::EventCount::measured(
+                    u32::try_from(*spent).unwrap_or(u32::MAX),
+                ),
+                entitlement: producer.simultaneous_holds,
+            });
+        }
+    }
+
     let index = Index::build(ir, stream);
     let mut conversions = Vec::new();
 

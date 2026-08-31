@@ -397,9 +397,9 @@ impl TransportActivation {
 
     /// How many rows the catch-up batch carries.
     ///
-    /// One per prepared target, so this is the quantity a plan-dependent session-share
-    /// admission will bound once it exists. `SessionEventShare` is reported against the
-    /// share today but is not yet admission-checked; see `compile.rs`'s session row.
+    /// One per prepared target, so this is the quantity the plan-dependent session-share
+    /// admission bounds: `SessionEventShare` is both reported against the share and refused
+    /// above it, at that count plus one; see `compile.rs`'s session row.
     #[must_use]
     pub fn catch_up(&self) -> usize {
         self.catch_up.len()

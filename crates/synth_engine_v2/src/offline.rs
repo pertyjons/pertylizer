@@ -94,6 +94,27 @@ pub fn render_offline(
     start: PlanPosition,
     events: &[OfflineEvent],
 ) -> Result<Vec<f32>, OfflineError> {
+    render_offline_reporting(plan, frames, start, events).map(|(samples, _)| samples)
+}
+
+/// The same render, with the diagnostics its renderer accumulated.
+///
+/// **The counters are otherwise unobservable on this path**, and one of them is the only
+/// instrument for a claim ADR-0043 asks Phase 3 to prove: that the stamp-window selector
+/// cannot present a **late** event. A selector that re-presented a quantum it had already
+/// covered would be caught here and nowhere else — the re-presented events are late, so the
+/// renderer clamps and counts them, while the audio can be identical because a repeated gate
+/// edge is idempotent. An independent review found the tiling fixture unable to see exactly
+/// that, because it compared samples alone.
+///
+/// Additive rather than a change to [`render_offline`], which keeps the signature every
+/// existing caller uses.
+pub fn render_offline_reporting(
+    plan: CompiledPlan,
+    frames: FrameCount,
+    start: PlanPosition,
+    events: &[OfflineEvent],
+) -> Result<(Vec<f32>, crate::diagnostics::DiagnosticsReport), OfflineError> {
     // A raw `usize` here would let a caller pass a sample count, a byte count, or a
     // duration in the wrong unit without a type error, and its range would vary by
     // platform. The checked conversion happens once, inside.
@@ -154,7 +175,7 @@ pub fn render_offline(
         out.drain(..head);
     }
     out.truncate(frames.saturating_mul(channels));
-    Ok(out)
+    Ok((out, *renderer.diagnostics()))
 }
 
 /// The events whose quanta this call renders.

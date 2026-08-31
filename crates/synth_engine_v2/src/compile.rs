@@ -329,6 +329,30 @@ fn inserted_records_upper_bound(ir: &GraphIr, profile: &HostProfile) -> u64 {
 }
 
 /// One row per field that carries an amount, in field order.
+/// The amount a declared aggregate requests, named exactly.
+///
+/// `HOST-INV-006` requires a row to carry the amount a plan **requested**, and a declared
+/// aggregate can sum past what an `EventCount` names. Saturating made the report understate
+/// the request and, against a profile limit of `u32::MAX`, read `Within` for a total it
+/// exceeded. [`ResourceAmount::EventsBeyondCount`] carries the real figure, so the ordinary
+/// row comparison refuses the plan and names the field — no separate error, and no arithmetic
+/// the reader has to trust.
+fn events_requested(total: u64) -> ResourceAmount {
+    u32::try_from(total).map_or_else(
+        |_| {
+            // The `None` arm is unreachable: `try_from` failed, so the value exceeds
+            // `u32::MAX`, which is exactly what the constructor validates. Written as a
+            // fallback rather than an `expect` because a report row must not panic the
+            // compiler, and the saturating value is the closest honest thing left to say.
+            crate::report::EventsBeyondCount::new(total).map_or(
+                ResourceAmount::Events(EventCount::measured(u32::MAX)),
+                ResourceAmount::EventsBeyondCount,
+            )
+        },
+        |fits| ResourceAmount::Events(EventCount::measured(fits)),
+    )
+}
+
 fn build_rows(
     ir: &GraphIr,
     profile: &HostProfile,
@@ -496,9 +520,41 @@ fn build_rows(
         ResourceAmount::Events(limits.events().max_note_expansion_per_tick()),
         IrObject::Plan,
     ));
+    // ADR-0046 clause 1's third authored relation: "the plan-wide aggregate maximum of
+    // simultaneously retained authored future events fits the headroom above that floor",
+    // the floor being `compiled_event_share * max_quanta_per_callback`. The row asks for the
+    // **larger** of the plan's own in-flight claim and that floor plus the authored
+    // retention, which is the shape [`ResourceField::MaxHeldNotes`] above already uses: two
+    // claims a plan makes about one store, and the store must satisfy both. Composing them
+    // by addition instead would double-count a plan that already folded its authored sources
+    // into its own figure, and refuse a plan that is in fact admissible.
+    //
+    // The floor is recomputed here rather than read back, because profile construction
+    // checks it as a relation and keeps no field for it. A capability that cannot name its
+    // own callback extent has already failed construction, so the fallback below is
+    // unreachable through a constructed profile; it is a saturating floor rather than an
+    // `expect`, because a value this row cannot compute must not panic the compiler.
+    let compiled_floor = capabilities
+        .max_quanta_per_callback()
+        .ok()
+        .and_then(|quanta| {
+            limits
+                .events()
+                .shares()
+                .compiled_event_share()
+                .checked_over(quanta)
+        })
+        .map_or(0_u64, |floor| u64::from(floor.get()));
+    let retained = declarations
+        .authored_sources
+        .iter()
+        .fold(compiled_floor, |total, source| {
+            total.saturating_add(u64::from(source.retained_future.get()))
+        });
+    let in_flight = retained.max(u64::from(declarations.scheduled_events_in_flight.get()));
     rows.push(ResourceRow::new(
         ResourceField::MaxScheduledEventsInFlight,
-        ResourceAmount::Events(declarations.scheduled_events_in_flight),
+        events_requested(in_flight),
         ResourceAmount::Events(limits.events().max_scheduled_events_in_flight()),
         IrObject::Plan,
     ));
@@ -621,31 +677,37 @@ fn build_rows(
     // share, so there is no requested amount that could differ. What the rows carry is
     // the partition itself, so a report shows which class a later admission refusal was
     // charged against rather than only the cap it summed to.
-    for (field, amount) in [
-        (
-            ResourceField::AuthoredRuntimeEventShare,
-            limits.events().shares().authored_runtime_event_share(),
-        ),
-        (
-            ResourceField::LiveEventShare,
-            limits.events().shares().live_event_share(),
-        ),
-    ] {
-        rows.push(ResourceRow::new(
-            field,
-            ResourceAmount::Events(amount),
-            ResourceAmount::Events(amount),
-            IrObject::Plan,
-        ));
-    }
+    // ADR-0046 clause 5's plan-wide authored aggregate, **summed**. The record allows two
+    // sources that fit individually to be rejected together "unless the compiler proves them
+    // mutually exclusive"; no such proof exists and none is built here, so every declared
+    // source counts. Summing is the conservative direction: it can refuse a plan whose
+    // sources never actually coincide, never admit one whose sources do.
+    let authored = declarations
+        .authored_sources
+        .iter()
+        .fold(0_u64, |total, source| {
+            total.saturating_add(u64::from(source.destination_occupancy.get()))
+        });
+    rows.push(ResourceRow::new(
+        ResourceField::AuthoredRuntimeEventShare,
+        events_requested(authored),
+        ResourceAmount::Events(limits.events().shares().authored_runtime_event_share()),
+        IrObject::Plan,
+    ));
+    rows.push(ResourceRow::new(
+        ResourceField::LiveEventShare,
+        ResourceAmount::Events(limits.events().shares().live_event_share()),
+        ResourceAmount::Events(limits.events().shares().live_event_share()),
+        IrObject::Plan,
+    ));
 
     // ADR-0051 clause 1's catch-up batch, which `HOST-INV-022` makes the session share's
     // bounded contributor. A locate restores **every** prepared target at once, so the
     // batch's size *is* the plan's prepared-target count at every legal locate position —
     // one row per control per node, which is exactly how `parameter_targets` is lowered
     // below. That is why the row has one number to report rather than a worst case to search
-    // for, which is what a plan-dependent admission of this share will compare when it
-    // lands. See the note on that row below for why it does not refuse yet.
+    // for, which is what the plan-dependent admission of this share compares. See the note
+    // on that row below for the boundary release it is charged alongside.
     let catch_up = ir.nodes().iter().fold(0_u64, |total, node| {
         total.saturating_add(
             crate::node::descriptor(node.kind()).map_or(0, |descriptor| descriptor.controls.len())
@@ -659,37 +721,48 @@ fn build_rows(
     // contract violation that ends the stream, not a load condition it recovers from.
     //
     // Like the compiled row above, this one reports a plan-derived request rather than the
-    // profile's value on both sides. Unlike it, the request is **not** refused:
-    // `SessionEventShare` is excluded from `ResourceField::is_admission_checked`, so a plan
-    // whose catch-up exceeds the share compiles and faults at its first locate instead. The
-    // row exists so that admission work has the number to check when it lands.
+    // profile's value on both sides, **and it is refused**. ADR-0046 clause 1 requires plan
+    // admission to check "the maximum destination contribution of one complete eligible
+    // session/transport snapshot, including the largest catch-up batch over every legal
+    // locate position in that plan", and the paragraph above is why that maximum is one
+    // number rather than a search: a locate restores every prepared target at once, so the
+    // batch's size *is* the prepared-target count at every legal position.
+    //
+    // It did not refuse until this slice. `SessionEventShare` was excluded from
+    // `ResourceField::is_admission_checked`, so a plan whose catch-up exceeded the share
+    // compiled and faulted at its **first locate** — a share overrun is a contract violation
+    // that ends the stream, which is a bad way to learn that a plan was never admissible.
     let session = catch_up.saturating_add(1);
     rows.push(ResourceRow::new(
         ResourceField::SessionEventShare,
-        ResourceAmount::Events(EventCount::measured(
-            u32::try_from(session).unwrap_or(u32::MAX),
-        )),
+        events_requested(session),
         ResourceAmount::Events(limits.events().shares().session_event_share()),
         IrObject::Plan,
     ));
 
-    for (field, amount) in [
-        (
-            ResourceField::InternalEventShare,
-            limits.events().shares().internal_event_share(),
-        ),
-        (
-            ResourceField::ReleaseEventShare,
-            limits.events().shares().release_event_share(),
-        ),
-    ] {
-        rows.push(ResourceRow::new(
-            field,
-            ResourceAmount::Events(amount),
-            ResourceAmount::Events(amount),
-            IrObject::Plan,
-        ));
-    }
+    // ADR-0046 clause 1: "the internal share covers the sum of every **admitted** internal
+    // producer's declared per-quantum maximum, which is a complete bound only because clause
+    // 2 confines an internal emission to the quantum that generates it". The confinement is
+    // why one number per producer suffices; without it a per-quantum rate would say nothing
+    // about occupancy at a destination admitted earlier.
+    let internal = declarations
+        .internal_producers
+        .iter()
+        .fold(0_u64, |total, producer| {
+            total.saturating_add(u64::from(producer.per_quantum.get()))
+        });
+    rows.push(ResourceRow::new(
+        ResourceField::InternalEventShare,
+        events_requested(internal),
+        ResourceAmount::Events(limits.events().shares().internal_event_share()),
+        IrObject::Plan,
+    ));
+    rows.push(ResourceRow::new(
+        ResourceField::ReleaseEventShare,
+        ResourceAmount::Events(limits.events().shares().release_event_share()),
+        ResourceAmount::Events(limits.events().shares().release_event_share()),
+        IrObject::Plan,
+    ));
 
     // ADR-0046 clause 6's hold partition, summed across the plan's **non-compiled** note-on
     // producers, and emitted here because `ResourceField::ALL` puts it after the release
@@ -955,6 +1028,26 @@ impl Lowered {
             .iter()
             .map(|producer| producer.simultaneous_notes)
             .collect();
+        // The same order, and the same reason: an entitlement is looked up by `ProducerId`.
+        let note_producer_holds: Vec<_> = declarations
+            .note_producers
+            .iter()
+            .map(|producer| producer.simultaneous_holds)
+            .collect();
+        // Sorted and deduplicated so the renderer-ingress refusal is a lookup rather than a
+        // scan, and so two authored sources on one producer name it once. Validation has
+        // already refused a source whose producer does not resolve, so every entry here is
+        // an index into the two lists above.
+        let authored_note_producers: Vec<_> = {
+            let mut claimed: Vec<_> = declarations
+                .authored_sources
+                .iter()
+                .map(|source| source.producer)
+                .collect();
+            claimed.sort_unstable_by_key(|producer| producer.as_u16());
+            claimed.dedup();
+            claimed
+        };
         // Validation has already refused a second one, so the first is the only one.
         let compiled_note_producer = declarations
             .note_producers
@@ -977,6 +1070,8 @@ impl Lowered {
             profile.limits().events().max_events_per_quantum(),
             profile.limits().events().shares().compiled_event_share(),
             note_producer_ranges,
+            note_producer_holds,
+            authored_note_producers,
             compiled_note_producer,
             profile.limits().events().forward_event_horizon(),
             FrameCount::QUANTUM,

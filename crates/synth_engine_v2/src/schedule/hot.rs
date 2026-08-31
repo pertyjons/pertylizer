@@ -106,6 +106,25 @@ impl CompiledEventScheduler {
         arbiter: &mut PublicationArbiter,
         output: AudioBlockMut<'_>,
     ) -> Result<(), ScheduledRenderError> {
+        self.render_with_ingress(renderer, arbiter, None, output)
+    }
+
+    /// Render one actual host block, draining a live ingress store into the same pass.
+    ///
+    /// The store is a parameter for the reason the arbiter is: ADR-0046 clause 2 admits one
+    /// publication pass per call, and every producer for the stream publishes into it. A
+    /// scheduler owning the live store would make the compiled producer the owner of
+    /// another producer's storage.
+    ///
+    /// Additive rather than a change to [`Self::render`], so a stream with no live producer
+    /// keeps the signature it had; passing `None` is exactly what that stream is.
+    pub fn render_with_ingress(
+        &mut self,
+        renderer: &mut PreparedRenderer,
+        arbiter: &mut PublicationArbiter,
+        ingress: Option<&mut crate::ingress::PerformanceIngress>,
+        output: AudioBlockMut<'_>,
+    ) -> Result<(), ScheduledRenderError> {
         // **Every refusal that leaves the stream untouched happens before any adoption.**
         // Adoption moves the anchor, the live-note registry, the schedule and the exchange,
         // and each of these three says the call should not have happened at all: a crossed
@@ -142,6 +161,25 @@ impl CompiledEventScheduler {
             }
             Some(_) => {}
             None => self.arbiter = Some(arbiter.id()),
+        }
+
+        // And the ingress store, **verified rather than latched**. The off-thread half marks
+        // a store when it adopts it, and this reads that one mark: two independent latches
+        // could disagree, and a caller offering into store A while rendering store B wedged
+        // the stream — offers reached only A while drains accepted only B, permanently. An
+        // independent review found it.
+        //
+        // A store this stream never adopted is refused, and refusing it strands nothing:
+        // every offer goes through the control, which is what sets the mark, so an unadopted
+        // store is necessarily empty. What the refusal does prevent is its zero counters
+        // overwriting the adopted store's totals, since the drain mirrors rather than adds.
+        if let Some(store) = ingress.as_deref()
+            && store.adopted_by() != Some(self.epoch)
+        {
+            return Err(ScheduledRenderError::UnadoptedIngressStore {
+                store: store.id(),
+                stream: self.epoch,
+            });
         }
 
         // **And the block itself, for the same reason.** `PreparedRenderer::render` refuses a
@@ -210,13 +248,23 @@ impl CompiledEventScheduler {
             None => None,
         };
 
+        // Reborrowed rather than moved, because the split path renders twice and each
+        // sub-call is its own publication pass: the store must be drained by both, and a
+        // moved `&mut` would serve only the first.
+        let mut ingress = ingress;
         let whole = match split {
             Some((boundary, late, cut)) => match output.split_at_frame(cut) {
                 Ok((mut head, mut tail)) => {
-                    let mut outcome = self.render_one(renderer, arbiter, head.reborrow());
+                    let mut outcome =
+                        self.render_one(renderer, arbiter, ingress.as_deref_mut(), head.reborrow());
                     if outcome.is_ok() {
                         self.adopt_pending(renderer, boundary, late);
-                        outcome = self.render_one(renderer, arbiter, tail.reborrow());
+                        outcome = self.render_one(
+                            renderer,
+                            arbiter,
+                            ingress.as_deref_mut(),
+                            tail.reborrow(),
+                        );
                     }
                     // **The terminal contract is silence over the complete callback**, and a
                     // sub-call can only silence its own half. After a tail fault the head
@@ -237,7 +285,7 @@ impl CompiledEventScheduler {
             },
             None => output,
         };
-        self.render_one(renderer, arbiter, whole)
+        self.render_one(renderer, arbiter, ingress, whole)
     }
 
     /// The effective point of the pending activation, if there is one.
@@ -314,6 +362,7 @@ impl CompiledEventScheduler {
         &mut self,
         renderer: &mut PreparedRenderer,
         arbiter: &mut PublicationArbiter,
+        ingress: Option<&mut crate::ingress::PerformanceIngress>,
         mut output: AudioBlockMut<'_>,
     ) -> Result<(), ScheduledRenderError> {
         // The epoch, the faulted-stream and the arbiter checks are `render`'s, taken before
@@ -446,6 +495,22 @@ impl CompiledEventScheduler {
                 return Err(ScheduledRenderError::Publication(fault));
             }
             index = index.saturating_add(1);
+        }
+
+        // **Live ingress is drained last**, which is ADR-0023's declared order: session and
+        // transport first, because they are the state already in force at this sample;
+        // compiled second, because it is the timeline; live last, because a performer acts
+        // on top of it and at a tie the second write is what the quantum renders.
+        //
+        // The store is drained even in a window of no quanta, because the drain is also
+        // where the horizon's reference clock is recorded. It charges nothing there — a
+        // window with no rows reaches no destination.
+        if let Some(store) = ingress
+            && let Err(fault) =
+                store.drain_into(&mut publication, renderer.diagnostics_mut(), clock)
+        {
+            renderer.terminal_fault(&mut output);
+            return Err(ScheduledRenderError::Publication(fault));
         }
 
         let batch = publication.seal();

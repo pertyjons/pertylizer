@@ -229,14 +229,21 @@ open owner is a starting point recorded honestly, not a rule invented here.
 
    **`accepted_sample_rates` is the clearest case, not the only exception.** Phase 1's implementation of this
    invariant found that **fourteen** of its forty-two reported fields do not take a `HOST-INV-007` refusal. ADR-0046
-   adds seven Phase 3 fields: the live and release event shares cannot be exceeded by a plan, while the other five can.
-   Once that contract is enabled, **seventeen** of fifty fields do not take this refusal, in five groups: the three
+   adds seven Phase 3 producer fields, of which **five** can be exceeded by a plan — `compiled_event_share`,
+   `session_event_share`, `release_hold_capacity`, `authored_runtime_event_share` and `internal_event_share`, each
+   against a quantity a plan states — and two cannot. It also
+   moves `max_events_per_quantum` out of the checked set: a plan no longer requests the cap directly, and cannot
+   exceed it without exceeding a share first, because the shares sum to at most the cap.
+   Once that contract is enabled, **eighteen** of fifty fields do not take this refusal, in seven groups: the three
    queried capabilities, which describe what a plan is *prepared against*; `accepted_sample_rates`; the three sizing
-   fields, which bound nothing; the capacities a plan does not request — `forward_event_horizon`, the three queue
-   depths,
-   the two per-voice slot counts, the live and release event shares, and `max_concurrent_retiring_voices`, which is
-   derived so that it cannot bind; and the advisory `predicted_quantum_cost_ratio`, whose excess produces a warning.
-   The other thirty-three each have a refusal case. The two per-voice slot counts move into that set when a phase
+   fields, which bound nothing; the seven capacities a plan does not request — `forward_event_horizon`, the three
+   queue depths, the two per-voice slot counts, and `max_concurrent_retiring_voices`, which is derived so that it
+   cannot bind; the advisory `predicted_quantum_cost_ratio`, whose excess produces a warning; `max_events_per_quantum`
+   for the reason above; and the **live** and **release** shares, which bound a runtime queue rather than a plan and
+   are enforced at publication instead of at admission. The authored-runtime and internal shares were in this group
+   until `PlanDeclarations` gained the declarations that let a plan state what they bound; a share reported against
+   itself cannot be exceeded, which is why the group is now two rather than four.
+   The other **thirty-two** each have a refusal case. The two per-voice slot counts move into that set when a phase
    declares per-voice slot *usage*, which is Phase 7's; until then their rows report the profile's own value.
 
    **That does not discharge `LIMIT-0004`'s disposition, and an earlier revision claimed it did "in substance".** The
@@ -316,7 +323,14 @@ open owner is a starting point recorded honestly, not a rule invented here.
     declares no arrival uncertainty and moves no arrival counter, and no live adapter may produce one.
 
     **It is evaluated exactly once, at ingress admission, against the timestamp as stamped.** Nothing that happens to
-    an event after it is admitted re-triggers the check. The clause is here because the horizon's penalty is
+    an event after it is admitted re-triggers the check. **"Ingress admission" is the boundary that admits into
+    bounded source storage** — in Phase 3, `PerformanceIngress::admit`. The renderer's own evaluation is *retired*,
+    and that resolves a question this clause left open while only one candidate site existed: four ways of keeping
+    both were tried in the ingress slice and each was refused by independent review, and a merge-gate review then
+    showed that keeping only the renderer's cannot work, because the drain releases an entry only once the publication
+    reaches it, so a far-future event never arrives there while it is still far-future. The maintainer settled the
+    reading on 2026-09-01. **The accepted cost:** a caller-assembled span carrying ingress provenance is no longer
+    measured against the horizon and meets only the span check. The clause is here because the horizon's penalty is
     *rejection*: an event accepted into bounded source storage may wait for the next publication snapshot and may be
     late by then, but it is not new ingress. Keeping the envelope's `time` immutable makes that distinction testable.
     ADR-0032 clause 21 already scopes the horizon to bounding "what an *external* producer can enqueue" — this says the
@@ -1319,7 +1333,7 @@ exist, in the phase that builds the thing it tests.
 | HOST-INV-004 | Partly a review check — no automated test can see that a default was *reasoned* from `Q`. The mechanical half is ADR-0032 clause 4's compile-time assertion `Q <= QuantumOffset::MAX`, which fails the build when `Q` changes and something was sized to its old value, plus a test that `HostProfile` exposes no field carrying a quantum | 1 |
 | HOST-INV-005 | A test enumerating profile fields against their admitting rule. The capability half is asserted against the invariant's **closed enumerated capability set**, so adding a capability field fails the test rather than passing silently. Each `RenderLimits` field is enumerated against the three grounds: a ledger entry owned `HostProfile`; a field an accepted ADR creates; and the **enumerated residual set** the invariant lists, each of whose members carries a stated basis and revisit point. The test compares against that explicit list — not against "everything else", which would admit a protocol- or job-owned capacity by default. It asserts each field matches exactly one and fails on a field in none; Phase 3 extends that enumeration with ADR-0046's seven ground-2 fields. **It must not enumerate the no-antecedent list**, which is a different axis, and **must not treat a `Replaces` entry as a ground** — `max_held_notes` and `max_events_per_quantum` name `LIMIT-0031` and `LIMIT-0075` as provenance while being admitted by the residual | 1 |
 | HOST-INV-006 | Every compile — succeeding and failing — returns a report whose every field has requested, available, and a dominant contributor | 1 |
-| HOST-INV-007 | One refusal case per render limit **a plan can exceed with an error** — twenty-eight in Phase 1 and thirty-three once ADR-0046's Phase 3 fields exist — and the test asserts that the cases *are* that set rather than merely covering some of it. Each asserts the error names the field, both amounts, and the authored object, and that the plan is unchanged. The corresponding fourteen and sixteen fields without that refusal are enumerated in the invariant; `accepted_sample_rates` is covered by HOST-INV-016's rows and `predicted_quantum_cost_ratio` by the advisory-warning test | 1 |
+| HOST-INV-007 | One refusal case per render limit **a plan can exceed with an error** — twenty-eight in Phase 1 and thirty-two once ADR-0046's Phase 3 fields exist — and the test asserts that the cases *are* that set rather than merely covering some of it. Each asserts the error names the field, both amounts, and the authored object, and that the plan is unchanged. The corresponding fourteen and eighteen fields without that refusal are enumerated in the invariant; `accepted_sample_rates` is covered by HOST-INV-016's rows and `predicted_quantum_cost_ratio` by the advisory-warning test | 1 |
 | HOST-INV-008 | A node whose declared capacity is exceeded is refused, and raising every profile field does not admit it | 2 |
 | HOST-INV-009 | Enumerate the *Live bounded queue* markers in the Events field table and the renderer-ingress source-store registry, assert those two named tables are the complete live-input marker domain and that ADR-0038 engine-egress queues remain outside it, then overrun each registered queue and assert its own drop count in the diagnostics report. For every queue that admits note-ons, exhaust each of the three resources separately while leaving the other two free — the queue slot, the producer hold entitlement and the producer's identity range — and assert the refused note-on is attributed to that offered queue and names the exhausted one rather than either other. Then assert the two **refusals** are not drops, covering the orphan's **three independently reachable branches** rather than one: an edge whose identity names a **free** index, one whose identity names a live index at a **superseded generation**, and one whose index has been **retired**, are each counted as an orphan; an edge whose producer holds no identity at all is counted as never-minted. Each is attributed to the offering producer and none moves a drop counter. A single case cannot establish all three branches, and retirement in particular is its own state — an index withdrawn after its generation space ran out is neither free nor live. A separate session-store case refuses before timestamped acceptance without incrementing a drop counter | 3 |
 | HOST-INV-010 | A project saved under one profile loads and compiles under another; no serialized field names a profile value | 10D |

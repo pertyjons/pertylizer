@@ -42,6 +42,7 @@ use thiserror::Error;
 use crate::diagnostics::CompileError;
 use crate::identity::{IdentityTable, NoteIdentity, ProducerId};
 use crate::plan::{CompiledPlan, PlanId};
+use crate::quantities::HeldNoteCount;
 use crate::render::PreparedRenderer;
 use crate::schedule::{AdmittedCompiledStream, CompiledPayload, SchedulePrepareError};
 use crate::time::{Located, PlanPosition, SampleTime, StreamAnchor, StreamEpoch, issue_epoch};
@@ -103,6 +104,23 @@ pub enum ActivationBuildError {
         event_index: usize,
         /// The note slot whose gate is unprepared.
         slot: crate::plan::NoteSlot,
+    },
+    /// This stream has adopted a live ingress store, which ADR-0050 clause 8 puts outside
+    /// this contract.
+    ///
+    /// Clause 5's boundary mass release ends every sounding note by freeing its index, and
+    /// a live note's release hold is only discharged by the release that redeems it. An
+    /// activation over an open live note would therefore leave the ingress queue reserving
+    /// a slot for an event that can no longer exist. The clause scopes activation to a
+    /// stream whose note producers are compiled; this is that scope refusing rather than
+    /// leaking.
+    #[error(
+        "this stream is served by {store}, and ADR-0050 clause 8 scopes activation to compiled \
+         producers"
+    )]
+    LiveIngressAdopted {
+        /// The store this stream adopted.
+        store: crate::ingress::IngressStoreId,
     },
     /// The stream has no schedule yet, so there is nothing to offer a candidate to.
     ///
@@ -384,6 +402,36 @@ pub struct StreamControl {
     /// would have its generations rewound by that promotion, and a later note could then be
     /// given an identity that is already live. An independent review found the rewind.
     live_candidates: usize,
+    /// Live notes this control has minted and not yet released.
+    ///
+    /// **A transport activation may not happen while one is open**, and the reason is a
+    /// leak rather than a taste: ADR-0050 clause 5's boundary mass release ends every
+    /// sounding note through `IdentityTable::release_all`, which frees the index without
+    /// passing through the ingress store. The store's release hold would then never be
+    /// discharged — its note is gone, so no release can ever redeem it — and the queue
+    /// would carry a permanent reservation for an event that can never arrive. ADR-0046
+    /// clause 6 asks a mass release to redeem every affected hold atomically, and nothing
+    /// does that yet.
+    ///
+    /// ADR-0050 clause 8 already scopes activation to a stream whose note producers are
+    /// compiled, so this is that scope made executable rather than a new restriction. The
+    /// refusal is what keeps it from being a silent leak.
+    live_notes_open: HeldNoteCount,
+    /// The ingress store this stream serves, latched on first use.
+    ///
+    /// One store per stream, refused rather than assumed: two stores for one producer each
+    /// hold that producer's whole hold entitlement, so the pair admits twice what ADR-0046
+    /// clause 6 partitioned, and a release offered to the wrong one spends a reservation it
+    /// never made. The registry's own rule is the same shape — a second live store needs its
+    /// own row and its own admitting ground.
+    #[cfg_attr(
+        not(feature = "simulated-ingress"),
+        allow(
+            dead_code,
+            reason = "the offers that read it are the boundary ADR-0053 clause 5 asks for"
+        )
+    )]
+    ingress_store: Option<crate::ingress::IngressStoreId>,
     /// The loop in force, adopted with an activation.
     ///
     /// The off-thread half owns the loop (ADR-0050 clause 9), so it has to keep the one
@@ -420,6 +468,8 @@ impl StreamControl {
             in_force: ActivationSequence::INITIAL,
             last_issued: ActivationSequence::INITIAL,
             live_candidates: 0,
+            live_notes_open: HeldNoteCount::NONE,
+            ingress_store: None,
             has_scheduler: false,
             loop_interval: None,
         };
@@ -497,6 +547,22 @@ impl StreamControl {
         // review found the dead end.
         if !self.has_scheduler {
             return Err(ActivationBuildError::NoSchedule);
+        }
+        // ADR-0050 clause 8's scope, enforced rather than assumed. Two things go wrong
+        // otherwise, and the second is why this refuses on the **store** rather than on the
+        // notes it currently holds open. Clause 5's boundary mass release ends a live note
+        // without passing through the store, stranding that note's release hold forever. And
+        // ADR-0051 clause 6 leaves a gate reached by two producers with no ownership law, so
+        // the catch-up's row can cut a live note the activation does not own.
+        //
+        // **A count of open notes cannot see either.** An offered note-on and its offered
+        // release take that count back to zero while both are still queued and neither has
+        // rendered — so an activation built there is built over a live note that is about to
+        // sound, and its catch-up row can cut it. An independent review found exactly that
+        // sequence. A stream that has adopted a store at all is out of scope, which is the
+        // conservative reading and the only one the state supports.
+        if let Some(store) = self.ingress_store {
+            return Err(ActivationBuildError::LiveIngressAdopted { store });
         }
         if stream.plan() != self.plan.id() {
             return Err(ActivationBuildError::ForeignPlan {
@@ -805,8 +871,12 @@ impl StreamControl {
         // **The predicate is the destination-open contract, not the mass release's scope.** A
         // forward seek can land inside a note the retired stream never sounded, and that gate
         // must still be low. The producer scope the clause also names holds structurally here
-        // rather than as a branch: the compiled producer is the only one that emits, so every
-        // contract this walk sees is in scope. Clause 6 is what keeps that true.
+        // rather than as a branch: **no stream that can activate has a live ingress store**,
+        // because `plan_activation` refuses once one is adopted. So every contract this walk
+        // sees is the compiled producer's. Phase 3's live ingress is what made that a check
+        // rather than a fact about what the crate happened to contain, and the check is on
+        // the adopted store rather than on notes currently open — a count of those goes to
+        // zero while both edges of a live note are still queued.
         for (index, depth) in open_at_anchor.iter().copied().enumerate() {
             if depth == 0 {
                 continue;
@@ -983,8 +1053,8 @@ impl StreamControl {
     /// value it was **prepared** with, because a control survives an activation in node state
     /// and a skipped target would keep whatever the pre-seek position left. Covering every
     /// target is also what makes the size exactly the prepared-target count, which is the
-    /// quantity a plan-dependent session-share admission will check once it exists — the
-    /// report already carries the number; `first_refusal` does not act on it yet.
+    /// quantity the plan-dependent session-share admission checks — that count plus one for
+    /// ADR-0050 clause 5's boundary mass release, and `first_refusal` acts on it.
     fn catch_up(
         &self,
         at: SampleTime,
@@ -1179,6 +1249,137 @@ impl StreamControl {
     /// The shared plan handle, for a caller that must keep it while the control is borrowed.
     pub(crate) const fn plan_arc(&self) -> &Arc<CompiledPlan> {
         &self.plan
+    }
+
+    /// Offer a live note-on into a producer's ingress store.
+    ///
+    /// The off-thread half owns the minter, so the offer is made here rather than on the
+    /// store: an identity minted from any other table is one the renderer refuses as
+    /// foreign, and this is what makes that unrepresentable.
+    ///
+    /// `HOST-INV-009`'s three resources are acquired together or not at all, and the store
+    /// names which one was exhausted.
+    #[cfg(feature = "simulated-ingress")]
+    pub fn offer_note_on(
+        &mut self,
+        store: &mut crate::ingress::PerformanceIngress,
+        time: crate::time::SampleTime,
+        note: crate::plan::NoteSlot,
+    ) -> Result<NoteIdentity, crate::ingress::IngressRefused> {
+        // The authoritative minter may not move while a candidate holds a snapshot of it,
+        // and a mint is exactly a move. Refused rather than allowed to rewind: ADR-0050
+        // clause 8 scopes activation to a stream whose note producers are compiled, so a
+        // live producer beside a pending activation is out of scope, not supported.
+        self.latch_store(store)?;
+        // **Before the mint and before the hold**, because a slot that names another plan is
+        // not a shortage to recover from — it is an offer that would play the wrong note.
+        // The renderer does not re-check this: `note_target` applies the slot's index to
+        // whichever plan is rendering, so nothing downstream can catch it.
+        if note.plan() != self.plan.id() {
+            return Err(crate::ingress::IngressRefused::ForeignSlot {
+                slot: note.plan(),
+                stream: self.plan.id(),
+            });
+        }
+        let identity = store.offer_note_on(&mut self.minter, time, note)?;
+        self.live_notes_open =
+            HeldNoteCount::measured(self.live_notes_open.get().saturating_add(1));
+        Ok(identity)
+    }
+
+    /// Offer a live parameter write into this stream's ingress store.
+    ///
+    /// It needs no minter, and it is here anyway: the stream latches one store, and an
+    /// offer that bypassed that latch would let a second store fill a queue the stream never
+    /// adopted — and overwrite the first store's cumulative counters in the report, because
+    /// the drain mirrors those totals rather than accumulating them.
+    #[cfg(feature = "simulated-ingress")]
+    pub fn offer_parameter(
+        &mut self,
+        store: &mut crate::ingress::PerformanceIngress,
+        time: crate::time::SampleTime,
+        slot: crate::plan::ParameterSlot,
+        value: crate::quantities::ParameterValue,
+    ) -> Result<(), crate::ingress::IngressRefused> {
+        self.latch_store(store)?;
+        store.offer_parameter(time, slot, value)
+    }
+
+    /// Adopt this stream's one ingress store, or refuse a second.
+    ///
+    /// **Two checks, and they answer different questions.** This stream may serve one store,
+    /// because two would each hold the producer's whole entitlement; and this store may be
+    /// served by one stream, because its entitlement and its identity range would otherwise
+    /// come from different plans. The mark the second check sets lives on the **store**, so
+    /// the audio-thread half verifies the same adoption instead of keeping a latch of its
+    /// own that could disagree with this one.
+    #[cfg(feature = "simulated-ingress")]
+    fn latch_store(
+        &mut self,
+        store: &mut crate::ingress::PerformanceIngress,
+    ) -> Result<(), crate::ingress::IngressRefused> {
+        // **A candidate outstanding refuses every offer, and for two reasons that would
+        // otherwise be checked in two places.** The authoritative minter may not move while a
+        // candidate holds a snapshot of it, so a mint would have its generation rewound by
+        // that candidate's promotion. And `plan_activation` refuses once a store is adopted,
+        // which is what keeps a live producer out of ADR-0050 clause 8's scope — but that
+        // check runs when the candidate is *built*, so adopting a store afterwards walks
+        // straight past it. An independent review found that ordering: a parameter offer,
+        // which mints nothing and so had no reason of its own to refuse, adopted a store
+        // between a candidate's build and its offer.
+        if self.live_candidates > 0 {
+            return Err(crate::ingress::IngressRefused::CandidateOutstanding);
+        }
+        if let Some(latched) = self.ingress_store
+            && latched != store.id()
+        {
+            return Err(crate::ingress::IngressRefused::ForeignStore {
+                latched,
+                offered: store.id(),
+            });
+        }
+        // **Adopt first, record second.** Recording the id before the fallible adoption
+        // poisoned the control: a refused foreign store left its id latched here, and the
+        // control's own store was then rejected as foreign for the rest of the stream. A
+        // refusal must leave the stream exactly as it found it, which is the same rule every
+        // activation refusal follows. An independent review found the ordering.
+        store.adopt(self.epoch)?;
+        self.ingress_store = Some(store.id());
+        Ok(())
+    }
+
+    /// Offer the release of a live note this stream's minter opened.
+    ///
+    /// Freeing the index is a move of the authoritative minter too, so it takes the same
+    /// refusal while a candidate is outstanding.
+    #[cfg(feature = "simulated-ingress")]
+    pub fn offer_note_off(
+        &mut self,
+        store: &mut crate::ingress::PerformanceIngress,
+        time: crate::time::SampleTime,
+        identity: NoteIdentity,
+    ) -> Result<(), crate::ingress::IngressRefused> {
+        self.latch_store(store)?;
+        store.offer_note_off(&mut self.minter, time, identity)?;
+        self.live_notes_open =
+            HeldNoteCount::measured(self.live_notes_open.get().saturating_sub(1));
+        Ok(())
+    }
+
+    /// Live notes this control has minted and not yet released.
+    ///
+    /// **A diagnostic, not a guard.** It counts note-ons this control has minted and not yet
+    /// released, which goes to zero as soon as a release is *offered* — while both edges are
+    /// still queued and neither has rendered. An earlier revision gated transport activation
+    /// on it and an independent review found that sequence: the count says nothing about
+    /// what is about to sound. `plan_activation` refuses on the adopted store instead.
+    ///
+    /// A `HeldNoteCount` because that is exactly what it is: notes a source holds open at
+    /// once, the same quantity `SOUND-INV-017`'s admitted producer range bounds. A raw
+    /// `usize` here would be comparable with a queue length and a frame count, which the
+    /// critical newtype rule exists to prevent.
+    pub const fn live_notes_open(&self) -> HeldNoteCount {
+        self.live_notes_open
     }
 
     /// The minting half, for the off-thread producer that stamps a compiled list.

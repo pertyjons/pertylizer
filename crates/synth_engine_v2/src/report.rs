@@ -325,7 +325,7 @@ impl ResourceField {
     ///
     /// `HOST-INV-007` binds the limits a plan can exceed, and its conformance row asks
     /// for one refusal case per such limit — so this predicate has to be exactly the
-    /// set those cases can be written for. Twenty-nine fields qualify. The twenty-one
+    /// set those cases can be written for. Thirty-two fields qualify. The eighteen
     /// that do not take that refusal fall into seven groups, each excluded for its own
     /// reason:
     ///
@@ -349,23 +349,27 @@ impl ResourceField {
     ///   statically knowable declaration is compiled work and is checked against
     ///   `compiled_event_share`; the cap cannot be exceeded without a share being exceeded
     ///   first, because the shares sum to at most the cap.
-    /// - **Five of ADR-0046's seven producer fields**, for now. `compiled_event_share` and
-    ///   `release_hold_capacity` have left this list: a plan declares statically knowable
-    ///   events and its note-on producers' hold entitlements, so both are things a plan can
-    ///   now exceed.
-    /// - The other five, for now. Their plan-dependent relations —
-    ///   the compiled and authored destination envelopes, the session snapshot, the
-    ///   internal declarations and the hold entitlements — are checked at plan admission
-    ///   by later Phase 3 work. Until that exists, these fields are checked by profile
-    ///   *construction* alone, and claiming a plan can exceed them would leave
-    ///   `HOST-INV-007`'s conformance row asking for a refusal case that cannot be
-    ///   written. Moving them here is the change that lands with that admission work.
+    /// - **Two of ADR-0046's seven producer fields**, and only these two. Five have left this
+    ///   list, each because a plan states the quantity the share bounds:
+    ///   `compiled_event_share`, against the statically knowable events a plan declares;
+    ///   `release_hold_capacity`, against its note-on producers' hold entitlements;
+    ///   `session_event_share`, against the prepared targets a locate restores at once plus
+    ///   ADR-0050 clause 5's boundary mass release; and — since `PlanDeclarations` gained
+    ///   [`crate::ir::AuthoredSourceDeclaration`] and
+    ///   [`crate::ir::InternalProducerDeclaration`] — `authored_runtime_event_share`, against
+    ///   ADR-0046 clause 5's summed destination envelopes, and `internal_event_share`,
+    ///   against clause 1's sum of admitted per-quantum maxima.
+    /// - The **live** and **release** shares stay, for a reason a declaration would not
+    ///   remove: they bound a runtime queue rather than a plan. ADR-0046 clause 6 charges
+    ///   them at publication, where `Publication::charge` refuses above the share. That is
+    ///   not plan admission, so claiming a plan can exceed them would leave
+    ///   `HOST-INV-007`'s conformance row asking for a refusal case that cannot be written.
     ///
     /// An earlier revision of this predicate excluded only eight fields, which made
     /// `HOST-INV-007`'s conformance row unsatisfiable: six of the remaining fields
     /// compare a value against itself, and no plan can be built that exceeds one.
     ///
-    /// Twenty-one fields are excluded and twenty-nine qualify.
+    /// Eighteen fields are excluded and thirty-two qualify.
     #[must_use]
     pub const fn is_admission_checked(self) -> bool {
         !matches!(
@@ -385,10 +389,7 @@ impl ResourceField {
                 | Self::ScriptHostSlotsPerVoice
                 | Self::PredictedQuantumCostRatio
                 | Self::MaxEventsPerQuantum
-                | Self::AuthoredRuntimeEventShare
                 | Self::LiveEventShare
-                | Self::SessionEventShare
-                | Self::InternalEventShare
                 | Self::ReleaseEventShare
                 | Self::PerformanceIngressCapacity
         )
@@ -398,6 +399,41 @@ impl ResourceField {
 impl std::fmt::Display for ResourceField {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(self.name())
+    }
+}
+
+/// A number of events larger than an [`EventCount`] can name.
+///
+/// The domain concept is "the same unit, past the point its counter holds", and the invariant
+/// is exactly that: a value at or below `u32::MAX` is not one of these, because such a value
+/// *is* an [`EventCount`] and belongs in [`ResourceAmount::Events`]. Construction validates
+/// it, so a caller cannot build a wide amount that would have fit and make a report claim two
+/// different things about the same figure. An independent review found the tuple variant it
+/// replaces constructible with `1`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[must_use]
+pub struct EventsBeyondCount(u64);
+
+impl EventsBeyondCount {
+    /// The amount, if it genuinely exceeds what an [`EventCount`] names.
+    pub const fn new(total: u64) -> Option<Self> {
+        if total > u32::MAX as u64 {
+            Some(Self(total))
+        } else {
+            None
+        }
+    }
+
+    /// The raw total.
+    #[must_use]
+    pub const fn get(self) -> u64 {
+        self.0
+    }
+}
+
+impl std::fmt::Display for EventsBeyondCount {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{} events", self.0)
     }
 }
 
@@ -418,6 +454,21 @@ pub enum ResourceAmount {
     HeldNotes(HeldNoteCount),
     /// A number of events.
     Events(EventCount),
+    /// A number of events larger than an [`EventCount`] can name.
+    ///
+    /// `HOST-INV-006` requires every row to name the amount a plan **requested**, and a
+    /// declared aggregate can sum past `u32::MAX` — two authored sources, or the compiled
+    /// floor added to a retained-future sum. Saturating the row to `u32::MAX` was the earlier
+    /// behaviour and it made the report lie twice over: it understated the request, and
+    /// against a profile whose limit is `u32::MAX` — construction accepts one, since
+    /// `EventCount::limit` refuses only zero — it read [`Fit::Within`] for a total it
+    /// exceeded. A merge-gate review held that against the invariant.
+    ///
+    /// This variant is not a second unit. It is the same unit past the point its counter can
+    /// hold, which is why it compares against [`Self::Events`] **in both directions** rather
+    /// than mismatching, and why [`EventsBeyondCount`] validates that the value would not
+    /// have fit.
+    EventsBeyondCount(EventsBeyondCount),
     /// A number of frames.
     Frames(FrameCount),
     /// A number of taps.
@@ -480,6 +531,19 @@ impl ResourceAmount {
             }
             (Self::HeldNotes(a), Self::HeldNotes(b)) => a <= b,
             (Self::Events(a), Self::Events(b)) => a <= b,
+            // A request past what an `EventCount` names is past every available `EventCount`,
+            // so this is `false` without inspecting either side — the available amount is a
+            // profile field and cannot exceed `u32::MAX`. Stated as a comparison rather than
+            // a bare `false` so a reader can check the reasoning against the types.
+            (Self::EventsBeyondCount(a), Self::Events(b)) => a.get() <= u64::from(b.get()),
+            // The other direction, which an independent review found missing: an ordinary
+            // request against an over-large available amount is the same unit and always
+            // fits. Reporting `UnitMismatch` there would have claimed an internal defect for
+            // a comparison that is simply true.
+            (Self::Events(a), Self::EventsBeyondCount(b)) => u64::from(a.get()) <= b.get(),
+            // Two over-large requests can still be ordered, which matters if a later field
+            // ever compares one against another rather than against a profile value.
+            (Self::EventsBeyondCount(a), Self::EventsBeyondCount(b)) => a.get() <= b.get(),
             (Self::Frames(a), Self::Frames(b)) => a <= b,
             (Self::Taps(a), Self::Taps(b)) => a <= b,
             (Self::Slots(a), Self::Slots(b)) => a <= b,
@@ -510,6 +574,7 @@ impl std::fmt::Display for ResourceAmount {
             Self::VoiceRange(low, high) => write!(f, "{low} to {high}"),
             Self::HeldNotes(v) => write!(f, "{v}"),
             Self::Events(v) => write!(f, "{v}"),
+            Self::EventsBeyondCount(v) => write!(f, "{v}"),
             Self::Frames(v) => write!(f, "{v}"),
             Self::Taps(v) => write!(f, "{v}"),
             Self::Slots(v) => write!(f, "{v}"),

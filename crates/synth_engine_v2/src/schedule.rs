@@ -440,6 +440,23 @@ pub enum ScheduledRenderError {
         offered: crate::publish::ArbiterId,
     },
 
+    /// An ingress store this stream never adopted was supplied to the drain.
+    ///
+    /// The off-thread half marks a store when it adopts it, and this reads that mark rather
+    /// than keeping a second latch: two latches can disagree, and a caller offering into
+    /// store A while rendering store B wedged the stream permanently.
+    ///
+    /// **Refusing strands nothing**, because every offer goes through the control that sets
+    /// the mark, so an unadopted store is empty. What it prevents is that empty store's zero
+    /// counters overwriting the adopted one's totals in the report, since the drain mirrors
+    /// them rather than accumulating.
+    #[error("ingress store {store} was not adopted by stream {stream}")]
+    UnadoptedIngressStore {
+        /// The store that was supplied.
+        store: crate::ingress::IngressStoreId,
+        /// The stream that was asked to drain it.
+        stream: crate::time::StreamEpoch,
+    },
     /// Publication could not seal this call's input.
     ///
     /// **The stream is over when this is returned.** ADR-0046 clause 7 makes a share

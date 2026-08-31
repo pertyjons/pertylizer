@@ -11,6 +11,22 @@ license.workspace = true
 name = "evd_0016_host_time"
 test = true
 
+# ADR-0053 clause 5 forbids a live adapter from stamping `TimeSource::Simulated` and asks
+# the ingress slice for a visibility or feature boundary, so a release build need not reach
+# the producer that does. This is that boundary, and it gates the **constructors** rather
+# than the module: `PerformanceIngress::prepare` and the three `StreamControl` offers are
+# the only ways to build or fill a store, so withholding them is enough, and gating the
+# module instead spread `cfg` through the scheduler and the stream for no more safety.
+#
+# On by default, because the exit gate's equivalence fixture is what proves the tag
+# reachable at all and the ordinary gate has to run it; a consumer that must not carry the
+# producer builds with `--no-default-features`, which the complete repository gate compiles.
+# What a boundary cannot do is constrain a downstream consumer of a public enum, which is
+# why clause 5 remains contractual on top of it.
+[features]
+default = ["simulated-ingress"]
+simulated-ingress = []
+
 [lints]
 workspace = true
 

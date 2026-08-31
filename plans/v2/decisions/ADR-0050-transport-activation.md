@@ -62,6 +62,13 @@ and admission partitions ranges across every declared producer — but nothing n
 compiled producer is the only one that mints. It is that narrower fact the scope rests on, not the false one that
 plans declare nothing else.
 
+**Phase 3's live ingress ends that fact and replaces it with a check**, which is recorded here rather than left to a
+reader to discover: a non-compiled producer can now mint and emit, so building an activation is refused once a stream
+has adopted a live ingress store. No stream that can activate has one, and the scope this clause describes is
+unchanged — it now rests on the refusal instead of on nothing else being able to emit. The check is on the adopted
+store rather than on notes currently open, because a count of those returns to zero while both edges of a live note
+are still queued and neither has rendered.
+
 **Non-goals.** This record does not claim sample-exact seek or loop. It fixes a quantum-granular activation point and
 says so in every place a reader could mistake it for the master plan's sample-exact requirement. It does not decide
 how a sub-quantum activation would be represented, how voice state migrates across a plan swap, or how two activations

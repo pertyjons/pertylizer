@@ -469,7 +469,6 @@ struct PendingCounts {
     late: u32,
     stale_epoch: u32,
     foreign_slot: u32,
-    out_of_horizon: u32,
     arrival_stamped: u32,
     orphan_note: u32,
     /// The most recent orphan's occurrence, for the report's attribution.
@@ -724,6 +723,15 @@ impl PreparedRenderer {
     }
 
     /// The counters this stream has accumulated.
+    /// The report, for the one producer that writes counts this renderer cannot observe.
+    ///
+    /// The live boundary drops **before acceptance**, on the producing half, so those counts
+    /// exist only on the ingress store. `HOST-INV-009` requires them to reach this report,
+    /// and there is no other path from one to the other.
+    pub(crate) const fn diagnostics_mut(&mut self) -> &mut DiagnosticsReport {
+        &mut self.diagnostics
+    }
+
     pub const fn diagnostics(&self) -> &DiagnosticsReport {
         &self.diagnostics
     }

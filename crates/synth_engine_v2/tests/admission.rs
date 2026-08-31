@@ -3,7 +3,11 @@
 //! The refusal cases are `HOST-INV-007`'s conformance row: **one per render limit a
 //! plan can exceed**, each asserting the error names the field, both amounts, and the
 //! responsible object, and that the plan the caller handed in is unchanged. There are
-//! twenty-eight, and the test asserts that number against
+//! thirty-two: twenty-eight in Phase 1, plus the five ADR-0046 fields a plan states —
+//! `compiled_event_share`, `release_hold_capacity`, `session_event_share`,
+//! `authored_runtime_event_share` and `internal_event_share` — less
+//! `max_events_per_quantum`, which left when a plan stopped requesting the cap directly.
+//! The test asserts that number against
 //! [`ResourceField::is_admission_checked`] so a new limit cannot arrive without a case.
 
 mod common;
@@ -12,9 +16,11 @@ use common::{OUTPUT, SOURCE, declaring, profile, source_plan};
 
 use synth_engine_v2::compile::{RenderConfig, compile};
 use synth_engine_v2::diagnostics::{CompileError, CompileWarning};
+use synth_engine_v2::identity::ProducerId;
 use synth_engine_v2::ir::{
-    ExecutionScope, GraphIr, IrNodeKind, IrObject, IrProgram, NodeId, NoteProducerDeclaration,
-    PlanDeclarations, PortId, ProgramId, SignalDomain, TapId,
+    AuthoredSourceDeclaration, ExecutionScope, GraphIr, InternalProducerDeclaration, IrNodeKind,
+    IrObject, IrProgram, NodeId, NoteProducerDeclaration, PlanDeclarations, PortId, ProgramId,
+    SignalDomain, TapId,
 };
 use synth_engine_v2::profile::{
     CostBudget, EventLimits, GraphLimits, HostProfile, MemoryLimits, MixingLimits,
@@ -26,7 +32,7 @@ use synth_engine_v2::quantities::{
     GainFactor, HeldNoteCount, InstructionCount, MixChannelCount, NodeCount, PreparedBytes,
     SendCount, SlotCount, TapCount, VoiceCount,
 };
-use synth_engine_v2::report::{ResourceField, ResourceReport};
+use synth_engine_v2::report::{ResourceAmount, ResourceField, ResourceReport};
 use synth_engine_v2::time::FrameCount;
 use synth_engine_v2::validate::PortDirection;
 
@@ -193,6 +199,8 @@ fn declared() -> PlanDeclarations {
             1,
         )],
         voices_per_instrument: VoiceCount::measured(2),
+        authored_sources: Vec::new(),
+        internal_producers: Vec::new(),
     }
 }
 
@@ -433,6 +441,145 @@ fn refusal_cases(host: &HostProfile) -> Vec<(ResourceField, GraphIr, HostProfile
             },
         ),
         (
+            // **ADR-0046 clause 5's plan-wide authored aggregate**, and the case is built
+            // from **two** sources rather than one on purpose: the record allows two that
+            // fit individually to be refused together "unless the compiler proves them
+            // mutually exclusive". Each declares three events against a share of five, so
+            // neither exceeds alone and the sum does. A version that summed nothing — or
+            // that took the maximum — would admit this plan, so the fixture fails if the
+            // aggregate is ever weakened to a per-source check.
+            ResourceField::AuthoredRuntimeEventShare,
+            declaring(PlanDeclarations {
+                note_producers: vec![NoteProducerDeclaration {
+                    compiled: false,
+                    simultaneous_notes: HeldNoteCount::measured(8),
+                    simultaneous_holds: events(8),
+                }],
+                authored_sources: vec![
+                    AuthoredSourceDeclaration {
+                        producer: ProducerId::new(0),
+                        destination_occupancy: events(3),
+                        retained_future: EventCount::NONE,
+                        simultaneous_holds: events(1),
+                    },
+                    AuthoredSourceDeclaration {
+                        producer: ProducerId::new(0),
+                        destination_occupancy: events(3),
+                        retained_future: EventCount::NONE,
+                        simultaneous_holds: events(1),
+                    },
+                ],
+                ..PlanDeclarations::default()
+            }),
+            {
+                let mut groups = Groups::of(host);
+                let horizon = groups.events.forward_event_horizon();
+                let one = events(1);
+                groups.events = EventLimits::new(
+                    events(64),
+                    events(128),
+                    events(4_096),
+                    horizon,
+                    QueueCapacities::new(one, events(16_384), events(256))
+                        .expect("the overridden capacities are above zero"),
+                    ProducerShares::new(
+                        events(8),
+                        events(5),
+                        one,
+                        one,
+                        one,
+                        events(40),
+                        events(40),
+                    )
+                    .expect("a valid partition"),
+                )
+                .expect("the overridden capacities are above zero");
+                groups.build(host)
+            },
+        ),
+        (
+            // **ADR-0046 clause 1's internal sum.** Two admitted producers again, for the
+            // same reason: the share covers "the sum of every admitted internal producer's
+            // declared per-quantum maximum", so a per-producer check would admit this.
+            //
+            // Clause 2 is what makes one number per producer a complete bound — an internal
+            // emission takes effect in the quantum that generates it and may not target a
+            // later one — which is why this row needs no destination search of its own.
+            ResourceField::InternalEventShare,
+            declaring(PlanDeclarations {
+                internal_producers: vec![
+                    InternalProducerDeclaration {
+                        per_quantum: events(3),
+                    },
+                    InternalProducerDeclaration {
+                        per_quantum: events(3),
+                    },
+                ],
+                ..PlanDeclarations::default()
+            }),
+            {
+                let mut groups = Groups::of(host);
+                let horizon = groups.events.forward_event_horizon();
+                let one = events(1);
+                groups.events = EventLimits::new(
+                    events(64),
+                    events(128),
+                    events(4_096),
+                    horizon,
+                    QueueCapacities::new(one, events(16_384), events(256))
+                        .expect("the overridden capacities are above zero"),
+                    ProducerShares::new(
+                        events(8),
+                        one,
+                        one,
+                        one,
+                        events(5),
+                        events(40),
+                        events(40),
+                    )
+                    .expect("a valid partition"),
+                )
+                .expect("the overridden capacities are above zero");
+                groups.build(host)
+            },
+        ),
+        (
+            // **ADR-0046 clause 1's session snapshot**, which is one number rather than a
+            // search: a locate restores every prepared target at once, so the largest
+            // catch-up batch over every legal position *is* the plan's prepared-target
+            // count, **plus one** for ADR-0050 clause 5's boundary mass release, which the
+            // same window charges to this share as a single operation.
+            //
+            // The share is **two**, not one, and that is what makes the `+1` load-bearing
+            // here: a sine has two prepared targets, so a share of one refuses it whether or
+            // not the boundary charge is counted, and the fixture would pass with the term
+            // dropped. At two, only `2 + 1` exceeds. An independent review found the weaker
+            // version.
+            //
+            // Until this slice the row reported the number and refused nothing, so such a
+            // plan compiled and faulted at its **first locate** instead. A share overrun
+            // ends the stream, which is a bad way to learn a plan was never admissible.
+            ResourceField::SessionEventShare,
+            sine.clone(),
+            {
+                let mut groups = Groups::of(host);
+                let horizon = groups.events.forward_event_horizon();
+                let one = events(1);
+                groups.events = EventLimits::new(
+                    events(64),
+                    events(128),
+                    events(4_096),
+                    horizon,
+                    QueueCapacities::new(one, events(16_384), events(256))
+                        .expect("the overridden capacities are above zero"),
+                    ProducerShares::new(events(8), events(8), one, events(2), one, events(40), one)
+                        .expect("a valid partition"),
+                )
+                .expect("the overridden capacities are above zero");
+                groups.build(host)
+            },
+        ),
+        (
             ResourceField::MaxNoteExpansionPerTick,
             declares.clone(),
             event_limits(256, 1, 4_096),
@@ -550,10 +697,13 @@ fn every_limit_a_plan_can_exceed_has_a_refusal_case() {
         covered, checked,
         "the refusal cases and the admission-checked set have diverged"
     );
-    // Twenty-nine, not twenty-eight: `release_hold_capacity` joined when a plan gained the
-    // note-on producers whose entitlements it partitions. A plan can now exceed it, so it is
-    // a limit rather than a field the report merely echoes.
-    assert_eq!(checked.len(), 29, "the admission-checked set changed size");
+    // Thirty-two, not thirty: `authored_runtime_event_share` and `internal_event_share`
+    // joined when `PlanDeclarations` gained the two declarations that let a plan state what
+    // those shares bound. Before that each share was reported against itself and no plan
+    // could exceed it, which is why `HOST-INV-007`'s conformance row could not be satisfied
+    // for them. `session_event_share` and `release_hold_capacity` joined in the two slices
+    // before this one, each for the same kind of reason.
+    assert_eq!(checked.len(), 32, "the admission-checked set changed size");
 }
 
 #[test]
@@ -1159,4 +1309,419 @@ fn the_identity_partition_sums_compiled_producers_too() {
         }
         other => panic!("expected the identity partition to refuse, got {other:?}"),
     }
+}
+
+#[test]
+fn an_authored_source_must_name_a_note_producer_the_plan_declares() {
+    // The contract hole an independent review found in an earlier attempt at this type: the
+    // envelopes were declared with nothing tying them to the `note_producers` entry carrying
+    // the source's `ProducerId` and its hold entitlement. A source whose producer resolves to
+    // nothing has no entitlement to spend, so its holds would be checked against an absent
+    // partition rather than a disjoint one.
+    let host = profile(256, ChannelLayout::Mono);
+    let ir = declaring(PlanDeclarations {
+        note_producers: vec![NoteProducerDeclaration {
+            compiled: false,
+            simultaneous_notes: HeldNoteCount::measured(4),
+            simultaneous_holds: events(2),
+        }],
+        authored_sources: vec![AuthoredSourceDeclaration {
+            // One past the only declared producer.
+            producer: ProducerId::new(1),
+            destination_occupancy: events(1),
+            retained_future: EventCount::NONE,
+            simultaneous_holds: events(1),
+        }],
+        ..declared()
+    });
+    match compile(&ir, &RenderConfig::new(host)).into_plan() {
+        Err(CompileError::AuthoredSourceProducerUnknown { index, producer }) => {
+            assert_eq!(index, 0);
+            assert_eq!(producer, ProducerId::new(1));
+        }
+        other => panic!("expected an unknown-producer refusal, got {other:?}"),
+    }
+}
+
+#[test]
+fn an_authored_source_may_not_route_through_the_compiled_producer() {
+    // ADR-0046 clause 6 gives a compiled producer plan entitlements and no hold, so its
+    // entitlement is zero. Routing an authored source through it would take holds the
+    // partition never granted — the mirror of the refusal a compiled producer takes for
+    // declaring one itself.
+    let host = profile(256, ChannelLayout::Mono);
+    let ir = declaring(PlanDeclarations {
+        note_producers: vec![NoteProducerDeclaration {
+            compiled: true,
+            simultaneous_notes: HeldNoteCount::measured(4),
+            simultaneous_holds: EventCount::NONE,
+        }],
+        authored_sources: vec![AuthoredSourceDeclaration {
+            producer: ProducerId::new(0),
+            destination_occupancy: events(1),
+            retained_future: EventCount::NONE,
+            simultaneous_holds: EventCount::NONE,
+        }],
+        ..declared()
+    });
+    match compile(&ir, &RenderConfig::new(host)).into_plan() {
+        Err(CompileError::AuthoredSourceProducerCompiled { index, producer }) => {
+            assert_eq!(index, 0);
+            assert_eq!(producer, ProducerId::new(0));
+        }
+        other => panic!("expected a compiled-producer refusal, got {other:?}"),
+    }
+}
+
+#[test]
+fn an_authored_source_may_not_hold_more_than_its_producer_is_entitled_to() {
+    // The producer's `simultaneous_holds` is its whole entitlement under clause 6's disjoint
+    // partition. A source claiming more is spending another producer's unused holds, which
+    // that clause forbids by name — and the overrun would otherwise surface as an exhausted
+    // entitlement mid-playback rather than as a plan that was never admissible.
+    //
+    // Three against two: the producer's own declaration is legal on its own, so this refusal
+    // can only come from comparing the two.
+    let host = profile(256, ChannelLayout::Mono);
+    let ir = declaring(PlanDeclarations {
+        note_producers: vec![NoteProducerDeclaration {
+            compiled: false,
+            simultaneous_notes: HeldNoteCount::measured(4),
+            simultaneous_holds: events(2),
+        }],
+        authored_sources: vec![AuthoredSourceDeclaration {
+            producer: ProducerId::new(0),
+            destination_occupancy: events(1),
+            retained_future: EventCount::NONE,
+            simultaneous_holds: events(3),
+        }],
+        ..declared()
+    });
+    match compile(&ir, &RenderConfig::new(host)).into_plan() {
+        Err(CompileError::AuthoredSourceHoldsAboveEntitlement {
+            index,
+            producer,
+            holds,
+            entitlement,
+        }) => {
+            assert_eq!(index, 0);
+            assert_eq!(producer, ProducerId::new(0));
+            assert_eq!(holds, events(3));
+            assert_eq!(entitlement, events(2));
+        }
+        other => panic!("expected a holds-above-entitlement refusal, got {other:?}"),
+    }
+}
+
+#[test]
+fn two_authored_sources_that_each_fit_are_refused_together() {
+    // ADR-0046 clause 5 admits "a checked plan-wide aggregate of every simultaneously legal
+    // source", and rejects two that fit individually "unless the compiler proves them
+    // mutually exclusive". No such proof exists and none is built, so every declared source
+    // counts — which is the conservative direction: this can refuse a plan whose sources
+    // never coincide, but never admit one whose sources do.
+    //
+    // The assertion is on both amounts, not just the refusal: a per-source check would also
+    // fail this plan if the share were smaller, so only the *summed* request distinguishes
+    // the two implementations.
+    let host = profile(256, ChannelLayout::Mono);
+    let ir = declaring(PlanDeclarations {
+        note_producers: vec![NoteProducerDeclaration {
+            compiled: false,
+            simultaneous_notes: HeldNoteCount::measured(8),
+            simultaneous_holds: events(4),
+        }],
+        authored_sources: vec![
+            AuthoredSourceDeclaration {
+                producer: ProducerId::new(0),
+                destination_occupancy: events(3),
+                retained_future: EventCount::NONE,
+                simultaneous_holds: events(1),
+            },
+            AuthoredSourceDeclaration {
+                producer: ProducerId::new(0),
+                destination_occupancy: events(3),
+                retained_future: EventCount::NONE,
+                simultaneous_holds: events(1),
+            },
+        ],
+        ..declared()
+    });
+    let outcome = compile(&ir, &RenderConfig::new(host));
+    let report = outcome.report();
+    let row = report
+        .rows()
+        .iter()
+        .find(|row| row.field() == ResourceField::AuthoredRuntimeEventShare)
+        .expect("every field has a row");
+    // Six, not three: the aggregate is the sum across sources.
+    assert_eq!(row.requested(), ResourceAmount::Events(events(6)));
+}
+
+#[test]
+fn two_authored_sources_sharing_a_producer_spend_one_entitlement_between_them() {
+    // ADR-0046 clause 6 partitions hold entitlements per **producer**, not per source, so
+    // two sources naming the same producer draw on one entitlement. Three each against an
+    // entitlement of four: neither exceeds alone, and a per-source comparison would admit
+    // this plan and let the second note-on find the entitlement already spent at runtime.
+    //
+    // The refusal reports the accumulated figure rather than the offending source's own, so
+    // the caller sees the quantity that actually exceeded.
+    let host = profile(256, ChannelLayout::Mono);
+    let ir = declaring(PlanDeclarations {
+        note_producers: vec![NoteProducerDeclaration {
+            compiled: false,
+            simultaneous_notes: HeldNoteCount::measured(8),
+            simultaneous_holds: events(4),
+        }],
+        authored_sources: vec![
+            AuthoredSourceDeclaration {
+                producer: ProducerId::new(0),
+                destination_occupancy: events(1),
+                retained_future: EventCount::NONE,
+                simultaneous_holds: events(3),
+            },
+            AuthoredSourceDeclaration {
+                producer: ProducerId::new(0),
+                destination_occupancy: events(1),
+                retained_future: EventCount::NONE,
+                simultaneous_holds: events(3),
+            },
+        ],
+        ..declared()
+    });
+    match compile(&ir, &RenderConfig::new(host)).into_plan() {
+        Err(CompileError::AuthoredSourceHoldsAboveEntitlement {
+            index,
+            producer,
+            holds,
+            entitlement,
+        }) => {
+            // The *second* source is where the running total crosses.
+            assert_eq!(index, 1);
+            assert_eq!(producer, ProducerId::new(0));
+            assert_eq!(holds, events(6));
+            assert_eq!(entitlement, events(4));
+        }
+        other => panic!("expected an accumulated-holds refusal, got {other:?}"),
+    }
+}
+
+#[test]
+fn two_authored_sources_on_different_producers_do_not_pool_their_holds() {
+    // The mirror, and what keeps the accumulation from being a global sum: entitlements are
+    // disjoint per producer, so two sources on two producers each draw on their own. Three
+    // and three against two four-hold producers fits, where one producer would refuse it.
+    let host = profile(256, ChannelLayout::Mono);
+    let ir = declaring(PlanDeclarations {
+        note_producers: vec![
+            NoteProducerDeclaration {
+                compiled: false,
+                simultaneous_notes: HeldNoteCount::measured(8),
+                simultaneous_holds: events(4),
+            },
+            NoteProducerDeclaration {
+                compiled: false,
+                simultaneous_notes: HeldNoteCount::measured(8),
+                simultaneous_holds: events(4),
+            },
+        ],
+        authored_sources: vec![
+            AuthoredSourceDeclaration {
+                producer: ProducerId::new(0),
+                destination_occupancy: events(1),
+                retained_future: EventCount::NONE,
+                simultaneous_holds: events(3),
+            },
+            AuthoredSourceDeclaration {
+                producer: ProducerId::new(1),
+                destination_occupancy: events(1),
+                retained_future: EventCount::NONE,
+                simultaneous_holds: events(3),
+            },
+        ],
+        ..declared()
+    });
+    assert!(
+        compile(&ir, &RenderConfig::new(host)).into_plan().is_ok(),
+        "disjoint entitlements are not pooled"
+    );
+}
+
+#[test]
+fn authored_retained_future_is_admitted_above_the_compiled_floor() {
+    // ADR-0046 clause 1's third authored relation: "the plan-wide aggregate maximum of
+    // simultaneously retained authored future events fits the headroom above that floor".
+    // Every other authored fixture here declares `retained_future` as `NONE`, so an
+    // independent review found this relation had no conformance case at all — removing the
+    // fold, or taking a maximum instead of a sum, would have passed the suite.
+    //
+    // The arithmetic: the harness profile renders four quanta per callback and the fixture's
+    // compiled share is eight, so the floor is thirty-two. Against a store of 4 096, a
+    // retention of 4 065 puts the total at 4 097 — one over, which is the smallest margin
+    // that can distinguish a refusal from an accident.
+    let host = profile(256, ChannelLayout::Mono);
+    let declarations = PlanDeclarations {
+        note_producers: vec![NoteProducerDeclaration {
+            compiled: false,
+            simultaneous_notes: HeldNoteCount::measured(8),
+            simultaneous_holds: events(4),
+        }],
+        authored_sources: vec![AuthoredSourceDeclaration {
+            producer: ProducerId::new(0),
+            destination_occupancy: events(1),
+            retained_future: events(4_065),
+            simultaneous_holds: events(1),
+        }],
+        ..declared()
+    };
+    let refusing = {
+        let mut groups = Groups::of(&host);
+        let horizon = groups.events.forward_event_horizon();
+        let one = events(1);
+        groups.events = EventLimits::new(
+            events(64),
+            events(128),
+            events(4_096),
+            horizon,
+            QueueCapacities::new(one, events(16_384), events(256))
+                .expect("the overridden capacities are above zero"),
+            ProducerShares::new(events(8), events(8), one, one, one, events(40), events(40))
+                .expect("a valid partition"),
+        )
+        .expect("the overridden capacities are above zero");
+        groups.build(&host)
+    };
+    match compile(
+        &declaring(declarations.clone()),
+        &RenderConfig::new(refusing),
+    )
+    .into_plan()
+    {
+        Err(CompileError::LimitExceeded { field, .. }) => {
+            assert_eq!(field, ResourceField::MaxScheduledEventsInFlight);
+        }
+        other => panic!("expected a scheduled-window refusal, got {other:?}"),
+    }
+
+    // And one below the floor-plus-retention still fits, so the refusal is the relation
+    // rather than the presence of an authored source.
+    let fitting = PlanDeclarations {
+        authored_sources: vec![AuthoredSourceDeclaration {
+            retained_future: events(4_064),
+            ..declarations.authored_sources[0]
+        }],
+        ..declarations
+    };
+    let accepting = {
+        let mut groups = Groups::of(&host);
+        let horizon = groups.events.forward_event_horizon();
+        let one = events(1);
+        groups.events = EventLimits::new(
+            events(64),
+            events(128),
+            events(4_096),
+            horizon,
+            QueueCapacities::new(one, events(16_384), events(256))
+                .expect("the overridden capacities are above zero"),
+            ProducerShares::new(events(8), events(8), one, one, one, events(40), events(40))
+                .expect("a valid partition"),
+        )
+        .expect("the overridden capacities are above zero");
+        groups.build(&host)
+    };
+    assert!(
+        compile(&declaring(fitting), &RenderConfig::new(accepting))
+            .into_plan()
+            .is_ok(),
+        "the exact bound fits"
+    );
+}
+
+#[test]
+fn a_declared_total_past_what_an_event_count_names_is_reported_and_refused() {
+    // **The row must name what the plan requested, even when no `EventCount` can hold it.**
+    // `HOST-INV-006` requires the requested amount on every row, and the retained-future
+    // aggregate sums two declarations *plus* the compiled floor. Saturating to `u32::MAX` was
+    // the earlier behaviour and it lied twice: it understated the request, and against a
+    // profile whose limit is `u32::MAX` the row read `Within` for a total it exceeded, so the
+    // plan was **admitted**. A merge-gate review found that path.
+    //
+    // **It is this row and not a share row**, which writing the fixture established: a share
+    // of `u32::MAX` cannot be constructed at all, because the six shares must sum to a
+    // representable total, so the tie is unreachable there. `max_scheduled_events_in_flight`
+    // is not a term in that sum, so its limit *can* be `u32::MAX` — which is exactly the row
+    // the review cited.
+    let host = profile(256, ChannelLayout::Mono);
+    let huge = events(u32::MAX);
+    let ir = declaring(PlanDeclarations {
+        note_producers: vec![NoteProducerDeclaration {
+            compiled: false,
+            simultaneous_notes: HeldNoteCount::measured(8),
+            simultaneous_holds: events(4),
+        }],
+        authored_sources: vec![
+            AuthoredSourceDeclaration {
+                producer: ProducerId::new(0),
+                destination_occupancy: events(1),
+                retained_future: huge,
+                simultaneous_holds: events(1),
+            },
+            AuthoredSourceDeclaration {
+                producer: ProducerId::new(0),
+                destination_occupancy: events(1),
+                retained_future: huge,
+                simultaneous_holds: events(1),
+            },
+        ],
+        ..declared()
+    });
+    let permissive = {
+        let mut groups = Groups::of(&host);
+        let horizon = groups.events.forward_event_horizon();
+        let one = events(1);
+        groups.events = EventLimits::new(
+            events(64),
+            events(128),
+            // The largest store an `EventCount` can name, which is what a saturated request
+            // would compare equal to.
+            huge,
+            horizon,
+            QueueCapacities::new(one, events(16_384), events(256))
+                .expect("the overridden capacities are above zero"),
+            ProducerShares::new(events(8), events(8), one, one, one, events(40), events(40))
+                .expect("a valid partition"),
+        )
+        .expect("the overridden capacities are above zero");
+        groups.build(&host)
+    };
+
+    let outcome = compile(&ir, &RenderConfig::new(permissive));
+    let row = outcome
+        .report()
+        .rows()
+        .iter()
+        .find(|row| row.field() == ResourceField::MaxScheduledEventsInFlight)
+        .expect("every field has a row");
+    // Two of `u32::MAX` plus the compiled floor, named exactly rather than clamped.
+    let expected = u64::from(u32::MAX) * 2 + u64::from(events(8).get()) * 4;
+    assert_eq!(
+        row.requested(),
+        ResourceAmount::EventsBeyondCount(
+            synth_engine_v2::report::EventsBeyondCount::new(expected)
+                .expect("two of u32::MAX plus a floor is past what an EventCount names")
+        )
+    );
+
+    // The constructor is the invariant, so assert it refuses a value that would have fit:
+    // a wide amount built from a small number would let one report claim two different
+    // things about the same figure.
+    assert!(
+        synth_engine_v2::report::EventsBeyondCount::new(u64::from(u32::MAX)).is_none(),
+        "a value an EventCount names is not a wide amount"
+    );
+    assert!(
+        outcome.into_plan().is_err(),
+        "a request past every representable store must not be admitted"
+    );
 }

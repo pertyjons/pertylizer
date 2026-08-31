@@ -115,8 +115,12 @@ past L2 rather than a superlinear term — but it is recorded as a qualification
 the smallest row would understate the largest by a third.
 
 **It does not reselect `max_events_per_quantum`**, and the host-profile specification's deferred row stays open. That
-reselection needs a measured *partition*, and four of the six producer classes have nothing to measure yet. The figure
-is a floor for the same reason, and a lower bound again because the harness runs with no callback deadline.
+reselection needs a measured *partition*, and at the time of this slice only the compiled class had a producer.
+**The record says four classes had nothing to measure and that was one too many**: at its own revision `540ed318`,
+production code charged `ProducerClass::Compiled` alone, so five of the six lacked a producer. Three have gained one
+since — session, from transport activation's boundary release and locate catch-up, and live and guaranteed release,
+from the ingress slice below — leaving two today: authored runtime and renderer-internal. The figure is a floor for
+the same reason, and a lower bound again because the harness runs with no callback deadline.
 
 One correction is recorded in the evidence rather than quietly fixed: a first reading called the control arm's figure
 "below memset speed" and suspected the ledger clear had been optimised away. That used DRAM bandwidth for an
@@ -368,6 +372,128 @@ violation — the scheduler refuses to publish there, so `publication_faults` ke
 `Renderer::render` still accepting a caller-supplied span, which the host-profile specification keeps as Phase 1 and
 Phase 2's contract. Live ingress is the parked slice below.
 
+### Completed slice — the exit gate's first seven bullets, and the two holes ticking them found
+
+Six of Phase 3's eight exit-gate bullets are now `[x]` in the master plan with their evidence named. That is a
+smaller claim than it sounds and a larger job than it looked: **a tick is an assertion**, and writing the evidence
+line for each is what exposed two bullets that were not actually met.
+
+**Bullet 4 was half-open.** "Tempo steps and ramps map to stable **sample** positions" needs both halves in one
+place, and they met nowhere. `tempo.rs` proves the conversion law over twenty-odd checks and stops at
+`PlanPosition`, which is ADR-0032 clause 27's whole point — the module has no `SampleTime` in its API. The session
+tests that *do* reach engine time all used a **constant** map, so neither a step nor a ramp had ever crossed an
+anchor. A new session check anchors a map that steps and ramps and asserts the frames, computed from the law rather
+than read back from it: the ramp's two beats last their mean period, 36 000 frames rather than 48 000. It is
+mutation-verified against a ramp degraded to a step and against an ignored anchor, and the first of those is the one
+that matters — a conversion interpolating the tempo *number* instead of the period would put the ramp's end
+elsewhere, which is exactly what ADR-0049 decided and V1 does the other way.
+
+**Bullet 3 was ticked on evidence that could not carry it**, and an independent review of the ticks caught it — which
+is the review earning its place, since the tick was the whole point of the slice. The bullet asks the offline
+stamp-window selector to prove it cannot present a **late** event. Tiling fails in two directions and they need
+different instruments: a **gap** shows in the rendered samples, and the fixture asserted those; an **overlap** does
+not, because a re-presented gate edge is idempotent and the audio stays identical. The instrument for an overlap is
+the renderer's late counter, since a re-presented event is behind the clock by then. The fixture now asserts it,
+through a new `render_offline_reporting` — the counters were otherwise unobservable on that path, which is why the
+gap survived. Both directions are mutation-verified: a `start` predicate that skips the boundary quantum, and a
+window that re-presents the previous one.
+
+**Bullet 7 had no fixture at all.** `note_events` renders a gated **constant** across three block sizes, offline. A
+constant has no state, so partitioning cannot disturb it, and offline drives its own blocks rather than the caller's.
+The reference render is the phase's deliverable voice — a sine through a **filter**, an envelope and an amplifier —
+and `reference_render` now drives it through the live scheduler across `1 x 4096`, `16 x 256`, `64 x 64` and the
+irregular partition, bit-identical. The stateful nodes are what make it a claim: clearing the filter's history at
+every call is caught at **frame 256**, the first block boundary of the second partition. The fixture also checks the
+reference render's shape before comparing anything, because two silences agree perfectly.
+
+**Bullets 6 and 8 were ticked and then untucked, and the review that reversed them is the point of having one.**
+Both ticks argued that the bullet asked less than I had assumed, and both arguments were refuted against the records
+themselves.
+
+Bullet 6's ordering **is** declared: ADR-0023 now assigns every kind the master plan names a drain position, by the
+producer that can emit it — stop, count-in, metronome, preview and recording state to the session block, panic and
+sustain lift to the live block, and play, seek and the wrap as activations contributing the boundary release and the
+catch-up. What the tick claimed beyond that is that ordering and identity are separable, so ADR-0052 did not block
+the limb. **ADR-0052 says otherwise in as many words**: the exit gate's loop-transition limb cannot close until that
+record does, and identity cannot be separated from activation granularity. It is `Proposed` and updates no
+specification, so nothing reconciles the two, and a master-plan line cannot overrule it.
+
+**Bullet 8's authored-composition clause was built and then backed out, on the maintainer's decision of
+2026-08-31.** The build summed each authored source's destination occupancy against the authored share and its
+retained future against the headroom above the compiled floor, both mutation-verified. Three reviews took it apart in
+turn, and the last two findings are why it is not in the tree.
+
+It broke **three public APIs without approval** — `authored_sources` on `PlanDeclarations` breaks exhaustive
+construction, and two `ResourceField` variants break exhaustive matches — and this section's own approval list says
+in as many words that a later variant asks again. And it left a **contract hole**: the declaration was stripped of
+its `simultaneous_holds` to avoid two authorities for one quantity, which was right, but nothing then linked an
+authored source to the `note_producers` entry carrying its hold and its `ProducerId`. The compiler could not verify
+that an authored note source had declared an entitlement, and a runtime producer would have no way to find its own.
+Half a repair is not one.
+
+Two findings from the same rounds are worth keeping even though the code is gone. The first draft carried
+`simultaneous_holds` on the authored declaration itself, giving **two authorities for one quantity**: a truthful
+source would be counted twice, and one declaring only there would reserve capacity nothing could consume. And the
+headroom was rebuilt from raw `u64` with saturating arithmetic, a second copy of a relation the profile already owns
+as `max_quanta_per_callback` and `EventCount::checked_over` — the critical newtype rule, caught by review rather than
+by me.
+
+**Bullet 8 was ticked a second time and reversed a second time, and the authority's own sentence is why.** The
+attempt measured what a full partition *costs to publish*, which nothing had:
+[EVD-0019](evidence/phase-03/EVD-0019-partition-publication-cost.md) fills every publishable share in every quantum a
+callback renders — 240 of the profile's 256-event cap — at 0.034 % to 0.052 % of the callback budget. The way in was
+that the `charge` path is producer-independent, so the partition's cost can be measured before authored runtime and
+renderer-internal have producers at all.
+
+**That is not the clause.** The master plan says Phase 3 must reselect `max_events_per_quantum` "from the measured
+partition before enabling the contract, **even if that partition fits within 256**", and the specification's deferred
+row asks for measured producer *values*. A cost that fits is the argument those words anticipate and reject. I have
+now read this clause wrongly three times — first as already met by EVD-0017, then as not requiring the reselection,
+then as met by measuring the cost — and each reading was refuted. The bullet closes when the partition's **occupancy**
+can be measured, which needs producers for authored runtime expansion and renderer-internal emission.
+
+EVD-0019 stays, with its scope corrected rather than its figures: it is `Supported` for the cost question it asks and
+explicitly does not discharge the gate clause. Three further corrections the same review forced, each an overclaim
+rather than a wrong number — the falsifier said "any profile this project would construct" while acceptance quietly
+weakened to the four measured; "exactly the arbiter work" ignored that a live drain calls `reaches` per charge and the
+session boundary uses `charge_operation`, which writes no batch entry; and 192x was called three orders of magnitude.
+The record also states plainly that its method-before-figures claim is **not auditable**, because the record and its
+harness reach version control together.
+
+**Six of eight bullets are `[x]`. Two are not, and both now wait on someone other than this stream.** Bullet 6
+waits on ADR-0052, whose closing decision is a product choice between reopening ADR-0050 clause 1's activation
+granularity and restricting loop lengths to whole quanta, at a cost constraint 5 prices at 251 of 281 integer tempi.
+Bullet 8 waited on four things and now waits on **one**: the partition measurement. That is bullet 8's own count
+rather than Phase 3's, and the distinction is worth keeping because a merge-gate review read it as a claim about the
+phase. The forward-horizon site was the other open obligation and is **now closed**: the maintainer settled it on
+2026-09-01 after four refuted mechanisms, and the check lives at the ingress boundary. The session half landed
+first; authored composition and internal declarations landed together once `PlanDeclarations` gained the
+two declarations that let a plan state what those shares bound. Session-snapshot admission closed because the share
+left `is_admission_checked`'s exclusion list, so a plan whose locate catch-up exceeds it is refused at admission
+rather than compiling and faulting at its first locate. It needed no producer and no new
+declaration — a locate restores every prepared target at once, so the largest batch over every legal position *is*
+the prepared-target count, plus one for ADR-0050 clause 5's boundary mass release, and the row already reported
+that number. Only the refusal was missing, and one existing fixture had to grow its cap from six to eight because
+its own plan's snapshot — a sine's two controls plus that one — did not fit a share of one.
+
+The authored and internal halves then landed together, because they were one missing thing rather than two: a plan
+could not *state* either quantity, so each share was reported against itself and no plan could exceed it.
+`PlanDeclarations` now carries `AuthoredSourceDeclaration` — clause 5's destination-occupancy, retained-future and
+simultaneous-hold envelopes, plus the `ProducerId` linking a source to the `note_producers` entry holding its
+entitlement — and `InternalProducerDeclaration`, one per-quantum maximum per producer. Clause 5's aggregate is
+**summed** across every declared source: the record allows two that fit individually to be refused together "unless
+the compiler proves them mutually exclusive", no such proof exists, and none is built. Summing is the conservative
+direction — it can refuse a plan whose sources never coincide, never admit one whose sources do.
+
+That linkage is what the first attempt lacked, and it is why that attempt was backed out rather than repaired in
+place. Four mutations verify the result: taking the maximum instead of summing in each aggregate, dropping the
+holds-against-entitlement comparison, and re-excluding the two fields from `is_admission_checked`.
+
+**What is left is the partition measurement, and a declaration does not supply it.** A declaration is a bound
+admission compares against; occupancy is what a running producer turns out to use. Authored-runtime expansion and
+renderer-internal emission still have no producer, so there is still nothing to measure for two of the six classes.
+A phase exits on its review rather than on its checklist.
+
 ### Proposed — ADR-0052, and why the loop wrap is not decidable yet
 
 [ADR-0052](decisions/ADR-0052-loop-wrap-note-identity.md) exists and takes **no decision**. Three designs were put
@@ -468,7 +594,273 @@ and displacing every ingress event by one frame did not fail it. A frequency is 
 makes it take effect at the next quantum boundary either way. Only a **sample-positioned** payload — a note edge —
 makes a one-frame error observable. A placement test built on a control-rate parameter measures nothing.
 
+### Accepted — ADR-0023, and the simulated ingress producer it unblocked
+
+**Phase 3's exit gate closes its fifth bullet.** The same `SampleTime` note edges reach bit-identical samples through
+a simulated ingress producer and through the compiled path, across `1 x 4096`, `16 x 256`, `64 x 64` and the
+irregular partition, with both edges off a quantum boundary. The parked slice below named the ordering fact this had
+to wait for, and it did: the compiled producer now publishes through the arbiter, so the two paths meet at one
+boundary rather than one of them bypassing it.
+
+**[ADR-0023](decisions/ADR-0023-same-sample-event-ordering.md) is `Accepted`** and creates `SOUND-INV-020`. The
+record's substance is a refutation, and it is worth keeping because the wrong answer is the natural one: **ordering
+by ADR-0046's producer class is structurally wrong.** The classes partition *capacity* — who pays for an event — not
+causality. A live note-on spends the live share while the release discharging it redeems a hold into the
+guaranteed-release share, so a class rank that puts `Release` before `Live` applies a live note's release before its
+own note-on wherever the late clamp or a zero-length note puts both at one position: the release is refused as an
+orphan and the note that follows sounds with nothing left to end it. Reversing the two ranks inverts the
+end-before-start property the renderer's application-order walk depends on. The first draft of the record selected
+that rank; an independent review refuted it.
+
+The accepted rule takes the **producer** as the unit of order: session and transport, compiled, authored runtime in
+plan declaration order, live ingress in queue order, each drained in one contiguous block in its own emission order.
+Draining one queue carries both of a producer's edges in the order they were offered, whichever share each spends.
+
+**A coupled policy bounds what may be built on it rather than the record itself.** ADR-0051 clause 6 leaves a scalar
+gate reached by more than one producer with no ownership law, and the rule forbids two producers **emitting** onto a
+gate rather than only both sounding at once — so no plan may carry a live store beside a compiled producer, which
+`PerformanceIngress::prepare` refuses. A narrower sounding-only reading was tried while building the ingress slice
+and withdrawn: narrowing an accepted record from inside a new one is an amendment nothing declared. The exit-gate
+obligation does not need a mixed plan — it compares two renders rather than mixing them — but the shared-gate case
+waits, and `PROCESS.md`'s rule against accepting an option that cannot be implemented safely is what makes that a
+named boundary instead of an omission.
+
+### Completed slice — the live boundary's three resources
+
+`PerformanceIngress` is the one row in `HOST-INV-009`'s closed registry. A note-on acquires **queue slot, release
+hold and identity together or not at all**, and the two cheap resources are decided before the mint so a refusal has
+taken nothing and a failed mint leaves the table as it found it. The exhausted resource is named, because the three
+need different fixes.
+
+Four things the building found, none of them predicted:
+
+- **A note-on needs two units of queue room, not one.** ADR-0046 clause 6 promises an accepted note-on's release
+  "cannot be dropped by queue pressure", so the queue reserves a slot per outstanding hold. Charging the note-on one
+  unit admits the last one into a queue with no room for its own release — which either overwrites an undrained
+  entry or breaks the promise. Mutation-verified in both directions, and the fixture has to fill the queue to exactly
+  one free slot to see it.
+- **The hold is discharged when the release takes its slot, not when the release is published.** The first version
+  decremented at both points, which took the count to zero while a note was still open. A test asserting the count
+  across the offer and the render is what caught it.
+- **A late ingress entry is due, not future.** `PublicationArbiter`'s row mapping now clamps a destination behind the
+  window to row zero under ADR-0043's preserving late clamp, and refuses only the forward direction — ADR-0032
+  clause 21's asymmetry, made executable. The old symmetric refusal was correct only because the compiled producer
+  can never be late; for a live one it strands the entry forever, since the window only moves further away.
+- **The minter is reached through `StreamControl`, not through the store.** A first version took any `IdentityTable`
+  and the renderer refused every edge as foreign, because the identities came from a fresh table rather than the
+  stream's. Routing the offer through the half that owns the minter makes that unrepresentable. It also gives the
+  refusal a place: while a transport-activation candidate holds a snapshot of the minter, a live mint is refused by
+  name rather than allowed to rewind a generation.
+
+**Charging both edges to the live share renders identical audio**, so the equivalence test was blind to ADR-0046
+clause 6's attribution — the mutation passed. The share split is asserted separately against the arbiter's per-class
+high-water marks. A test whose only evidence is that it passes establishes nothing, and this one had to be shown a
+failure to earn its claim.
+
+**`HOST-INV-009` asks for two things and the second is easy to leave undone.** The drop is counted with the
+exhausted resource named, *and* the count reaches the structured diagnostics report. The drop happens on the
+producing half before acceptance, where the report cannot be reached, so the drain mirrors the store's running totals
+into it — assignment rather than accumulation, since the store's counters are cumulative and adding them each pass
+would report every earlier drop again on every callback. Both halves are mutation-verified, and a first draft's module
+comment claimed the fold already happened when nothing did it.
+
+**An independent uncommitted review found seven further defects and every one was repaired.** Four were
+correctness: two ingress stores for one producer each held the whole hold entitlement, and a release offered to the
+wrong one spent a reservation it never made while stranding the other's hold — a stream now latches one store, the
+same shape the arbiter's identity uses. A non-monotone stamp broke identity reuse, because a note-on reusing a freed
+index with an earlier stamp starts before the release it followed; stamps are now non-decreasing or refused, which
+also **simplified the drain**: reachability is monotone in the stamp, so it stops at the head and moves one index
+instead of compacting the ring. The forward horizon was evaluated twice for a `Simulated` stamp, which `HOST-INV-013`
+places exactly once — the first of four attempts to reconcile that, all recorded below, and the one *that slice*
+landed on was to cut the check from the store entirely. The maintainer reversed that on 2026-09-01: the store is the
+one site and the renderer's evaluation is retired. And the fixture declared a live *and* a
+compiled producer in one plan, which **is** ADR-0051 clause 6's shared-gate construction — the rule forbids more than
+one producer emitting onto a gate, not only both sounding. It is now two plans with one producer each. A later slice
+briefly reintroduced a mixed plan for a cross-producer release fixture and narrowed the rule to justify it; that
+narrowing was an amendment nothing declared, and both were withdrawn. The check that fixture would have proved,
+`IdentityTable::release_for`, is covered instead over a bare table with two producer ranges, which reaches no gate.
+
+Three were evidence rather than behaviour, and they are the more useful kind. The equivalence render's two edges sit
+at different samples, so position sorting restores their order however the drain presented them — **it could not
+falsify the ordering it was cited for**. A fixture placing a note and its release at one render position now can, and
+a mutation that lets the release jump ahead of its own note-on fails exactly that test and no other. The ring never
+wrapped in any fixture, and no entry ever waited for a later call; both now do. The hold-exhaustion test exhausted the
+identity range at the same moment, so it established branch order rather than classification — the producer now
+declares eight identities and two holds. **Identity exhaustion turned out to be unreachable**: admission refuses a
+producer owing more releases than it can sound notes, so with `holds <= notes` the hold is always reached first, and
+the branch survives for ADR-0048 rather than because anything checks it.
+
+**A focused reread of those repairs confirmed three and found five more, all repaired.** The two that mattered are
+the same shape — a claim resting on a boundary nothing enforced. The store took its hold entitlement and identity
+range from **whatever plan it was handed** while minting through the stream's table, so one plan's eight-hold
+entitlement could mint into another's two-index range: that spends an entitlement the second plan never admitted and
+makes the identity shortage reachable although each plan separately satisfies `holds <= notes` — which is exactly the
+claim this slice had just recorded as unreachable. `prepare` now refuses a store whose plan is not the renderer's.
+And the renderer's horizon exemption was inferred from **provenance**: `EventEnvelope::new` is public, so a
+hand-built `Simulated` stamp reached the renderer checked nowhere at all. That exemption is gone, and so is every
+successor to it — the horizon paragraph below is where that thread ends.
+
+Three more: a parameter offer bypassed the one-store latch and the scheduler drained any store handed to it, so a
+second store could overwrite the first's cumulative counters — the drain mirrors rather than accumulates, so an
+overwrite understates what the boundary refused. Both now latch. The store identity used `fetch_add`, which wraps at
+`u64::MAX` and would reissue; it refuses permanently, as `ArbiterId` already did. And two evidence gaps: the report's
+orphan field was never asserted through a render, and the ring fixture wrote the same value from every slot, so
+substituting a duplicate for a real entry passed. Each ring entry now lands in its own quantum with an
+alternating gate, and the rendered square wave falsifies a **lost** entry — while a **duplicated** one is invisible
+there, because charging one write twice into its own quantum is idempotent, and is caught instead by the live share's
+peak. Loss and duplication needed different instruments, and one fixture had only the first.
+
+**A third reread reduced two of those repairs to one mechanism and refused a third outright.** Binding the store to
+its plan was not enough: the plan is checked against the renderer `prepare` was given, and nothing stopped the store
+being carried to a *different* control afterwards, which is the same disagreement by another route. And the two
+latches — the control's and the scheduler's — were independent, so a caller offering into store A while rendering
+store B latched one on each and **wedged the stream permanently**: offers reached only A, drains accepted only B.
+Both are now one mark, set on the store by the half that owns the decision and merely verified by the other. Refusing
+an unadopted store strands nothing, because every offer goes through the control that sets the mark, so an unadopted
+store is empty; what the refusal prevents is its zero counters overwriting the adopted store's totals, since the
+drain mirrors rather than accumulates.
+
+**Superseded on 2026-09-01: the store now takes the check.** The paragraphs from here to the decision below record
+the slice in which it was cut and the eight review rounds that forced the cut; they are kept because the refutations
+still bound what a future change may do, and they describe that slice rather than the code today.
+
+**The forward horizon was cut from that slice, and eight review rounds are what established that it had to be.**
+`HOST-INV-013` places the check at ingress admission into bounded source storage and says it is evaluated **exactly
+once**. This store is such storage, so checking at the offer looks obviously right — and it creates a **second**
+evaluation site, because the renderer has checked ingress provenance since Phase 1, when it was the admission point.
+
+Four ways of having both were tried and every one was refused by independent review, and they are kept here so the
+next attempt does not repeat one: exempting `TimeSource::Simulated` at the renderer, which a public
+`EventEnvelope::new` forges, leaving a hand-built stamp checked nowhere; arguing the second site harmless because it
+can never reject what the first accepted — true, by an arithmetic the reviewer verified, and still a second
+evaluation; skipping the check for a span an arbiter had **sealed**, which the arbiter's necessarily public API
+forges just as easily, and which was strictly worse because a forged event's horizon was then evaluated *zero*
+times; and removing the renderer's site, which leaves an **in-span** ingress event handed straight to
+`Renderer::render` evaluated zero times too.
+
+**So the store did not take the check, in that slice.** The renderer kept the one it had had since Phase 1, and that
+slice's net change to renderer behaviour was nothing: `render/hot.rs` and Phase 1's test carry comment-only diffs, and
+`render.rs`
+gains one additive crate-private accessor the drain needs. The store's `BeyondHorizon` refusal and its counter are
+gone with the check.
+
+**Decided by the maintainer on 2026-09-01: the boundary that admits into bounded source storage.**
+`PerformanceIngress::admit` evaluates the horizon and the renderer's evaluation is retired, so the invariant's
+"exactly once" has one site again. A merge-gate review is what forced the decision, and it added an argument the four
+rounds had not: keeping only the *renderer's* check cannot work either, because the drain releases an entry only once
+the publication reaches it — a far-future event never arrives there while it is still far-future, so it can hold a
+queue slot and a note-on's hold until its own timestamp comes round. The accepted cost is that a caller-assembled
+span carrying ingress provenance now meets only the span check; a fixture asserts exactly that, and asserts the
+retirement rather than describing it. `HOST-INV-013` carries the reading.
+
+The paragraph below records the option space as it stood before the decision, and is kept because the refutations
+still bound what a future change may do. Which site the invariant means, once bounded ingress storage exists, **was**
+a specification decision. The option space the rounds produced: read "exactly once" as "at the boundary that admits
+into bounded storage" and retire the renderer's Phase 1 check, accepting that a caller-assembled span then meets only
+the span check; or amend the invariant to bound *rejection* rather than evaluation, which makes two sites legal where
+the second provably cannot reject. `PROCESS.md` forbids accepting an option that cannot be implemented safely until
+the coupled policy is resolved, and four refutations is what that looks like from inside an implementation slice.
+
+**ADR-0053's horizon pair is now discharged.** A `Simulated` stamp beyond the horizon is refused and counted, and
+the horizon's own sample is admitted — owed as a pair because either half alone passes with the predicate inverted,
+and mutation-verified in both directions (dropping the check, and closing the boundary one sample early). One
+further obligation was already built: `Simulated` moves no arrival counter,
+mutation-verified by folding it into `arrival_stamped`. **The source scan is built but does not discharge its
+obligation**, and that is stated rather than glossed: the record asks for exactly one construction site across the
+repository, and the fixture reads this crate's `src` matching the literal path, so an aliased, wildcard-imported or
+`Self::`-qualified construction, or one in another crate, passes unnoticed. It is a useful guard and not the check
+the record named; closing it needs a scan whose method can carry the claim.
+
+**ADR-0053's release-reachability boundary is built, after a false start.** The record asks the slice for a
+visibility or feature boundary so a release build need not reach this producer. A first answer claimed the crate
+already had one, because `synth_engine_v2` is a dev-dependency of `pertylizer` reachable only from three measurement
+examples — **that is false**, and a reviewer showed why: those examples link the crate in `--release`, and
+`crate_boundary.rs` bounds the dependency edges rather than gating the producer. The boundary is a default-on
+`simulated-ingress` feature that gates the **constructors** — `PerformanceIngress::prepare` and the three
+`StreamControl` offers, which are the only ways to build or fill a store. Gating the module instead was tried and
+reverted: it spread `cfg` through the scheduler and the stream to say what the constructors already say. Without the
+feature the store compiles and is unreachable, which is what the boundary means.
+
+**One leak the slice's own walk found, and two reviews to get its guard right.** A live note open across a transport
+activation is ended by ADR-0050 clause 5's boundary mass release, which frees the index without passing through the
+ingress store — so its release hold is never discharged, and the queue keeps a reservation for an event that can no
+longer exist. ADR-0046 clause 6 asks a mass release to redeem every affected hold atomically and nothing does that
+yet. ADR-0051 clause 6 adds a second hazard on the same combination: the catch-up's row can cut a live note through a
+gate the activation does not own.
+
+**The first guard was a count of open live notes and it was wrong.** An offered release takes that count to zero
+while both edges are still queued and neither has rendered, so an activation built there sits over a note about to
+sound. The guard is the **adopted store**: `plan_activation` refuses once a stream has one. A second review then
+found the mirror ordering — build the candidate first, adopt a store afterwards, and the check has already run —
+which a *parameter* offer reached, because it mints nothing and so had no reason of its own to refuse. Every offer
+now passes one check at the point that adopts, and both orderings have their own fixture and their own mutation.
+
+That is ADR-0050 clause 8's existing scope — activation is scoped to a stream whose note producers are compiled —
+made executable rather than assumed. The refusal is permanent for a stream that has adopted a store, and it strands
+nothing: the store is untouched, and its entries still render.
+
+**The producer/consumer handoff is not modelled, and that is the maintainer's decision of 2026-08-31 rather than
+an oversight.** The parked slice's review below required split handles, and this store does not have them:
+`render_with_ingress` borrows the same value the offers write to, so nothing can enqueue while a pass runs. The
+alternatives were an entry encoded across `AtomicU64`s, an `unsafe` ring, or a new dependency, and the maintainer
+chose consistency with the crate's existing boundary instead: **no boundary in `synth_engine_v2` models a thread
+handoff**. `CompiledEventScheduler::offer` takes an off-thread candidate into an audio-thread value and the transport
+exchange hands a retired box back the same way; in both, the host owns the handoff and the crate owns the contract on
+either side of it. The first producer that really runs on another thread is a hardware adapter, and Phase 9 owns
+those, so a lock-free encoding here would be machinery this phase never executes across two threads. An independent
+review raised it again against the built slice; it is recorded, not repaired.
+
+**The outstanding measurement is now closer to due, and the boundary is worth stating exactly.** The host-profile
+specification's deferred row says `max_events_per_quantum` must be reselected from a measured partition "before
+enabling live ingress". This slice builds the ingress *boundary* and a deterministic simulated producer; it enables no
+live adapter, and Phase 9 owns those. So the gate is not crossed — but four of the six producer classes now have
+something to measure rather than two, and only authored runtime and renderer-internal have nothing. The measurement
+is the next slice rather than a later one.
+
+**What this slice does not build**, and each is a later obligation rather than an omission: panic and sustain lift,
+which ADR-0046 clause 6 charges to the live share; a second live store, which needs its own registry row and
+admitting ground; pitch and velocity on a note edge, which `NoteEdge` still does not carry; and the capacity
+measurement that must reselect `max_events_per_quantum`, whose two remaining unbuilt classes are authored
+runtime and renderer-internal.
+
 ### Approved: `synth_engine_v2` API breaks during Phase 3
+
+**A fourth set, approved by the maintainer on 2026-09-01. Five variants, of which exactly
+two were already in the branch when the approval was sought**, and that lateness is the
+defect this paragraph records as much as the approval: the ingress slice added
+`ActivationBuildError::LiveIngressAdopted` and `ScheduledRenderError::UnadoptedIngressStore`
+and asked for neither, which the merge-gate review caught by grepping this section and
+finding nothing. The other three were sought before they were built.
+`AGENTS.md` requires approval *for each break*, and a merge to `main` has no waiver, so the
+squash was refused and reset rather than landed.
+
+- `ActivationBuildError::LiveIngressAdopted` — the guard that keeps a transport activation
+  out of a stream that has adopted a live ingress store, which ADR-0050 clause 8 scopes out.
+- `ScheduledRenderError::UnadoptedIngressStore` — the renderer's refusal of a store the
+  stream never latched.
+- `ResourceAmount::EventsBeyondCount` — the maintainer chose on 2026-09-01 to widen the
+  amount type rather than amend `HOST-INV-006`. `CompileError::DeclaredTotalUnrepresentable`,
+  added earlier in this branch, is **removed** with it: once a row can name the real request
+  the ordinary comparison refuses the plan and names the field, so a separate error had
+  nothing left to say. Writing the fixture established which row is actually reachable — a
+  share of `u32::MAX` cannot be constructed, because the six shares must sum to a
+  representable total, so only `max_scheduled_events_in_flight` can tie.
+- `IngressRefused::BeyondHorizon` — entailed by the maintainer's 2026-09-01 reading of
+  `HOST-INV-013`: moving the single evaluation to the ingress boundary requires a way to say
+  so there. `DiagnosticsReport::count_out_of_horizon_event` is removed with the renderer's
+  check, though the public `out_of_horizon_events` accessor survives with its meaning shifted
+  from *events the renderer refused* to *offers the boundary never accepted*.
+- `IngressRefused::ForeignSlot` — added *by* that review: a `NoteSlot` carries the `PlanId`
+  it was resolved against and nothing on the offer path compared it, so a slot from another
+  plan minted and the renderer played the current plan's target at the other plan's index.
+
+None of these enums is `#[non_exhaustive]`, so each variant breaks an exhaustive match. The
+grounds are the ones every earlier approval in this section rested on: the crate is
+experimental, is not a dependency of the workspace's default members, and `crate_boundary.rs`
+permits exactly one in-repo consumer, `pertylizer` as a dev-dependency for three measurement
+examples. Making the enums `#[non_exhaustive]` has been offered three times and declined
+three times, so a later variant asks again.
+
 
 The maintainer approved, on 2026-08-26, the API breaks the producer-share and ingress-store slices make to
 `synth_engine_v2::profile`: `EventLimits::new` changed signature twice, and `command_queue_capacity` and
@@ -631,7 +1023,8 @@ Four rules, and each is checked where it can be answered:
   sources out would admit a plan whose compiled notes alone outrun what an identity can name.
 
 `release_hold_capacity` therefore leaves the not-admission-checked list: a plan can now exceed it, so it is a limit
-rather than a field the report echoes. Twenty-nine fields qualify, twenty-one do not.
+rather than a field the report echoes. Twenty-nine fields qualify at this slice and twenty-one do not; the
+session-admission slice above later moves one more, making it thirty and twenty.
 
 Three properties are mutation-verified: filtering compiled producers out of the identity sum, taking the maximum
 instead of the sum for holds, and letting a compiled producer declare one. The row-order test caught the hold row
@@ -788,11 +1181,14 @@ releases an aborted list already performed are not recoverable that way.
 And the orphan counter was anonymous where ADR-0047 clause 4 asks for the event to be counted "against its offering
 producer with the identity named". `DiagnosticsReport::last_orphan_note` names one. **Naming the identity names the
 producer** — the ranges are disjoint and a producer's position in the declaration is its `ProducerId`, so the index
-falls in exactly one range. What is owed is *per-producer counts*, and it is owed to ingress — but the reason the
-aggregate is unambiguous meanwhile is about **emission**, not about how many producers a plan declares.
-`stamp_compiled` is the only path that mints into a renderer's table, and it mints only from the plan's compiled
-producer, so every occurrence a renderer can see is that producer's. A producer that emits without going through
-compiled stamping is what makes the aggregate ambiguous.
+falls in exactly one range. What is owed is *per-producer counts*, and the **count beside the
+identity** is what cannot be attributed: two producers orphaning in one call are reported as one identity and a
+total. That is a property of the report's shape rather than of how many producers emit — and it is not reachable
+here yet, because `PerformanceIngress::prepare` refuses a plan that also declares a compiled producer, which is how
+ADR-0051 clause 6's boundary is enforced rather than assumed. The ingress slice's own reviews refuted two more
+justifications for this gap: that `stamp_compiled` is the only path that mints into a renderer's table, which the
+live boundary's `StreamControl::offer_note_on` contradicts; and that the disjoint ranges carry it, which they do not
+— they identify the *named* occurrence's producer and say nothing about the count.
 
 A third review round caught the first version of that justification, which argued from the producer *count* and was
 contradicted by `note_identity`'s own two-producer fixture in this very commit. It also caught the claim standing in
@@ -1117,10 +1513,11 @@ stream's own events at that sample. `NodeState::control_value` is the symmetric 
 a target with no history its prepared value, and it answers for the gate that `set_control` deliberately ignores.
 
 **Scope held to what this phase reaches, deliberately.** Two conditions the record states as general are established
-**structurally** rather than as branches: the release scope, because the compiled producer is the only one that
-emits, and alias aggregation, which comes free because the substitution set is keyed on the physical
+**structurally** rather than as branches: the release scope, because the compiled producer was then the only one
+that emits, and alias aggregation, which comes free because the substitution set is keyed on the physical
 `(node, control)` pair rather than on a slot. Neither is a dead branch and neither has a test that could only pass
-vacuously. Clause 6 is what keeps the first true, and it is live ingress's entry cost rather than this slice's.
+vacuously. Clause 6 is what keeps the first true — **and the ingress slice below is where it stopped being free**: a
+live producer can now emit, so an activation is refused once a stream has adopted a live ingress store.
 
 **One correction the code forced on the record**, made rather than left to a later reader: an earlier draft said the
 preserved gate-down adds to what admission must check. It does not. The write takes the omitted release's place one
@@ -1136,7 +1533,9 @@ count plus one for clause 5's boundary mass release — but `SessionEventShare` 
 nor a warning. A plan with more prepared targets than the share compiles, and the overrun arrives at the first locate
 as the publication fault that ends the stream. That is ADR-0046 clause 3's own case, an admitted plan reaching a
 runtime miss; `is_admission_checked`'s documentation already names the plan-dependent admission of all five remaining
-shares as later Phase 3 work, and this is one of them.
+shares as later Phase 3 work, and this is one of them. **Overtaken by the session-admission slice above**, which is
+the later work this paragraph anticipated: the field has since left the exclusion list and the refusal exists, so
+this paragraph records what was true when it was written rather than the current behaviour.
 
 **One repair the merge review forced, in the loop rather than in the catch-up.** Clause 5's preserved gate write and
 the loop's admission were built in different slices and disagreed: `repeating_pass` skipped a crossing release's
@@ -1441,8 +1840,10 @@ collected* — building competing candidates is fine until one is accepted.
 
 One more false claim was caught there and is worth keeping, because it is the kind that reads as harmless: the record
 said plans "today declare only compiled note producers". They do not — `NoteProducerDeclaration` carries a `compiled`
-flag and a plan may declare a non-compiled producer. The true and weaker fact is that nothing non-compiled can yet
-**emit**, so the compiled producer is the only one that mints, and that is what the scope rests on.
+flag and a plan may declare a non-compiled producer. The true and weaker fact was that nothing non-compiled could yet
+**emit**, so the compiled producer was the only one that minted. **The ingress slice ends that**, and replaces the
+reason rather than the conclusion: building an activation is refused once a stream has adopted a live ingress store,
+so no stream that can activate has one. The scope now rests on a check instead of on an absence.
 
 A repair that introduces a new defect is still a defect, and the count here is the honest one: **seven findings, then
 four, then four, then four**, across one design consultation and four reviews. The identity design is a working

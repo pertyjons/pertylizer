@@ -104,10 +104,28 @@ impl PublicationArbiter {
     }
 
     /// The same, for a charge whose destination is a time rather than an event.
+    /// The window row a time lands in, which is its **render position**'s row and not
+    /// always its stamp's.
+    ///
+    /// The two directions are deliberately not symmetric, and
+    /// [ADR-0032](../../../plans/v2/decisions/ADR-0032-sample-time-and-event-timestamps.md)
+    /// clause 21 is why: only the forward direction has a budget. A stamp beyond the open
+    /// window has a destination this call cannot reach, so it is refused and waits. A stamp
+    /// **behind** the window start is not outside it — ADR-0043's preserving late clamp
+    /// puts its render position at the first not-yet-rendered boundary, which is exactly
+    /// this window's first quantum, so row zero *is* its destination. Refusing it would drop
+    /// an event ADR-0001 clause 16 forbids dropping, and would leave a live producer's late
+    /// entry stuck in its queue forever.
+    ///
+    /// The stamp itself is untouched: the envelope stays immutable, the renderer clamps the
+    /// render position and counts the displacement, and this only decides which row's share
+    /// the event spends. The compiled path never reaches the clamp — `render_one` refuses a
+    /// missed compiled event before charging anything, because admission makes one a
+    /// producer defect rather than a condition.
     fn row_of_time(&self, time: SampleTime) -> Option<WindowRow> {
         let offset = time
             .quantum_index()
-            .checked_sub(self.start.quantum_index())?;
+            .saturating_sub(self.start.quantum_index());
         let offset = usize::try_from(offset).ok()?;
         if offset < self.open_quanta {
             Some(WindowRow::new(offset))
@@ -128,6 +146,18 @@ pub struct Publication<'a> {
 }
 
 impl<'a> Publication<'a> {
+    /// Whether this call's open window can reach the event's destination.
+    ///
+    /// The question a producer's drain has to answer before charging, and it is not
+    /// "is the stamp inside the window": a late stamp is reachable, because
+    /// the arbiter's own row mapping gives it row zero under ADR-0043's preserving late
+    /// clamp. Offered as a predicate rather than leaving the drain to compare
+    /// quantum indices itself, so one authority decides what this window reaches and a
+    /// second implementation cannot drift from it.
+    pub fn reaches(&self, event: TimedEvent) -> bool {
+        self.arbiter.row_of(event).is_some()
+    }
+
     /// Charge one event to one class, in the quantum the event itself names.
     ///
     /// Refuses on the **class's own share**, never on the quantum total. ADR-0046 clause 7

@@ -549,6 +549,66 @@ pub struct PlanDeclarations {
     pub programs: Vec<IrProgram>,
     /// Voices any one instrument declares.
     pub voices_per_instrument: VoiceCount,
+    /// Every authored runtime source this plan admits, with its ADR-0046 clause 5 envelopes.
+    ///
+    /// Empty is ordinary and is what every plan in this phase declares: no authored producer
+    /// exists yet. The field is not speculation about one — it is what lets admission refuse
+    /// a plan that declares more than its share allows, which `HOST-INV-007` requires of the
+    /// `authored_runtime_event_share` row and which a share compared against itself can never
+    /// do.
+    pub authored_sources: Vec<AuthoredSourceDeclaration>,
+    /// Every renderer-internal producer this plan admits, with its per-quantum maximum.
+    ///
+    /// Empty for the same reason, and with the same purpose.
+    pub internal_producers: Vec<InternalProducerDeclaration>,
+}
+
+/// One admitted authored runtime source's conservative envelopes.
+///
+/// ADR-0046 clause 5 admits data-dependent expansion against declarations rather than
+/// against what a source turns out to emit: a runtime producer cannot be trusted to stay
+/// inside a share it never stated. The three envelopes are the three ways such a source can
+/// outgrow the partition — too many events at one destination, too much retained future, or
+/// too many open release obligations — and each is checked separately because a source can
+/// fit one and exceed another.
+///
+/// **The `producer` link is what makes the holds checkable**, and its absence was a contract
+/// hole an independent review found in an earlier attempt at this type: without it nothing
+/// tied a source to the `note_producers` entry carrying its `ProducerId` and its hold
+/// entitlement, so the compiler could not verify that an authored note source had declared
+/// one at all.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[must_use]
+pub struct AuthoredSourceDeclaration {
+    /// The note producer this source expands through.
+    ///
+    /// It must name a declared **non-compiled** producer: ADR-0046 clause 6 gives compiled
+    /// releases plan entitlements and no hold, so an authored source routed through a
+    /// compiled producer would take holds against an entitlement of zero.
+    pub producer: crate::identity::ProducerId,
+    /// Most events it may place at any one destination quantum.
+    pub destination_occupancy: EventCount,
+    /// Most future events it may simultaneously retain.
+    pub retained_future: EventCount,
+    /// Most release obligations it may hold at once.
+    ///
+    /// Bounded by the named producer's own entitlement, which is where the disjointness
+    /// ADR-0046 clause 6 requires is enforced.
+    pub simultaneous_holds: EventCount,
+}
+
+/// One admitted renderer-internal producer's per-quantum maximum.
+///
+/// ADR-0046 clause 2 confines a renderer-internal emission to the quantum that generates it,
+/// which is exactly what makes a single declared per-quantum maximum a **complete** bound
+/// rather than a rate below which occupancy could still accumulate. A producer that needed a
+/// future target would first need clause 5's envelopes, which is a change to that record
+/// rather than a declaration this type could carry.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[must_use]
+pub struct InternalProducerDeclaration {
+    /// Most events it may emit into the quantum that generates them.
+    pub per_quantum: EventCount,
 }
 
 impl Default for PlanDeclarations {
@@ -573,6 +633,11 @@ impl Default for PlanDeclarations {
             recorded_events_per_take: EventCount::NONE,
             programs: Vec::new(),
             voices_per_instrument: VoiceCount::NONE,
+            // Empty for the same reason `note_producers` is: a plan that declares no
+            // authored or internal producer has none, and inventing one here would give
+            // admission an envelope to partition that the plan never asked for.
+            authored_sources: Vec::new(),
+            internal_producers: Vec::new(),
         }
     }
 }
