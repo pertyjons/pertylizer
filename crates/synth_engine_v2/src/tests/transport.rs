@@ -46,62 +46,6 @@ fn a_loop_interval_is_half_open_and_positive() {
 }
 
 #[test]
-fn wrap_times_come_from_the_ideal_timeline_so_a_non_quantum_loop_does_not_drift() {
-    // ADR-0050 clause 1, and the property a wrap derived from the previous *effective* point
-    // would lose. The loop below is 100 frames, which is not a whole number of 64-frame
-    // quanta, so every wrap snaps forward by a different amount.
-    //
-    // The falsifier is drift: under the ideal derivation the `n`-th wrap is exactly `n`
-    // lengths after the first, so the error at each one is independent and bounded by a
-    // quantum. Deriving each from the last snapped value would make the gap between
-    // consecutive wraps at least one length and usually more, and the deficit would grow
-    // without bound.
-    const LENGTH: u64 = 100;
-    let interval =
-        LoopInterval::new(PlanPosition::ZERO, PlanPosition::new(LENGTH)).expect("positive");
-    let first = SampleTime::new(1_000);
-
-    let mut previous_effective = snap(first);
-    for pass in 1..=64_u64 {
-        let requested = interval.wrap_at(first, pass).expect("representable");
-        assert_eq!(
-            requested.as_u64(),
-            first.as_u64() + LENGTH * pass,
-            "the requested time is the ideal one, whatever the previous wrap snapped to"
-        );
-
-        let effective = snap(requested);
-        let error = effective.as_u64() - requested.as_u64();
-        assert!(
-            error < u64::from(crate::time::QUANTUM_FRAMES),
-            "pass {pass} snapped by {error} frames, which is a whole quantum or more"
-        );
-
-        // The gap between consecutive wraps stays within one quantum of the ideal length.
-        // Under a drifting derivation it could not: each pass would add the previous
-        // pass's rounding to its own.
-        let gap = effective.as_u64() - previous_effective.as_u64();
-        assert!(
-            gap.abs_diff(LENGTH) < u64::from(crate::time::QUANTUM_FRAMES),
-            "pass {pass} landed {gap} frames after the previous wrap, against a loop of {LENGTH}"
-        );
-        previous_effective = effective;
-    }
-}
-
-/// The first quantum boundary at or after `time`, which is clause 1's effective point once
-/// the clock has been taken into account.
-fn snap(time: SampleTime) -> SampleTime {
-    let quantum = u64::from(crate::time::QUANTUM_FRAMES);
-    let remainder = time.as_u64() % quantum;
-    if remainder == 0 {
-        time
-    } else {
-        SampleTime::new(time.as_u64() + (quantum - remainder))
-    }
-}
-
-#[test]
 fn the_exchange_tells_a_pending_candidate_from_an_uncollected_retirement() {
     // `HOST-INV-022`: an offer is refused either way, but only one of the two means the
     // off-thread half has not collected — and a diagnostic that reported one as the other

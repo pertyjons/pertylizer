@@ -541,10 +541,10 @@ impl VoiceLimits {
 /// producer may reclaim it while the stream runs. That is why these are `EventCount`
 /// capacities rather than `EventCount::NONE` measurements.
 ///
-/// The values themselves are **not** evidenced. ADR-0046 fixes the relations and leaves
-/// the numbers to Phase 3 measurement, which must reselect `max_events_per_quantum`
-/// from the measured partition before live ingress is enabled — even if the measured
-/// partition would fit inside the present cap.
+/// The values themselves are **not** evidenced. ADR-0046 fixes the relations and ADR-0054
+/// stages numeric selection: measure each first real authored or internal producer before
+/// downstream use, then reselect the complete partition before production live ingress —
+/// even if it fits inside the present cap.
 #[derive(Debug, Clone, Copy, PartialEq)]
 #[must_use]
 pub struct ProducerShares {
@@ -1157,11 +1157,11 @@ impl RenderLimits {
         };
 
         // ADR-0046 clause 1's partition of `max_events_per_quantum`. **Every number here
-        // is provisional.** The record fixes the relations and leaves the values to
-        // Phase 3 measurement, which must reselect the cap itself from the measured
-        // partition before live ingress is enabled. They are chosen to satisfy every
-        // checked relation and to sum to the cap exactly, so the default carries no
-        // unusable slack that a later measurement would have to explain away.
+        // is provisional.** ADR-0054 measures each first real authored or internal producer
+        // before downstream use, then reselects the complete partition before production
+        // live ingress. These values satisfy every checked relation and sum to the cap
+        // exactly, so the default carries no unusable slack a later measurement would have
+        // to explain away.
         let shares = ProducerShares::new(
             EventCount::limit(96)?,
             EventCount::limit(48)?,

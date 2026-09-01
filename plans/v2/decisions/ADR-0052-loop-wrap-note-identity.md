@@ -6,8 +6,8 @@
 | Status | Proposed |
 | Phase | 3 |
 | Created | 2026-08-31 |
-| Last reviewed | 2026-08-31 |
-| Related | ADR-0023, ADR-0032, ADR-0046, ADR-0047, ADR-0050, `SPEC` sound core render contract, `SPEC` host profile and render limits |
+| Last reviewed | 2026-09-01 |
+| Related | ADR-0023, ADR-0032, ADR-0046, ADR-0047, ADR-0050, ADR-0055, `SPEC` sound core render contract, `SPEC` host profile and render limits |
 | Supersedes | — |
 | Superseded by | — |
 
@@ -37,11 +37,11 @@ already done is enough; what it does not settle is whether a wrap may be refused
 question is what makes this an ownership boundary rather than an implementation detail. `PROCESS.md`'s
 durable-decision test names a real-time ownership boundary as requiring a record.
 
-**Why the topic is open now rather than later.** ADR-0050 clause 3 records the debt in as many words: an activation
-carries the loop interval, "**recorded, and not yet enforced**: a wrap is not implemented, so nothing repeats the
-interval and the candidate's schedule is not bounded by it". The loop's *admission* is built — `admit_loop` and
-`admit_loop_polyphony` both have callers and both refuse — so the wrap is the last unbuilt half of the transport
-work, and Phase 3's exit gate names loop transition ordering.
+**Why the topic is open now rather than later.** ADR-0050 originally recorded a loop interval without enforcing it.
+ADR-0055 now fails closed at the offer: a loop-bearing candidate can pass its off-thread bounds, but it cannot enter
+active transport state until this record's coupled sample-exact contract is resolved. The loop's *admission* remains
+built — `admit_loop` and `admit_loop_polyphony` both have callers and both refuse — so the wrap is the last unbuilt
+half of runtime loop playback.
 
 ## Decision boundary
 
@@ -64,10 +64,10 @@ round and six in the second; the numbering here is by subject rather than by rou
 
 ### The contract
 
-1. **A wrap is a transport activation.** ADR-0050 clause 3 puts the loop interval in the atomic set and treats a
-   wrap as one of the four re-anchoring moments; `SOUND-INV-018` carries that as the current rule, and ADR-0032
-   requires a loop wrap to establish a new anchor. A design in which a wrap is *not* an activation contradicts three
-   accepted records at once, and must supersede them rather than sit beside them.
+1. **A wrap is a transport activation.** ADR-0050 treats a wrap as one of the four re-anchoring moments;
+   `SOUND-INV-018` carries that rule, and ADR-0032 requires a loop wrap to establish a new anchor. ADR-0055 prevents
+   a loop interval from becoming active while the wrap is absent; it does not change the eventual wrap boundary. A
+   design in which a wrap is *not* an activation must supersede those accepted records rather than sit beside them.
 2. **Adoption is infallible and advances the freshness sequence.** ADR-0050 clause 6 changes the in-force sequence
    at adoption alone, and an accepted candidate is valid only while the value it supersedes is still in force.
    Adoption itself has no branch that can fail, by clause 3, so it cannot re-check anything at the boundary.
@@ -219,9 +219,9 @@ The record that closes this topic has to answer these as one contract, and the f
 
 ## Consequences and risks
 
-- **Accepted cost.** The loop stays unbuilt and its interval stays recorded-but-unenforced, exactly as ADR-0050
-  clause 3 describes. An event past `loop_end` therefore plays, and reserves an identity, where under wrapping it
-  would be unreachable. Phase 3's exit gate cannot close its loop-transition limb until this record does.
+- **Accepted cost.** Loop playback stays unavailable. ADR-0055 refuses a loop-bearing activation at the runtime
+  offer, names the interval and leaves active state unchanged. No event can silently play past an allegedly active
+  loop end; the first consumer that needs loop playback must resolve this record.
 - **Safety/correctness control.** The admission halves already built are unaffected and keep refusing: a loop whose
   periodic extension overruns the compiled share, and one whose repeating pass exceeds the producer's admitted
   range, are both refused at the build today. Nothing in this record relaxes either.
@@ -232,8 +232,8 @@ The record that closes this topic has to answer these as one contract, and the f
 
 ## Specification update
 
-None. A `Proposed` record changes no current specification, and the render contract's existing statement that a
-loop interval is recorded and not yet enforced remains correct.
+None. A `Proposed` record changes no current specification. ADR-0055 independently updates the current render
+contract with fail-closed behavior while this record remains undecided.
 
 ## Review
 

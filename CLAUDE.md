@@ -16,6 +16,15 @@ Pertylizer is in active development. Backward compatibility is **not promised**,
 but breaking an existing API, persisted format, manifest, wire contract, or
 protocol requires the user's **explicit approval for that break**.
 
+`synth_engine_v2` is an explicitly unstable experimental boundary until a
+production dependency or supported external consumer is declared. The user's
+2026-09-01 process-reset approval pre-approves clean breaks to its Rust API when
+the diff is confined to that crate and repository-local development or test
+consumers. Update every such consumer in the same change. This standing approval
+does not cover persisted data, wire or protocol contracts, manifests, a shipping
+dependency edge, an external consumer, or `unsafe` code; each still requires
+specific approval.
+
 After approval, make the break cleanly; compatibility shims and migrations are
 not required unless the user asks for them. For persisted and wire contracts,
 prefer a format or protocol version change. Never silently give an existing
@@ -34,36 +43,66 @@ changes already in the worktree, and do not stage them. "Clean" below means that
 the checks report no warnings or errors and that the intended change contains no
 unexplained files; it does not mean that the worktree has no uncommitted change.
 
-Choose the gate from the change, rather than running unrelated work:
+Choose the smallest gate that covers the changed risk:
+
+When more than one row applies, use the strongest applicable gate. The complete
+repository gate includes the core and evidence gates; the core gate includes the
+evidence gate.
 
 | Change | Required verification before commit |
 |---|---|
-| Mechanical documentation, status, links, indexes, or `scripts/check_v2_docs.py` | `git diff --check`; for Core V2, run the documentation gate below |
-| Normative documentation, ADRs, specifications, evidence methods, or process rules | The documentation checks above plus one independent semantic review |
-| Rust behavior | The core Rust gate below plus one independent uncommitted review |
-| Features, dependencies, build configuration, release, or merge to `main` | The complete repository gate below plus one independent uncommitted review |
+| Mechanical documentation, status, links, or indexes | `git diff --check`; for Core V2, run the fast documentation gate below |
+| Documentation-checker behavior | The fast documentation gate plus author diff review; use the evidence gate when simulator selection, validation or dependency controls change |
+| Normative documentation, ADRs, specifications, process rules, or evidence conclusions | The fast documentation gate plus one independent semantic review |
+| Evidence method, harness, digest, phase exit, or Core V2 code in the EVD-0016 simulator dependency closure | The evidence gate below plus the review required by the change's other risk |
+| Rust behavior confined to one package and outside the boundary-sensitive set below | The targeted Rust gate plus author review of the complete diff |
+| Admission, scheduling, identity, concurrency, persistence, protocol, real-time boundaries, or production-facing APIs | The core Rust gate plus one independent uncommitted review |
+| Features, dependencies, build configuration, phase exit, release, or merge to `main` | The complete repository gate plus one independent uncommitted review |
 
-The Core V2 documentation gate is:
+The fast Core V2 documentation gate is:
 
 ```bash
 python3 -B scripts/check_v2_docs.py
 python3 -B -m unittest scripts/test_check_v2_docs.py
 ```
 
-`check_v2_docs.py` also compiles and runs EVD-0016's deterministic Rust
-simulator and checks its output digest. The Core V2 documentation gate therefore
-requires the repository's Rust toolchain even for a documentation-only change.
-The quality workflow runs this gate before installing Linux system libraries.
-The simulator must therefore remain in `synth_engine_v2`'s system-library-free
-dependency closure; if a future evidence control needs a system-linked target,
-reorder `.github/workflows/quality.yml` before adding that dependency.
-The simulator evaluates roughly 11.5 million long-horizon observations per run;
-`cargo test --workspace` executes the example's control test a second time.
+It checks structure, links, registers, Python evidence controls, specification
+coverage, and active-document style without compiling Rust.
+
+The Core V2 evidence gate adds the deterministic EVD-0016 simulator:
+
+```bash
+python3 -B scripts/check_v2_docs.py --evidence
+python3 -B -m unittest scripts/test_check_v2_docs.py
+```
+
+The quality workflow always runs the evidence gate. Run it locally when an
+evidence method, harness, digest, phase exit, or any code in the simulator's
+dependency closure changes. The simulator evaluates roughly 11.5 million
+long-horizon observations; ordinary mechanical documentation does not need to
+repeat it. The simulator must remain in `synth_engine_v2`'s
+system-library-free dependency closure because CI runs it before installing
+Linux system libraries.
+
+The targeted Rust gate, valid only while every changed Rust path is inside one
+package, is:
+
+```bash
+cargo fmt --check
+cargo clippy -p <package> --all-targets
+cargo test -p <package>
+```
+
+Use the core Rust gate instead when a diff crosses package boundaries or touches
+admission, scheduling, identity, concurrency, persistence, a protocol, a
+real-time boundary, or a production-facing API. A package-local change does not
+become boundary-sensitive merely because it fixes ordinary UI, formatting,
+diagnostic wording, or isolated non-real-time logic.
 
 The core Rust gate is:
 
 ```bash
-python3 -B scripts/check_v2_docs.py
+python3 -B scripts/check_v2_docs.py --evidence
 python3 -B -m unittest scripts/test_check_v2_docs.py
 cargo fmt --check
 cargo build --workspace
@@ -102,8 +141,8 @@ scoped allowance at the relevant site.
 
 #### Who may perform an independent review
 
-This governs every table row above that requires a review: the semantic review
-for normative documentation and the uncommitted review for the other two rows.
+This governs every table row above that requires an independent review. A
+targeted ordinary Rust change receives author diff review instead.
 A reader qualifies by two properties rather than by being a named tool:
 
 1. **It did not author the change.** A reader holding the session context in
@@ -134,11 +173,12 @@ set -o pipefail
   git status --short --untracked-files=all
   printf '\n=== staged ===\n';   git diff --cached
   printf '\n=== unstaged ===\n'; git diff
-} | claude -p --tools "Read,Grep,Glob" --disable-slash-commands \
-  --strict-mcp-config --mcp-config '{"mcpServers":{}}' \
+} | claude -p \
   "Review this uncommitted change against CLAUDE.md's invariants. The status
    block lists untracked files; open them yourself. Report defects only. Do
-   not fix anything."
+   not fix anything." \
+  --tools "Read,Grep,Glob" --disable-slash-commands \
+  --strict-mcp-config --mcp-config '{"mcpServers":{}}'
 ```
 
 Check the exit status. Five details are load-bearing:
@@ -180,13 +220,13 @@ so two clauses bound it:
   was available in the commit message. The waiver is unavailable for a merge to
   `main` and for a release; those stop until a qualifying reader is available.
 
-Read and report the findings before acting on them. A separate independent
-design review and an uncommitted review are not both required when one
-review can satisfy the declared scope and stopping rule. Follow the
-[review and design protocol](#review-and-design-protocol), including its
-self-audit after every repair. Re-run every gate command affected by a repair;
-run the complete gate again when the repair changes features, dependencies,
-build behavior, release behavior, or a cross-configuration contract.
+Read and report the findings before acting on them. One independent review
+covers one declared high-risk scope; a separate design and uncommitted review
+are not both required when the same read can inspect the final artifact. Follow
+the [review and design protocol](#review-and-design-protocol). Re-run every gate
+command affected by a repair; run the complete gate again when the repair
+changes features, dependencies, build behavior, release behavior, or a
+cross-configuration contract.
 
 Before the commit, inspect `git status --short`, `git diff`, and
 `git diff --cached`. Stage only the intended paths:
@@ -207,9 +247,10 @@ Reviews are load-bearing: they catch false behavioral claims, contradictions,
 uncontrolled measurements, and contract holes that compilation cannot find.
 They must remain independent and bounded.
 
-1. **Review the design before building.** For a measurement, decision record,
-   or anything carrying acceptance criteria, write the criteria first and ask:
-   *what would make this wrong?*
+1. **Frame the design before building.** For a measurement, durable decision,
+   or phase acceptance criterion, write the falsifier and ask *what would make
+   this wrong?* An independent design consultation is required only when the
+   method has an unresolved asymmetry or the choice crosses a safety boundary.
 2. **Do not ask the reviewer to author the frames.** A reader who wrote the
    constraints cannot independently review them.
    `plans/v2/PROCESS.md` requires a reader who did not author the durable
@@ -219,11 +260,16 @@ They must remain independent and bounded.
    threshold, artifact, or failure that can violate it.
 4. **Verify factual claims while drafting.** Check them against the code or the
    command's actual output; do not infer facts that are cheap to inspect.
-5. **Self-audit every repair before another read.** Search for renamed or
-   renumbered references, recount changed totals, and reread for contradictions
-   introduced by the repair.
-6. **Scope rereads to the changed claim or clauses.** Do not trigger a broad
-   reaudit when a focused independent read can settle the repair.
+5. **Self-audit every repair.** Search for renamed or renumbered references,
+   recount changed totals, and reread for contradictions introduced by the
+   repair.
+6. **Reread only boundary-sensitive repairs.** A focused independent reread is
+   required when a repair changes the reviewed conclusion, contract, evidence
+   method, safety boundary, or code in admission, scheduling, identity,
+   concurrency, persistence, protocol, or the real-time path. Other repairs use
+   author self-audit and affected tests. A reviewer may explicitly mark a
+   finding as requiring a focused reread. Never restart a broad review merely
+   because a repair is semantic.
 7. **State the stopping rule.** A false claim, internal contradiction, or
    contract hole that an implementer cannot fill blocks acceptance. A request
    for optional implementation detail does not.

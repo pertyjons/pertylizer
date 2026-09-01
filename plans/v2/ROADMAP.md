@@ -27,8 +27,8 @@ accepted exit review. `NOW.md` owns task activity within an active phase.
 | [0B](master-plan.md#phase-0b-migration-inventories-and-project-contracts) | Migration inventories and Project/Application contracts | Active, parallel | — |
 | [1](master-plan.md#phase-1-introduce-the-experimental-sound-core-v2-crate) | Deletable experimental Sound Core renderer | Complete | 0A |
 | [2](master-plan.md#phase-2-minimal-compiled-voice-graph) | One complete compiled voice graph | Complete | 1 |
-| [3](master-plan.md#phase-3-sample-accurate-scheduler-and-block-partition-invariance) | Sample-accurate scheduler and host-block invariance | Active | 2 |
-| [4](master-plan.md#phase-4-current-project-lowering-and-offline-ab-path) | Current-project lowering and offline V1/V2 comparison | Not started | 3 |
+| [3](master-plan.md#phase-3-sample-accurate-scheduler-and-block-partition-invariance) | Sample-accurate scheduler and host-block invariance | Complete | 2 |
+| [4](master-plan.md#phase-4-current-project-lowering-and-offline-ab-path) | Current-project lowering and offline V1/V2 comparison | Active | 3 |
 | [5](master-plan.md#phase-5-declarative-node-and-parameter-api) | Declarative node and parameter API | Not started | 4 |
 | [6](master-plan.md#phase-6-polyphony-and-instrument-runtime) | Polyphony and instrument runtime | Not started | 5 |
 | [7](master-plan.md#phase-7-yams-mod-grid-and-unified-modulation) | YAMS, Mod Grid, and unified modulation | Not started | 6 |
@@ -114,6 +114,10 @@ block partitioning.
 Exit requires exact within-block event placement, stable tempo mapping,
 declared same-sample ordering, bounded exhaustion behavior, and identical
 deterministic output across equivalent host-block partitions.
+
+Exit: [`REV-P03`](reviews/phase-03-exit-review.md) is accepted. Unsupported
+runtime loop playback fails closed, and the four residual obligations in that
+review block their first real consumers rather than unrelated Phase 4 lowering.
 
 ### Phase 4 — current-project lowering and offline A/B
 

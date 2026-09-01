@@ -470,21 +470,21 @@ fn the_retired_schedule_comes_back_rather_than_being_dropped() {
 }
 
 #[test]
-fn a_loop_interval_travels_with_the_activation() {
-    // ADR-0046 clause 4 admits a loop before the transport state changes, and ADR-0050
-    // clause 3 puts the admitted interval in the atomic set. Adopting is what makes it the
-    // one in force; offering is not.
+fn runtime_loop_playback_fails_closed_until_sample_exact_wraps_exist() {
+    // The off-thread checks can admit the interval's density and polyphony, but the runtime
+    // has no sample-exact wrap mechanism. The offer must refuse instead of recording a loop
+    // and then playing silently past its end.
     let plan = plan();
     let (mut control, mut renderer) =
         StreamControl::open(plan.clone(), ORIGIN).expect("the stream opens");
-    let mut arbiter = arbiter();
     let quiet = admitted(&plan, &[]);
     let mut scheduler =
         CompiledEventScheduler::prepare(&mut control, &quiet).expect("an empty stream prepares");
-    assert_eq!(scheduler.loop_interval(), None, "a stream starts unlooped");
 
     let interval = LoopInterval::new(PlanPosition::ZERO, PlanPosition::new(4 * Q))
         .expect("a positive interval");
+    let scheduler_before = scheduler.in_force();
+    let control_before = control.in_force();
     let activation = control
         .plan_activation(
             &quiet,
@@ -494,30 +494,39 @@ fn a_loop_interval_travels_with_the_activation() {
                 loop_interval: Some(interval),
             },
         )
-        .expect("the candidate builds");
-    scheduler
+        .expect("the candidate passes the off-thread loop bounds");
+    let (activation, refusal) = scheduler
         .offer(&mut renderer, activation)
-        .expect("the offer is accepted");
+        .expect_err("runtime loop playback is not implemented");
     assert_eq!(
-        scheduler.loop_interval(),
-        None,
-        "an offered activation has changed nothing yet"
-    );
-
-    let mut out = Vec::new();
-    drive(
-        &mut scheduler,
-        &mut renderer,
-        &mut arbiter,
-        4 * Q as usize,
-        64,
-        &mut out,
+        refusal,
+        ActivationRefused::LoopPlaybackUnsupported {
+            start: interval.start(),
+            end: interval.end(),
+        }
     );
     assert_eq!(
-        scheduler.loop_interval(),
-        Some(interval),
-        "adoption is what puts it in force"
+        renderer.diagnostics().refused_activations(),
+        1,
+        "the unsupported offer is visible"
     );
+    assert_eq!(
+        scheduler.in_force(),
+        scheduler_before,
+        "refusal leaves the scheduler's active sequence unchanged"
+    );
+    assert_eq!(
+        control.in_force(),
+        control_before,
+        "refusal leaves the control's active sequence unchanged"
+    );
+    assert!(
+        scheduler.collect().is_none(),
+        "refusal leaves neither a pending candidate nor a retired value"
+    );
+    control
+        .withdraw(activation)
+        .expect("a refused candidate still costs the control nothing");
 }
 
 #[test]
@@ -1346,58 +1355,32 @@ fn an_adoption_never_happens_in_a_call_that_renders_no_quantum() {
 }
 
 #[test]
-fn a_retirement_reports_the_cursor_and_loop_it_replaced() {
+fn a_retirement_reports_the_cursor_and_anchor_it_replaced() {
     // ADR-0050 clause 3 exchanges an atomic set. The allocations come back by being swapped;
-    // the anchor, the cursor and the loop are values with nowhere to go, and an earlier
-    // revision simply overwrote them — so a collected retirement could not describe the state
-    // it claimed to return. An independent review found the hole.
+    // the anchor and cursor are values with nowhere to go, and an earlier revision simply
+    // overwrote them — so a collected retirement could not describe the state it claimed to
+    // return. An independent review found the hole. ADR-0055 prevents a loop from entering
+    // active state until runtime wrapping exists, so no active loop belongs in this fixture.
     let plan = plan();
     let (mut control, mut renderer) =
         StreamControl::open(plan.clone(), ORIGIN).expect("the stream opens");
     let mut arbiter = arbiter();
 
-    // An outgoing schedule with two edges, and a loop, so both have something to report.
+    // Advance an outgoing schedule with two edges so its retirement has a cursor to report.
     let two = admitted(&plan, &[note(&plan, 0, true), note(&plan, Q, false)]);
     let mut scheduler =
         CompiledEventScheduler::prepare(&mut control, &two).expect("the outgoing stream prepares");
-    let interval =
-        LoopInterval::new(PlanPosition::ZERO, PlanPosition::new(4 * Q)).expect("positive");
-    let looping = control
-        .plan_activation(
-            &two,
-            ActivationRequest {
-                at: SampleTime::ZERO,
-                position: PlanPosition::ZERO,
-                loop_interval: Some(interval),
-            },
-        )
-        .expect("the loop activation builds");
-    scheduler
-        .offer(&mut renderer, looping)
-        .expect("the offer is accepted");
-
     let mut out = Vec::new();
     drive(
         &mut scheduler,
         &mut renderer,
         &mut arbiter,
-        4 * Q as usize,
+        2 * Q as usize,
         64,
         &mut out,
     );
-    let first = scheduler
-        .collect()
-        .expect("the loop activation was adopted");
-    control
-        .adopted(first)
-        .expect("the control promotes its own retirement");
-    assert_eq!(
-        scheduler.loop_interval(),
-        Some(interval),
-        "the loop is in force"
-    );
 
-    // Now replace it, and read back what the replacement retired.
+    // Replace it, and read back what the replacement retired.
     let quiet = admitted(&plan, &[]);
     let replacement = control
         .plan_activation(&quiet, request(8 * Q, 0))
@@ -1417,11 +1400,6 @@ fn a_retirement_reports_the_cursor_and_loop_it_replaced() {
     let state = retired
         .retired()
         .expect("an adopted activation reports what it replaced");
-    assert_eq!(
-        state.loop_interval,
-        Some(interval),
-        "the loop that was in force comes back rather than being dropped"
-    );
     assert!(
         state.cursor > 0,
         "and so does how far the replaced schedule had been released"
@@ -1532,66 +1510,6 @@ fn a_stamping_refusal_names_the_event_in_the_stream_the_caller_admitted() {
         ),
         other => panic!("unexpected refusal: {other}"),
     }
-}
-
-#[test]
-fn the_control_keeps_the_loop_adoption_put_in_force() {
-    // ADR-0050 clause 9 gives the off-thread half the loop. A promotion that dropped it would
-    // leave the audio thread's scheduler holding the only copy, and a control that read it
-    // back from there would be shadowing state it is supposed to own.
-    let plan = plan();
-    let (mut control, mut renderer) =
-        StreamControl::open(plan.clone(), ORIGIN).expect("the stream opens");
-    let mut arbiter = arbiter();
-    let quiet = admitted(&plan, &[]);
-    let mut scheduler =
-        CompiledEventScheduler::prepare(&mut control, &quiet).expect("an empty stream prepares");
-    assert_eq!(control.loop_interval(), None, "a stream starts unlooped");
-
-    let interval =
-        LoopInterval::new(PlanPosition::ZERO, PlanPosition::new(4 * Q)).expect("positive");
-    let activation = control
-        .plan_activation(
-            &quiet,
-            ActivationRequest {
-                at: SampleTime::new(2 * Q),
-                position: PlanPosition::ZERO,
-                loop_interval: Some(interval),
-            },
-        )
-        .expect("the candidate builds");
-    scheduler
-        .offer(&mut renderer, activation)
-        .expect("the offer is accepted");
-    assert_eq!(
-        control.loop_interval(),
-        None,
-        "an offered activation has changed nothing yet"
-    );
-
-    let mut out = Vec::new();
-    drive(
-        &mut scheduler,
-        &mut renderer,
-        &mut arbiter,
-        4 * Q as usize,
-        64,
-        &mut out,
-    );
-    let retired = scheduler.collect().expect("it was adopted");
-    control
-        .adopted(retired)
-        .expect("the control promotes its own retirement");
-    assert_eq!(
-        control.loop_interval(),
-        Some(interval),
-        "collecting is what puts it in force on this half"
-    );
-    assert_eq!(
-        control.loop_interval(),
-        scheduler.loop_interval(),
-        "and the two halves agree about it"
-    );
 }
 
 #[test]

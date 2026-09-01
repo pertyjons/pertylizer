@@ -837,12 +837,12 @@ impl DiagnosticsReport {
 
     /// Activations refused at the offer.
     ///
-    /// A stream that has already faulted, a stale epoch, a superseded sequence, or an occupied
-    /// exchange slot. **A schedule paired with another stream's renderer refuses too and is
-    /// deliberately not counted here**: these counters belong to the stream that was offered
-    /// to, and that refusal has no such stream. None of the counted ones is a
-    /// fault — ADR-0050 clause 3 puts every refusal at the offer precisely so that adoption
-    /// has no branch that can fail — but a stream that silently refuses every seek and one
+    /// A stream that has already faulted, a stale epoch, unsupported loop playback, a
+    /// superseded sequence, or an occupied exchange slot. **A schedule paired with another
+    /// stream's renderer refuses too and is deliberately not counted here**: these counters
+    /// belong to the stream that was offered to, and that refusal has no such stream. None of
+    /// the counted ones is a fault — ADR-0050 clause 3 puts every refusal at the offer so
+    /// adoption has no branch that can fail — but a stream that silently refuses every seek and one
     /// that adopts them are indistinguishable without this.
     pub const fn refused_activations(&self) -> u64 {
         self.refused_activations

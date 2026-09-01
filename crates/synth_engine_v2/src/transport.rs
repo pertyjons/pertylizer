@@ -96,12 +96,9 @@ pub struct LoopInterval {
 impl LoopInterval {
     /// A loop, or `None` where the interval is not positive.
     ///
-    /// **An interval carried by an activation is admitted, but not enforced.** No wrap is
-    /// implemented, so nothing repeats it: the candidate's schedule is not bounded by
-    /// [`Self::end`], and an event past it plays and reserves an identity where under
-    /// wrapping it would be unreachable. That enforcement is the wrap slice's, and so is the
-    /// identity question it turns on — a wrap replays a list whose occurrences were minted
-    /// once, which ADR-0052 owes an answer before any of it can be built.
+    /// An interval carried by an activation is admitted off-thread, then refused at the
+    /// runtime offer under ADR-0055. No interval enters active transport state until the
+    /// sample-exact wrap and note-identity contract in ADR-0052 is implemented.
     ///
     /// What **is** proved when the candidate is built is two bounds on the pass a wrap would
     /// produce, answering to two records: ADR-0046 clause 4's event density against the
@@ -134,32 +131,9 @@ impl LoopInterval {
     /// How long one pass is.
     ///
     /// A [`FrameCount`](crate::time::FrameCount) rather than a `u64`: it is a duration in
-    /// frames, [`Self::wrap_at`] adds multiples of it to a [`SampleTime`], and the unit
-    /// belongs in the type rather than in the caller's memory.
+    /// frames, and the unit belongs in the type rather than in the caller's memory.
     pub const fn length(self) -> crate::time::FrameCount {
         crate::time::FrameCount::new(self.end.as_u64() - self.start.as_u64())
-    }
-
-    /// The requested engine time of the `pass`-th wrap after `first`.
-    ///
-    /// **Derived from the ideal timeline, never from the previous wrap's effective point.**
-    /// ADR-0050 clause 1: a loop whose length is not a whole number of quanta snaps at every
-    /// wrap, and deriving each wrap from the last actual one accumulates those roundings
-    /// until the loop is permanently longer than the one the user set. Under this
-    /// derivation each error is an independent value below one quantum, so the audible
-    /// period jitters and returns.
-    ///
-    /// The two are indistinguishable for a loop length that happens to be a multiple of `Q`,
-    /// which is exactly why the ideal derivation is a rule rather than an implementation
-    /// detail.
-    pub const fn wrap_at(self, first: SampleTime, pass: u64) -> Option<SampleTime> {
-        let Some(offset) = self.length().as_u64().checked_mul(pass) else {
-            return None;
-        };
-        match first.as_u64().checked_add(offset) {
-            Some(time) => Some(SampleTime::new(time)),
-            None => None,
-        }
     }
 }
 
@@ -214,6 +188,20 @@ pub enum ActivationRefused {
     /// as accepted is the failure this refuses; an independent review found it.
     #[error("the stream has faulted and is waiting to be re-prepared")]
     StreamFaulted,
+
+    /// Runtime loop playback is not implemented yet.
+    ///
+    /// A loop interval can be checked off-thread for density and polyphony, but the current
+    /// scheduler has no sample-exact wrap mechanism. Accepting it would therefore record a
+    /// loop while continuing past its end. Refusal keeps the experimental transport
+    /// fail-closed until the sample-exact owner replaces this guard.
+    #[error("loop playback for [{start}, {end}) is not implemented")]
+    LoopPlaybackUnsupported {
+        /// The loop's first frame.
+        start: PlanPosition,
+        /// Its exclusive end.
+        end: PlanPosition,
+    },
 
     /// A candidate is already waiting to be adopted.
     #[error("an activation is already pending")]
@@ -287,7 +275,9 @@ pub struct TransportActivation {
     /// ADR-0051 clause 1's catch-up batch: one row per prepared target, restoring the
     /// destination's control state before the new stream's own events at that sample.
     pub(crate) catch_up: Vec<crate::render::TimedEvent>,
-    /// The loop in force after adoption.
+    /// The requested loop, inspected by the fail-closed offer boundary.
+    ///
+    /// ADR-0055 prevents a candidate carrying this value from being adopted.
     pub(crate) loop_interval: Option<LoopInterval>,
     /// The producers whose sounding notes the boundary ends.
     pub(crate) producers: Vec<ProducerId>,
@@ -313,7 +303,7 @@ pub struct TransportActivation {
     ///
     /// The scalars of the atomic set clause 3 exchanges. The vectors travel by being swapped
     /// into the fields above; these have nowhere else to go, and a retirement that could not
-    /// report the cursor and loop it replaced would not be the state it claims to return.
+    /// report the cursor it replaced would not be the state it claims to return.
     pub(crate) retired: Option<RetiredState>,
 }
 
@@ -321,7 +311,7 @@ pub struct TransportActivation {
 ///
 /// ADR-0050 clause 3 exchanges an atomic set; the allocations come back by being swapped, and
 /// these are the members that are values rather than allocations. An independent review found
-/// the cursor and the loop being dropped instead of returned.
+/// the cursor being dropped instead of returned.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[must_use]
 pub struct RetiredState {
@@ -329,8 +319,6 @@ pub struct RetiredState {
     pub anchor: crate::time::StreamAnchor,
     /// How far its schedule had been released.
     pub cursor: usize,
-    /// The loop that was in force.
-    pub loop_interval: Option<LoopInterval>,
     /// The displacement its own placed events were read under.
     ///
     /// Without it the returned event list is uninterpretable: the times it carries are the
@@ -372,7 +360,10 @@ impl TransportActivation {
         self.supersedes
     }
 
-    /// The loop in force after adoption.
+    /// The requested loop, or `None` for a non-loop activation.
+    ///
+    /// ADR-0055 makes a candidate carrying `Some` fail at the offer, so such a candidate
+    /// never reaches adoption.
     pub const fn loop_interval(&self) -> Option<LoopInterval> {
         self.loop_interval
     }

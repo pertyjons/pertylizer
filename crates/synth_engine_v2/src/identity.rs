@@ -319,8 +319,8 @@ pub struct IdentityTable {
     pub(super) ranges: Vec<Range>,
     /// The highest generation an index may mint before it retires.
     ///
-    /// A construction parameter rather than a constant, because ADR-0047 leaves the widths
-    /// to Phase 3 measurement — and because retirement is otherwise unreachable in a test:
+    /// A construction parameter rather than a constant, because ADR-0047 leaves endurance
+    /// validation to P03-R004 — and because retirement is otherwise unreachable in a test:
     /// walking a `u32` to its ceiling by minting would take longer than this project will
     /// exist, and a rule no test can reach is a rule nobody has checked.
     pub(super) generation_ceiling: u32,

@@ -4,9 +4,9 @@
 |---------------|--------------------------------------------------------------|
 | ID            | ADR-0028                                                     |
 | Status        | Deferred                                                     |
-| Phase         | 0A, deferred to the Phase 4 entry gate                       |
+| Phase         | 0A/4, deferred to the first Phase 4 render-orchestration slice |
 | Created       | 2026-08-13                                                   |
-| Last reviewed | 2026-08-13                                                   |
+| Last reviewed | 2026-09-01                                                   |
 | Related       | ADR-0027, ADR-0029, ADR-0030, ADR-0035, ADR-0032, P00A-T006  |
 | Supersedes    | —                                                            |
 | Superseded by | —                                                            |
@@ -17,14 +17,18 @@
 
 | Field                | Value                                                                                   |
 |----------------------|-----------------------------------------------------------------------------------------|
-| Deferred to          | The **Phase 4 entry gate**. Phase 4 (V1 lowering and offline A/B) may not begin before this is `Accepted` |
+| Deferred to          | The first Phase 4 slice that introduces shared render orchestration, multi-project A/B, streaming, progress, cancellation, or a frontend surface; no later than Phase 4 exit |
 | Owner                | Project maintainer — this is a single-maintainer repository, so there is no second party to assign |
 | Evidence required    | A workflow analysis of every existing render and analysis caller: what each needs of progress, cancellation, pinning, and a result; how MCP clients behave on a long synchronous call; and whether the GUI's export-progress model survives a second consumer |
-| Why not now          | The register's basis is `Render/analysis workflow analysis`, and that analysis has not been done. Nothing in Phases 1-3 creates a job |
+| Why not now          | The register's basis is `Render/analysis workflow analysis`, and that analysis has not been done. The initial Phase 4 lowerer and one bounded in-process smoke render create no job or shared orchestration |
 | What makes it safe   | Phase 0A's own executable work — the corpus and `pertylizer compare` — runs synchronously and is not a job |
 
-The Phase 0A exit gate accepts this record as `Deferred` on those four fields, and the master plan permits deferral
-**only** to the Phase 4 entry gate.
+The Phase 0A exit gate accepted this record as `Deferred` to the Phase 4 entry
+gate. Its 2026-09-01 boundary correction leaves that completed review unchanged
+and narrows what may start before acceptance: only the pure lowerer and one
+bounded in-process smoke render. No shared `RenderRequest`/`RenderResult`,
+multi-project A/B orchestration, streaming sink, progress, cancellation, GUI,
+CLI or MCP surface may be built before this record is accepted.
 
 ## Context
 
@@ -49,7 +53,7 @@ pieces already exist, in three places, each built for one caller. Read at `e4873
   `LOAD_DEADLINE` (`crates/pertylizer/src/render/headless.rs:60`) as a deadlock backstop, with a comment explaining why
   it is wall-clock rather than a block count. That is job-lifecycle reasoning, written for one call site.
 
-**What this record will decide**, at the Phase 4 entry gate:
+**What this record will decide**, before the first Phase 4 render-orchestration slice:
 
 1. Job identity and lifecycle: the states, which are terminal, and who owns the handle.
 2. Revision pinning: which project revision a job operates on, and what happens when the document changes while it
@@ -72,8 +76,10 @@ pieces already exist, in three places, each built for one caller. Read at `e4873
   done, and deciding without it would design for the callers that come to mind rather than the ones that exist.
 - The pieces that exist are evidence about requirements: someone needed progress for export, a receipt for the headless
   renderer, and a deadline for loading. A contract that cannot express all three is already known to be wrong.
-- Nothing in Phases 1-3 creates a job, so the decision has no earlier consumer. Phase 4 is the first: offline A/B runs
-  many renders and is where an uncancellable, unobservable render becomes painful.
+- Nothing in Phases 1-3 creates a job, and neither does a pure lowering pass or
+  one bounded in-process smoke render. Multi-project offline A/B is the first
+  consumer: it runs many renders and is where an uncancellable, unobservable
+  render becomes painful.
 - A job contract touches four other open decisions. Settling it early, alone, would fix a boundary that those four have
   not yet had a chance to argue with.
 
@@ -106,16 +112,24 @@ what an MCP client actually does when a call takes minutes. Both are obtainable 
 
 ## Decision
 
-**Deferred to the Phase 4 entry gate**, with the owner and evidence recorded in *The deferral* above.
+**Deferred to the first Phase 4 render-orchestration slice**, with the owner,
+scope guard and evidence recorded in *The deferral* above. This is no later than
+Phase 4 exit.
 
 Two constraints hold in the meantime:
 
 1. **No new long-running synchronous surface** should be added to MCP or the CLI without recording that it will be
    migrated. The existing ones are a known cost; new ones are a growing one.
-2. **No second progress or cancellation mechanism** may be built beside `ExportProgress`. A caller that needs one is
-   evidence for this record and should be written down as such rather than served with a third bespoke channel.
+2. **No second progress or cancellation mechanism** may be built beside
+   `ExportProgress`. A caller that needs one is evidence for this record and
+   pulls acceptance forward rather than receiving a third bespoke channel.
+3. **The pre-acceptance Phase 4 scope is closed:** pure lowering plus one bounded
+   in-process smoke render. Multi-project A/B, a shared render request/result,
+   streaming, progress, cancellation and frontend integration are refused as
+   task selections until this record is accepted.
 
-Neither constraint blocks Phase 1-3 work, because none of it creates a job.
+These constraints do not block Phase 1-3 or the closed initial Phase 4 scope,
+because none creates a job.
 
 ## Consequences
 
@@ -137,23 +151,26 @@ Neither constraint blocks Phase 1-3 work, because none of it creates a job.
 
 - **Risk: a third bespoke mechanism appears** before the contract does, making the migration larger than the decision.
   Control: constraint 2, which turns the need into evidence instead of into code.
-- **Risk: the deferral is extended past Phase 4** because A/B work can be done with blocking renders if one is patient.
-  Control: the master plan permits deferral only to the Phase 4 entry gate.
-- **Risk: the workflow analysis is skipped** and the record is written from this context section instead. Control: the
-  register's basis names the analysis, and the Phase 4 entry gate checks the basis, not the prose.
+- **Risk: the deferral is extended through Phase 4** because A/B work can be
+  done with blocking renders if one is patient. Control: multi-project A/B and
+  every shared render-orchestration surface are outside the closed initial
+  scope, and Phase 4 cannot exit while this record remains deferred.
+- **Risk: the workflow analysis is skipped** and the record is written from this context section instead. Control:
+  the register's basis names the analysis, and the first shared render-orchestration slice checks the basis, not the
+  prose.
 
 ## Follow-up work
 
 | Task                                                                              | Phase | Status      |
 |-----------------------------------------------------------------------------------|-------|-------------|
-| Workflow analysis of every render and analysis caller                             | 4     | Not started |
-| Establish what MCP clients do on a multi-minute synchronous call                  | 4     | Not started |
-| Write and accept this record against that analysis                                | 4     | Not started |
+| Workflow analysis of every render and analysis caller                             | 4, before render orchestration | Not started |
+| Establish what MCP clients do on a multi-minute synchronous call                  | 4, before render orchestration | Not started |
+| Write and accept this record against that analysis                                | 4, before render orchestration | Not started |
 | Decide whether `RenderReceipt` generalizes or is one instance of a receipt family  | 4     | Not started |
 
 ## Revisit conditions
 
-Superseded by its own accepted version at the Phase 4 entry gate. It would be revisited earlier only if a Phase 1-3
-task turned out to need a job — the plausible case being a Phase 2 or Phase 3 test harness that renders long enough to
-want cancellation, which would be an argument for bringing the analysis forward rather than for improvising a
-mechanism.
+Superseded by its own accepted version before the first Phase 4
+render-orchestration slice. Any earlier task that needs a job, shared render
+request, streaming, progress or cancellation pulls the analysis forward rather
+than improvising a mechanism.

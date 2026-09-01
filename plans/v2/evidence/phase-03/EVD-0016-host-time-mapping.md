@@ -173,14 +173,14 @@ synthetic continuous-clock control marker declares zero freshness cost; a
 free-form host name cannot license that exemption.
 This evidence method is intentionally pinned to CPAL 0.18.2. A later dependency
 bump requires updating the analyzer and taking new platform observations rather
-than silently relabeling old artifacts. The documentation gate checks that the
-workspace requirement, resolved lock version, probe constant, and analyzer
-constant agree.
+than silently relabeling old artifacts. The fast and evidence gates both check
+that the workspace requirement, resolved lock version, probe constant, and
+analyzer constant agree. The evidence gate additionally executes the simulator.
 
 Controls, in execution order:
 
 1. Run F1's deliberately wrong static mapper before any candidate result.
-   The Core V2 documentation gate executes the complete simulator, so these
+   The Core V2 evidence gate and CI execute the complete simulator, so these
    controls cannot silently rot while their figures remain cited here.
 2. Feed the analyzer a synthetic valid single-direction artifact, a valid
    duplex artifact, and nineteen classified mutations:
@@ -371,7 +371,7 @@ SHA-256
 It is not an acceptance artifact: after the harness has an exact source
 revision, it must be rerun and either retained or tied to that revision before
 this record can complete.
-The documentation gate reruns the simulator and requires its complete control
+The evidence gate reruns the simulator and requires its complete control
 sequence to exit zero; the workspace test gate independently runs the same
 example as a Rust test.
 F1 observed the exact predeclared 8,640-frame separation. F2 mapped all 36

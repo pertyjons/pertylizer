@@ -316,14 +316,7 @@ impl CompiledEventScheduler {
         else {
             return;
         };
-        renderer.adopt(
-            &mut activation,
-            boundary,
-            late,
-            self.next,
-            self.loop_interval,
-            self.shift,
-        );
+        renderer.adopt(&mut activation, boundary, late, self.next, self.shift);
 
         // **Swapped, not rebuilt.** The candidate's vectors become the scheduler's live ones
         // and the scheduler's become the candidate's, so the box the candidate arrived in
@@ -346,7 +339,6 @@ impl CompiledEventScheduler {
         );
         self.next = 0;
         self.in_force = activation.sequence;
-        self.loop_interval = activation.loop_interval;
         // Clause 5's mass release ran inside `adopt`, and it owes the session share one
         // charge at the boundary quantum. Recorded rather than charged here because
         // publication belongs to the next call, which is the one that opens a window.

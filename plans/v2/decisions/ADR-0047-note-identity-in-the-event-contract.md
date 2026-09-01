@@ -6,8 +6,8 @@
 | Status | Accepted |
 | Phase | 3 |
 | Created | 2026-08-25 |
-| Last reviewed | 2026-08-26 |
-| Related | [ADR-0046](ADR-0046-destination-quantum-admission.md) clauses 3, 5 and 6; [ADR-0032](ADR-0032-sample-time-and-event-timestamps.md) clauses 17 and 20; [ADR-0021](ADR-0021-host-profile-and-admission-policy.md) part 3; ADR-0025 (`Proposed`, tuning); [REV-P02](../reviews/phase-02-exit-review.md)'s `NoteEdge` deviation row; `HOST-INV-009`; `HOST-INV-013`; `HOST-INV-018`; `HOST-INV-021`; `SOUND-INV-016` |
+| Last reviewed | 2026-09-01 |
+| Related | [ADR-0046](ADR-0046-destination-quantum-admission.md) clauses 3, 5 and 6; [ADR-0032](ADR-0032-sample-time-and-event-timestamps.md) clauses 17 and 20; [ADR-0021](ADR-0021-host-profile-and-admission-policy.md) part 3; ADR-0025 (`Proposed`, tuning); [REV-P02](../reviews/phase-02-exit-review.md)'s `NoteEdge` deviation row; [REV-P03](../reviews/phase-03-exit-review.md); `HOST-INV-009`; `HOST-INV-013`; `HOST-INV-018`; `HOST-INV-021`; `SOUND-INV-016` |
 | Supersedes | — |
 | Superseded by | — |
 

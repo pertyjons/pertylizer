@@ -42,8 +42,11 @@ archive/
 │   └── obsolete-reports/
 ├── phase-00b/
 │   └── INDEX.md
-└── phase-01/
-    └── INDEX.md
+├── phase-01/
+│   └── INDEX.md
+└── phase-03/
+    ├── INDEX.md
+    └── process-history.md
 ```
 
 Create a phase directory only when something is archived.

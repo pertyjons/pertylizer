@@ -178,7 +178,9 @@ the present scope rests on.
 **Phase 3's live ingress preserves that fact by a check rather than leaving it true by accident.** A non-compiled
 producer can now mint and emit, so the premise above stopped holding on its own. Building an activation is therefore
 refused once a stream has adopted a live ingress store: no stream that can activate has one, so no gate this record
-reasons about is reached by two producers. The check is on the **store** rather than on notes currently open, because
+reasons about is reached by two producers. Store adoption is also refused while
+an activation candidate is outstanding, which closes the opposite ordering.
+The check is on the **store** rather than on notes currently open, because
 a count of those returns to zero while both edges of a live note are still queued and neither has rendered — an
 activation built there would sit over a note about to sound. Recorded here because the premise is this record's, and
 the check that keeps it true is not.

@@ -79,7 +79,8 @@ pub struct ActivationRequest {
     /// The plan position the transport moves to. **Not** snapped: moving it would seek
     /// somewhere other than where the caller asked.
     pub position: PlanPosition,
-    /// The loop in force afterwards, already admitted under ADR-0046 clause 4.
+    /// The requested loop. It is admitted off-thread, but ADR-0055 refuses it at the
+    /// runtime offer until sample-exact wrapping exists.
     pub loop_interval: Option<LoopInterval>,
 }
 
@@ -170,7 +171,7 @@ pub enum ActivationBuildError {
     /// Two bounds from two records. ADR-0046 clause 4 checks the periodic extension of
     /// `[start, end)` against a sliding `Q`-frame window; `SOUND-INV-017` bounds the notes
     /// that pass holds at once by the compiled producer's admitted range. ADR-0050 clause 3
-    /// wants the interval **already admitted** when it joins the atomic set, and
+    /// wants the interval **already admitted** when it becomes an offer candidate, and
     /// `LoopInterval::new` proves only that the interval is positive — so without these a
     /// caller could activate a loop whose first wrap then faults at publication or
     /// over-emits, either of which ends the stream rather than refusing the state change. An
@@ -432,13 +433,6 @@ pub struct StreamControl {
         )
     )]
     ingress_store: Option<crate::ingress::IngressStoreId>,
-    /// The loop in force, adopted with an activation.
-    ///
-    /// The off-thread half owns the loop (ADR-0050 clause 9), so it has to keep the one
-    /// adoption put in force — otherwise the only copy is the audio thread's scheduler, and
-    /// a control that had to read it back from there would be shadowing state it is supposed
-    /// to own. An independent review found the promotion dropping it.
-    loop_interval: Option<LoopInterval>,
 }
 
 impl StreamControl {
@@ -471,7 +465,6 @@ impl StreamControl {
             live_notes_open: HeldNoteCount::NONE,
             ingress_store: None,
             has_scheduler: false,
-            loop_interval: None,
         };
         Ok((control, renderer))
     }
@@ -497,14 +490,6 @@ impl StreamControl {
     /// starting at `INITIAL`, because the control's next candidate supersedes it.
     pub const fn in_force(&self) -> ActivationSequence {
         self.in_force
-    }
-
-    /// The loop in force, which adoption is what puts there.
-    ///
-    /// Clause 9 gives the off-thread half the loop, so this is the authority rather than a
-    /// mirror of the scheduler's copy.
-    pub const fn loop_interval(&self) -> Option<LoopInterval> {
-        self.loop_interval
     }
 
     /// The transport's current pairing of plan time and engine time.
@@ -807,8 +792,8 @@ impl StreamControl {
 
         // ADR-0046 clause 4, and **against what repeats** — which is neither the stream this
         // candidate was derived from nor the suffix it carries. This is `admit_loop`'s first
-        // caller: an interval reaches the atomic set only through here, so "already admitted"
-        // is a fact about the value rather than a rule someone has to remember.
+        // caller: an interval reaches the offer candidate only through here, so "already
+        // admitted" is a fact about the value rather than a rule someone has to remember.
         //
         // Judging the *suffix this candidate carries* misses events in
         // `[loop_start, request.position)`: the first pass skips them because it enters the
@@ -872,11 +857,12 @@ impl StreamControl {
         // forward seek can land inside a note the retired stream never sounded, and that gate
         // must still be low. The producer scope the clause also names holds structurally here
         // rather than as a branch: **no stream that can activate has a live ingress store**,
-        // because `plan_activation` refuses once one is adopted. So every contract this walk
-        // sees is the compiled producer's. Phase 3's live ingress is what made that a check
-        // rather than a fact about what the crate happened to contain, and the check is on
-        // the adopted store rather than on notes currently open — a count of those goes to
-        // zero while both edges of a live note are still queued.
+        // because `plan_activation` refuses once one is adopted and `latch_store` refuses
+        // while a candidate is outstanding. So every contract this walk sees is the compiled
+        // producer's. Phase 3's live ingress made those checks necessary rather than leaving
+        // this as a fact about what the crate happened to contain. The store check is
+        // intentionally not a count of notes currently open — that count goes to zero while
+        // both edges of a live note are still queued.
         for (index, depth) in open_at_anchor.iter().copied().enumerate() {
             if depth == 0 {
                 continue;
@@ -970,7 +956,6 @@ impl StreamControl {
         self.minter = retired.minter;
         self.outstanding = retired.outstanding;
         self.in_force = retired.sequence;
-        self.loop_interval = retired.loop_interval;
         self.live_candidates = self.live_candidates.saturating_sub(1);
         Ok(())
     }

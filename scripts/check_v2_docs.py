@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import argparse
 import hashlib
 import re
 import subprocess
@@ -622,14 +623,28 @@ def check_derived_source_citations(errors: list[str]) -> None:
                 )
 
 
-def main() -> int:
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Check mechanical invariants of the Core V2 documentation."
+    )
+    parser.add_argument(
+        "--evidence",
+        action="store_true",
+        help="also compile and run the deterministic EVD-0016 simulator",
+    )
+    return parser.parse_args(argv)
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = parse_args(argv)
     errors: list[str] = []
     check_control_plane(errors)
     check_links(errors)
     check_decision_index(errors)
     check_evidence_ids(errors)
     check_evidence_harnesses(errors)
-    check_evidence_simulators(errors)
+    if args.evidence:
+        check_evidence_simulators(errors)
     check_evidence_dependency_pins(errors)
     check_spec_prefixes(errors)
     check_state_ownership_coverage(errors)
@@ -639,7 +654,8 @@ def main() -> int:
         for error in errors:
             print(error, file=sys.stderr)
         return 1
-    print("Core V2 documentation checks passed.")
+    suffix = " and evidence" if args.evidence else ""
+    print(f"Core V2 documentation{suffix} checks passed.")
     return 0
 
 

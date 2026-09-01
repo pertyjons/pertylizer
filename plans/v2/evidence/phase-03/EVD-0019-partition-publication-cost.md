@@ -8,6 +8,14 @@
 | Created | 2026-08-31 |
 | Related | ADR-0046, EVD-0017, `SPEC` host profile and render limits |
 
+## 2026-09-01 phase-exit disposition
+
+ADR-0054 and REV-P03 supersede the Phase 3 numeric-selection deadline quoted
+below. This record now supports only the statement that publishing a
+synthetically full provisional partition fits the measured callback budget. It
+does not qualify producer occupancy or final numeric values. The original gate
+wording below is retained as the historical question this evidence evaluated.
+
 ## Question and falsifier
 
 **The question.** What does one publication pass cost when **every publishable producer class**

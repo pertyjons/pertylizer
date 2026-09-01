@@ -21,6 +21,12 @@ One fact has one authority. Other documents link to it and state only the
 consequence needed by their own scope. Operational files do not copy benchmark
 figures, review chronology, or decision rationale.
 
+`NOW.md` contains only active streams, current blockers, the selected slice and
+named next actions. Completed-slice narratives, review rounds and abandoned
+options belong in commits, ADRs, evidence records, reviews or an archived
+working note. A completion update in `NOW.md` is one short consequence plus a
+link to its durable authority.
+
 Claims about current V1 behavior link to the owning inventory row or evidence
 record. Current workflow, architecture, and specification documents do not copy
 `path.rs:N` citations that would drift independently.
@@ -43,9 +49,12 @@ Choose the class before writing a new artifact.
 
 ### Ordinary implementation
 
-The default for internal code, refactoring, tests, and task execution. State the
-observable completion check in `NOW.md`, implement it, run the relevant tests,
-and obtain the repository review required by `AGENTS.md`. No ADR is needed.
+The default for internal code, refactoring, tests, and task execution. State an
+observable completion check in the test, task, commit scope or `NOW.md`,
+implement it, and run the risk-selected gate in `AGENTS.md`. An independent
+review is not required for a package-local change outside admission,
+scheduling, identity, concurrency, persistence, protocols, production-facing
+APIs and the real-time path. No ADR is needed.
 
 ### Internal experiment
 
@@ -58,11 +67,18 @@ merely because it defines an internal type or layout.
 
 An ADR is required only when a choice does at least one of these:
 
-- changes persisted data, a wire protocol, or a public API;
-- defines a real-time safety or ownership boundary;
+- changes persisted data, a wire protocol, or a production-facing public API;
+- defines a real-time safety or ownership boundary that binds another component
+  or later phase;
 - binds several later phases or an external consumer;
 - requires data migration or breaks delivered behavior when reversed;
 - requires an explicit product choice from the user.
+
+Public Rust surface inside the experimental `synth_engine_v2` crate is not a
+durable API merely because a repository test or development harness imports it.
+`AGENTS.md` records the standing approval and the boundary that ends it. Internal
+admission, scheduling, identity and real-time changes still take the stronger
+code review gate even when they need no ADR.
 
 Decision-driving measurements use an EVD with the falsifier and acceptance rule
 written before collection. Review the method before collecting data when an
@@ -98,18 +114,39 @@ An exit review checks the named outcomes and evidence for that phase. It does
 not re-review accepted ADRs or repeat measurements unless new evidence
 invalidates them.
 
+A phase may exit with named residual obligations when all of these hold:
+
+- the current gate is rewritten not to claim the deferred behavior;
+- the implemented behavior fails closed rather than accepting and silently
+  ignoring the unsupported case;
+- each obligation has a named owner and blocks its first real consumer; and
+- no real-time safety, persisted-data, protocol or correctness guarantee needed
+  by a dependent phase is weakened.
+
+The exit review records the residuals and their pull-forward rule. A later phase
+that expands into one of them inherits the obligation before that expansion,
+even if the roadmap named a later deadline.
+
 ## Execution loop
 
-1. Select one bounded vertical slice in `NOW.md`.
-2. Name its observable completion checks and non-goals.
+1. Select one bounded vertical slice; put it in `NOW.md` only when it is the
+   active cross-turn coordination point.
+2. Name its observable completion checks and non-goals in the narrowest useful
+   place.
 3. Build the smallest test, probe, or implementation that can answer the open
    question.
 4. Create an ADR only if the durable-decision test above is met.
 5. Run the change-appropriate gate in `AGENTS.md`.
-6. Obtain one review covering the declared risk.
-7. Repair blocking findings and reread only the changed claims and their direct
-   consumers.
-8. Commit the coherent slice and advance `NOW.md` once.
+6. Perform author diff review when `AGENTS.md` requires no independent reader;
+   otherwise obtain the independent semantic or uncommitted review its change
+   table requires. Boundary-sensitive Rust is one trigger, not the definition
+   of every review-triggering change.
+7. Repair blocking findings. Independently reread only a repair that changes the
+   reviewed conclusion, contract, evidence method, safety boundary, or the
+   boundary-sensitive code set named in `AGENTS.md`; otherwise self-audit and
+   rerun affected tests.
+8. Commit the coherent slice. Update `NOW.md` once only when active state or the
+   selected next action changed.
 
 ## Review stopping rule
 
@@ -125,9 +162,12 @@ Editorial preferences and optional implementation detail do not block. Findings
 outside scope become separate work unless they invalidate the current
 conclusion. There is no required number of passes.
 
-Every semantic repair receives a focused independent reread. A mechanical
-status, link, or wording repair receives self-audit and the documentation check;
-it does not automatically start another independent review.
+A focused independent reread is risk-triggered, not syntax-triggered. It is
+required for repairs to the reviewed conclusion, contract, evidence method,
+safety boundary, admission, scheduling, identity, concurrency, persistence,
+protocol or real-time path, and when the reviewer explicitly requests one.
+Other repairs receive author self-audit and affected checks. No repair restarts
+a broad review merely because it is semantic.
 
 ## Decisions and current specifications
 
@@ -151,6 +191,12 @@ coherent current rule.
 Claims about performance, correctness, parity, or real-time behavior require a
 named automated test or reproducible EVD. An EVD owns its method, numbers,
 limitations, and conclusion; operational documents only link it.
+
+The fast documentation gate checks structure without compiling Rust. The
+evidence gate additionally runs the EVD-0016 simulator and is required for
+evidence changes, phase exits, CI, and changes in the simulator's dependency
+closure. Mechanical status prose does not rerun a long-horizon simulator whose
+inputs it cannot affect.
 
 A phase gate identifies its bounded input or revision, required outcomes, named
 checks, and later-finding policy. A later finding reopens a passed gate only when

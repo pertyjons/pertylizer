@@ -8,6 +8,7 @@ import hashlib
 import subprocess
 import tempfile
 import unittest
+from contextlib import ExitStack
 from pathlib import Path
 from unittest import mock
 
@@ -52,6 +53,33 @@ class DocumentationCheckerTests(unittest.TestCase):
             encoding="utf-8",
         )
         return manifest
+
+    def test_evidence_simulator_is_opt_in(self) -> None:
+        self.assertFalse(CHECKER.parse_args([]).evidence)
+        self.assertTrue(CHECKER.parse_args(["--evidence"]).evidence)
+        ordinary_checks = (
+            "check_control_plane",
+            "check_links",
+            "check_decision_index",
+            "check_evidence_ids",
+            "check_evidence_harnesses",
+            "check_evidence_dependency_pins",
+            "check_spec_prefixes",
+            "check_state_ownership_coverage",
+            "check_active_document_width",
+            "check_derived_source_citations",
+        )
+        with ExitStack() as stack:
+            for check in ordinary_checks:
+                stack.enter_context(mock.patch.object(CHECKER, check))
+            simulator = stack.enter_context(
+                mock.patch.object(CHECKER, "check_evidence_simulators")
+            )
+            stack.enter_context(mock.patch("builtins.print"))
+            self.assertEqual(CHECKER.main([]), 0)
+            simulator.assert_not_called()
+            self.assertEqual(CHECKER.main(["--evidence"]), 0)
+            simulator.assert_called_once()
 
     def test_same_document_fragments_are_checked(self) -> None:
         self.write(

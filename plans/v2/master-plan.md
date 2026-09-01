@@ -284,9 +284,9 @@ compile or execute anything.
   have moved to [Phase 3](#phase-3-sample-accurate-scheduler-and-block-partition-invariance).
   ADR-0046 now fixes their checked relations and overload behaviour.
   `max_events_per_quantum` stays here as the successor to V1's unbounded
-  per-block event `Vec`; Phase 3 must reselect its unevidenced value from the
-  measured partition before enabling the contract, even if that partition fits
-  within 256. The Phase 0A reasoning remains in
+  per-block event `Vec`; ADR-0054 now stages its numeric calibration at the
+  first real producers and before Phase 9 enables a production live adapter.
+  The Phase 0A reasoning remains in
   [REV-P00A](reviews/phase-00a-exit-review.md).
 - Open an architecture decision record under [decisions/](decisions/README.md)
   for every entry in the [decision register](ADR.md) whose target phase begins
@@ -294,14 +294,15 @@ compile or execute anything.
   sample-time/event-timestamp, and the host-profile/admission decisions before
   Phase 0A closes because Phase 1 implements those contracts. At Phase 0A close, hardware time mapping could remain
   `Deferred` only to the explicit Phase 3 entry gate; its 2026-08-25 boundary correction now permits deferral only to
-  the explicit Phase 9 exit gate. The long-running job contract may remain deferred only to the explicit Phase 4 entry
-  gate. A deferred ADR names that target gate, its
+  the explicit Phase 9 exit gate. The long-running job contract's 2026-09-01 boundary correction permits only pure
+  lowering and one bounded in-process smoke render before acceptance; shared render orchestration remains blocked. A
+  deferred ADR names that target gate, its
   owner, and the evidence still required. The register — not this plan — is
   authoritative for the topic list, identifiers, status, and target phase;
   [Part VII](#part-vii-open-decisions) explains why each decision is open.
 
-The Phase 0A criteria below retain the boundary that REV-P00A actually evaluated. ADR-0022's 2026-08-25 boundary
-correction changes future enforcement to the Phase 9 exit gate; it does not retroactively rewrite this completed gate.
+The Phase 0A criteria below retain the boundary that REV-P00A actually evaluated. ADR-0022's 2026-08-25 and ADR-0028's
+2026-09-01 boundary corrections change future enforcement; they do not retroactively rewrite this completed gate.
 
 ### Exit gate
 
@@ -614,9 +615,10 @@ active bounded slice.
   checks session snapshots and locate catch-up, internal declarations, and the
   plan-wide aggregate of runtime destination/future/hold declarations. Aggregate
   authored sources by summation unless the compiler proves them mutually
-  exclusive. Measure useful values and reselect `max_events_per_quantum` from
-  them before enabling live ingress; its current unevidenced 256 is not retained
-  merely because they fit.
+  exclusive. Follow ADR-0054's staged calibration: measure each first real
+  authored/internal producer before downstream use and reselect the complete
+  partition before Phase 9 enables a production live adapter. The current
+  unevidenced 256 is not retained merely because the partition fits.
 - Admit compiled events against every half-open `Q`-frame window over all anchor
   phases. Validate a loop's periodic extension before changing transport state,
   including multiple wraps when the loop is shorter than `Q`.
@@ -720,24 +722,20 @@ irregular host blocks with the same total frames
       mutation-verified against a one-frame displacement of every ingress stamp.
       The fixture uses note edges deliberately: a control-rate payload takes
       effect at the next quantum boundary either way and would measure nothing.
-- [ ] Play/stop/seek, count-in, metronome, preview, loop transition, and panic
+- [x] Play/stop/seek, count-in, metronome, preview, loop transition, and panic
       have declared ordering against note/controller/automation events at the
       same sample.
-      *Status:* the **ordering is declared** — ADR-0023 and `SOUND-INV-020` give
+      *Evidence:* ADR-0023 and `SOUND-INV-020` give
       each kind a drain position, assigned by the producer that can emit it:
       stop, count-in, metronome, preview and recording state take the session
       block; panic and sustain lift take the live block under ADR-0046 clause 6;
       play, seek and the loop wrap are activations, adopted between two renderer
       sub-calls, contributing the boundary release and the locate catch-up.
-      **It stays unticked on ADR-0052's own words.** That record states that the
-      exit gate's loop-transition limb cannot close until it does, and that
-      identity cannot be separated from activation granularity — a
-      quantum-granular wrap truncates or overruns the pass whenever the loop is
-      not a whole number of quanta, which 251 of 281 integer tempi at 48 kHz are.
-      A draft of this line argued that ordering and identity are separable
-      questions; an independent review refuted it, because ADR-0052 is `Proposed`
-      and makes no specification update, so nothing has reconciled the two. The
-      limb closes with that record.
+      This gate proves the declared order, not runtime loop playback. A loop
+      activation is refused at offer with `LoopPlaybackUnsupported`, so an
+      unimplemented wrap cannot be accepted and silently ignored. ADR-0052's
+      sample-exact wrap is residual P03-R001; ADR-0055 supplies the fail-closed
+      guard until any V2 consumer pulls that obligation forward.
 
 - [x] The reference V2 renders are invariant to host block partitioning.
       *Evidence:* `reference_render` drives the phase's own deliverable voice —
@@ -754,12 +752,13 @@ irregular host blocks with the same total frames
       for a partition to disturb, and it renders offline rather than through the
       caller's actual blocks. The reference render is also checked for shape
       before it is compared, so two silences cannot pass as agreement.
-- [ ] Every renderer-ingress stream has a declared capacity, all six producer
+- [x] Every renderer-ingress stream has a declared capacity, all six producer
       shares and `release_hold_capacity` satisfy ADR-0046's checked sum and lower
       bounds, every share is a positive `EventCount`, authored declarations are
       composed across every simultaneously legal source, hold entitlements are
-      disjoint across admitted non-compiled producers, and the measured partition
-      fits the callback budget. A deliberately forged over-full sealed batch
+      disjoint across admitted non-compiled producers, and publishing a
+      synthetically full provisional partition fits the callback budget. The
+      producer values remain provisional under ADR-0054. A deliberately forged over-full sealed batch
       takes the terminal fault; no correct producer can reach it. Every live
       renderer-ingress store has exactly one *Live bounded queue* row in the
       host-profile specification's closed renderer-ingress source-store registry.
@@ -789,27 +788,33 @@ irregular host blocks with the same total frames
       may not exceed that entitlement or route through a compiled producer —
       which closes the contract hole an independent review found in the first
       attempt at this work, the reason that attempt was backed out.
-      **One clause is not met.** Earlier status lines here miscounted this set
-      twice, first naming two and then four, which is why it is now named singly.
-      *The measured partition* is that clause, and this bullet was ticked twice on
-      readings of that clause that an independent review refuted both times.
       [EVD-0019](evidence/phase-03/EVD-0019-partition-publication-cost.md)
-      measures what a full partition **costs to publish** — 0.034 % to 0.052 %
-      of the callback budget — which no record had. That is not what the clause
-      asks. This section of the master plan says Phase 3 must reselect
-      `max_events_per_quantum` "from the measured partition before enabling the
-      contract, **even if that partition fits within 256**", and the
-      host-profile specification's deferred row says the same: the required
-      result is measured producer *values* and a reselected partition, cap and
-      ingress depth. A cost that fits is exactly the argument those words
-      anticipate and reject.
-      **So this closes when the partition's occupancy can be measured**, which
-      needs producers for the classes that have none — authored runtime
-      expansion and renderer-internal emission. Both are Phase 3 Work-list
-      items. That a plan can now *declare* those two producers does not supply
-      them: a declaration is a bound admission compares against, while occupancy
-      is what a running producer turns out to use, and the two clauses above are
-      met by the first without touching the second.
+      measures what a synthetically full partition costs to publish — 0.034% to
+      0.052% of the callback budget. ADR-0054 explicitly supersedes ADR-0046's
+      Phase 3 numeric-selection deadline: each first real authored/internal
+      producer measures before downstream use, and Phase 9 reselects the
+      complete partition, cap, holds and live ingress depth before a production
+      live adapter can be enabled. The current values remain provisional and
+      carry no live-product qualification.
+
+### Residual obligations after Phase 3
+
+- **P03-R001 — sample-exact runtime loop wrap.** ADR-0052 remains `Proposed`.
+  Loop admission stays executable, but ADR-0055 makes
+  `CompiledEventScheduler::offer` refuse a loop activation until the
+  sample-exact mechanism exists. Any phase that wants V2 loop playback pulls
+  this obligation forward; Phase 9 cannot exit without it.
+- **P03-R002 — producer-capacity calibration.** ADR-0054 owns the staged rule.
+  Each first real authored/internal producer measures before use, and Phase 9
+  reselects the complete partition before enabling a production live adapter.
+- **P03-R003 — pitch and velocity on note events.** Minimum typed payload
+  semantics are the first Phase 4 lowering slice's prerequisite before it may
+  render a saved pitched note. Phase 6 still owns tuning, polyphonic expression
+  and their full composition law.
+- **P03-R004 — identity-width endurance.** The checked index relation and
+  never-reuse/fail-closed generation exhaustion preserve correctness. Phase 9
+  validates the selected numeric widths against the first representative
+  long-lived live workload before enabling a production live adapter.
 
 [Phase 7](#phase-7-yams-mod-grid-and-unified-modulation) may not begin before
 this gate passes. Modulation and script timing are meaningless until the event
@@ -817,10 +822,13 @@ timing contract is stable.
 
 ## Phase 4: Current-project lowering and offline A/B path
 
-ADR-0028 (long-running job contract) must be `Accepted` before Phase 4
-implementation begins. The initial contract may deliberately leave frontend
-adapters to Phase 10B, but streaming, progress, cancellation, revision pinning,
-and result ownership must already have one authoritative meaning.
+ADR-0028 may remain `Deferred` for the closed initial scope: the pure
+`LegacyProjectLowerer` plus one bounded in-process smoke render. It must be
+`Accepted` before shared `RenderRequest`/`RenderResult`, multi-project A/B,
+streaming, progress, cancellation or any GUI, CLI or MCP render surface. The
+initial accepted contract may deliberately leave frontend adapters to Phase
+10B, but streaming, progress, cancellation, revision pinning and result
+ownership then have one authoritative meaning.
 
 ### Work
 
@@ -832,6 +840,9 @@ and result ownership must already have one authoritative meaning.
   - basic parameter values;
   - a note or a simple arrangement;
   - no mixer or live commands yet.
+- Before rendering the first saved pitched note, close P03-R003 with minimum
+  typed pitch and velocity payload semantics. This does not decide Phase 6's
+  tuning or expression-composition model.
 - Resolve current string and positional identities during lowering. V2 IR must
   only contain stable typed identities after lowering.
 - Feed samples and other assets as already prepared immutable data; no file
@@ -841,7 +852,8 @@ and result ownership must already have one authoritative meaning.
 - Introduce the shared immutable `RenderRequest`/`RenderResult` contract used by
   A/B, export, analysis, CLI, and later background jobs. The request names the
   project/render revision, sample rate, range, tail/output policy, channel/stem
-  selection, and resource profile.
+  selection, and resource profile. ADR-0028 must be `Accepted` before this item
+  begins.
 - Make the V2 path render incrementally into a caller-owned sink/callback. A
   full in-memory audio buffer is an optional caller policy, not a renderer
   requirement.
@@ -856,6 +868,9 @@ and result ownership must already have one authoritative meaning.
 
 - [ ] At least three existing saved projects lower and render through V2 without
       hand-rebuilding their patches in tests.
+- [ ] Their note pitch and velocity reach the V2 note payload through typed
+      values; an unpitched or fixed-velocity render cannot satisfy the first
+      bullet.
 - [ ] Unsupported modules and targets produce structured diagnostics naming the
       project object and reason.
 - [ ] V1 remains the default for GUI, MCP, CLI, and release rendering.
@@ -928,6 +943,8 @@ stored base
 - Keep expensive spectrum/feature analysis off the audio thread unless a native
   node explicitly declares and passes its bounded RT cost. Passive observation
   must not alter the audio signal or require a GUI object during compilation.
+- If this phase introduces the first renderer-internal event producer, satisfy
+  ADR-0054's per-class occupancy measurement before enabling it downstream.
 
 ### Exit gate
 
@@ -1056,6 +1073,8 @@ YAMS Audio:   per-sample audio processing
   and stable script-state identity, never from plan order or plan revision.
 - Enforce bounded execution and publish cost warnings for expensive audio-rate
   scripts multiplied by maximum polyphony.
+- Measure the first real authored-runtime event producer under ADR-0054 and
+  reselect its provisional share before a downstream plan can enable it.
 - Lower current Mod Matrix and Mod Grid routes into the same modulation target
   representation. Preserve their product-level authoring differences without
   retaining separate target semantics in the renderer.
@@ -1211,6 +1230,19 @@ evidence rather than to Phase 3's scheduler implementation.
   It must never infer identity from graph position.
 - Add underrun, overflow, rejected-plan, and retired-plan diagnostics without
   logging from the audio callback.
+- Before enabling the first production live adapter, measure the complete
+  simultaneously legal producer partition and reselect all shares,
+  `release_hold_capacity`, `max_events_per_quantum` and live ingress depths as
+  ADR-0054 requires.
+- Before enabling a production live adapter, validate P03-R004's note-index and
+  generation widths against a representative long-lived live workload. The
+  existing retirement/refusal behavior remains mandatory if the finite space is
+  exhausted.
+- Resolve P03-R001 before enabling V2 loop playback; Phase 9 cannot exit while
+  ADR-0055's unsupported-loop refusal stands in for product loop behavior.
+- Resolve ADR-0050 clause 8's non-compiled release-hold redemption and
+  activation-time minter ownership before a stream can combine live ingress
+  with transport activation.
 
 ### Exit gate
 
@@ -3260,7 +3292,9 @@ is settled by a preference stated here.
 28. **Long-running job contract (ADR-0028)** — streaming sink, progress unit,
     cancellation granularity, stem/channel selection, temporary output
     atomicity, retention, and stale-result labeling; investigate in Phase 0A,
-    accept before Phase 4, and implement the shared service in Phase 10B.
+    accept before Phase 4 introduces shared render orchestration,
+    multi-project A/B, streaming, progress, cancellation or a frontend surface,
+    and implement the shared service in Phase 10B.
 29. **Host/service configuration and authorization (ADR-0029)** — boundary
     between user preference, deployment config, active runtime state,
     local-only policy, and any promoted remote authorization requirement;

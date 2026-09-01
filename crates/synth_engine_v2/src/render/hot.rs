@@ -95,7 +95,6 @@ impl PreparedRenderer {
         effective: SampleTime,
         late: bool,
         cursor: usize,
-        loop_interval: Option<crate::transport::LoopInterval>,
         shift: crate::time::FrameCount,
     ) {
         // The scalars of clause 3's atomic set, which have no storage to be swapped into.
@@ -103,7 +102,6 @@ impl PreparedRenderer {
         activation.retired = Some(crate::transport::RetiredState {
             anchor: self.anchor,
             cursor,
-            loop_interval,
             shift,
         });
         self.anchor = crate::time::StreamAnchor::new(effective, activation.position);

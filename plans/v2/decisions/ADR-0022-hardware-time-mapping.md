@@ -179,9 +179,10 @@ Three constraints hold in the meantime, so that the deferral cannot be used as p
 
 - **Risk: the remaining platform methods or replacement mapping arrive without
   executable controls**, turning an exit gate into an unverifiable assertion.
-  Control: the simulator and analyzer now execute in the documentation gate;
-  macOS and Windows are rejected until their freshness methods are reviewed,
-  and the record names retained platform and adapter artifacts as preconditions.
+  Control: the analyzer self-test executes in the fast documentation gate, and
+  the simulator executes in the evidence gate and CI; macOS and Windows are
+  rejected until their freshness methods are reviewed, and the record names
+  retained platform and adapter artifacts as preconditions.
 - **Risk: a mapping accumulates by accident** — a GUI meter reads `output_latency`, then a recording path does, and the
   contract is written afterwards to match. Control: constraint 2; the named evidence probes and V1's unread
   host-timestamp-derived context field publish no mapping to a V2 production consumer. The GUI's distinct buffer-size

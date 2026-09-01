@@ -5,8 +5,8 @@
 | Status | Current |
 | Phase | 1–2 |
 | Created | 2026-08-19 |
-| Last reviewed | 2026-08-27 |
-| Based on | ADR-0001, ADR-0004, ADR-0005, ADR-0021, ADR-0032, ADR-0037, ADR-0040, ADR-0041, ADR-0043, ADR-0046, ADR-0047, ADR-0049, ADR-0050 |
+| Last reviewed | 2026-09-01 |
+| Based on | ADR-0001, ADR-0004, ADR-0005, ADR-0021, ADR-0032, ADR-0037, ADR-0040, ADR-0041, ADR-0043, ADR-0046, ADR-0047, ADR-0049, ADR-0050, ADR-0055 |
 | Invariant prefix | `SOUND` |
 | Supersedes | — |
 | Superseded by | — |
@@ -54,6 +54,7 @@ storage assigned to compiled signal lifetimes.
 | [ADR-0047](../decisions/ADR-0047-note-identity-in-the-event-contract.md) | A note-on names an occurrence as well as its node; a release names the occurrence alone |
 | [ADR-0049](../decisions/ADR-0049-tempo-ramp-law.md) | A tempo ramp interpolates the beat's length, not the tempo number, so the conversion stays inside the four operations |
 | [ADR-0050](../decisions/ADR-0050-transport-activation.md) | A rendering stream moves to a new mapping through one activation value adopted whole at a quantum boundary |
+| [ADR-0055](../decisions/ADR-0055-refuse-unimplemented-loop-playback.md) | A loop-bearing activation is refused at the runtime offer until sample-exact wrapping exists; the interval cannot become active-but-unenforced state |
 
 ## Invariants
 
@@ -250,8 +251,11 @@ storage assigned to compiled signal lifetimes.
     ADR-0050 clause 8's second obligation.
 
     **What this invariant does not fix is pitch or velocity.** Those remain
-    [REV-P02](../reviews/phase-02-exit-review.md)'s open deviation row, owned by
-    Phase 3 and owed before ingress; ADR-0047 adds identity and discharges neither.
+    [REV-P02](../reviews/phase-02-exit-review.md)'s open deviation row. Residual
+    P03-R003 makes minimum typed pitch and velocity a prerequisite of the first
+    Phase 4 lowering slice that renders a saved pitched note; Phase 6 owns the
+    complete tuning and expression model. ADR-0047 adds identity and discharges
+    neither.
 
 18. **SOUND-INV-018 — Transport activation.** Moving a rendering stream to a new
     plan mapping — a seek, a loop wrap, a tempo-map replacement — happens through
@@ -272,7 +276,7 @@ storage assigned to compiled signal lifetimes.
     implies the other: a request one frame past a boundary offered against a clock
     already at the next one is late and displaced by nothing.
 
-    The **loop interval** in the atomic set is admitted when the candidate is built, on
+    The **loop interval** in the candidate request is admitted when the candidate is built, on
     two counts that answer to two records. ADR-0046 clause 4 checks the periodic
     extension of `[start, end)` against the compiled share. `SOUND-INV-017`'s producer
     range is checked over the same pass: the notes it holds open at one instant may not
@@ -282,11 +286,12 @@ storage assigned to compiled signal lifetimes.
     crossing release as the bare gate-down it is rather than as a note contract it ends.
     Neither bound implies the other.
 
-    The interval is nonetheless **recorded rather than enforced**: no wrap is
-    implemented, so nothing repeats it and the candidate's schedule is not bounded by
-    its end. An event past that end plays and reserves an identity, where under wrapping
-    it would be unreachable. The wrap slice inherits that, and the conformance row does
-    not claim it.
+    Runtime loop playback **fails closed** under ADR-0055. The interval can pass
+    these off-thread checks, but offering its activation returns
+    `LoopPlaybackUnsupported` with the interval named, increments the refused-
+    activation counter and changes neither active schedule nor loop state. The
+    first consumer that enables loop playback must replace this guard with the
+    sample-exact mechanism coupled to ADR-0052.
 
     The **catch-up batch** below is part of this invariant and is built.
 
@@ -314,12 +319,9 @@ storage assigned to compiled signal lifetimes.
     satisfied by this rule, and no gate may be read as closing it on this rule's
     strength.
 
-    **A repeating wrap keeps its ideal phase.** The requested time of the `k`-th wrap
-    is derived from the ideal timeline and never from the previous wrap's effective
-    point. Under the ideal derivation each wrap's error is an independent value in
-    `[0, Q)`, so the audible period jitters by under one quantum and returns; deriving
-    it from the last actual wrap accumulates the errors and makes the loop
-    permanently longer than the one the user set.
+    **A future repeating wrap must keep its ideal phase.** ADR-0052 owns the
+    executable mechanism and its conformance check. No runtime wrap helper exists
+    while ADR-0055's fail-closed guard is in force.
 
     What quantum granularity buys beyond implementability is admission. Shares are
     charged per destination quantum, so a boundary-aligned activation puts the old
@@ -345,9 +347,11 @@ storage assigned to compiled signal lifetimes.
     and nothing more. An operation that must silence already-rendered audio is a
     **fault** under ADR-0021, not an activation.
 
-    **One value carries the whole state set**: the anchor, the placed and stamped
-    compiled schedule with its cursor, the loop interval, the tempo map where one is
-    replaced, and the locate catch-up batch. The stream's arbiter is neither carried
+    **One value carries the whole adoptable state set**: the anchor, the placed and
+    stamped compiled schedule with its cursor, the tempo map where one is replaced,
+    and the locate catch-up batch. A candidate may also carry a requested loop
+    interval, but ADR-0055 refuses it before adoption and active loop state is absent
+    from both transport halves. The stream's arbiter is neither carried
     nor swapped — ADR-0046 clause 2 admits exactly one per stream, so an adopted
     schedule inherits the latched identity of the schedule it replaces. The identity
     table is not swapped either: both schedules mint from the one table, which is
@@ -356,11 +360,11 @@ storage assigned to compiled signal lifetimes.
     **Failure leaves the stream exactly as it was, and refusal happens at the offer
     rather than at adoption.** Most checks run while the candidate is built: admission
     of the stream and of the loop, placement against the new anchor, and stamping.
-    **Offering** the candidate can refuse for exactly five further reasons — a schedule
+    **Offering** the candidate can refuse for exactly six further reasons — a schedule
     paired with another stream's renderer, a stream that has already faulted, a stale
-    epoch, a superseded sequence, and an occupied exchange slot — and each leaves the
-    state in force. **Four of the five increment the refusal counter; the pairing does
-    not**, and the exception is the reason it is checked first: the counters belong to
+    epoch, unsupported loop playback, a superseded sequence, and an occupied exchange
+    slot — and each leaves the state in force. **Five of the six increment the refusal
+    counter; the pairing does not**, and the exception is the reason it is checked first: the counters belong to
     the stream that was offered to, so attributing this refusal to a renderer that is
     not this schedule's half would put a diagnostic on a stream nobody asked anything.
     The occupied slot is backpressure and not a fault, and it is occupied in two
@@ -410,7 +414,7 @@ storage assigned to compiled signal lifetimes.
     second would turn a caller mistake into a terminal fault. A violation detected
     after adoption is ADR-0046 clause 7's terminal response rather than a rollback.
     Adoption **exchanges** rather than replaces: **every** piece the activation
-    replaces — anchor, schedule, loop, tempo map and catch-up batch — moves into the
+    replaces — anchor, schedule, tempo map and catch-up batch — moves into the
     return slot the off-thread half collects, so nothing is dropped on the audio
     thread. Naming a subset would be worse than naming none, because the omitted
     pieces are the ones that own allocations.
@@ -460,8 +464,10 @@ storage assigned to compiled signal lifetimes.
     voice's gate made producer-exclusive, or a depth-and-ownership aggregation law
     designed — and with it what the catch-up row does for a gate the activation does
     not own. All three hold today because **no stream that can activate has a live
-    ingress store**: building an activation is refused once a stream has adopted one.
-    That is a check rather than an absence, which is what changed when live ingress
+    ingress store**: building an activation is refused once a stream has adopted one,
+    and store adoption is refused while an activation candidate is outstanding.
+    Those two checks cover both orderings rather than relying on absence, which
+    is what changed when live ingress
     arrived — a plan may declare a non-compiled producer, and since Phase 3 one can
     also mint and emit, so the earlier reason, that the compiled producer is the only
     minter, no longer holds on its own. The check is on the adopted **store**: a count
@@ -561,7 +567,7 @@ storage assigned to compiled signal lifetimes.
     discarding an event does not reach them and no counter records them.
 
     **The stream has two owners.** The off-thread half owns the tempo map, the
-    current anchor and loop, the admitted streams, the identity **minter** and the
+    current anchor, admitted streams, identity **minter** and the
     building of candidates; the audio-thread half owns the clock, the carries, node
     state, the **live-note registry** and adoption. That split is what lets a
     candidate be built while the stream renders, without a lock the real-time rules
@@ -711,7 +717,7 @@ excess is a preparation refusal rather than runtime truncation.
 | SOUND-INV-009, 010, 014 | `layout_baseline` for ADR-0041 clause 16's per-quantum digest comparison over its five fixtures, `arena_reuse` for the structural check over physical sample ranges and for `reuse_renders_bit_identically_to_no_reuse`, and `lowering`'s `a_mono_source_into_a_stereo_stream_widens_into_one_wider_region`, `a_mono_stream_compiles_exactly_one_output_operation` and `an_inserted_conversion_is_reported_and_not_only_scheduled` |
 | SOUND-INV-015 | `graph_validation`'s `every_kernel_admits_exactly_one_channel_on_every_port` over the macro-generated catalog, and `kernels`' `the_widening_writes_every_channel_of_every_frame` for the one kernel with two admitted counts |
 | SOUND-INV-017 | Two files, and the split is the invariant's own. **The minting table** is covered by `identity`: the three orphan branches separately — a free index, a live index at a superseded generation, and a retired one — along with disjoint producer ranges asserted by minting each producer's **whole** range rather than one index, the foreign-table resolution, counted retirement, over-emission distinguished from retirement erosion, a scoped mass release that leaves other producers alone, the refusal to rebuild while an obligation is outstanding, and the index-space relation at its boundary — enforced at `HostProfile` construction, as the invariant requires, not only where a table is built. Three are mutation-verified: resolving without comparing the generation, restarting a generation instead of retiring the index, and overlapping the producer ranges. **The event side** is covered by `note_identity`, over the compiled path. A release carries no node, so the fixture is two gates in series whose releases differ in *shape* — one instantaneous, one a ramp — because two sustain levels would render the same product and hide a release resolved to the wrong note. Sixteen cases: a release resolved through its occurrence; the same list with the other release rendering the other shape; two releases interleaved so the first names the **older** outstanding note; a producer's range bounding its *polyphony* rather than a piece's note count, with a one-note producer playing eight notes in sequence, refusing two at once, and stamping a valid list afterwards — a mint that failed part-way through having left nothing reserved; a reissued index still resolving **both** of the notes that used it, which is why the renderer keeps a registry the events write rather than reading the minter; a refused list leaving the minter as it found it, whose falsifier is the valid retry that follows; a spent release replayed against a node that has since been replayed, moving nothing and counted as an orphan rather than silently skipped, with the report **naming the occurrence** it refused; an occurrence from another plan's table refused and counted with the epoch equal, so the stale-epoch filter cannot be what caught it; a node address from another plan refused at stamping, which the renderer can no longer catch because its foreign filter compares the occurrence's table; the stamp carrying the renderer's own epoch; a compiled release that opens nothing refused at stamping; a plan declaring no producer unable to stamp a note at all; a second compiled producer refused at admission; and the compiled producer looked up rather than assumed to be producer 0, checked by declaring a one-wide runtime producer first so an assumed producer 0 exhausts on its second mint. `admission` adds the identity halves' memory to the scratch budget. Fifteen properties are mutation-verified: pairing by recency, resolving without the generation, dropping the table comparison, dropping the second-compiled-producer refusal, swallowing an unmatched release, assuming producer 0, never freeing a released occurrence, dropping the note-slot provenance check, not freeing an index at the paired release, resolving a release through the minter instead of the registry, minting during validation so a refused list keeps its indices, committing a partial mint instead of discarding it, refusing an orphan without counting it, refusing an orphan without naming it, and leaving the identity halves out of the scratch budget. **The live half is now covered in part**, by `simulated_ingress`: a live producer acquires its queue slot, release hold and identity together, the hold is spent when the release takes the slot it reserved and not a second time at publication, and a note-on is refused when the queue cannot also hold the release it would owe — that reservation arithmetic mutation-verified in both directions. The hold's exhaustion is asserted on its own, with six identities still free; **identity exhaustion is not asserted and cannot be**, because admission refuses a producer owing more releases than it can sound notes, so with `holds <= notes` the hold is always reached first, and the only remaining route is a generation space no test can walk. That conclusion holds only because a store is bound to the plan its renderer renders: a store carrying one plan's eight-hold entitlement while minting into another's two-index range makes the shortage reachable although each plan separately satisfies the relation, and an independent review found the binding missing. And clause 4's orphan attribution is carried by one named identity plus an aggregate count rather than by per-producer counts. **Naming the identity does name the producer**, since the ranges are disjoint by construction, so an index falls in exactly one. **The aggregate count is what cannot be attributed**: the renderer records the most recent orphan's identity and counts the rest, so two producers orphaning in one call are reported as one identity and a total. That is the gap this row records, and it is a property of the report's shape rather than of how many producers emit — two minting paths now exist, `stamp_compiled` and the live boundary's `StreamControl::offer_note_on`. Three earlier revisions justified the gap by the producer count, then by there being a single emitter, then by the disjoint ranges; independent reviews caught all three, the last because ranges identify the named occurrence and not the count beside it. The situation is not reachable here yet, and by a check rather than a convention: a live ingress store refuses a plan that also declares a compiled producer, which is how ADR-0051 clause 6's boundary is enforced while a gate reached by more than one has no ownership law. Plans declaring both exist in this crate's fixtures and are harmless, because none builds a store and without one a non-compiled declaration cannot emit. The generation ceiling remains a construction parameter for the reason this row gave before: walking a `u32` by minting is unreachable, and a rule no test can reach is a rule nobody has checked |
-| SOUND-INV-018 | `transport_activation.rs` and `transport.rs`: the effective point invariant to the four host partitions `2048`, `256`, `64` and `37`; a superseded candidate refused and counted; a stale-epoch candidate refused; both exchange occupancies refusing and told apart; an offer paired with another stream's renderer touching no counter; an offer into a faulted stream refused rather than trapping the candidate; a note cut at the boundary, asserted per frame on both sides; a seek between a note's edges buildable with the omission counted; a release with no note-on at all refused; a history note edge needing a producer, and a history holding more notes than that producer admits refused; an activation needing a schedule to replace; the schedule in force releasing its index to the replacement, and a withdrawn candidate's reservations released, both falsified by over-emission at a partition of one; every committed stamping keeping its reservations reclaimable; the minter standing still while a candidate holds a snapshot of it; a stream having one schedule and a second refused; a loop whose periodic extension does not fit refused at the build, and the same pass judged a second time against the compiled producer's admitted simultaneous notes, falsified by a late entry whose history and suffix each hold what the producer admits while the pass they straddle holds one more, by a pass that inherits the depth open where the loop starts, and by a crossing release lowering a count it ends nothing of; the pass that is judged being the one a wrap replays rather than the suffix the candidate carries, falsified by a late entry whose skipped events are the ones that collide at the wrap; and a crossing release counting in that pass, because clause 5 keeps its gate write where the bare omission dropped the event; the release scope being the compiled producer alone, and an empty producer declared before a sounding one not hiding the compaction; an adoption never happening in a call that renders no quantum; the boundary mass release charged as one session operation; a refused call adopting nothing when the boundary is the clock; a block the renderer cannot serve adopting nothing; a fault in **each** half of a split silencing the whole callback; a late activation taking effect at the clock and counted, an off-grid request that snaps forward without being late, and a late one displaced by nothing; a loop interval taking force at adoption and the control keeping it; the retired schedule coming back with the cursor, loop, anchor and displacement it replaced; a retirement from another stream refused rather than promoted; withdrawal refusing a foreign candidate and a retirement and returning both; and a repeating wrap at a non-quantum loop length whose period returns rather than drifting. the catch-up restoring every prepared target with the boundary release charged beside it; a crossing note's gate cut whether or not automation touched it after its note-on, the equality falsifying a last-write restore and the silence falsifying no substitution at all, mutation-verified against both; and an omitted crossing release carrying its gate-down in place of the note contract, counted, with the pair that lies wholly after the destination placed untouched beside it. **One of the invariant's clauses is not covered, and it is not deferred silently**: a live ingress note left sounding across an activation needs a producer that can emit, which ADR-0050 clause 8 puts out of scope |
+| SOUND-INV-018 | `transport_activation.rs` and `transport.rs`: the effective point invariant to the four host partitions `2048`, `256`, `64` and `37`; a superseded candidate refused and counted; a stale-epoch candidate refused; both exchange occupancies refusing and told apart; an offer paired with another stream's renderer touching no counter; an offer into a faulted stream refused rather than trapping the candidate; a note cut at the boundary, asserted per frame on both sides; a seek between a note's edges buildable with the omission counted; a release with no note-on at all refused; a history note edge needing a producer, and a history holding more notes than that producer admits refused; an activation needing a schedule to replace; the schedule in force releasing its index to the replacement, and a withdrawn candidate's reservations released, both falsified by over-emission at a partition of one; every committed stamping keeping its reservations reclaimable; the minter standing still while a candidate holds a snapshot of it; a stream having one schedule and a second refused; a loop whose periodic extension does not fit refused at the build, and the same pass judged a second time against the compiled producer's admitted simultaneous notes, falsified by a late entry whose history and suffix each hold what the producer admits while the pass they straddle holds one more, by a pass that inherits the depth open where the loop starts, and by a crossing release lowering a count it ends nothing of; the pass that is judged being the one a wrap replays rather than the suffix the candidate carries, falsified by a late entry whose skipped events are the ones that collide at the wrap; and a crossing release counting in that pass, because clause 5 keeps its gate write where the bare omission dropped the event; the release scope being the compiled producer alone, and an empty producer declared before a sounding one not hiding the compaction; an adoption never happening in a call that renders no quantum; the boundary mass release charged as one session operation; a refused call adopting nothing when the boundary is the clock; a block the renderer cannot serve adopting nothing; a fault in **each** half of a split silencing the whole callback; a late activation taking effect at the clock and counted, an off-grid request that snaps forward without being late, and a late one displaced by nothing; a loop-bearing candidate passing off-thread admission but being refused at offer with its interval and counter asserted and active loop state absent from both halves by construction; the retired schedule coming back with the cursor, anchor and displacement it replaced; a retirement from another stream refused rather than promoted; withdrawal refusing a foreign candidate and a retirement and returning both; the catch-up restoring every prepared target with the boundary release charged beside it; a crossing note's gate cut whether or not automation touched it after its note-on, the equality falsifying a last-write restore and the silence falsifying no substitution at all, mutation-verified against both; and an omitted crossing release carrying its gate-down in place of the note contract, counted, with the pair that lies wholly after the destination placed untouched beside it. **Two parts are not covered, and neither is deferred silently**: a live ingress note left sounding across an activation needs a producer that can emit, which ADR-0050 clause 8 puts out of scope; and the ideal-phase law for runtime wraps waits behind ADR-0055's refusal and belongs to ADR-0052's first executable consumer |
 | SOUND-INV-020 | `simulated_ingress.rs`, over the one pair of producers that exists, and the coverage is narrower than the rule. **The decisive case is a note and its release at one render position**: applied in the order they were offered the gate rises and falls at one sample and nothing sounds, while any order derived from ADR-0046's capacity classes applies the release first, refuses it as an orphan, and leaves the note sounding to the end. A mutation letting a release jump ahead of its own note-on fails that test and no other. The equivalence render is a weaker check than it looks and is cited as such: its two edges sit at different samples, so position sorting restores their order however they were presented — an independent review refuted an earlier claim that it proved release ordering. What it does establish is placement, falsified by displacing every ingress stamp one frame. Beside them: an entry whose destination is past the window waits and later lands on its own sample; and the ring wraps across three blocks with one alternating gate write per quantum, so the rendered square wave falsifies a **lost** entry while a **duplicated** one — idempotent in the audio, since one write charged twice into its own quantum wins the same way — is caught by the live share's peak instead. Both mutations were run, and an earlier version of that fixture wrote the same value from every slot and could see neither. **The rest of the declared sequence is not covered.** Authored runtime and renderer-internal producers do not exist, transport stop and panic have no producer, and the declaration-order rule needs two producers **emitting** into one position, which no plan can do until ADR-0051 clause 6 supplies a gate-ownership law — a live store refuses a plan that also declares a compiled producer, so the combination is refused rather than merely absent. Contiguity has no fixture for the same reason. Those cases arrive with the producers they need, and no test notices a producer nobody wrote a case for |
 | SOUND-INV-019 | `tempo.rs`: a beat's exact frame at a constant tempo; a step holding the old tempo up to its change; a half-frame position rounding away from zero rather than truncating; a position being the stored prefix plus its own offset, and independent of what was asked before it; a tick past exact integer range refused rather than answered; and the ramp's own nine — an equal-endpoint ramp equal to a step bit for bit, falsified by the ramp recomputing the shared linear term; a ramp lasting its beats times the mean of its two periods, asserted as the corpus fixture's exact 48 000 frames and explicitly not V1's 44 361, falsified by the quadratic term's sign and by treating every change as a ramp; positions non-decreasing across steep ramps in both directions over adjacent ticks in four sampled windows, falsified by that same sign; a tempo whose period overflows refused at construction, and a 6000-to-`1e100` BPM ramp reporting a real tempo one tick before its end, falsified separately by dropping the period check and by either rejected interpolation form; chained ramps each reaching the next declared tempo with a continuous junction, falsified by pointing a ramp at the last one; a trailing ramp behaving as a step, falsified by giving it a degenerate destination; and the reported tempo being the reciprocal of the interpolated period rather than a straight line between two tempo numbers, falsified by reporting the declared tempo. The standing source scan covers the five functions the law reaches **and is closed under calls**: every call those bodies make must be to one of the five or to a named arithmetic or accessor method, and no allowlisted name may itself be a function this module defines — so a transcendental can hide neither in an unfollowed helper nor behind an allowlisted name, both mutation-verified. It strips comments and attributes but not a line holding a quote, and that exemption is checked directly, since the module's own source cannot exercise it |
 | Node arithmetic and preparation | `voice_nodes`, internal kernel tests |

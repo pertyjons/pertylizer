@@ -56,8 +56,8 @@
 //! Clause 4 is explicit that this is finite but **not** real-time: its cost scales with the
 //! events inside the loop interval, which no profile capacity bounds — only the *window* it
 //! slides is bounded by `Q`. Running it inside a callback would put producer-sized work on
-//! the audio thread, which ADR-0021 forbids. A loop change is validated where the plan is,
-//! and the audio thread only ever adopts an already-admitted loop.
+//! the audio thread, which ADR-0021 forbids. A loop request is validated where the plan is;
+//! ADR-0055 then refuses it at the runtime offer until sample-exact adoption exists.
 
 use thiserror::Error;
 

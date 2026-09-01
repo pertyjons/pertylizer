@@ -484,8 +484,6 @@ pub struct CompiledEventScheduler {
     in_force: crate::transport::ActivationSequence,
     /// ADR-0050's single-slot exchange, in both directions.
     exchange: crate::transport::Exchange,
-    /// The loop in force, adopted with an activation and admitted before it was built.
-    loop_interval: Option<crate::transport::LoopInterval>,
     /// Whether an adopted activation still owes the session share its mass-release charge.
     ///
     /// ADR-0050 clause 5's release runs inside adoption, between renderer calls, where no
@@ -612,7 +610,6 @@ impl CompiledEventScheduler {
             // that, because two schedulers were never one stream.
             in_force: crate::transport::ActivationSequence::INITIAL,
             exchange: crate::transport::Exchange::Empty,
-            loop_interval: None,
             owed_release_charge: false,
             catch_up: Vec::new(),
             catch_up_len: 0,
@@ -630,24 +627,21 @@ impl CompiledEventScheduler {
         self.in_force
     }
 
-    /// The loop in force, if any.
-    pub const fn loop_interval(&self) -> Option<crate::transport::LoopInterval> {
-        self.loop_interval
-    }
-
     /// Offer an activation, which the next boundary at or after its time adopts.
     ///
-    /// **Every refusal is here**, which is what makes adoption infallible. There are five, and
+    /// **Every refusal is here**, which is what makes adoption infallible. There are six, and
     /// this is the order they are decided in: a schedule paired with another stream's
-    /// renderer, a stream that has already faulted, a stale epoch, an occupied exchange slot,
-    /// and a superseded sequence. The last two are in that order deliberately — an
+    /// renderer, a stream that has already faulted, a stale epoch, unsupported loop playback,
+    /// an occupied exchange slot, and a superseded sequence. The last two are in that order
+    /// deliberately — an
     /// uncollected retirement is *why* a candidate is superseded, so reporting the
     /// consequence would send a reader after a racing seek when the fix is that the
-    /// off-thread half has not collected. Each leaves the stream running on the state in force, and the candidate
-    /// comes back so the control can withdraw it — which for the control means dropping the
-    /// working copy it stamped against, restoring nothing because nothing was taken.
+    /// off-thread half has not collected. Each leaves the stream running on the state in
+    /// force, and the candidate comes back so the control can withdraw it — which means
+    /// dropping the working copy it stamped against and restoring nothing because nothing
+    /// was taken.
     ///
-    /// **Four of the five are counted; the pairing is not**, and that is why it is decided
+    /// **Five of the six are counted; the pairing is not**, and that is why it is decided
     /// first: the counters belong to the stream that was offered to, and a renderer that is
     /// not this schedule's half is not that stream. Counting matters because a stream that
     /// silently declines every seek and one that adopts them are otherwise
@@ -684,6 +678,18 @@ impl CompiledEventScheduler {
             let refusal = ActivationRefused::StaleEpoch {
                 candidate: activation.epoch,
                 stream: self.epoch,
+            };
+            return Err((activation, refusal));
+        }
+        // The interval has already passed its off-thread density and polyphony checks, but
+        // no runtime wrap exists. Accepting it would expose a loop as active while the
+        // schedule continues beyond its end. This refusal is the executable pull-forward
+        // guard on the deferred sample-exact wrap obligation.
+        if let Some(interval) = activation.loop_interval() {
+            renderer.count_refused_activation();
+            let refusal = ActivationRefused::LoopPlaybackUnsupported {
+                start: interval.start(),
+                end: interval.end(),
             };
             return Err((activation, refusal));
         }

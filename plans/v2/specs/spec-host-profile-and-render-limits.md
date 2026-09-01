@@ -5,8 +5,8 @@
 | Status           | Current                                |
 | Phase            | 00A                                    |
 | Created          | 2026-08-13                             |
-| Last reviewed    | 2026-08-27 |
-| Based on         | ADR-0021, ADR-0001, ADR-0032, ADR-0037, ADR-0038, ADR-0043, ADR-0046, ADR-0050, ADR-0053 |
+| Last reviewed    | 2026-09-01 |
+| Based on         | ADR-0021, ADR-0001, ADR-0032, ADR-0037, ADR-0038, ADR-0043, ADR-0046, ADR-0050, ADR-0053, ADR-0054 |
 | Invariant prefix | HOST                                   |
 | Supersedes       | —                                      |
 | Superseded by    | —                                      |
@@ -21,9 +21,11 @@ This specification is `Current`. `event_egress_capacity` depends on accepted
 `HOST-INV-021` is the destination-admission contract selected by
 [ADR-0046](../decisions/ADR-0046-destination-quantum-admission.md). A single publication arbiter builds bounded
 quantum batches from disjoint prepared producer shares; the renderer never moves an event for capacity. The concrete
-renderer-ingress streams and numeric share values remain Phase 3 work, but the checked sum, producer bounds, release
-holds and refusal rules are normative. Phase 1 and Phase 2 keep their pre-mutation caller-contract rejection until the
-Phase 3 stream boundary supplies sealed batches.
+renderer-ingress streams and checked share relations are built. ADR-0054 keeps
+the numeric defaults provisional and stages real occupancy calibration at each
+first producer and before Phase 9 enables a production live adapter. Phase 1 and
+Phase 2 retain their pre-mutation caller-contract rejection; the Phase 3 stream
+boundary supplies sealed batches.
 
 The field set below is complete against the master plan's initial Phase 1 list. Durable corrections are summarized in
 [Corrections](#corrections); the full review result is [REV-P00A](../reviews/phase-00a-exit-review.md), not duplicated
@@ -63,8 +65,10 @@ until it retires.
 - **Hardware clock calibration, latency compensation, and drift.**
   [ADR-0022](../decisions/ADR-0022-hardware-time-mapping.md), deferred to the Phase 9 exit gate. This specification
   sizes the forward event horizon; it does not decide how a host timestamp maps into the epoch it is measured against.
-- **Job bounds.** Render tail, output size, pre-roll, and quality presets belong to
-  [ADR-0028](../decisions/ADR-0028-long-running-job-contract.md), deferred to the Phase 4 entry gate.
+- **Job bounds.** Render tail, output size, pre-roll, and quality presets belong
+  to [ADR-0028](../decisions/ADR-0028-long-running-job-contract.md), deferred to
+  the first Phase 4 render-orchestration slice. Pure lowering and one bounded
+  in-process smoke render precede no job contract.
 - **What an observation tap is for** (ADR-0027), **what a send is** (ADR-0034),
   and **what a recording take is** (ADR-0024). This specification carries their capacities, not their meanings.
   The current internal meaning of a channel layout belongs to the
@@ -111,6 +115,7 @@ A limit that is reported and never enforced. Exceeding it produces a `CompileWar
 | [ADR-0053](../decisions/ADR-0053-simulated-ingress-provenance.md) | A deterministic simulated ingress producer stamps its own provenance, which the forward horizon binds like any other ingress |
 | [ADR-0043](../decisions/ADR-0043-event-deferral-and-late-clamp.md) | The preserving late clamp: a late event moves to the first not-yet-rendered boundary, its envelope `time` is immutable, the late condition is asked once, and its control-rate response follows the clamped render position. ADR-0046 supersedes the record's capacity-deferral half |
 | [ADR-0046](../decisions/ADR-0046-destination-quantum-admission.md) | That one publication arbiter constructs renderer input from six checked producer shares; compiled and authored-runtime work is admitted before playback; releases use end-to-end holds; and the renderer never moves an event for capacity |
+| [ADR-0054](../decisions/ADR-0054-staged-producer-capacity-calibration.md) | That the current numeric event partition is provisional; each first real authored-runtime or internal producer is measured before downstream use; and the complete partition is reselected before production live ingress |
 | [ADR-0037](../decisions/ADR-0037-render-quantum-value.md) | That no field here may be sized by `Q`'s value, which ADR-0037 now fixes finally at 64 |
 | [ADR-0050](../decisions/ADR-0050-transport-activation.md) | That the activation exchange is a fixed single-slot non-dropping session store whose full-slot refusal happens at the caller boundary, and that the locate catch-up batch is the bounded quantity the session share's plan-admission check compares against |
 
@@ -197,7 +202,8 @@ open owner is a starting point recorded honestly, not a rule invented here.
       **`performance_ingress_capacity` is the one addition made under that rule, and it is ground 3 rather than
       ground 2 deliberately.** ADR-0046 establishes that live ingress uses fixed queues, each registered exactly once,
       and that the live share covers their snapshots — but it creates seven fields and *not* these, which the
-      [*Deferred to Phase 3*](#deferred-to-phase-3) table states. So the record requires the store to exist without
+      [*Staged producer calibration*](#staged-producer-calibration) table states. So the record requires the store to
+      exist without
       creating its capacity, and the capacity takes the only other route this invariant offers. A second ingress store
       would need its own addition here; it does not arrive with an adapter.
 
@@ -250,8 +256,10 @@ open owner is a starting point recorded honestly, not a rule invented here.
    ledger requires a *job* outside the range to be refused with a job admission error naming the requested rate and the
    profile range. A job is not a plan and not a profile: it asks for a rate before either exists, so the check belongs
    to
-   the job contract — [ADR-0028](../decisions/ADR-0028-long-running-job-contract.md), `Deferred` to the Phase 4 entry
-   gate — and remains **outstanding**, not satisfied by a construction failure one layer down. What construction gives
+   the job contract — [ADR-0028](../decisions/ADR-0028-long-running-job-contract.md),
+   `Deferred` until Phase 4 first introduces shared render orchestration or a
+   frontend-facing job surface — and remains **outstanding**, not satisfied by
+   a construction failure one layer down. What construction gives
    is a floor: no out-of-range stream can be prepared even before the job layer exists. Both enforcement points are real
    and neither substitutes for the other.
 8. **HOST-INV-008** — A node's intrinsic capacity is declared by the node, reported in the `ResourceReport`, and
@@ -301,8 +309,9 @@ open owner is a starting point recorded honestly, not a rule invented here.
     should be stated in seconds instead, and the question is recorded as unresolved rather than answered here.
 
     **Destination occupancy is not a duration budget.** `max_events_per_quantum` retains its event unit and one
-    profile-selected value within an epoch; it is not rescaled with rate. Phase 3 must still reselect the current
-    unevidenced 256 before enabling ingress. A musical plan's requested `EventCount` is recomputed at the prepared rate
+    profile-selected value within an epoch; it is not rescaled with rate. ADR-0054 keeps the current unevidenced 256
+    provisional until staged producer measurements and the pre-live Phase 9 selection. A musical plan's requested
+    `EventCount` is recomputed at the prepared rate
     because a 64-frame window spans different musical time there. A lower rate may therefore make the same project
     request more events and fail admission. This case is explicitly outside the invariant's first sentence: it is
     measurement of work against an unchanged count budget, not frame-based reinterpretation of a duration.
@@ -446,11 +455,14 @@ open owner is a starting point recorded honestly, not a rule invented here.
     Establishing or changing a loop separately checks the periodic extension of the half-open interval
     `[loop_start, loop_end)` over every anchor phase. The check includes enough repetitions to cover a `Q`-frame
     window, including multiple wraps when the loop is shorter than `Q`. Failure leaves the previous transport state
-    unchanged and reports the interval, phase, requested count and available count. An accepted loop cannot fail for
+    unchanged and reports the interval, phase, requested count and available count. An admitted loop cannot fail for
     compiled capacity at its wrap. **This check runs off the audio thread**, like the tempo-map replacement below:
     only the sliding window is bounded by `Q`, while the work scales with the compiled events inside the loop
-    interval, which no profile capacity bounds. The audio thread adopts an already-admitted loop state atomically and
-    does no wrap-time admission of its own.
+    interval, which no profile capacity bounds. The current runtime performs no
+    wrap-time admission and adopts no loop state: ADR-0055 makes the offer fail
+    closed after these off-thread checks. ADR-0052's first executable runtime
+    wrap must retain off-thread admission rather than moving this scan onto the
+    audio thread.
 
     A tempo-map edit invalidates compiled and authored-runtime entitlements. The replacement map is compiled and
     re-admitted off the audio thread and activates only with its admitted plan; failure leaves the old plan and tempo
@@ -525,8 +537,8 @@ open owner is a starting point recorded honestly, not a rule invented here.
     attributable diagnostics. External batches stay immutable; internal events contribute through their separate
     arena and the same total occupancy ledger.
 
-    Phase 1 and Phase 2 keep their current pre-mutation `RenderError` for a caller-supplied over-full span. Phase 3
-    replaces that open caller boundary with sealed external batches and the terminal invariant response above. Every
+    Phase 1 and Phase 2 retain their pre-mutation `RenderError` for a caller-supplied over-full span. Phase 3
+    replaced that open caller boundary with sealed external batches and the terminal invariant response above. Every
     stream reports high-water occupancy per quantum and per share, whether or not a fault occurs.
 
 22. **HOST-INV-022 — the activation exchange is a non-dropping session store, and the catch-up batch is what
@@ -541,7 +553,7 @@ open owner is a starting point recorded honestly, not a rule invented here.
     It therefore takes **no row** in the renderer-ingress source-store registry, which registers live input that may
     drop and states that non-dropping session/transport stores do not belong there.
 
-    The exchange is two-way: adoption moves **every** piece the activation replaced — anchor, schedule, loop, tempo
+    The exchange is two-way: adoption moves **every** piece the activation replaced — anchor, schedule, tempo
     map and catch-up batch — back into the slot for the off-thread half to collect and deallocate, so no allocation
     is freed on the audio thread. Naming a subset would be worse than naming none: the omitted pieces are the ones
     that own allocations.
@@ -577,23 +589,29 @@ open owner is a starting point recorded honestly, not a rule invented here.
     passed it. That is a correctness rule and not an optimisation.
 
 
-## Deferred to Phase 3
+## Staged producer calibration
 
-ADR-0046 fixes the safe relations and every exhaustion class. Phase 3 still owns the concrete renderer-ingress streams
-and numeric values because V1 has no timestamped renderer-ingress design to carry over and 256 has no measurement
-basis. These are values and internal stream shapes, not undecided overload policy.
+Historical Phase 1 records refer to this section by its former heading,
+*Deferred to Phase 3*. Those frozen citations retain the title of the current
+specification section they were evaluated against; this heading carries the
+successor rule after Phase 3 completion.
 
-| Deferred value or shape | Required Phase 3 result | What holds meanwhile |
+ADR-0046 fixes the safe relations and every exhaustion class. Phase 3 built the concrete renderer-ingress streams and
+all checked relations. ADR-0054 supersedes only the old Phase 3 numeric-selection deadline because authored-runtime,
+renderer-internal and production-live producers do not all exist yet. The current values remain provisional until
+their named real-consumer gates; this is staged calibration, not undecided overload policy.
+
+| Value or shape | Required result | What holds meanwhile |
 |---|---|---|
-| Live renderer-ingress streams and their capacities | Name each fixed-capacity live source store, add exactly one row for it marked *Live bounded queue* to the [closed renderer-ingress source-store registry](#renderer-ingress-source-store-registry), and include its snapshot capacity in the live-share lower bound | No profile field may be invented at a call site. ADR-0046 creates seven ground-2 fields and **not** these, so each new ingress capacity needs an admitting ground before it becomes a profile field: an accepted ADR that creates it, or an explicit amendment of HOST-INV-005's closed residual list, reviewable as a change to this specification |
-| Six producer-share values and `release_hold_capacity` | **Partially built.** The seven fields exist. **Three of the four construction relations** are checked: the live share against the registered ingress store, `max_scheduled_events_in_flight` against the compiled floor over a derived `QuantumCount`, and `release_event_share >= release_hold_capacity`. The fourth — the note-identity index space against `max_held_notes` — is now implemented too, in `VoiceLimits`' constructor where that field is validated, and refused there rather than only where a table is built. The separate requirements are also met — the share sum against the cap, positivity per field, and the checked-arithmetic obligation, under which construction refuses a compiled product or a `max_events_per_quantum * max_quanta_per_callback` extent that no `EventCount` can name. **The arbiter-bound relation — the sealed-batch store's coverage — is satisfied, by preparation rather than by construction**, as the list above separates it: profile construction checks that the extent is nameable, while the publication arbiter's preparation allocates exactly `max_events_per_quantum * max_quanta_per_callback` and a named test asserts that extent over four callback sizes. It is not the unimplemented index relation named above; the two are different relations, and an earlier revision of this cell called both "the fourth". **One obligation stays open and this row stays open until it lands:** measurement, which must reselect the partition, `max_events_per_quantum` and the ingress depth before live ingress is enabled. The two remain distinct even now that the store exists: construction can only decide whether an extent is nameable, and a profile that passed that check could still meet an arbiter that allocated something else — which is why the extent is asserted where it is allocated | The unevidenced value 256 is not retained merely because the measured partition fits, and neither is the provisional partition. Construction never derives shares from a plan; every share and `release_hold_capacity` is a positive `EventCount`, a disabled optional class leaves its share unused, and `release_event_share >= release_hold_capacity`. One consequence is now load-bearing: six positive shares cannot fit a cap below six, so a smaller `max_events_per_quantum` is no longer representable |
-| Session/transport source storage and plan-time declarations | Name the fixed non-dropping session stores; plan admission checks complete snapshot expansion, every locate catch-up position, all three authored-runtime envelopes, internal declarations and hold entitlements | These stores are not *Live bounded queue* entries and are distinct from legacy `command_queue_capacity`. A future design may reuse that physical queue only through an accepted change that replaces its drop classification and preserves refusal before timestamped acceptance. An undeclared producer cannot publish; plan-dependent work is refused at admission rather than changing a share or failing during playback |
-| Publication-arbiter cost | Measure the bounded serial pass with representative and admitted-maximum batches | The graph path needs one materialization, not a second evaluation; high-water counters expose conservatism |
+| Live renderer-ingress streams and their capacities | Keep every fixed-capacity source store in the [closed registry](#renderer-ingress-source-store-registry) and include its complete eligible snapshot in the live-share lower bound | No profile field may be invented at a call site. A new store needs an admitting ground, a registry row and fail-closed overload behavior before it can run |
+| Six producer-share values, `release_hold_capacity` and `max_events_per_quantum` | Measure the first real authored-runtime and renderer-internal producer before downstream use. Before the first production live adapter, measure the complete simultaneously legal partition and reselect all values under ADR-0054 | Every construction and admission relation is already checked. The provisional partition may exercise compiled, session and deterministic simulated ingress only; fitting within 256 does not qualify it |
+| Session/transport storage and plan-time declarations | Keep the fixed non-dropping stores and admission checks for complete snapshots, locate catch-up, authored-runtime envelopes, internal declarations and hold entitlements | These stores are not *Live bounded queue* entries. An undeclared producer cannot publish; plan-dependent work is refused before playback |
+| Publication-arbiter cost | Re-measure when a new real producer changes the representative or admitted-maximum batch shape | EVD-0019 qualifies the bounded serial mechanism, not producer occupancy or the provisional numeric partition |
 
 There is no deferred-event store, deferred-store exhaustion policy, starvation order or capacity-displacement counter.
 ADR-0046 removes the mechanism that required them.
 
-`max_events_per_quantum` remains normative in Phase 1 and Phase 2. Their event input is a prevalidated bounded span:
+`max_events_per_quantum` remains normative. Phase 1 and Phase 2 use a prevalidated bounded span:
 plan preparation refuses a statically knowable overrun, and `Renderer::render` rejects a caller span before renderer
 state or output is mutated if any absolute quantum exceeds the cap. The total span may exceed the cap when it covers
 several quanta. Those phases never defer, drop, clip, partially render or allocate to absorb the violation.
@@ -603,7 +621,7 @@ supplement it during development but can never define this behaviour, because it
 REV-P00A raised that as a P2 finding against an earlier draft, and it binds Phase 3's sealed-batch boundary for the
 same reason.
 
-Phase 3 replaces the open caller span with HOST-INV-021's sealed batches. From that point an over-full quantum is not a
+Phase 3 replaced the open caller span with HOST-INV-021's sealed batches. At that boundary an over-full quantum is not a
 recoverable caller error; it is the terminal invariant fault specified there.
 
 ## Types and ownership
@@ -819,8 +837,10 @@ refusal is a construction failure naming both fields, not a `CompileError`, and 
 
 **`LIMIT-0004`'s job-admission error is not this field's to deliver.** The ledger requires an out-of-range *job* to be
 refused with an error naming the requested rate and the profile range. That check runs where a job's requested rate is
-read, which is ADR-0028's job contract, `Deferred` to the Phase 4 entry gate. This field is what such a check reads; it
-is not the check. The obligation is listed under [*Unresolved questions*](#unresolved-questions) so it is not lost.
+read, which is ADR-0028's job contract, `Deferred` to the first Phase 4 render-orchestration slice. Pure lowering and
+one bounded in-process smoke render create no shared job and may precede it. This field is what the later job check
+reads; it is not the check. The obligation is listed under [*Unresolved questions*](#unresolved-questions) so it is not
+lost.
 
 **Raisable, but not past the engine ceiling.** This is a render limit, so an operator may widen it — within
 `DeviceSampleRate::MAX_SUPPORTED`, which the constructor enforces. The ceiling is not an operator setting for the same
@@ -915,18 +935,18 @@ recorded here so the entry's closure has a visible successor.
 
 | Field | Type | Default | Basis | Replaces | Revisit |
 |-------|------|---------|-------|----------|---------|
-| `max_events_per_quantum` | `EventCount` | 256 until Phase 3 reselects it from measured producer shares before enabling ingress | **Chosen and unevidenced**, not carried over: `LIMIT-0014`'s constant is an egress ring size, while V1's real per-block buffer has no cap. Fitting within 256 does not waive reselection; see below | `LIMIT-0075` — the unbounded `Vec` this field replaces | Phase 3, before ingress |
-| `compiled_event_share` | `EventCount` | 96, provisional | ADR-0046 fixed profile input for compiled timeline and automation. **Provisional and unevidenced**, like the cap it partitions. ADR-0046 fixes the relations and leaves the numbers to Phase 3 measurement; the six share defaults are chosen only to satisfy every checked relation and to total the cap exactly, so the default carries no unusable slack | — | Phase 3, from measurement |
-| `authored_runtime_event_share` | `EventCount` | 48, provisional | ADR-0046 fixed profile input for admitted data-dependent expansion. **Provisional and unevidenced**, like the cap it partitions. ADR-0046 fixes the relations and leaves the numbers to Phase 3 measurement; the six share defaults are chosen only to satisfy every checked relation and to total the cap exactly, so the default carries no unusable slack | — | Phase 3, from measurement |
-| `live_event_share` | `EventCount` | 32, provisional | ADR-0046 fixed profile input covering complete eligible live snapshots. **Provisional and unevidenced**, like the cap it partitions. ADR-0046 fixes the relations and leaves the numbers to Phase 3 measurement; the six share defaults are chosen only to satisfy every checked relation and to total the cap exactly, so the default carries no unusable slack | — | Phase 3, from measurement |
-| `session_event_share` | `EventCount` | 24, provisional | ADR-0046 fixed profile input covering complete session snapshots and locate catch-up. **Provisional and unevidenced**, like the cap it partitions. ADR-0046 fixes the relations and leaves the numbers to Phase 3 measurement; the six share defaults are chosen only to satisfy every checked relation and to total the cap exactly, so the default carries no unusable slack | — | Phase 3, from measurement |
-| `internal_event_share` | `EventCount` | 16, provisional | ADR-0046 fixed profile input for admitted renderer-internal producers. **Provisional and unevidenced**, like the cap it partitions. ADR-0046 fixes the relations and leaves the numbers to Phase 3 measurement; the six share defaults are chosen only to satisfy every checked relation and to total the cap exactly, so the default carries no unusable slack | — | Phase 3, from measurement |
-| `release_event_share` | `EventCount` | 40, provisional | ADR-0046 fixed profile input for individual redemptions of non-compiled release holds. **Provisional and unevidenced**, like the cap it partitions. ADR-0046 fixes the relations and leaves the numbers to Phase 3 measurement; the six share defaults are chosen only to satisfy every checked relation and to total the cap exactly, so the default carries no unusable slack | — | Phase 3, from measurement |
-| `release_hold_capacity` | `EventCount` | 40, provisional | ADR-0046 fixed profile input for disjoint non-compiled producer hold entitlements. **Not a share and not a term in the sum**: it bounds outstanding obligations rather than events in a quantum, so the six shares alone total the cap while this field satisfies `release_event_share >= release_hold_capacity`. **Provisional and unevidenced**, like the cap the shares partition | — | Phase 3, from measurement |
+| `max_events_per_quantum` | `EventCount` | 256, provisional | **Chosen and unevidenced**, not carried over: `LIMIT-0014`'s constant is an egress ring size, while V1's real per-block buffer has no cap. ADR-0054 stages reselection from real producer occupancy; fitting within 256 does not waive it | `LIMIT-0075` — the unbounded `Vec` this field replaces | First real producers; complete Phase 9 pre-live selection |
+| `compiled_event_share` | `EventCount` | 96, provisional | ADR-0046 fixed profile input for compiled timeline and automation. The six provisional shares satisfy every checked relation and total the cap exactly; ADR-0054 owns final calibration | — | Phase 9 pre-live selection |
+| `authored_runtime_event_share` | `EventCount` | 48, provisional | ADR-0046 fixed profile input for admitted data-dependent expansion. The first real authored-runtime producer measures this class before downstream use under ADR-0054 | — | First real authored producer; Phase 9 pre-live selection |
+| `live_event_share` | `EventCount` | 32, provisional | ADR-0046 fixed profile input covering complete eligible live snapshots. Deterministic simulated ingress may exercise it, but production live ingress requires ADR-0054's complete selection | — | Phase 9 pre-live selection |
+| `session_event_share` | `EventCount` | 24, provisional | ADR-0046 fixed profile input covering complete session snapshots and locate catch-up. ADR-0054 owns final calibration | — | Phase 9 pre-live selection |
+| `internal_event_share` | `EventCount` | 16, provisional | ADR-0046 fixed profile input for admitted renderer-internal producers. The first real internal producer measures this class before downstream use under ADR-0054 | — | First real internal producer; Phase 9 pre-live selection |
+| `release_event_share` | `EventCount` | 40, provisional | ADR-0046 fixed profile input for individual redemptions of non-compiled release holds. ADR-0054 owns final calibration | — | Phase 9 pre-live selection |
+| `release_hold_capacity` | `EventCount` | 40, provisional | ADR-0046 fixed profile input for disjoint non-compiled producer hold entitlements. It is not a share or a term in the sum; `release_event_share >= release_hold_capacity` is checked | — | Phase 9 pre-live selection |
 | `max_note_expansion_per_tick` | `EventCount` | 128 | V1 carry-over. Contributes to HOST-INV-021's conservative authored-runtime envelope; it is not a licence to trim expansion | `LIMIT-0043` | Phase 3 |
 | `max_scheduled_events_in_flight` | `EventCount` | `compiled_event_share * max_quanta_per_callback + 4 096`, checked | The existing chosen value becomes authored-future headroom above a derived compiled floor when ADR-0046 is enabled, with checked arithmetic. Plan admission charges simultaneously retained authored future events to that headroom; a full store may not make an admitted event late | — | Phase 3 |
 | `forward_event_horizon` | `FrameCount` | `max(one second at the prepared rate, maximum_block_size + Q)` | Chosen, with a derived floor — see below | — | Phase 3; revalidate at Phase 9 exit against ADR-0022 |
-| `performance_ingress_capacity` | `EventCount` | 32, provisional | The one live renderer-ingress store, registered below. **The live share bounds it from above**, and that is not a sizing preference: ADR-0046 clause 3 requires the live share to cover a complete eligible snapshot and forbids an accepted entry from waiting for publication capacity, so the queue may not be deeper than the share. The relation is one-sided: a larger share is always admissible, so raising the share alone is legal while raising this field alone is refused. 32 is the **largest depth this share admits**, and taking the maximum is still an unevidenced choice rather than a forced value — ADR-0046 is explicit that the numbers "are not coupled policy". This is shallow for real MIDI, which is the tension the record names when it says 256 "may be too small once live snapshots, release holds and internal production receive hard guarantees" | — | Phase 3, from measurement |
+| `performance_ingress_capacity` | `EventCount` | 32, provisional | The one live renderer-ingress store, registered below. The live share bounds it from above because an accepted entry may not wait for publication capacity. Deterministic simulated ingress may exercise the current depth; production live ingress requires ADR-0054's complete selection | — | Phase 9 pre-live selection |
 | `command_queue_capacity` | `EventCount` | 16 384 | V1 carry-over. **Live bounded queue** for legacy engine-command ingress under HOST-INV-009; it is not ADR-0046's Phase 3 session/transport store, whose caller-boundary refusal contract is non-dropping. Reusing this physical queue for that store requires an accepted change that removes this classification and preserves refusal before timestamped acceptance | `LIMIT-0012` | Phase 9 |
 | ~~`event_queue_capacity`~~ (critical / high / normal / low) | — | **Withdrawn** | **This field is removed from the profile, and the removal is the correction rather than a simplification.** It was a V1 carry-over of `LIMIT-0013`'s four prioritized rings, admitted through HOST-INV-005 ground 1 by that ledger entry's `HostProfile` ownership. [ADR-0038](../decisions/ADR-0038-engine-egress-queue-classification.md) part 3 establishes that the prioritized channel has no workspace production caller. Its public export leaves external use unknown, so removal is an explicit compatibility break rather than an unreachability claim. The entry moves to `N/A — removed` and this field loses its only admissibility ground. The source evidence belongs to the [resource-limit inventory](../inventories/resource-limits.md), not to a copy in this specification. Sizing a V2 capacity from four rings with no observed workspace production use would carry an unvalidated shape forward: nothing has established that four priority tiers, or these four numbers, are right for anything. V2's engine egress is ADR-0038 part 1's rule with a capacity per surviving entry — `event_egress_capacity` for the GUI ring, and the protocol contract's own for `LIMIT-0076`. If V2 wants priority classes on egress it designs them from a requirement | ~~`LIMIT-0013`~~ — none; the entry is `N/A — removed` | Withdrawn |
 | `event_egress_capacity` (engine-to-GUI event ring **only**) | `EventCount` | 256 | V1 carry-over of what `LIMIT-0014`'s constant sizes on the GUI side. **The field is one capacity, not two, and that is a change.** Earlier revisions carried `EventCount x 2` because one V1 constant sizes a GUI ring and an OSC note-telemetry ring; [ADR-0038](../decisions/ADR-0038-engine-egress-queue-classification.md) part 4 splits the ledger entry, and the OSC ring becomes `LIMIT-0076` owned by the protocol contract that serializes it — **not a profile field**. The two may take different sizes from that point on, which is the reason to split them. **Loss semantics are ADR-0038's, not HOST-INV-009's**: this is engine *egress*, which does not meet ADR-0021's definition of a live bounded queue, so dropping is licensed by ADR-0038 part 1 and only under its three conditions — observational payload, counted drop, count in the structured diagnostics report. V1 satisfies none of the three on this ring, which is why the field's conformance work is Phase 5's rather than Phase 1's. **`RecordedNotesFlushed` is custodial under ADR-0038 part 2 and may not share this capacity** | `LIMIT-0014` | Phase 5 |
@@ -937,9 +957,9 @@ This table and the Events field table above are HOST-INV-009's complete **live-i
 engine-egress drop licence is separate. Every concrete Phase 3 renderer-ingress store gets exactly one row here, even
 when its capacity is also a `HostProfile` field; the capacity column then references that field. Only this registry row
 carries the classification for a renderer-ingress store; a corresponding Events field row references it without
-repeating the marker. Rows may be added only with the admitting ground required under *Deferred to Phase 3*. A live
-**renderer-ingress** source store absent from this table is not permitted to drop. Non-dropping session/transport
-stores do not belong here.
+repeating the marker. Rows may be added only with the admitting ground required under *Staged producer calibration*.
+A live **renderer-ingress** source store absent from this table is not permitted to drop. Non-dropping
+session/transport stores do not belong here.
 
 | Store | Capacity owner | Classification | Status |
 |---|---|---|---|
@@ -957,7 +977,7 @@ compiled window is sparse. Failure to publish an entitlement before its quantum 
 
 The default adds 4,096 events of provisional authored-future headroom above the compiled floor rather than taking the
 larger of the two. Taking `max` would leave zero headroom whenever the compiled product reached 4,096. The addition is
-checked and Phase 3 must measure its memory cost and usefulness.
+checked and the first real authored producer must measure its memory cost and usefulness under ADR-0054.
 
 The Phase 1 allocator currently adds one slack quantum to its scratch extent although the public
 `quanta_needed_for` calculation proves carry cannot increase the exact ceiling above
@@ -966,8 +986,9 @@ documents that old slack; the comment beside the Phase 1 allocation is not a sec
 
 **The event cap has no V1 value to inherit.** The resource inventory establishes that `LIMIT-0014` and `LIMIT-0076`
 are egress rings, while `LIMIT-0075` is V1's uncapped per-block sequencer `Vec`. The current value 256 is chosen and
-unevidenced. Phase 3 must reselect it from the measured producer-share partition before enabling ingress, even when the
-measured partition would fit within 256. [EVD-0015](../evidence/phase-03/EVD-0015-quantum-occupancy.md) measures a peak
+unevidenced. ADR-0054 requires staged measurement at the first real authored and internal producers, then complete
+reselection before production live ingress, even when the measured partition would fit within 256.
+[EVD-0015](../evidence/phase-03/EVD-0015-quantum-occupancy.md) measures a peak
 of 36 in the 23 projects whose streams can be derived, but also shows why that observation cannot establish a safe cap:
 expansion is bounded per tick while renderer occupancy is per quantum, and releases from different production times can
 converge.
@@ -1157,7 +1178,7 @@ Three properties of this field are deliberate:
   same plan at 192 kHz is measured against a budget one quarter the size — which is exactly the asymmetry EVD-0003 found
   and warned that a frame-based policy would invert.
 - **It has no real-time evidence behind it.** EVD-0003 measured offline throughput with no host, no device, and no
-  callback deadline; every figure is a lower bound on the same work live. Phase 3 may enforce the derived floor for
+  callback deadline; every figure is a lower bound on the same work live. Phase 3 enforces the derived floor for
   simulated ingress; Phase 9's host-adapter evidence and ADR-0022 acceptance are what qualify it for live refusal.
 
 ## Coverage against the master plan and the ledger
@@ -1216,8 +1237,8 @@ Plus `LIMIT-0031`, whose ledger owner is `N/A — removed` but whose disposition
 **Fourteen fields have no V1 antecedent**, which is where V1 had nothing rather than something wrong:
 `max_active_voices`, `max_scheduled_events_in_flight`, `forward_event_horizon`, `max_mix_channels`, `max_buses`,
 `max_concurrent_retiring_voices`, `predicted_quantum_cost_ratio`, the six event-share fields, and
-`release_hold_capacity`. ADR-0046 creates the last seven on accepted-ADR ground 2; their numeric defaults remain Phase
-3 evidence rather than being invented in this specification.
+`release_hold_capacity`. ADR-0046 creates the last seven on accepted-ADR ground 2; ADR-0054 keeps their numeric
+defaults provisional until the named real-consumer measurements rather than inventing support in this specification.
 
 **The historical count went to eight and back to seven, then ADR-0046 took it to fourteen**, which is worth recording.
 `max_events_per_quantum` was listed here when the use-site audit showed `LIMIT-0014` is an egress ring; review then
@@ -1265,8 +1286,8 @@ the use-site audit showed `LIMIT-0014` is an egress ring, and back to **seven** 
 | A live note edge names an identity that is free, whose generation has moved on, or whose index has been retired | **Refused, not dropped**, and counted as an **orphan** against the producer that offered it. It resolves to no note. The distinction from a drop is load-bearing: a drop loses an event the producer was entitled to send, while this one names a note that does not exist, and counting it as a drop would make a healthy producer look starved | Structured diagnostics report |
 | A live note edge is offered whose note-on was dropped, so its producer holds no identity for it | **Refused, not dropped**, and counted as **never-minted**. Distinct from an orphan: an orphan carries an identity that names no live note, this carries none at all, and the two point at different producer defects | Structured diagnostics report |
 | A new non-critical Phase 3 session/transport command cannot enter its fixed source store | The command remains caller-owned or is explicitly refused before timestamped acceptance; prior session state is unchanged and no drop counter moves | Fallible caller result naming the source store and requested and available capacity |
-| More events are due in one quantum than `max_events_per_quantum` admits — **in Phase 1 and Phase 2** | **The call is rejected before renderer state or output is mutated**, with a release-active error naming that quantum and the requested and available counts. This is the *current* behaviour and it is not deferral: the candidate set is a prevalidated bounded span, so an over-full quantum is a caller-contract violation rather than a state the render loop absorbs. It is stated in full under [*Deferred to Phase 3*](#deferred-to-phase-3), where the prevalidated-span rule lives, and it is covered by a named test in the V2 render-contract suite | `RenderError`, release-active |
-| A producer exceeds its share or scheduled-store declaration, or one external batch or the external-plus-internal total exceeds `max_events_per_quantum` — **once Phase 3 implements ingress** | HOST-INV-021's terminal invariant fault, even when unusable total slack remains: the complete current and every later callback in the epoch is silence, both carries are invalidated, atomic `needs_reprepare` is published, and no further quantum renders | Structured diagnostics report, attributed by producer share |
+| More events are due in one quantum than `max_events_per_quantum` admits — **in Phase 1 and Phase 2** | **The call is rejected before renderer state or output is mutated**, with a release-active error naming that quantum and the requested and available counts. This is the *current* behaviour and it is not deferral: the candidate set is a prevalidated bounded span, so an over-full quantum is a caller-contract violation rather than a state the render loop absorbs. It is stated in full under [*Staged producer calibration*](#staged-producer-calibration), where the prevalidated-span rule lives, and it is covered by a named test in the V2 render-contract suite | `RenderError`, release-active |
+| A producer exceeds its share or scheduled-store declaration, or one external batch or the external-plus-internal total exceeds `max_events_per_quantum` — **at the Phase 3 sealed-batch boundary** | HOST-INV-021's terminal invariant fault, even when unusable total slack remains: the complete current and every later callback in the epoch is silence, both carries are invalidated, atomic `needs_reprepare` is published, and no further quantum renders | Structured diagnostics report, attributed by producer share |
 | The compiled callback window would exceed the derived compiled floor of `max_scheduled_events_in_flight`, or retained authored future events would exceed the headroom above it | Profile construction checks the compiled floor and plan admission checks the authored addition before playback. Reaching the condition at runtime means a producer broke its declaration and takes HOST-INV-021's terminal fault; an event is never delayed into lateness to recover capacity | `ResourceReport`, or the structured diagnostics report for a defect |
 | A lossy field's capacity is reached | The oldest data is evicted by design, and the evicted count or continuation marker is exposed (HOST-INV-019) | The surface presenting that data |
 | A session limit is reached | The activity stops with a counted diagnostic; everything already produced is kept, and nothing authored is dropped (HOST-INV-020) | The recording surface, plus the structured diagnostics report |
@@ -1323,15 +1344,16 @@ the two possibilities.
 
 ## Conformance tests
 
-No test exists yet: the V2 crate is Phase 1's, and this specification is written before it. Each row names what must
-exist, in the phase that builds the thing it tests.
+The V2 crate implements the Phase 1 through Phase 3 rows exercised by their
+accepted exit evidence. Each row names what must exist; later-phase rows remain
+obligations owned by the phase in the rightmost column.
 
 | Invariant | Named test or evidence | Phase |
 |-----------|------------------------|-------|
 | HOST-INV-001, HOST-INV-002 | A prepared plan renders after its source profile is dropped; the renderer holds no profile reference | 1 |
 | HOST-INV-003 | Two tests, because no runtime check can see where a value came from. **Shape:** `HostCapabilities::from_device` has no defaulted parameter and no `Default` impl, so a caller cannot omit a capability. **Behaviour:** the cpal adapter is driven with a device reporting a non-default buffer range and the resulting profile carries that range — the direct regression test for `LIMIT-0057`, which discarded it | 9 |
 | HOST-INV-004 | Partly a review check — no automated test can see that a default was *reasoned* from `Q`. The mechanical half is ADR-0032 clause 4's compile-time assertion `Q <= QuantumOffset::MAX`, which fails the build when `Q` changes and something was sized to its old value, plus a test that `HostProfile` exposes no field carrying a quantum | 1 |
-| HOST-INV-005 | A test enumerating profile fields against their admitting rule. The capability half is asserted against the invariant's **closed enumerated capability set**, so adding a capability field fails the test rather than passing silently. Each `RenderLimits` field is enumerated against the three grounds: a ledger entry owned `HostProfile`; a field an accepted ADR creates; and the **enumerated residual set** the invariant lists, each of whose members carries a stated basis and revisit point. The test compares against that explicit list — not against "everything else", which would admit a protocol- or job-owned capacity by default. It asserts each field matches exactly one and fails on a field in none; Phase 3 extends that enumeration with ADR-0046's seven ground-2 fields. **It must not enumerate the no-antecedent list**, which is a different axis, and **must not treat a `Replaces` entry as a ground** — `max_held_notes` and `max_events_per_quantum` name `LIMIT-0031` and `LIMIT-0075` as provenance while being admitted by the residual | 1 |
+| HOST-INV-005 | A test enumerating profile fields against their admitting rule. The capability half is asserted against the invariant's **closed enumerated capability set**, so adding a capability field fails the test rather than passing silently. Each `RenderLimits` field is enumerated against the three grounds: a ledger entry owned `HostProfile`; a field an accepted ADR creates; and the **enumerated residual set** the invariant lists, each of whose members carries a stated basis and revisit point. The test compares against that explicit list — not against "everything else", which would admit a protocol- or job-owned capacity by default. It asserts each field matches exactly one and fails on a field in none; Phase 3 extended that enumeration with ADR-0046's seven ground-2 fields. **It must not enumerate the no-antecedent list**, which is a different axis, and **must not treat a `Replaces` entry as a ground** — `max_held_notes` and `max_events_per_quantum` name `LIMIT-0031` and `LIMIT-0075` as provenance while being admitted by the residual | 1 |
 | HOST-INV-006 | Every compile — succeeding and failing — returns a report whose every field has requested, available, and a dominant contributor | 1 |
 | HOST-INV-007 | One refusal case per render limit **a plan can exceed with an error** — twenty-eight in Phase 1 and thirty-two once ADR-0046's Phase 3 fields exist — and the test asserts that the cases *are* that set rather than merely covering some of it. Each asserts the error names the field, both amounts, and the authored object, and that the plan is unchanged. The corresponding fourteen and eighteen fields without that refusal are enumerated in the invariant; `accepted_sample_rates` is covered by HOST-INV-016's rows and `predicted_quantum_cost_ratio` by the advisory-warning test | 1 |
 | HOST-INV-008 | A node whose declared capacity is exceeded is refused, and raising every profile field does not admit it | 2 |
@@ -1364,7 +1386,7 @@ exist, in the phase that builds the thing it tests.
 | Whether same-sample ingress order distinguishes `Hardware` from `Arrival`, and how their measured uncertainties participate in that order | No — HOST-INV-021 partitions capacity without assigning semantic precedence | ADR-0023 and Phase 3 for abstract order; ADR-0022 and Phase 9 exit for measured uncertainty |
 | ~~**ADR-0021's `LIMIT-0013` evidence.**~~ **Resolved in Phase 0A, not Phase 3.** Its drivers and disposition describe per-priority drop counters "published on OSC"; they are published nowhere, and the OSC counter it names belongs to another ring. [ADR-0038](../decisions/ADR-0038-engine-egress-queue-classification.md) supersedes both the driver and the disposition on that evidence | Resolved by accepted ADR-0038 | ADR-0038 |
 | ~~**The class ADR-0021 gave `LIMIT-0013`'s rings.**~~ **Resolved in Phase 0A, not Phase 3.** They are engine egress, not "fed by external, unbounded-in-time input", so `Live bounded queue` never described them. [ADR-0038](../decisions/ADR-0038-engine-egress-queue-classification.md) part 1 supplies the missing rule and part 3 removes the entry as an explicit compatibility break: there is no workspace production caller, while public external use remains unknown | Resolved by accepted ADR-0038 | ADR-0038 |
-| **What V2's live renderer-ingress streams are, and what bounds them.** V1 has no timestamped ingress queue to carry over — `LIMIT-0013` is engine egress and `LIMIT-0012` carries commands. Phase 3 must name each live source store and capacity, add it exactly once as *Live bounded queue* to the [closed renderer-ingress source-store registry](#renderer-ingress-source-store-registry), then include the complete eligible snapshot in HOST-INV-021's live-share lower bound; session/transport storage is separately covered by that invariant's session relation | No for Phase 1, which accepts an open caller span. **Yes for Phase 3**, which cannot construct the publication partition without the streams | Phase 3 |
+| ~~**What V2's live renderer-ingress streams are, and what bounds them.**~~ **Resolved in Phase 3.** V1 has no timestamped ingress queue to carry over — `LIMIT-0013` is engine egress and `LIMIT-0012` carries commands. Phase 3 named every live source store and capacity exactly once as *Live bounded queue* in the [closed renderer-ingress source-store registry](#renderer-ingress-source-store-registry) and includes the complete eligible snapshot in HOST-INV-021's live-share lower bound; session/transport storage is separately covered by that invariant's session relation | Resolved by the Phase 3 ingress and publication boundary | Phase 3 |
 | Where `LIMIT-0004`'s **job-admission error** is delivered. The ledger requires an out-of-range job to be refused with an error naming the requested rate and this field's range. Profile construction refuses an out-of-range *stream*, which is a floor rather than that error: a job asks for a rate before a profile exists | No for Phase 1, which has no job layer. **Yes for Phase 4**, which cannot close with the disposition undelivered | ADR-0028, Phase 4 |
 | Whether `max_nodes` should be anchored independently rather than computed from `max_active_voices`, which is itself only measurement-anchored | No | Phase 2 exit |
 | Whether `max_mix_channels` and `max_observation_taps` should be coupled so that every mix channel is guaranteed a tap | No — the report names which budget bound the plan | ADR-0027, Phase 8 |

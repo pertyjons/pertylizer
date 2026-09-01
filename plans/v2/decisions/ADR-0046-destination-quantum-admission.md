@@ -6,10 +6,10 @@
 | Status | Accepted |
 | Phase | 3 |
 | Created | 2026-08-24 |
-| Last reviewed | 2026-08-25 |
-| Related | [ADR-0043](ADR-0043-event-deferral-and-late-clamp.md); [ADR-0044](ADR-0044-deferral-causal-order.md); [ADR-0045](ADR-0045-cross-control-causal-order.md); ADR-0021 parts 1 and 2; ADR-0032 clauses 17, 21, 23 and 27; [EVD-0015](../evidence/phase-03/EVD-0015-quantum-occupancy.md); `HOST-INV-010`; `HOST-INV-011`; `HOST-INV-018`; `HOST-INV-019`; `HOST-INV-021`; `SOUND-INV-016` |
+| Last reviewed | 2026-09-01 |
+| Related | [ADR-0043](ADR-0043-event-deferral-and-late-clamp.md); [ADR-0044](ADR-0044-deferral-causal-order.md); [ADR-0045](ADR-0045-cross-control-causal-order.md); [ADR-0054](ADR-0054-staged-producer-capacity-calibration.md); [ADR-0055](ADR-0055-refuse-unimplemented-loop-playback.md); ADR-0021 parts 1 and 2; ADR-0032 clauses 17, 21, 23 and 27; [EVD-0015](../evidence/phase-03/EVD-0015-quantum-occupancy.md); `HOST-INV-010`; `HOST-INV-011`; `HOST-INV-018`; `HOST-INV-019`; `HOST-INV-021`; `SOUND-INV-016` |
 | Supersedes | **[ADR-0043](ADR-0043-event-deferral-and-late-clamp.md)'s capacity-deferral rule; [ADR-0044](ADR-0044-deferral-causal-order.md) and [ADR-0045](ADR-0045-cross-control-causal-order.md) in full, dissolved rather than answered.** ADR-0043's preserving late clamp, immutable stamp, control-response rule and prohibition on applying an event to produced samples remain in force |
-| Superseded by | — |
+| Superseded by | [ADR-0054](ADR-0054-staged-producer-capacity-calibration.md) supersedes only the Phase 3 numeric-selection deadline; [ADR-0055](ADR-0055-refuse-unimplemented-loop-playback.md) supersedes clause 4's runtime-adoption sentence while loop playback is unsupported; every safety relation and ownership rule here remains accepted |
 
 This record meets `PROCESS.md`'s durable-decision test because it moves a real-time ownership boundary, binds several
 later phases, and reverses delivered timing behaviour if changed. It fixes relations, not numeric values.
