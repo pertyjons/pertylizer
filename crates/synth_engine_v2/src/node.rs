@@ -198,6 +198,57 @@ pub(crate) const SAW: NodeDeclaration = NodeDeclaration {
     )>() as u64,
 };
 
+/// The control-rate output an envelope declares.
+const CONTROL_OUT: PortSpec = PortSpec::new(
+    crate::ir::PortId::FIRST,
+    PortDirection::Output,
+    SignalDomain::Control,
+    ChannelLayout::Mono,
+);
+
+/// The envelope, declared once — `P05-S002`, the first **playable** declared kind.
+///
+/// Its gate is the control a note edge moves, so `note_control` names it and the gate is
+/// sample-positioned (ADR-0001 clause 14): addressing it as a parameter and playing the node
+/// as a note reach the same control under the same timing law. Its velocity is
+/// `SOUND-INV-021`'s velocity destination, and the reason it is the envelope's rather than
+/// an oscillator's: the invariant requires the played node's scope to declare a destination
+/// that **scales** the rendered amplitude, and an envelope's output is what an amplifier
+/// multiplies its audio by. The byte attributions name the kernel's layouts: three segment
+/// lengths and a sustain level prepared; a segment, three levels, a remaining count, the
+/// gate and the velocity kept between quanta.
+pub(crate) const ENVELOPE: NodeDeclaration = NodeDeclaration {
+    kernel: kernels::ENVELOPE,
+    ports: &[CONTROL_OUT],
+    controls: &[
+        ControlSpec {
+            parameter: parameters::ENVELOPE_GATE,
+            control: kernels::ENVELOPE_GATE,
+            rate: ControlRate::Sample,
+            magnitude: None,
+        },
+        ControlSpec {
+            parameter: parameters::ENVELOPE_VELOCITY,
+            control: kernels::ENVELOPE_VELOCITY,
+            rate: ControlRate::Sample,
+            magnitude: Some(NoteMagnitude::Velocity),
+        },
+    ],
+    in_place_safe: false,
+    note_control: Some(kernels::ENVELOPE_GATE),
+    prepared_bytes: size_of::<(SegmentFrames, SegmentFrames, SegmentFrames, NormalizedLevel)>()
+        as u64,
+    state_bytes: size_of::<(
+        kernels::Segment,
+        f32,
+        f32,
+        f32,
+        u32,
+        bool,
+        crate::quantities::NoteVelocity,
+    )>() as u64,
+};
+
 /// The declaration a kind has, where it has moved to one.
 ///
 /// The **only** per-kind `match` a declared kind appears in, besides [`prepare`]'s. Every
@@ -208,6 +259,7 @@ pub(crate) const SAW: NodeDeclaration = NodeDeclaration {
 pub(crate) fn declaration(kind: IrNodeKind) -> Option<&'static NodeDeclaration> {
     match kind {
         IrNodeKind::Saw { .. } => Some(&SAW),
+        IrNodeKind::Envelope { .. } => Some(&ENVELOPE),
         _ => None,
     }
 }
@@ -298,41 +350,8 @@ pub(crate) fn descriptor(kind: IrNodeKind) -> Option<NodeDescriptor> {
             in_place_safe: true,
             note_control: None,
         },
-        IrNodeKind::Envelope { .. } => NodeDescriptor {
-            kernel: kernels::ENVELOPE,
-            ports: vec![PortSpec::new(
-                crate::ir::PortId::FIRST,
-                PortDirection::Output,
-                SignalDomain::Control,
-                ChannelLayout::Mono,
-            )],
-            // The gate is **sample-positioned** (ADR-0001 clause 14), and it says so here
-            // rather than at the payload, so addressing it as a parameter and playing the
-            // node as a note reach the same control under the same timing law. An earlier
-            // revision left this at quantum rate, which is the defect P02-T007 closes.
-            controls: vec![
-                ControlSpec {
-                    parameter: parameters::ENVELOPE_GATE,
-                    control: kernels::ENVELOPE_GATE,
-                    rate: ControlRate::Sample,
-                    magnitude: None,
-                },
-                // `SOUND-INV-021`'s velocity destination, and the reason it is the
-                // envelope's: the invariant requires the played node's scope to declare a
-                // destination that **scales the rendered amplitude**, and an envelope's
-                // output is what an amplifier multiplies its audio by. Putting it on an
-                // oscillator's amplitude instead would replace the patch's authored level
-                // rather than scale it.
-                ControlSpec {
-                    parameter: parameters::ENVELOPE_VELOCITY,
-                    control: kernels::ENVELOPE_VELOCITY,
-                    rate: ControlRate::Sample,
-                    magnitude: Some(NoteMagnitude::Velocity),
-                },
-            ],
-            in_place_safe: false,
-            note_control: Some(kernels::ENVELOPE_GATE),
-        },
+        // Declared: the arm defers and states nothing.
+        IrNodeKind::Envelope { .. } => return declared.map(NodeDeclaration::descriptor),
         IrNodeKind::Filter { .. } => NodeDescriptor {
             kernel: kernels::FILTER,
             ports: vec![audio_in(crate::ir::PortId::FIRST), audio_out()],
@@ -604,9 +623,7 @@ pub fn prepared_payload_bytes(kind: IrNodeKind) -> u64 {
         )>(),
         IrNodeKind::Gain { .. } => size_of::<crate::quantities::GainFactor>(),
         IrNodeKind::Filter { .. } => size_of::<[f32; 3]>(),
-        IrNodeKind::Envelope { .. } => {
-            size_of::<(SegmentFrames, SegmentFrames, SegmentFrames, NormalizedLevel)>()
-        }
+        IrNodeKind::Envelope { .. } => return declared.map_or(0, |d| d.prepared_bytes),
     }) as u64
 }
 
@@ -624,15 +641,7 @@ pub fn state_payload_bytes(kind: IrNodeKind) -> u64 {
             crate::quantities::Amplitude,
         )>(),
         IrNodeKind::Filter { .. } => size_of::<(f32, f32)>(),
-        IrNodeKind::Envelope { .. } => size_of::<(
-            kernels::Segment,
-            f32,
-            f32,
-            f32,
-            u32,
-            bool,
-            crate::quantities::NoteVelocity,
-        )>(),
+        IrNodeKind::Envelope { .. } => return declared.map_or(0, |d| d.state_bytes),
         IrNodeKind::Output
         | IrNodeKind::Silence
         | IrNodeKind::Amplifier
@@ -769,46 +778,75 @@ mod tests {
         );
     }
 
-    /// `P05-S001`: every registry fact about a declared kind is the declaration's.
+    /// `P05-S001`, extended by `P05-S002`: every registry fact about a declared kind is the
+    /// declaration's.
     ///
     /// Read back through the registry functions rather than from the constant, so this
-    /// fails if any of them stops deferring: the descriptor's kernel, ports, controls,
+    /// fails if any of them stops forwarding: the descriptor's kernel, ports, controls,
     /// in-place eligibility and note control, and both byte attributions, must be the
-    /// declaration's own values. Mutation-verified by restating any one of them in the
-    /// function's own arm — the scan in `tests/node_representation.rs` catches the form,
-    /// and this catches a restated value that happens to differ.
+    /// declaration's own values, for every kind `declaration` knows. Mutation-verified by
+    /// restating any one of them in the function's own arm — the scan in
+    /// `tests/node_representation.rs` catches the form, and this catches a restated value
+    /// that happens to differ.
     #[test]
     fn a_declared_kinds_registry_facts_derive_from_its_declaration() {
-        let kind = IrNodeKind::Saw {
-            frequency: crate::quantities::Frequency::ZERO,
-            amplitude: Amplitude::UNITY,
-        };
-        let declared = declaration(kind).expect("the sawtooth is declared");
-        let descriptor = descriptor(kind).expect("a declared kind has a descriptor");
-
-        assert!(descriptor.kernel.is_same(declared.kernel));
-        assert_eq!(descriptor.ports, declared.ports.to_vec());
-        assert_eq!(descriptor.controls, declared.controls.to_vec());
-        assert_eq!(descriptor.in_place_safe, declared.in_place_safe);
-        assert_eq!(descriptor.note_control, declared.note_control);
+        let declared: Vec<IrNodeKind> = every_kind()
+            .into_iter()
+            .filter(|kind| declaration(*kind).is_some())
+            .collect();
         assert_eq!(
-            ports(kind, ChannelLayout::Stereo),
-            declared.ports.to_vec(),
-            "the public port set is the declaration's, for any stream"
+            declared.len(),
+            2,
+            "the sawtooth and the envelope are declared so far"
         );
-        assert_eq!(prepared_payload_bytes(kind), declared.prepared_bytes);
-        assert_eq!(state_payload_bytes(kind), declared.state_bytes);
 
-        // And the declaration says something: a sawtooth is a pitched, played-through
-        // source with a phase to keep, so neither attribution is zero and its frequency
-        // is the pitch destination.
-        assert!(declared.prepared_bytes > 0 && declared.state_bytes > 0);
+        for kind in declared {
+            let declared = declaration(kind).expect("filtered on it");
+            let descriptor = descriptor(kind).expect("a declared kind has a descriptor");
+            assert!(descriptor.kernel.is_same(declared.kernel), "{kind:?}");
+            assert_eq!(descriptor.ports, declared.ports.to_vec(), "{kind:?}");
+            assert_eq!(descriptor.controls, declared.controls.to_vec(), "{kind:?}");
+            assert_eq!(descriptor.in_place_safe, declared.in_place_safe, "{kind:?}");
+            assert_eq!(descriptor.note_control, declared.note_control, "{kind:?}");
+            assert_eq!(
+                ports(kind, ChannelLayout::Stereo),
+                declared.ports.to_vec(),
+                "{kind:?}: the public port set is the declaration's, for any stream"
+            );
+            assert_eq!(
+                prepared_payload_bytes(kind),
+                declared.prepared_bytes,
+                "{kind:?}"
+            );
+            assert_eq!(state_payload_bytes(kind), declared.state_bytes, "{kind:?}");
+            assert!(
+                declared.prepared_bytes > 0 && declared.state_bytes > 0,
+                "{kind:?}: both declared kinds prepare something and keep something"
+            );
+        }
+
+        // And each declaration says what its kind is. The sawtooth is a pitched source: its
+        // frequency is a sample-positioned pitch destination and no note plays it directly.
         assert!(
-            declared
+            SAW.controls
+                .iter()
+                .any(|c| c.magnitude == Some(NoteMagnitude::Pitch) && c.rate == ControlRate::Sample)
+                && SAW.note_control.is_none()
+        );
+        // The envelope is the played node: its gate is the note control, sample-positioned,
+        // and its velocity is the velocity destination, also sample-positioned.
+        let gate = ENVELOPE
+            .controls
+            .iter()
+            .find(|c| Some(c.control) == ENVELOPE.note_control)
+            .expect("the note control is one of the declared controls");
+        assert_eq!(gate.rate, ControlRate::Sample);
+        assert!(
+            ENVELOPE
                 .controls
                 .iter()
-                .any(|c| c.magnitude == Some(NoteMagnitude::Pitch) && c.rate == ControlRate::Sample),
-            "the sawtooth's frequency is a sample-positioned pitch destination"
+                .any(|c| c.magnitude == Some(NoteMagnitude::Velocity)
+                    && c.rate == ControlRate::Sample)
         );
     }
 }
