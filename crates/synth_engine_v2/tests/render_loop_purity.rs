@@ -1053,9 +1053,21 @@ fn the_kernel_registry_is_closed_and_no_scanned_form_forges_a_kernel() {
     // No descriptor may spell its kernel any other way. The compiler already refuses a
     // *foreign* function; this refuses a local alias that would hide which constant is
     // meant from a reader of the registry.
-    // Minus the struct's own field declaration, `kernel: Kernel`, which is not an entry.
+    // Minus the field declarations, `kernel: Kernel`, which are not entries — and minus a
+    // declaration-derived descriptor's `kernel: self.kernel`, which names no kernel at all:
+    // it forwards the one its `NodeDeclaration` already named through `kernels::`, and
+    // that naming is counted above. `P05-S001` introduced the form, and holding it to
+    // exactly that spelling is what keeps a derivation from becoming a second path.
+    let forwarded = registry.matches("kernel: self.kernel").count();
+    assert!(
+        forwarded <= 1,
+        "a kernel is forwarded from a declaration in {forwarded} places; one derivation \
+         is the design, more is a second registry"
+    );
     assert_eq!(
-        registry.matches("kernel: ").count() - registry.matches("kernel: Kernel").count(),
+        registry.matches("kernel: ").count()
+            - registry.matches("kernel: Kernel").count()
+            - forwarded,
         entries.len(),
         "a descriptor names its kernel by some path other than `kernels::`, so the \
          registry no longer reads as one list of named kernels"
@@ -1100,4 +1112,67 @@ fn strip_comments(source: &str) -> String {
         })
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+/// `SOUND-INV-012`: adding a node adds no renderer control flow.
+///
+/// The region already names no `IrNodeKind` — `the_render_loop_makes_no_topology_or_naming_decision`
+/// forbids it — so the loop cannot branch on a kind. What that leaves is a second way in:
+/// a kind called differently, either through a second dispatch site or by a kernel named
+/// directly from the loop. Both are source forms, and both are held here: the hot path
+/// dispatches through exactly one `Kernel::run` site, and names no kernel but the
+/// kind-independent seam `kernels::bind`.
+#[test]
+fn the_render_loop_dispatches_every_node_through_one_site() {
+    let lines = code_lines(&hot_path_source());
+    let dispatch_sites: Vec<&(usize, String)> = lines
+        .iter()
+        .filter(|(_, line)| line.contains(".kernel().run("))
+        .collect();
+    assert_eq!(
+        dispatch_sites.len(),
+        1,
+        "the render loop must reach every kernel through one dispatch site, found: {dispatch_sites:?}"
+    );
+
+    // Any other `.run(` is a kernel value invoked outside prepared dispatch —
+    // `kernels::SAW.run(..)` reaches a kind by name while leaving the count above at one,
+    // which an independent review pointed out — so every `.run(` must be that one site.
+    let other_runs: Vec<String> = lines
+        .iter()
+        .filter(|(_, line)| line.contains(".run(") && !line.contains(".kernel().run("))
+        .map(|(line_number, line)| format!("{line_number}: {line}"))
+        .collect();
+    assert!(
+        other_runs.is_empty(),
+        "the render loop must invoke no kernel value but the dispatched one:\n  {}",
+        other_runs.join("\n  ")
+    );
+
+    // And no kernel is named at all: a `kernels::` path may reach the kind-independent
+    // seam `bind` or a type, never a function call or a `Kernel` constant. A constant is
+    // spelled in capitals, a type in camel case, so the spelling decides.
+    let named_kernels: Vec<String> = lines
+        .iter()
+        .filter_map(|(line_number, line)| {
+            let start = line.find("kernels::")?;
+            let rest = &line[start + "kernels::".len()..];
+            let identifier: String = rest
+                .chars()
+                .take_while(|c| c.is_ascii_alphanumeric() || *c == '_')
+                .collect();
+            let called = rest[identifier.len()..].starts_with('(');
+            let constant = !identifier.is_empty()
+                && identifier
+                    .chars()
+                    .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_');
+            ((called && identifier != "bind") || constant).then(|| format!("{line_number}: {line}"))
+        })
+        .collect();
+    assert!(
+        named_kernels.is_empty(),
+        "the render loop must name no kernel; a kind reached by name is control flow the \
+         registry did not add:\n  {}",
+        named_kernels.join("\n  ")
+    );
 }

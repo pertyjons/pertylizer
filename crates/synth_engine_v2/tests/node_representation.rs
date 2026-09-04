@@ -307,3 +307,62 @@ fn a_widened_signal_is_copied_by_a_scheduled_kernel() {
         "both channels carry the widened signal"
     );
 }
+
+/// `P05-S001`: a declared kind is named in the registry only where it is declared, where
+/// its prepared data is built, and in arms that defer to the declaration.
+///
+/// The registry's functions match exhaustively over `IrNodeKind`, so a declared kind still
+/// appears in each of them; what the declaration removes is the *fact* those arms used to
+/// carry. This holds every arm of the sawtooth to one of three forms: the declaration's own
+/// (`Some(&SAW)`), `prepare`'s field destructuring (the one arm that stays until parameters
+/// are slots), or an exact one-line forwarding arm — the declaration's descriptor, or one
+/// declared field through the `Option`'s `0` fallback. An arm restating a port, a control or
+/// a byte count, or forwarding through a second expression, matches none and fails here; `node.rs`'s own
+/// `a_declared_kinds_registry_facts_derive_from_its_declaration` is the other half, that
+/// the deferring arms reach the declaration rather than a copy of it.
+#[test]
+fn a_declared_kind_appears_in_the_registry_only_by_deferring_to_its_declaration() {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/node.rs");
+    let source = std::fs::read_to_string(&path)
+        .unwrap_or_else(|e| panic!("cannot read {}: {e}", path.display()));
+    // Production code only: the test module names kinds freely.
+    let production = source.split("#[cfg(test)]").next().unwrap_or("");
+    let mut offending = Vec::new();
+    let mut seen = 0;
+    for (index, line) in production.lines().enumerate() {
+        let trimmed = line.trim();
+        if trimmed.starts_with("//") || !trimmed.contains("IrNodeKind::Saw") {
+            continue;
+        }
+        seen += 1;
+        let declares = trimmed == "IrNodeKind::Saw { .. } => Some(&SAW),";
+        let prepares = trimmed == "IrNodeKind::Saw {";
+        // A deferring arm is one line, ends the arm, and forwards exactly one thing: the
+        // declaration's descriptor, or one of its fields through the `0` fallback the
+        // `Option` needs. Anything else — a literal, a second expression, a body on the
+        // next line — is not a forwarding form. An independent review found the earlier
+        // token check accepting `declared.map_or(16, |_| 16)`.
+        let field_forward = trimmed
+            .strip_prefix("IrNodeKind::Saw { .. } => return declared.map_or(0, |d| d.")
+            .and_then(|rest| rest.strip_suffix("),"))
+            .is_some_and(|field| {
+                !field.is_empty() && field.chars().all(|c| c.is_ascii_lowercase() || c == '_')
+            });
+        let defers = trimmed
+            == "IrNodeKind::Saw { .. } => return declared.map(NodeDeclaration::descriptor),"
+            || field_forward;
+        if !(declares || prepares || defers) {
+            offending.push(format!("{}:{} {trimmed}", path.display(), index + 1));
+        }
+    }
+    assert!(
+        seen >= 3,
+        "the scan expects the declaration, `prepare` and at least one deferring arm; it \
+         found {seen} mentions, so it is reading the wrong file or the shape moved"
+    );
+    assert!(
+        offending.is_empty(),
+        "an arm of a declared kind must defer to its declaration rather than restate a fact:\n  {}",
+        offending.join("\n  ")
+    );
+}

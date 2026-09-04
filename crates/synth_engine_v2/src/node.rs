@@ -102,13 +102,114 @@ pub(crate) struct NodeDescriptor {
 pub const AMPLIFIER_CONTROL: crate::ir::PortId = crate::ir::PortId::new(1);
 
 /// The audio output every source declares.
+const AUDIO_OUT: PortSpec = PortSpec::new(
+    crate::ir::PortId::FIRST,
+    PortDirection::Output,
+    SignalDomain::Audio,
+    ChannelLayout::Mono,
+);
+
+/// The audio output every source declares, for the arms not yet moved to a declaration.
 fn audio_out() -> PortSpec {
-    PortSpec::new(
-        crate::ir::PortId::FIRST,
-        PortDirection::Output,
-        SignalDomain::Audio,
-        ChannelLayout::Mono,
-    )
+    AUDIO_OUT
+}
+
+/// What one node kind declares about itself, in one place.
+///
+/// Phase 5's first slice, `P05-S001`, and the shape every later kind moves to. Before it,
+/// what a kind said about itself was spread over one `match` arm per registry function —
+/// its descriptor, its prepared and mutable byte attribution — so a kind's facts could
+/// disagree with each other and nothing asked. A declaration is one value the registry
+/// functions **derive** from through [`declaration`], so the facts cannot disagree. The
+/// registry functions still match exhaustively over every kind, so a declared kind keeps
+/// an arm in each — but that arm **defers** to the declaration and states nothing, and
+/// `tests/node_representation.rs` holds every arm of a declared kind to that form.
+///
+/// The prepared-data construction is **not** here yet: [`prepare`] still reads the kind's
+/// own IR fields, because the IR carries them per variant. When parameters become slots
+/// that arm moves too; until then it is the one other place a declared kind is named.
+#[derive(Debug)]
+#[must_use]
+pub(crate) struct NodeDeclaration {
+    /// The kernel that renders it.
+    pub(crate) kernel: Kernel,
+    /// The ports it declares. Stream-independent for every kind but the output node,
+    /// which has no declaration because it has no kernel.
+    pub(crate) ports: &'static [PortSpec],
+    /// The controls a parameter event can move, with the note magnitude each carries.
+    pub(crate) controls: &'static [ControlSpec],
+    /// ADR-0005 clause 5's first condition, as [`NodeDescriptor::in_place_safe`].
+    pub(crate) in_place_safe: bool,
+    /// The control a note edge moves, where the kind can be played at all.
+    pub(crate) note_control: Option<ControlIndex>,
+    /// The immutable payload this kind is charged for, per node, in the resource report.
+    pub(crate) prepared_bytes: u64,
+    /// The mutable payload this kind is charged for, per node, in the resource report.
+    pub(crate) state_bytes: u64,
+}
+
+impl NodeDeclaration {
+    /// The descriptor admission reads, derived rather than restated.
+    fn descriptor(&self) -> NodeDescriptor {
+        NodeDescriptor {
+            kernel: self.kernel,
+            ports: self.ports.to_vec(),
+            controls: self.controls.to_vec(),
+            in_place_safe: self.in_place_safe,
+            note_control: self.note_control,
+        }
+    }
+}
+
+/// The sawtooth, declared once.
+///
+/// A pitch destination on its frequency, as the sine's is and for the same reason: a
+/// note's key has to be in force at the sample its gate rises, so the destination is
+/// sample-positioned. The byte attributions name the kernel's prepared and state layouts
+/// — a phase accumulator beside its frequency and amplitude — as the report charges them.
+pub(crate) const SAW: NodeDeclaration = NodeDeclaration {
+    kernel: kernels::SAW,
+    ports: &[AUDIO_OUT],
+    controls: &[
+        ControlSpec {
+            parameter: parameters::SAW_FREQUENCY,
+            control: kernels::SAW_FREQUENCY,
+            rate: ControlRate::Sample,
+            magnitude: Some(NoteMagnitude::Pitch),
+        },
+        ControlSpec {
+            parameter: parameters::SAW_AMPLITUDE,
+            control: kernels::SAW_AMPLITUDE,
+            rate: ControlRate::Quantum,
+            magnitude: None,
+        },
+    ],
+    in_place_safe: false,
+    note_control: None,
+    prepared_bytes: size_of::<(
+        f64,
+        crate::quantities::Frequency,
+        crate::quantities::Amplitude,
+    )>() as u64,
+    state_bytes: size_of::<(
+        f64,
+        crate::quantities::Frequency,
+        crate::quantities::Amplitude,
+    )>() as u64,
+};
+
+/// The declaration a kind has, where it has moved to one.
+///
+/// The **only** per-kind `match` a declared kind appears in, besides [`prepare`]'s. Every
+/// registry function asks here first and falls back to its own arms for the kinds that
+/// have not moved yet, so migration is one kind at a time and a kind cannot be half
+/// declared: its descriptor and both byte attributions come from the same value or none of
+/// them do.
+pub(crate) fn declaration(kind: IrNodeKind) -> Option<&'static NodeDeclaration> {
+    match kind {
+        IrNodeKind::Saw { .. } => Some(&SAW),
+        _ => None,
+    }
 }
 
 /// One mono audio input on the given port.
@@ -128,6 +229,7 @@ fn audio_in(port: crate::ir::PortId) -> PortSpec {
 /// a node's work. It is the only kind whose ports depend on the stream, because it is
 /// the one place a plan meets the layout the host asked for.
 pub(crate) fn descriptor(kind: IrNodeKind) -> Option<NodeDescriptor> {
+    let declared = declaration(kind);
     let descriptor = match kind {
         IrNodeKind::Output => return None,
         IrNodeKind::Silence => NodeDescriptor {
@@ -175,27 +277,9 @@ pub(crate) fn descriptor(kind: IrNodeKind) -> Option<NodeDescriptor> {
             in_place_safe: false,
             note_control: None,
         },
-        IrNodeKind::Saw { .. } => NodeDescriptor {
-            kernel: kernels::SAW,
-            ports: vec![audio_out()],
-            controls: vec![
-                // A pitch destination, as the sine's is and for the same reason.
-                ControlSpec {
-                    parameter: parameters::SAW_FREQUENCY,
-                    control: kernels::SAW_FREQUENCY,
-                    rate: ControlRate::Sample,
-                    magnitude: Some(NoteMagnitude::Pitch),
-                },
-                ControlSpec {
-                    parameter: parameters::SAW_AMPLITUDE,
-                    control: kernels::SAW_AMPLITUDE,
-                    rate: ControlRate::Quantum,
-                    magnitude: None,
-                },
-            ],
-            in_place_safe: false,
-            note_control: None,
-        },
+        // Declared: the arm defers and states nothing. `tests/node_representation.rs` holds
+        // every arm of a declared kind to that form.
+        IrNodeKind::Saw { .. } => return declared.map(NodeDeclaration::descriptor),
         IrNodeKind::Amplifier => NodeDescriptor {
             kernel: kernels::AMPLIFIER,
             ports: vec![
@@ -505,12 +589,15 @@ pub const fn state_bytes_per_node() -> u64 {
 /// that sets the record. Summing by hand named the wrong node for exactly that reason.
 #[must_use]
 pub fn prepared_payload_bytes(kind: IrNodeKind) -> u64 {
+    let declared = declaration(kind);
     (match kind {
+        // Declared: the arm defers and states nothing.
+        IrNodeKind::Saw { .. } => return declared.map_or(0, |d| d.prepared_bytes),
         // The output node has no kernel, so it carries no prepared data of its own.
         IrNodeKind::Output | IrNodeKind::Silence | IrNodeKind::Amplifier => 0,
         IrNodeKind::Constant { .. } => size_of::<crate::quantities::Amplitude>(),
         IrNodeKind::Impulse { .. } => size_of::<crate::time::PlanPosition>(),
-        IrNodeKind::Sine { .. } | IrNodeKind::Saw { .. } => size_of::<(
+        IrNodeKind::Sine { .. } => size_of::<(
             f64,
             crate::quantities::Frequency,
             crate::quantities::Amplitude,
@@ -526,9 +613,12 @@ pub fn prepared_payload_bytes(kind: IrNodeKind) -> u64 {
 /// The mutable payload one kind carries, for the same attribution and by the same rule.
 #[must_use]
 pub fn state_payload_bytes(kind: IrNodeKind) -> u64 {
+    let declared = declaration(kind);
     (match kind {
+        // Declared: the arm defers and states nothing.
+        IrNodeKind::Saw { .. } => return declared.map_or(0, |d| d.state_bytes),
         // Only these keep anything between quanta.
-        IrNodeKind::Sine { .. } | IrNodeKind::Saw { .. } => size_of::<(
+        IrNodeKind::Sine { .. } => size_of::<(
             f64,
             crate::quantities::Frequency,
             crate::quantities::Amplitude,
@@ -676,6 +766,49 @@ mod tests {
             record.saturating_sub(widest) <= size_of::<u64>() as u64,
             "the widest declared payload is {widest} bytes and a record is {record}; one of \
              the payload figures is out of date"
+        );
+    }
+
+    /// `P05-S001`: every registry fact about a declared kind is the declaration's.
+    ///
+    /// Read back through the registry functions rather than from the constant, so this
+    /// fails if any of them stops deferring: the descriptor's kernel, ports, controls,
+    /// in-place eligibility and note control, and both byte attributions, must be the
+    /// declaration's own values. Mutation-verified by restating any one of them in the
+    /// function's own arm — the scan in `tests/node_representation.rs` catches the form,
+    /// and this catches a restated value that happens to differ.
+    #[test]
+    fn a_declared_kinds_registry_facts_derive_from_its_declaration() {
+        let kind = IrNodeKind::Saw {
+            frequency: crate::quantities::Frequency::ZERO,
+            amplitude: Amplitude::UNITY,
+        };
+        let declared = declaration(kind).expect("the sawtooth is declared");
+        let descriptor = descriptor(kind).expect("a declared kind has a descriptor");
+
+        assert!(descriptor.kernel.is_same(declared.kernel));
+        assert_eq!(descriptor.ports, declared.ports.to_vec());
+        assert_eq!(descriptor.controls, declared.controls.to_vec());
+        assert_eq!(descriptor.in_place_safe, declared.in_place_safe);
+        assert_eq!(descriptor.note_control, declared.note_control);
+        assert_eq!(
+            ports(kind, ChannelLayout::Stereo),
+            declared.ports.to_vec(),
+            "the public port set is the declaration's, for any stream"
+        );
+        assert_eq!(prepared_payload_bytes(kind), declared.prepared_bytes);
+        assert_eq!(state_payload_bytes(kind), declared.state_bytes);
+
+        // And the declaration says something: a sawtooth is a pitched, played-through
+        // source with a phase to keep, so neither attribution is zero and its frequency
+        // is the pitch destination.
+        assert!(declared.prepared_bytes > 0 && declared.state_bytes > 0);
+        assert!(
+            declared
+                .controls
+                .iter()
+                .any(|c| c.magnitude == Some(NoteMagnitude::Pitch) && c.rate == ControlRate::Sample),
+            "the sawtooth's frequency is a sample-positioned pitch destination"
         );
     }
 }
