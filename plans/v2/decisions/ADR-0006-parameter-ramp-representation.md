@@ -3,7 +3,7 @@
 | Field | Value |
 |---|---|
 | ID | ADR-0006 |
-| Status | Proposed |
+| Status | Accepted |
 | Phase | 5/7 |
 | Created | 2026-09-04 |
 | Last reviewed | 2026-09-04 |
@@ -43,9 +43,13 @@ between).
 - **V2 today has steps only.** A `ControlRate::Quantum` write takes effect at the next
   boundary as a step; a `ControlRate::Sample` write at its offset as a step
   (`TimedControl { offset, control, value }`). No kernel interpolates a control.
-- **V1 de-zippers level per block** and nothing else: `voice.rs` ramps the amplifier level
-  across a block so a level change does not click; pitch and cutoff step, and their clicks
-  are what the Mod Grid's `smooth` field was added to hide, per node.
+- **V1 ramps two things per block: level and cutoff.** `voice.rs` ramps the amplifier
+  level across a block, and `filter.rs` ramps the base cutoff from the previous block's
+  final value to this block's target with the convention that *"sample (n−1) lands exactly
+  on the target"*, applying key-tracking and modulation per sample on top of the ramped
+  base. Pitch steps. The Mod Grid's `smooth` fields are one-pole follower accumulators for
+  audio-tap sources, not de-zippering; an independent read of this record's acceptance
+  corrected an earlier claim that level was the only ramp.
 - **ADR-0001's quantum is 64 frames** (ADR-0037), so a per-quantum linear segment is 64
   samples long — long enough that a step at a quantum boundary is audible on an amplitude and
   short enough that a linear segment across it is not.
@@ -70,8 +74,14 @@ between).
 ## Decision
 
 1. A parameter slot's runtime value is a **linear segment**: the current value, the target
-   value, and the frames remaining; the value advances by `(target − current) / remaining`
-   per frame and holds at the target. A segment with zero remaining frames is a step.
+   value, and the frames remaining. **The slot advances before the kernel reads**, so a
+   retarget over `N` frames yields, on frame `k` of the segment, `current + (target −
+   current) × (k + 1) / N`; the last frame of the segment reads exactly the target, which is
+   V1's own filter convention, and every later frame holds it. A segment with zero frames
+   remaining is a step read on its first frame. The ordering is stated because the other
+   reading — read, then advance — emits the start value first and reaches the target one
+   frame late, and the two render different samples; an independent read found the record
+   silent on it.
 2. **Endpoints are resolved values** under ADR-0007's law; the segment moves between them
    and composes nothing.
 3. **A new write retargets from the current value**, not from the previous target, so a
@@ -82,13 +92,21 @@ between).
    slot does not know who retargeted it.
 5. A kernel reads **one value per sample** from its controls and never advances a segment
    itself; advancing is the slot's, in the loop, so the purity scan sees it once.
+6. **An activation's catch-up seeds a slot; it never ramps across an activation.**
+   `SOUND-INV-018`'s catch-up batch restores the last pre-destination write of every
+   prepared target as a `SetParameter`, which under ADR-0007 is an override-layer write; the
+   slot takes it as its override *and* seeds the segment with current equal to target and
+   no frames remaining, so the first sample the new mapping governs reads the restored value
+   in force, as the invariant requires. What a modulator contributes after the activation is
+   re-derived by that modulator; no modulation is restored from a flattened value.
 
 ## Falsifier and stopping rule
 
 Violated if a sample-positioned control is smoothed, if a retarget jumps from the previous
-target rather than the current value, if two kernels advance the same control, or if the
-loop's ramp arithmetic is anything but an add per frame. A different default duration is not
-a defect.
+target rather than the current value, if the first frame of a segment reads the start value
+or its last frame does not read the target, if an activation's catch-up ramps rather than
+seeds, if two kernels advance the same control, or if the loop's ramp arithmetic is anything
+but an add per frame. A different default duration is not a defect.
 
 ## Consequences and risks
 
@@ -101,14 +119,23 @@ a defect.
 
 ## Specification update
 
-Acceptance adds the slot's segment to the Sound Core render contract beside ADR-0007's law,
-written by the same slice. No current behaviour changes at acceptance.
+Acceptance writes the slot's segment into the Sound Core render contract now, as
+`SOUND-INV-024` beside ADR-0007's `SOUND-INV-023`, marked *not built* and owed by the same
+slice. No current behaviour changes at acceptance.
 
 ## Review
 
-Design consultation: put to the user on 2026-09-04 with the three options; to be recorded.
+Design consultation: the three options and their costs were put to the user on 2026-09-04,
+who selected option 2 together with ADR-0007's option 3.
 
-Independent semantic reviewer: to be recorded at acceptance.
+Independent semantic reviewer: `codex review --uncommitted` over the acceptance transaction,
+shared with ADR-0007. It found three defects, all repaired before the commit: the record was
+silent on whether a segment advances before or after the kernel reads it, which two readings
+render differently (clause 1 now states advance-then-read, with V1's filter convention as the
+precedent); it left `SOUND-INV-018`'s catch-up unreconciled with a layered, smoothed slot
+(clause 6 seeds the slot and never ramps across an activation); and its evidence claimed V1
+smooths level and nothing else, while `filter.rs` ramps the base cutoff per block and the Mod
+Grid's `smooth` fields are audio-tap followers (the evidence now says so).
 
 Stopping rule: a smoothed gate, a retarget from the wrong endpoint, or unenumerable loop
 work blocks acceptance.

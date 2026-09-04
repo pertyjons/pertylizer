@@ -3,7 +3,7 @@
 | Field | Value |
 |---|---|
 | ID | ADR-0007 |
-| Status | Proposed |
+| Status | Accepted |
 | Phase | 5/7 |
 | Created | 2026-09-04 |
 | Last reviewed | 2026-09-04 |
@@ -61,8 +61,10 @@ Ratified from real existing parameters, as master plan question 7 asks, by readi
   source`, clamped to the target's range. No multiplicative mode exists in V1.
 - **A choice is not modulated.** V1's `ParamKind::Enum`, `Bool` and `Reference` parameters
   are excluded from the Mod Matrix roster; `modulatable: false` is a descriptor field.
-- **Smoothing exists only as a level de-zipper.** `voice.rs` ramps level per block; nothing
-  else is smoothed, and the Mod Grid's `smooth` field is carried but its law is per node.
+- **Smoothing exists for level and for cutoff, per block.** `voice.rs` ramps level and
+  `filter.rs` ramps the base cutoff, each across a block; the Mod Grid's `smooth` fields are
+  one-pole followers for audio-tap sources rather than de-zippering. ADR-0006 owns what a
+  ramp is; this record's layers end where that ramp begins.
 
 Two things V1 does **not** have, and the master plan asks for: a decibel-additive law (V1's
 level is a normalized linear value modulated additively) and a physical-linear-additive law
@@ -116,6 +118,11 @@ distinct from normalized (V1 has none with a physical unit that is modulated).
    beside the unit, and validation refuses an edge whose units do not match the target's law.
 6. Phase 6 states velocity composition — `P04-R001` — as a modulation under one of these laws
    on the velocity destination, and inherits that residual before it does.
+7. **An activation's catch-up write is an override-layer write.** `SOUND-INV-018` restores the
+   last pre-destination `SetParameter` of every prepared target; the slot takes that value as
+   its override and seeds ADR-0006's segment at the resolved value, and a modulator's
+   contribution after the activation comes from the modulator, never from the flattened
+   value. An independent read of this acceptance found the two invariants unreconciled.
 
 ## Falsifier and stopping rule
 
@@ -137,16 +144,23 @@ a law is an amendment with its arithmetic stated, and is not a defect.
 
 ## Specification update
 
-Acceptance adds the law and the layer order to the Sound Core render contract as a new
-invariant, written by the slice that builds the slot (Phase 5's seventh slice), and the
-`ParameterUnit` gains its paired law in `node::catalog()`. No current behaviour changes at
+Acceptance writes the law set and the layer order into the Sound Core render contract now,
+as `SOUND-INV-023`, marked *not built* and owed by Phase 5's seventh slice — the form
+`SOUND-INV-022` takes — so that implementation follows a current specification rather than
+this record's clauses; ADR-0027's acceptance established that postponing the contract to the
+building slice is not what `decisions/README.md`'s lifecycle allows. `node::catalog()` gains
+the paired law beside the unit when that slice declares it. No current behaviour changes at
 acceptance: nothing in V2 composes yet.
 
 ## Review
 
-Design consultation: put to the user on 2026-09-04 with the three options; to be recorded.
+Design consultation: the three options and their costs were put to the user on 2026-09-04,
+who selected option 3 together with ADR-0006's option 2.
 
-Independent semantic reviewer: to be recorded at acceptance.
+Independent semantic reviewer: `codex review --uncommitted` over the acceptance transaction
+— both records, the decision index, the Sound Core contract's two new invariants and
+`NOW.md`. Its three findings and their repairs are recorded in ADR-0006's review section;
+the one that reaches this record is clause 7.
 
 Stopping rule: an arithmetic that contradicts V1's own for pitch and cutoff, a layer order
 that lets modulation be replaced by automation, or a kernel that composes blocks acceptance.
