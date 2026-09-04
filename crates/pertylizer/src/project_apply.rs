@@ -1009,16 +1009,26 @@ fn apply_instrument_metadata(
     );
 }
 
+/// V1's reading of a saved instrument's oversampling number.
+///
+/// The one place the mapping lives. `2` and `4` are the real factors and **every other value**
+/// — including `0` and `3` — is `X1`, so a caller deciding whether a saved project is neutral
+/// must ask this rather than compare the number to `1`. The V2 lowerer asks it for exactly that
+/// reason, which is why this is a shared function rather than a `match` at the load site.
+pub(crate) fn saved_oversampling_factor(saved: u8) -> synth_dsp::OversamplingFactor {
+    match saved {
+        2 => synth_dsp::OversamplingFactor::X2,
+        4 => synth_dsp::OversamplingFactor::X4,
+        _ => synth_dsp::OversamplingFactor::X1,
+    }
+}
+
 fn push_instrument_params(
     sender: &CommandSender,
     inst_state: &InstrumentState,
     inst_id: InstrumentId,
 ) {
-    let oversampling = match inst_state.oversampling {
-        2 => synth_dsp::OversamplingFactor::X2,
-        4 => synth_dsp::OversamplingFactor::X4,
-        _ => synth_dsp::OversamplingFactor::X1,
-    };
+    let oversampling = saved_oversampling_factor(inst_state.oversampling);
     let key_range = synth_engine::instrument::KeyRange::new(
         synth_core::MidiNote::new(inst_state.key_range.0),
         synth_core::MidiNote::new(inst_state.key_range.1),

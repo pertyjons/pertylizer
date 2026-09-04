@@ -475,8 +475,35 @@ fn every_call_the_render_loop_makes_is_inside_the_checked_region() {
         "min",
         "max",
         "abs",
+        // `NoteVelocity::saturating` is the documented policy holding a parameter-written
+        // velocity inside `[0, 1]`, which is the destination's domain — `SOUND-INV-021` puts
+        // the *refusing* constructor on the note payload, and the parameter path has only
+        // this one. It is a `NaN` test and an `f32::clamp`: two comparisons and a select,
+        // allocating nothing and locking nothing. `clamp` can panic on `min > max` alone,
+        // and both are literals there, so the assertion is constant-true and compiles away;
+        // `NaN` is answered before it is reached. It lives on the quantity rather than at
+        // the assignment because `AGENTS.md` requires a documented saturating **type** to
+        // own a policy like this, which is what moved it out of the checked region and onto
+        // this list.
+        "saturating",
+        // `SOUND-INV-021`'s expansion, both halves of it. `CompiledPlan::note_magnitudes_of`
+        // is a plan-identity comparison and one checked slice of a table the plan owns;
+        // `CompiledPlan::magnitude_value` is two array indexes and an infallible conversion,
+        // which is the whole reason a key resolves through a **prepared** table rather than
+        // through a formula. Neither allocates, locks, or panics: every lookup is `get`, and
+        // an out-of-range slot yields the empty slice or `None` rather than a substituted
+        // frequency. They live on the plan rather than in the loop because the plan is what
+        // owns the tables, and a copy of them in `hot.rs` would be a second authority on
+        // where a note's magnitudes land.
+        "note_magnitudes_of",
+        "magnitude_value",
         "floor",
         "sin",
+        // `f64::is_finite` is one exponent comparison and compiles to a bit test. The
+        // sawtooth's band-limiting residual uses it to refuse a step it cannot place in its
+        // domain, which is the alternative to a negated partial-order comparison that reads
+        // as a trap. It allocates nothing, locks nothing, and cannot panic.
+        "is_finite",
         "matches",
         // The arbiter's half. `measured` is `EventCount`'s observation constructor — a
         // `const fn` wrapping a `u32`, which is exactly the newtype the critical rule asks

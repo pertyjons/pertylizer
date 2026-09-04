@@ -109,6 +109,9 @@ fn voice() -> GraphIr {
             (OUTPUT, PortId::FIRST),
             SignalDomain::Audio,
         )
+        // `SOUND-INV-021`: the sine is a pitch destination in the played node's scope, so
+        // the scope states what a key resolves to.
+        .tuning(ExecutionScope::Voice, common::twelve_tet())
         .declaring(common::compiled_notes(4))
         .build()
         .expect("a readable plan")
@@ -126,7 +129,7 @@ fn compiled_note(plan: &CompiledPlan, time: u64, on: bool) -> PlanEvent {
         .resolve_note(ENVELOPE)
         .expect("the envelope accepts note edges");
     let payload = if on {
-        CompiledPayload::NoteOn { slot }
+        common::note_on(slot)
     } else {
         CompiledPayload::NoteOff { slot }
     };

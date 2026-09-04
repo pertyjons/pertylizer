@@ -282,6 +282,38 @@ fn write_gate(
     }
 }
 
+/// Record a note-on's **magnitudes** in that same history.
+///
+/// ADR-0051's rule is that a target carries the last write before the destination, and since
+/// `SOUND-INV-021` a note-on writes more than its gate. Without this, seeking into a sounding
+/// note restores the gate and leaves the pitch at the value the node was *prepared* with — the
+/// note would resume, audibly, as a different note.
+///
+/// Written through the prepared rows the magnitude's physical `(node, control)` resolves to,
+/// exactly as [`write_gate`] does and for the same aliasing reason.
+fn write_magnitudes(
+    values: &mut [Option<crate::quantities::ParameterValue>],
+    plan: &crate::plan::CompiledPlan,
+    slot: crate::plan::NoteSlot,
+    key: crate::quantities::KeyIdentity,
+    velocity: crate::quantities::NoteVelocity,
+) {
+    let targets = plan.parameter_targets();
+    for magnitude in plan.note_magnitudes_of(slot) {
+        let Some(value) = plan.magnitude_value(magnitude, key, velocity) else {
+            continue;
+        };
+        for (index, target) in targets.iter().enumerate() {
+            if target.node == magnitude.node
+                && target.control == magnitude.control
+                && let Some(entry) = values.get_mut(index)
+            {
+                *entry = Some(value);
+            }
+        }
+    }
+}
+
 /// Rewrite a stamping error's event index from the suffix back to the admitted stream.
 ///
 /// The suffix is built here — history dropped, crossing-note releases omitted — so an index
@@ -661,7 +693,11 @@ impl StreamControl {
                                 *entry = Some(value);
                             }
                         }
-                        CompiledPayload::NoteOn { slot } => {
+                        CompiledPayload::NoteOn {
+                            slot,
+                            key,
+                            velocity,
+                        } => {
                             require_note_producer(&self.plan, event_index)?;
                             write_gate(
                                 &mut values,
@@ -669,6 +705,7 @@ impl StreamControl {
                                 slot,
                                 crate::quantities::ParameterValue::ONE,
                             );
+                            write_magnitudes(&mut values, &self.plan, slot, key, velocity);
                             if let Some(depth) = open_at_anchor.get_mut(slot.index()) {
                                 *depth = depth.saturating_add(1);
                             }
@@ -737,7 +774,7 @@ impl StreamControl {
             };
 
             match event.payload() {
-                CompiledPayload::NoteOn { slot } => {
+                CompiledPayload::NoteOn { slot, .. } => {
                     if let Some(depth) = in_suffix.get_mut(slot.index()) {
                         *depth = depth.saturating_add(1);
                     }
@@ -1130,7 +1167,7 @@ impl StreamControl {
             let position = event.position();
             if position < interval.start() {
                 match event.payload() {
-                    CompiledPayload::NoteOn { slot } => {
+                    CompiledPayload::NoteOn { slot, .. } => {
                         if let Some(depth) = before.get_mut(slot.index()) {
                             *depth = depth.saturating_add(1);
                         }
@@ -1149,7 +1186,7 @@ impl StreamControl {
             }
             positions.push(position);
             match event.payload() {
-                CompiledPayload::NoteOn { slot } => {
+                CompiledPayload::NoteOn { slot, .. } => {
                     if let Some(depth) = inside.get_mut(slot.index()) {
                         *depth = depth.saturating_add(1);
                     }
@@ -1250,6 +1287,8 @@ impl StreamControl {
         store: &mut crate::ingress::PerformanceIngress,
         time: crate::time::SampleTime,
         note: crate::plan::NoteSlot,
+        key: crate::quantities::KeyIdentity,
+        velocity: crate::quantities::NoteVelocity,
     ) -> Result<NoteIdentity, crate::ingress::IngressRefused> {
         // The authoritative minter may not move while a candidate holds a snapshot of it,
         // and a mint is exactly a move. Refused rather than allowed to rewind: ADR-0050
@@ -1266,7 +1305,7 @@ impl StreamControl {
                 stream: self.plan.id(),
             });
         }
-        let identity = store.offer_note_on(&mut self.minter, time, note)?;
+        let identity = store.offer_note_on(&mut self.minter, time, note, key, velocity)?;
         self.live_notes_open =
             HeldNoteCount::measured(self.live_notes_open.get().saturating_add(1));
         Ok(identity)

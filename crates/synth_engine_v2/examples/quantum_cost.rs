@@ -156,6 +156,13 @@ fn voice() -> GraphIr {
             (OUTPUT, PortId::FIRST),
             SignalDomain::Audio,
         )
+        // `SOUND-INV-021`: the oscillator is a pitch destination in the played node's
+        // scope, so the scope states the tuning its keys resolve through.
+        .tuning(
+            ExecutionScope::Voice,
+            synth_engine_v2::tuning::PreparedTuning::equal_temperament()
+                .expect("twelve-tone equal temperament prepares"),
+        )
         .declaring(synth_engine_v2::ir::PlanDeclarations {
             // A plan that starts notes must say who starts them: the identity range a
             // compiled note-on mints from is partitioned across declared producers.
@@ -213,6 +220,13 @@ fn gain_chain() -> GraphIr {
             (upstream, PortId::FIRST),
             (OUTPUT, PortId::FIRST),
             SignalDomain::Audio,
+        )
+        // `SOUND-INV-021`: the oscillator is a pitch destination in the played node's
+        // scope, so the scope states the tuning its keys resolve through.
+        .tuning(
+            ExecutionScope::Voice,
+            synth_engine_v2::tuning::PreparedTuning::equal_temperament()
+                .expect("twelve-tone equal temperament prepares"),
         )
         .declaring(synth_engine_v2::ir::PlanDeclarations {
             // A plan that starts notes must say who starts them: the identity range a
@@ -347,7 +361,15 @@ fn settled(shape: Shape, carry: Option<&mut InputCarry>) -> (PreparedRenderer, V
                 &mut control,
                 &[synth_engine_v2::schedule::CompiledEvent::new(
                     SampleTime::ZERO,
-                    synth_engine_v2::schedule::CompiledPayload::NoteOn { slot },
+                    synth_engine_v2::schedule::CompiledPayload::NoteOn {
+                        slot,
+                        // A4, the 440 Hz the voice fixture prepares. A note-on writes its key through the
+                        // tuning now, so any other key would retune the oscillator and the
+                        // pinned digests would stop reproducing; a squash review found 60 here.
+                        key: synth_engine_v2::quantities::KeyIdentity::new(69)
+                            .unwrap_or(synth_engine_v2::quantities::KeyIdentity::LOWEST),
+                        velocity: synth_engine_v2::quantities::NoteVelocity::FULL,
+                    },
                 )],
             )
             .expect("one note-on against an admitted producer")
@@ -408,7 +430,15 @@ fn digest(shape: Shape) -> String {
             .expect("the envelope is playable");
         vec![OfflineEvent::new(
             SampleTime::ZERO,
-            synth_engine_v2::schedule::CompiledPayload::NoteOn { slot },
+            synth_engine_v2::schedule::CompiledPayload::NoteOn {
+                slot,
+                // A4, the 440 Hz the voice fixture prepares. A note-on writes its key through the
+                // tuning now, so any other key would retune the oscillator and the
+                // pinned digests would stop reproducing; a squash review found 60 here.
+                key: synth_engine_v2::quantities::KeyIdentity::new(69)
+                    .unwrap_or(synth_engine_v2::quantities::KeyIdentity::LOWEST),
+                velocity: synth_engine_v2::quantities::NoteVelocity::FULL,
+            },
         )]
     } else {
         // `gain-chain` has no envelope, so it renders with no events at all — which is

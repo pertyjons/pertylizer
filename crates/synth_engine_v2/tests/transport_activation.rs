@@ -99,7 +99,7 @@ fn note(plan: &CompiledPlan, position: u64, on: bool) -> PlanEvent {
         .resolve_note(ENVELOPE)
         .expect("the envelope is playable");
     let payload = if on {
-        CompiledPayload::NoteOn { slot }
+        common::note_on(slot)
     } else {
         CompiledPayload::NoteOff { slot }
     };
@@ -2008,10 +2008,7 @@ fn an_empty_producer_before_a_sounding_one_does_not_hide_its_release() {
         .expect("the envelope is playable");
     let held = AdmittedCompiledStream::admit(
         &plan,
-        &[PlanEvent::new(
-            PlanPosition::ZERO,
-            CompiledPayload::NoteOn { slot },
-        )],
+        &[PlanEvent::new(PlanPosition::ZERO, common::note_on(slot))],
     )
     .expect("the stream fits its share");
     let mut scheduler =
@@ -2276,7 +2273,7 @@ fn a_history_note_edge_needs_a_producer_to_have_come_from() {
     let edges = AdmittedCompiledStream::admit(
         &plan,
         &[
-            PlanEvent::new(PlanPosition::ZERO, CompiledPayload::NoteOn { slot }),
+            PlanEvent::new(PlanPosition::ZERO, common::note_on(slot)),
             PlanEvent::new(PlanPosition::new(Q), CompiledPayload::NoteOff { slot }),
         ],
     )
@@ -2777,6 +2774,10 @@ fn two_gated_stages(simultaneous: u32) -> GraphIr {
             ExecutionScope::Voice,
         )
         .node(AMPLIFIER, IrNodeKind::Amplifier, ExecutionScope::Voice)
+        // In **another scope**, and it has to be: `SOUND-INV-021` binds a note's
+        // magnitudes by execution scope, so two playable nodes sharing one would each move
+        // the other's velocity and admission refuses the plan. Nothing here plays a
+        // magnitude; the scope is what keeps the two notes independently addressable.
         .node(
             SECOND_ENVELOPE,
             IrNodeKind::Envelope {
@@ -2785,12 +2786,12 @@ fn two_gated_stages(simultaneous: u32) -> GraphIr {
                 sustain: NormalizedLevel::FULL,
                 release: Seconds::new(0.0).expect("not negative"),
             },
-            ExecutionScope::Voice,
+            ExecutionScope::InstrumentInstance,
         )
         .node(
             SECOND_AMPLIFIER,
             IrNodeKind::Amplifier,
-            ExecutionScope::Voice,
+            ExecutionScope::InstrumentInstance,
         )
         .node(OUTPUT, IrNodeKind::Output, ExecutionScope::Global)
         .connect(
@@ -2826,7 +2827,7 @@ fn two_gated_stages(simultaneous: u32) -> GraphIr {
 fn note_on_node(plan: &CompiledPlan, node: NodeId, position: u64, on: bool) -> PlanEvent {
     let slot = plan.resolve_note(node).expect("the node is playable");
     let payload = if on {
-        CompiledPayload::NoteOn { slot }
+        common::note_on(slot)
     } else {
         CompiledPayload::NoteOff { slot }
     };
@@ -3055,7 +3056,7 @@ fn a_loop_does_not_reclassify_a_note_that_has_no_producer_at_all() {
     let edges = AdmittedCompiledStream::admit(
         &plan,
         &[
-            PlanEvent::new(PlanPosition::new(2 * Q), CompiledPayload::NoteOn { slot }),
+            PlanEvent::new(PlanPosition::new(2 * Q), common::note_on(slot)),
             PlanEvent::new(PlanPosition::new(3 * Q), CompiledPayload::NoteOff { slot }),
         ],
     )
@@ -3082,5 +3083,150 @@ fn a_loop_does_not_reclassify_a_note_that_has_no_producer_at_all() {
             )
         ),
         "the missing producer keeps its own diagnostic: {refusal}"
+    );
+}
+
+/// The `gated_constant` voice with a sine in place of the constant, so the restored pitch is
+/// audible.
+///
+/// A constant cannot show it: what a locate restores to an oscillator's frequency is only
+/// observable in a signal whose *pitch* can be read back.
+fn gated_sine(simultaneous: u32) -> GraphIr {
+    GraphIr::builder()
+        .node(
+            SOURCE,
+            IrNodeKind::Sine {
+                frequency: synth_engine_v2::quantities::Frequency::new(220.0).expect("finite"),
+                amplitude: Amplitude::new(1.0).expect("finite"),
+            },
+            ExecutionScope::Voice,
+        )
+        .node(
+            ENVELOPE,
+            IrNodeKind::Envelope {
+                attack: Seconds::new(0.0).expect("not negative"),
+                decay: Seconds::new(0.0).expect("not negative"),
+                sustain: NormalizedLevel::FULL,
+                release: Seconds::new(0.0).expect("not negative"),
+            },
+            ExecutionScope::Voice,
+        )
+        .node(AMPLIFIER, IrNodeKind::Amplifier, ExecutionScope::Voice)
+        .node(OUTPUT, IrNodeKind::Output, ExecutionScope::Global)
+        .connect(
+            (SOURCE, PortId::FIRST),
+            (AMPLIFIER, PortId::FIRST),
+            SignalDomain::Audio,
+        )
+        .connect(
+            (ENVELOPE, PortId::FIRST),
+            (AMPLIFIER, synth_engine_v2::node::AMPLIFIER_CONTROL),
+            SignalDomain::Control,
+        )
+        .connect(
+            (AMPLIFIER, PortId::FIRST),
+            (OUTPUT, PortId::FIRST),
+            SignalDomain::Audio,
+        )
+        .tuning(ExecutionScope::Voice, common::twelve_tet())
+        .declaring(common::compiled_notes(simultaneous))
+        .build()
+        .expect("a readable plan")
+}
+
+#[test]
+fn a_locate_restores_the_pitch_the_last_note_before_it_carried() {
+    // ADR-0051 clause 1 over `SOUND-INV-021`'s magnitudes. A target with a write before the
+    // destination carries it, and since a note-on writes more than its gate, its **key** is
+    // one of those writes. Without that, seeking past a note restores the frequency the
+    // oscillator was *prepared* with — a value no event in the stream ever wrote.
+    //
+    // It is not audible through the note itself: ADR-0050 clause 5 cuts every crossing note's
+    // gate at the boundary, so nothing this restores is sounding. It becomes audible the
+    // moment anything else opens the gate, which is what this drives — automation raising the
+    // gate at the destination, with no note behind it.
+    //
+    // The falsifier is the pair: two identical seeks differing only in the **key** of the note
+    // that ended before the destination. If the catch-up restored the prepared frequency, both
+    // would render the same pitch.
+    let render_after_seek = |key: u8| -> Vec<f32> {
+        let plan = common::admit(
+            &gated_sine(8),
+            common::profile(TOTAL as u64, ChannelLayout::Mono),
+        );
+        let (mut control, mut renderer) =
+            StreamControl::open(plan.clone(), ORIGIN).expect("the stream opens");
+        let mut arbiter = arbiter();
+        let quiet = admitted(&plan, &[]);
+        let mut scheduler = CompiledEventScheduler::prepare(&mut control, &quiet)
+            .expect("an empty stream prepares");
+
+        let slot = plan
+            .resolve_note(ENVELOPE)
+            .expect("the envelope is playable");
+        let gate = plan
+            .resolve_parameter(ENVELOPE, synth_engine_v2::ir::parameters::ENVELOPE_GATE)
+            .expect("the envelope declares a gate parameter");
+        let events = vec![
+            // A note that begins and **ends** before the destination, so its pitch is the last
+            // write the oscillator's frequency saw.
+            PlanEvent::new(
+                PlanPosition::new(0),
+                CompiledPayload::NoteOn {
+                    slot,
+                    key: synth_engine_v2::quantities::KeyIdentity::new(key)
+                        .expect("a keyboard position"),
+                    velocity: synth_engine_v2::quantities::NoteVelocity::FULL,
+                },
+            ),
+            PlanEvent::new(PlanPosition::new(2 * Q), CompiledPayload::NoteOff { slot }),
+            // And automation opening the gate at the destination, with no note contract behind
+            // it — which is the one thing that can make the restored frequency audible.
+            PlanEvent::new(
+                PlanPosition::new(8 * Q),
+                CompiledPayload::SetParameter {
+                    slot: gate,
+                    value: synth_engine_v2::quantities::ParameterValue::ONE,
+                },
+            ),
+        ];
+        let stream = admitted(&plan, &events);
+
+        let activation = control
+            .plan_activation(&stream, request(4 * Q, 8 * Q))
+            .expect("the seek builds");
+        scheduler
+            .offer(&mut renderer, activation)
+            .expect("the offer is accepted");
+
+        let mut out = Vec::new();
+        drive(
+            &mut scheduler,
+            &mut renderer,
+            &mut arbiter,
+            32 * Q as usize,
+            64,
+            &mut out,
+        );
+        out
+    };
+
+    let low = render_after_seek(48);
+    let high = render_after_seek(72);
+    let crossings = |samples: &[f32]| {
+        samples
+            .windows(2)
+            .filter(|pair| (pair[0] < 0.0) != (pair[1] < 0.0))
+            .count()
+    };
+    assert!(
+        crossings(&low) > 0,
+        "the automation has to open the gate at all, or neither render says anything"
+    );
+    assert_ne!(
+        crossings(&low),
+        crossings(&high),
+        "two seeks past two different notes restored one pitch, so the catch-up carried the \
+         prepared frequency rather than the last write before the destination"
     );
 }

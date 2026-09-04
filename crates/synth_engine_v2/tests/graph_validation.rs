@@ -421,6 +421,10 @@ catalog! {
         frequency: synth_engine_v2::quantities::Frequency::new(440.0).expect("finite"),
         amplitude: level(0.5),
     } => IrNodeKind::Sine { .. },
+    IrNodeKind::Saw {
+        frequency: synth_engine_v2::quantities::Frequency::new(440.0).expect("finite"),
+        amplitude: level(0.5),
+    } => IrNodeKind::Saw { .. },
     IrNodeKind::Impulse { position: PlanPosition::ZERO } => IrNodeKind::Impulse { .. },
     IrNodeKind::Gain { factor: factor(0.5) } => IrNodeKind::Gain { .. },
     IrNodeKind::Envelope {

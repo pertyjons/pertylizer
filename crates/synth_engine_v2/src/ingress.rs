@@ -741,6 +741,8 @@ impl PerformanceIngress {
         table: &mut IdentityTable,
         time: SampleTime,
         note: NoteSlot,
+        key: crate::quantities::KeyIdentity,
+        velocity: crate::quantities::NoteVelocity,
     ) -> Result<NoteIdentity, IngressRefused> {
         self.admit(time)?;
 
@@ -794,7 +796,11 @@ impl PerformanceIngress {
             time,
             EventPayload::Note {
                 identity,
-                edge: NoteEdge::On { slot: note },
+                edge: NoteEdge::On {
+                    slot: note,
+                    key,
+                    velocity,
+                },
             },
             false,
         );

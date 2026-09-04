@@ -863,6 +863,26 @@ impl ParameterValue {
         Frequency(self.0)
     }
 
+    /// A resolved frequency as the value a control write carries.
+    ///
+    /// The inverse of [`Self::into_frequency`], and infallible for the same reason: a
+    /// [`Frequency`] is finite by construction and this type admits exactly the finite
+    /// floats. `SOUND-INV-021`'s pitch expansion needs it on the **audio thread**, where a
+    /// fallible constructor would need a fallback nobody could justify — a substituted
+    /// frequency is a substituted note.
+    pub const fn from_frequency(frequency: Frequency) -> Self {
+        Self(frequency.0)
+    }
+
+    /// A note's velocity as the value a control write carries.
+    ///
+    /// Infallible on the same ground: `[0, 1]` is inside the finite floats, so widening
+    /// cannot fail. The narrowing direction is not, which is why it is
+    /// [`NoteVelocity::saturating`] and lives on that type.
+    pub const fn from_note_velocity(velocity: NoteVelocity) -> Self {
+        Self(velocity.0)
+    }
+
     /// This value as an amplitude. Infallible, for the same reason.
     pub const fn into_amplitude(self) -> Amplitude {
         Amplitude(self.0)
@@ -887,6 +907,184 @@ impl ParameterValue {
 }
 
 impl std::fmt::Display for ParameterValue {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+/// How many control writes one note-on expands to, its gate included.
+///
+/// `SOUND-INV-021` makes a note-on more than one write, and the sample-positioned control
+/// scratch is sized on this: a budget stated over one write per event is overrun by the first
+/// note whose scope declares a pitch and a velocity destination. It is a **capacity**, not a
+/// count of anything observed, which is why it crosses the admission and preparation boundary
+/// as its own type rather than as a `u32` interchangeable with an event count.
+///
+/// **Zero is unrepresentable rather than refused.** There is no fallible constructor to
+/// unwrap on a derivation path: every note writes at least its gate, so the type is built from
+/// [`Self::GATE_ONLY`] upward and a count of zero cannot be spelled.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[must_use]
+pub struct WritesPerNote(u32);
+
+impl WritesPerNote {
+    /// A note that moves its gate and nothing else.
+    ///
+    /// Every plan's floor, and what a plan with no magnitude destination charges.
+    pub const GATE_ONLY: Self = Self(1);
+
+    /// The gate plus this many magnitude destinations.
+    pub const fn with_magnitudes(magnitudes: u32) -> Self {
+        Self(magnitudes.saturating_add(1))
+    }
+
+    /// The raw count.
+    pub const fn get(self) -> u32 {
+        self.0
+    }
+}
+
+impl std::fmt::Display for WritesPerNote {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{} writes per note", self.0)
+    }
+}
+
+/// A keyboard position a note names.
+///
+/// `SOUND-INV-021`: the note payload's pitch limb is a **key**, not a frequency. What frequency
+/// a key is belongs to the prepared tuning the plan resolves it through, so nothing here knows
+/// about scales, reference pitches or equal temperament.
+///
+/// # Why it is not `synth_core::MidiNote`
+///
+/// That type's constructor replaces a value above 127 with 127. A key arriving from a saved
+/// project or a live adapter is external input, and silently substituting a different note for
+/// one out of range is the case `AGENTS.md`'s numeric rule exists to prevent — the render would
+/// simply play a different note than the project says, with nothing reporting it. This refuses
+/// instead, at the boundary where a diagnostic is still possible.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[must_use]
+pub struct KeyIdentity(u8);
+
+impl KeyIdentity {
+    /// The lowest key a keyboard names.
+    pub const LOWEST: Self = Self(0);
+
+    /// The highest.
+    pub const HIGHEST: Self = Self(127);
+
+    /// A key. Must be a keyboard position in `0..=127`.
+    pub fn new(key: u8) -> Result<Self, QuantityError> {
+        if key <= 127 {
+            Ok(Self(key))
+        } else {
+            Err(QuantityError::OutsideInterval {
+                quantity: "KeyIdentity",
+                value: f32::from(key),
+                minimum: 0.0,
+                maximum: 127.0,
+            })
+        }
+    }
+
+    /// The raw keyboard position.
+    pub const fn as_u8(self) -> u8 {
+        self.0
+    }
+
+    /// Its position in a table indexed by key.
+    pub const fn as_index(self) -> usize {
+        self.0 as usize
+    }
+}
+
+impl std::fmt::Display for KeyIdentity {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "key {}", self.0)
+    }
+}
+
+/// How hard a note was struck.
+///
+/// `SOUND-INV-021`: one validated normalized magnitude on the on edge, because V1 consumes a
+/// single saved velocity at both its envelope and its voice output and two consumers of one
+/// fact do not need two fields.
+///
+/// Zero is legal and means a note struck with no force — a silent note is representable, and
+/// V1's own `Velocity` admits it. That is not a release: a release is the off edge, and this
+/// travels beside the gate rather than being it.
+///
+/// # Why it is not `synth_core::Velocity`
+///
+/// That type's constructor clamps into `[0, 1]`. This refuses, for the reason [`KeyIdentity`]
+/// gives: a value outside the range is external input that means something, and replacing it
+/// silently renders a different note than the project asks for.
+#[derive(Debug, Clone, Copy, PartialEq, PartialOrd)]
+#[must_use]
+pub struct NoteVelocity(f32);
+
+impl NoteVelocity {
+    /// Struck with no force.
+    pub const SILENT: Self = Self(0.0);
+
+    /// Struck as hard as the range admits.
+    pub const FULL: Self = Self(1.0);
+
+    /// A velocity at a destination that has no way to refuse one.
+    ///
+    /// **The saturating constructor, and the type owning that policy is the point of it.**
+    /// `SOUND-INV-021` gives the envelope a velocity control that is addressable as an
+    /// ordinary parameter, and `ParameterValue` admits every finite float — "what a
+    /// particular parameter does with a finite value is that parameter's business". A `2.0`
+    /// would over-amplify the envelope and a `-1.0` would **invert** it, and the audio
+    /// thread can neither allocate a diagnostic nor drop the write without leaving the
+    /// previous note's velocity in force.
+    ///
+    /// So the domain is enforced here, by the same two-constructor shape the rest of this
+    /// module uses: [`Self::new`] refuses, and is what the **note payload** is built
+    /// through — a key or a velocity arriving from a saved project or a live adapter is
+    /// external input, and substituting for it silently is what that constructor exists to
+    /// prevent. This one saturates, and is reachable only from the parameter path. V1
+    /// applies the same policy at the same place: its own `Velocity` clamps.
+    ///
+    /// `NaN` becomes [`Self::SILENT`] rather than propagating. It cannot arrive from a
+    /// `ParameterValue`, which is finite by construction, but a total function needs a total
+    /// answer and `f32::clamp` returns `NaN` unchanged — which would then multiply every
+    /// sample the envelope emits for the rest of the render.
+    pub fn saturating(velocity: f32) -> Self {
+        if velocity.is_nan() {
+            return Self::SILENT;
+        }
+        Self(velocity.clamp(0.0, 1.0))
+    }
+
+    /// A velocity. Must be finite and within `[0, 1]`.
+    pub fn new(velocity: f32) -> Result<Self, QuantityError> {
+        if !velocity.is_finite() {
+            return Err(QuantityError::NotFinite {
+                quantity: "NoteVelocity",
+                value: velocity,
+            });
+        }
+        if !(0.0..=1.0).contains(&velocity) {
+            return Err(QuantityError::OutsideInterval {
+                quantity: "NoteVelocity",
+                value: velocity,
+                minimum: 0.0,
+                maximum: 1.0,
+            });
+        }
+        Ok(Self(velocity))
+    }
+
+    /// The raw magnitude.
+    pub const fn as_f32(self) -> f32 {
+        self.0
+    }
+}
+
+impl std::fmt::Display for NoteVelocity {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.0)
     }

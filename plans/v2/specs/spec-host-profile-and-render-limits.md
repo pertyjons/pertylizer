@@ -67,8 +67,9 @@ until it retires.
   sizes the forward event horizon; it does not decide how a host timestamp maps into the epoch it is measured against.
 - **Job bounds.** Render tail, output size, pre-roll, and quality presets belong
   to [ADR-0028](../decisions/ADR-0028-long-running-job-contract.md), deferred to
-  the first Phase 4 render-orchestration slice. Pure lowering and one bounded
-  in-process smoke render precede no job contract.
+  **Phase 10B** by `P04-R004`, which needs Phase 10A's canonical revision first.
+  Phase 4 delivered pure lowering and one bounded in-process smoke render, which
+  precede no job contract, and built no render-orchestration slice.
 - **What an observation tap is for** (ADR-0027), **what a send is** (ADR-0034),
   and **what a recording take is** (ADR-0024). This specification carries their capacities, not their meanings.
   The current internal meaning of a channel layout belongs to the
@@ -257,8 +258,8 @@ open owner is a starting point recorded honestly, not a rule invented here.
    profile range. A job is not a plan and not a profile: it asks for a rate before either exists, so the check belongs
    to
    the job contract — [ADR-0028](../decisions/ADR-0028-long-running-job-contract.md),
-   `Deferred` until Phase 4 first introduces shared render orchestration or a
-   frontend-facing job surface — and remains **outstanding**, not satisfied by
+   `Deferred` to Phase 10B, which is where shared render orchestration and a
+   frontend-facing job surface first appear — and remains **outstanding**, not satisfied by
    a construction failure one layer down. What construction gives
    is a floor: no out-of-range stream can be prepared even before the job layer exists. Both enforcement points are real
    and neither substitutes for the other.
@@ -837,10 +838,10 @@ refusal is a construction failure naming both fields, not a `CompileError`, and 
 
 **`LIMIT-0004`'s job-admission error is not this field's to deliver.** The ledger requires an out-of-range *job* to be
 refused with an error naming the requested rate and the profile range. That check runs where a job's requested rate is
-read, which is ADR-0028's job contract, `Deferred` to the first Phase 4 render-orchestration slice. Pure lowering and
-one bounded in-process smoke render create no shared job and may precede it. This field is what the later job check
-reads; it is not the check. The obligation is listed under [*Unresolved questions*](#unresolved-questions) so it is not
-lost.
+read, which is ADR-0028's job contract, `Deferred` to Phase 10B. Pure lowering and one bounded in-process smoke
+render create no shared job and may precede it, which is what Phase 4 built and all it built. This field is what the
+later job check reads; it is not the check. The obligation is listed under
+[*Unresolved questions*](#unresolved-questions) so it is not lost.
 
 **Raisable, but not past the engine ceiling.** This is a render limit, so an operator may widen it — within
 `DeviceSampleRate::MAX_SUPPORTED`, which the constructor enforces. The ceiling is not an operator setting for the same
@@ -1387,7 +1388,7 @@ obligations owned by the phase in the rightmost column.
 | ~~**ADR-0021's `LIMIT-0013` evidence.**~~ **Resolved in Phase 0A, not Phase 3.** Its drivers and disposition describe per-priority drop counters "published on OSC"; they are published nowhere, and the OSC counter it names belongs to another ring. [ADR-0038](../decisions/ADR-0038-engine-egress-queue-classification.md) supersedes both the driver and the disposition on that evidence | Resolved by accepted ADR-0038 | ADR-0038 |
 | ~~**The class ADR-0021 gave `LIMIT-0013`'s rings.**~~ **Resolved in Phase 0A, not Phase 3.** They are engine egress, not "fed by external, unbounded-in-time input", so `Live bounded queue` never described them. [ADR-0038](../decisions/ADR-0038-engine-egress-queue-classification.md) part 1 supplies the missing rule and part 3 removes the entry as an explicit compatibility break: there is no workspace production caller, while public external use remains unknown | Resolved by accepted ADR-0038 | ADR-0038 |
 | ~~**What V2's live renderer-ingress streams are, and what bounds them.**~~ **Resolved in Phase 3.** V1 has no timestamped ingress queue to carry over — `LIMIT-0013` is engine egress and `LIMIT-0012` carries commands. Phase 3 named every live source store and capacity exactly once as *Live bounded queue* in the [closed renderer-ingress source-store registry](#renderer-ingress-source-store-registry) and includes the complete eligible snapshot in HOST-INV-021's live-share lower bound; session/transport storage is separately covered by that invariant's session relation | Resolved by the Phase 3 ingress and publication boundary | Phase 3 |
-| Where `LIMIT-0004`'s **job-admission error** is delivered. The ledger requires an out-of-range job to be refused with an error naming the requested rate and this field's range. Profile construction refuses an out-of-range *stream*, which is a floor rather than that error: a job asks for a rate before a profile exists | No for Phase 1, which has no job layer. **Yes for Phase 4**, which cannot close with the disposition undelivered | ADR-0028, Phase 4 |
+| Where `LIMIT-0004`'s **job-admission error** is delivered. The ledger requires an out-of-range job to be refused with an error naming the requested rate and this field's range. Profile construction refuses an out-of-range *stream*, which is a floor rather than that error: a job asks for a rate before a profile exists | No for Phase 1, which has no job layer, and no for Phase 4, which builds none: `P04-R004` moved ADR-0028's acceptance to Phase 10B, so the job admission this error belongs to does not exist until then. **Yes for Phase 10B**, which cannot close with the disposition undelivered | ADR-0028, Phase 10B |
 | Whether `max_nodes` should be anchored independently rather than computed from `max_active_voices`, which is itself only measurement-anchored | No | Phase 2 exit |
 | Whether `max_mix_channels` and `max_observation_taps` should be coupled so that every mix channel is guaranteed a tap | No — the report names which budget bound the plan | ADR-0027, Phase 8 |
 | Where a profile is stored and who may edit it — application settings, host configuration, or neither | No — Phase 1 constructs it in code | ADR-0013, ADR-0029, Phase 10A |

@@ -433,6 +433,22 @@ impl PreparedRenderer {
                     *count = count.saturating_add(1);
                 }
             }
+            // `SOUND-INV-021`: a note-on is a gate **and** the magnitudes describing the
+            // note it starts, so it is due more than one write — and they land on nodes
+            // other than the gate's, which is why the count is per magnitude rather than a
+            // multiple of the gate's. Counted in the same window as pass two writes in, so
+            // the two cannot disagree about how much room a node's run needs.
+            if let EventPayload::Note {
+                edge: NoteEdge::On { slot, .. },
+                ..
+            } = event.payload
+            {
+                for magnitude in self.plan.note_magnitudes_of(slot) {
+                    if let Some(count) = self.control_starts.get_mut(magnitude.node.index() + 1) {
+                        *count = count.saturating_add(1);
+                    }
+                }
+            }
         }
         *cursor = last;
 
@@ -480,31 +496,89 @@ impl PreparedRenderer {
                 break;
             };
             index += 1;
+            // The magnitudes go in **at the note's own offset**, which is what
+            // `SOUND-INV-021`'s "a gate raised at the same sample must see them already
+            // applied" requires: a kernel applies every control due at a frame before it
+            // writes that frame, so a magnitude one sample later would leave the note's first
+            // frame carrying the previous note's pitch. That placement is what
+            // `a_notes_magnitudes_are_in_force_on_the_sample_its_gate_rises` asserts, and a
+            // one-frame displacement fails it.
+            //
+            // They are written **before** the gate, and that order is currently not
+            // observable — measured, not assumed: moving this block after the gate write
+            // fails no test. It cannot be, because the two land at one offset and the
+            // envelope's gate law does not read the velocity; the multiplier is applied where
+            // the sample is emitted, after every control due at that frame. The order is kept
+            // because it costs nothing and it is the one that stays correct if a kernel ever
+            // does read a magnitude while handling its own edge.
+            if let EventPayload::Note {
+                edge:
+                    NoteEdge::On {
+                        slot,
+                        key,
+                        velocity,
+                    },
+                ..
+            } = event.payload
+            {
+                for position in 0..self.plan.note_magnitudes_of(slot).len() {
+                    let Some(magnitude) = self.plan.note_magnitudes_of(slot).get(position).copied()
+                    else {
+                        break;
+                    };
+                    let Some(value) = self.plan.magnitude_value(&magnitude, key, velocity) else {
+                        continue;
+                    };
+                    self.push_timed_control(
+                        magnitude.node.index(),
+                        magnitude.control,
+                        event.position.quantum_offset(),
+                        value,
+                    );
+                }
+            }
             let (Some(target), Some(value)) = (event.target, self.timed_value(event.payload))
             else {
                 continue;
             };
             let (node, control) = (target.node, target.control);
-            let (Some(base), Some(filled)) = (
-                self.control_starts.get(node).copied(),
-                self.control_fill.get(node).copied(),
-            ) else {
-                continue;
-            };
-            let Some(slot) = self
-                .timed_controls
-                .get_mut(base.saturating_add(filled) as usize)
-            else {
-                continue;
-            };
-            *slot = TimedControl {
-                offset: event.position.quantum_offset(),
-                control,
-                value,
-            };
-            if let Some(fill) = self.control_fill.get_mut(node) {
-                *fill = fill.saturating_add(1);
-            }
+            self.push_timed_control(node, control, event.position.quantum_offset(), value);
+        }
+    }
+
+    /// Append one control change to a node's run.
+    ///
+    /// The one place a run is written, so the gate and the magnitudes `SOUND-INV-021` adds
+    /// beside it are placed by the same rule — and the counting sort's two passes stay
+    /// symmetric, because a second inline copy of this is how a run comes to be filled past
+    /// what pass one counted. Every step is bounds-checked; an out-of-range node or a full
+    /// run writes nothing rather than panicking on the audio thread.
+    fn push_timed_control(
+        &mut self,
+        node: usize,
+        control: crate::node::kernels::ControlIndex,
+        offset: crate::time::QuantumOffset,
+        value: crate::quantities::ParameterValue,
+    ) {
+        let (Some(base), Some(filled)) = (
+            self.control_starts.get(node).copied(),
+            self.control_fill.get(node).copied(),
+        ) else {
+            return;
+        };
+        let Some(slot) = self
+            .timed_controls
+            .get_mut(base.saturating_add(filled) as usize)
+        else {
+            return;
+        };
+        *slot = TimedControl {
+            offset,
+            control,
+            value,
+        };
+        if let Some(fill) = self.control_fill.get_mut(node) {
+            *fill = fill.saturating_add(1);
         }
     }
 
@@ -529,7 +603,7 @@ impl PreparedRenderer {
             let target = match event.payload {
                 EventPayload::Note {
                     identity,
-                    edge: NoteEdge::On { slot },
+                    edge: NoteEdge::On { slot, .. },
                 } => {
                     // The on edge names what is played; the registry records it against the
                     // occurrence so the release does not have to carry it.

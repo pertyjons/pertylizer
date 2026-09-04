@@ -19,6 +19,36 @@ pub const SOURCE: NodeId = NodeId::new(1);
 /// The output node.
 pub const OUTPUT: NodeId = NodeId::new(2);
 
+/// The tuning a fixture resolves its keys through.
+///
+/// `SOUND-INV-021` refuses a plan whose note scope declares a pitch destination and states
+/// no tuning, rather than substituting a default: choosing a scale is the authored model's
+/// decision. Every fixture here states this one, which is what nearly every project states.
+pub fn twelve_tet() -> synth_engine_v2::tuning::PreparedTuning {
+    synth_engine_v2::tuning::PreparedTuning::equal_temperament()
+        .expect("twelve-tone equal temperament prepares")
+}
+
+/// The key a fixture plays where the pitch is not what it is testing.
+///
+/// Middle C. `SOUND-INV-021` makes every note-on carry one, so a fixture about identity,
+/// placement or scheduling still has to name a key — and naming the same one everywhere is
+/// what keeps those fixtures about what they were about.
+pub fn any_key() -> synth_engine_v2::quantities::KeyIdentity {
+    synth_engine_v2::quantities::KeyIdentity::new(60).expect("middle C is a keyboard position")
+}
+
+/// A compiled note-on at [`any_key`] and full velocity.
+pub fn note_on(
+    slot: synth_engine_v2::plan::NoteSlot,
+) -> synth_engine_v2::schedule::CompiledPayload {
+    synth_engine_v2::schedule::CompiledPayload::NoteOn {
+        slot,
+        key: any_key(),
+        velocity: synth_engine_v2::quantities::NoteVelocity::FULL,
+    }
+}
+
 /// A rate that is certainly valid.
 pub fn rate(hz: f32) -> SampleRate {
     SampleRate::new(hz).expect("test rate is valid")

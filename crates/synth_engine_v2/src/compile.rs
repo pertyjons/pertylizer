@@ -12,10 +12,10 @@ use crate::arena::{self, ArenaPolicy};
 use crate::diagnostics::{CompileError, CompileWarning};
 use crate::ir::{GraphIr, IrNodeKind, IrObject, NodeId, PlanDeclarations, PortId};
 use crate::node::kernels::{MAX_INPUTS, PreparedNode};
-use crate::node::{self, NodeDescriptor};
+use crate::node::{self, NodeDescriptor, NoteMagnitude};
 use crate::plan::{
-    BufferSlot, CompiledPlan, NodeSlot, NodeStep, NoteAddress, NoteSlot, NoteTarget,
-    ParameterAddress, ParameterSlot, ParameterTarget, PlanOp, issue_plan_id,
+    BufferSlot, CompiledPlan, NodeSlot, NodeStep, NoteAddress, NoteMagnitudeTarget, NoteSlot,
+    NoteTarget, ParameterAddress, ParameterSlot, ParameterTarget, PlanOp, issue_plan_id,
 };
 use crate::profile::HostProfile;
 use crate::quantities::{
@@ -136,6 +136,7 @@ pub(crate) fn compile_with(
         profile,
         arena_upper_bound(ir, profile),
         inserted_records_upper_bound(ir, profile),
+        ir.tuning_bytes(),
     )
     .with_estimated_arena();
 
@@ -176,6 +177,7 @@ pub(crate) fn compile_with(
         profile,
         lowered.arena_samples() as u64,
         lowered.inserted as u64,
+        ir.tuning_bytes(),
     );
 
     // The field scan runs **whatever else is wrong**, because it is also what collects
@@ -265,10 +267,11 @@ fn build_report(
     profile: &HostProfile,
     arena_samples: u64,
     inserted_records: u64,
+    tuning_bytes: u64,
 ) -> ResourceReport {
     let (script_work, script_contributor) = ir.script_instructions_per_quantum();
     ResourceReport::new(
-        build_rows(ir, profile, arena_samples, inserted_records),
+        build_rows(ir, profile, arena_samples, inserted_records, tuning_bytes),
         LatencyAccounting::default().with(
             // ADR-0001 clause 7 requires this to be a *named* contributor: a latency
             // that is implicit is a latency nobody compensates, and its own risk
@@ -358,12 +361,25 @@ fn build_rows(
     profile: &HostProfile,
     arena_samples: u64,
     inserted_records: u64,
+    tuning_bytes: u64,
 ) -> Vec<ResourceRow> {
     let capabilities = profile.capabilities();
     let limits = profile.limits();
     let declarations = ir.declarations();
 
-    let (prepared_bytes, prepared_contributor) = ir.prepared_bytes(inserted_records);
+    let (node_prepared_bytes, node_contributor) = ir.prepared_bytes(inserted_records);
+    // `SOUND-INV-021`'s prepared tunings are immutable plan data like a node's prepared
+    // record, so they are charged to the same row. The contributor stays the node that set
+    // the record width unless the tables outweigh every node's records, in which case no
+    // single authored object is responsible and the plan is — which is what `IrObject::Plan`
+    // means in this report.
+    let prepared_bytes =
+        PreparedBytes::measured(node_prepared_bytes.get().saturating_add(tuning_bytes));
+    let prepared_contributor = if tuning_bytes > node_prepared_bytes.get() {
+        IrObject::Plan
+    } else {
+        node_contributor
+    };
     let (mutable_bytes, mutable_contributor) = ir.mutable_bytes(inserted_records);
     let (peak_fan_out, fan_out_contributor) = ir.peak_fan_out();
     // The same count the prepared and mutable rows are over: a node with a kernel, plus
@@ -379,6 +395,7 @@ fn build_rows(
         arena_samples,
         ir.scheduled_records(inserted_records),
         &declared_note_ranges,
+        ir.max_writes_per_note(),
     );
 
     let node_count = NodeCount::measured(u32::try_from(ir.nodes().len()).unwrap_or(u32::MAX));
@@ -915,6 +932,7 @@ fn scratch_bytes(
     arena_samples: u64,
     scheduled_records: RecordCount,
     note_producer_ranges: &[crate::quantities::HeldNoteCount],
+    writes_per_note: crate::quantities::WritesPerNote,
 ) -> PreparedBytes {
     let channels = profile.capabilities().channel_layout().channels() as u64;
     let carry_frames = profile
@@ -952,6 +970,7 @@ fn scratch_bytes(
         profile.limits().events().max_events_per_quantum(),
         scheduled_records,
         crate::quantities::HeldNoteCount::measured(identity_indices),
+        writes_per_note,
     );
 
     // And ADR-0047's two identity halves, both sized by the producer partition this plan
@@ -1006,6 +1025,8 @@ struct Lowered {
     parameter_addresses: Vec<ParameterAddress>,
     note_targets: Vec<NoteTarget>,
     note_addresses: Vec<NoteAddress>,
+    note_magnitudes: Vec<NoteMagnitudeTarget>,
+    prepared_tunings: Vec<crate::tuning::PreparedTuning>,
 }
 
 impl Lowered {
@@ -1064,6 +1085,8 @@ impl Lowered {
             self.parameter_addresses,
             self.note_targets,
             self.note_addresses,
+            self.note_magnitudes,
+            self.prepared_tunings,
             capabilities.channel_layout(),
             capabilities.sample_rate(),
             capabilities.maximum_block_size(),
@@ -1155,6 +1178,10 @@ fn lower(
         source_of.entry(edge.to()).or_insert(edge.from().0);
     }
     let mut slots: HashMap<NodeId, BufferSlot> = HashMap::with_capacity(ir.nodes().len());
+    // The node's place in the *state* tables, which is what a note target addresses. Kept
+    // beside the buffer slots rather than derived from them: they are two numberings, and
+    // the output node has one of them and not the other.
+    let mut node_slots: HashMap<NodeId, NodeSlot> = HashMap::with_capacity(ir.nodes().len());
 
     let kinds: HashMap<NodeId, IrNodeKind> = ir
         .nodes()
@@ -1212,6 +1239,7 @@ fn lower(
             .map_or(ChannelLayout::Mono, |port| port.layout());
         let (node_slot, out) = state.schedule(&descriptor, prepared, inputs, out_layout);
         slots.insert(*id, out);
+        node_slots.insert(*id, node_slot);
 
         for spec in &descriptor.controls {
             let slot = ParameterSlot::new(plan_id, parameter_targets.len());
@@ -1235,9 +1263,29 @@ fn lower(
             note_targets.push(NoteTarget {
                 node: node_slot,
                 control,
+                // Filled by `bind_note_magnitudes` below, which needs every node scheduled
+                // before it can collect a scope's destinations: a played node may be
+                // lowered before the oscillator its key reaches.
+                magnitudes: crate::plan::NoteMagnitudeRange::EMPTY,
             });
             note_addresses.push(NoteAddress { node: *id, slot });
         }
+    }
+
+    // `SOUND-INV-021`'s binding, and it runs here rather than inside the walk because a
+    // scope's destinations are only complete once every node of that scope is scheduled.
+    let mut note_magnitudes = Vec::new();
+    let mut prepared_tunings = Vec::new();
+    if let Err(error) = bind_note_magnitudes(
+        ir,
+        plan_id,
+        &node_slots,
+        &note_addresses,
+        &mut note_targets,
+        &mut note_magnitudes,
+        &mut prepared_tunings,
+    ) {
+        fault = fault.or(Some(error));
     }
 
     // ADR-0005: lowering emits one buffer per value; the arena decides which of them
@@ -1257,7 +1305,134 @@ fn lower(
         parameter_addresses,
         note_targets,
         note_addresses,
+        note_magnitudes,
+        prepared_tunings,
     }
+}
+
+/// Bind each note target to the magnitude destinations its execution scope declares.
+///
+/// `SOUND-INV-021`'s answer to how a key reaches a node that is not the played one: a
+/// producer names a node, and admission collects — from every node **kind** within that
+/// node's scope — the controls that kind declares as a pitch or velocity destination. The
+/// caller never names a destination, so `SOUND-INV-016`'s ownership is untouched; what
+/// changes is that one note-on now resolves to more than one control write.
+///
+/// Three refusals live here, and each is the narrowest rule that is implementable now:
+///
+/// - two playable nodes in the voice scope, which the rule above cannot tell apart because
+///   `ExecutionScope::Voice` names a kind rather than an instance;
+/// - a note scope declaring no velocity destination, because the Phase 4 gate says a
+///   fixed-velocity render cannot satisfy it and a typed velocity reaching nothing is that
+///   render with extra steps;
+/// - a pitch destination whose scope states no tuning, because a key with nothing to
+///   resolve against has no frequency and this crate may not invent one.
+fn bind_note_magnitudes(
+    ir: &GraphIr,
+    plan_id: crate::plan::PlanId,
+    node_slots: &HashMap<NodeId, NodeSlot>,
+    note_addresses: &[NoteAddress],
+    note_targets: &mut [NoteTarget],
+    note_magnitudes: &mut Vec<NoteMagnitudeTarget>,
+    prepared_tunings: &mut Vec<crate::tuning::PreparedTuning>,
+) -> Result<(), CompileError> {
+    let scopes: HashMap<NodeId, crate::ir::ExecutionScope> = ir
+        .nodes()
+        .iter()
+        .map(|node| (node.id(), node.scope()))
+        .collect();
+
+    // Two playable nodes in one scope share one set of destinations, so playing either
+    // would move the other's velocity. Checked over the note addresses, which is exactly
+    // the set of playable nodes. The invariant states the rule over the voice scope — that
+    // is where two instruments land — and the check is over every scope because the reason
+    // is: the binding merges within a scope, whichever scope it is.
+    let mut played: Vec<(crate::ir::ExecutionScope, NodeId)> = Vec::new();
+    for address in note_addresses {
+        let Some(scope) = scopes.get(&address.node).copied() else {
+            continue;
+        };
+        if let Some((_, first)) = played.iter().find(|(held, _)| *held == scope) {
+            return Err(CompileError::AmbiguousNoteScope {
+                first: *first,
+                second: address.node,
+                scope,
+            });
+        }
+        played.push((scope, address.node));
+    }
+
+    for address in note_addresses {
+        let Some(scope) = scopes.get(&address.node).copied() else {
+            continue;
+        };
+        let start = note_magnitudes.len();
+        let mut has_velocity = false;
+        // Every node of the scope, in the plan's declaration order, so the expansion a note
+        // produces is the same list on every admission of one plan.
+        for node in ir.nodes() {
+            if node.scope() != scope {
+                continue;
+            }
+            let (Some(descriptor), Some(slot)) =
+                (node::descriptor(node.kind()), node_slots.get(&node.id()))
+            else {
+                continue;
+            };
+            for spec in &descriptor.controls {
+                let Some(magnitude) = spec.magnitude else {
+                    continue;
+                };
+                let tuning = match magnitude {
+                    NoteMagnitude::Velocity => {
+                        has_velocity = true;
+                        None
+                    }
+                    NoteMagnitude::Pitch => {
+                        let Some(tuning) = ir.tuning_of(scope) else {
+                            return Err(CompileError::ScopeWithoutTuning {
+                                node: node.id(),
+                                scope,
+                            });
+                        };
+                        // Deduplicated by comparing the tables themselves: `SOUND-INV-021`
+                        // charges one prepared table once however many nodes reference it,
+                        // so two scopes naming one scale must not become two tables in the
+                        // report. **Not by digest** — that is a 64-bit hash, and a collision
+                        // would make the second scope resolve every key through the first
+                        // scale. Off the audio thread, once per destination.
+                        let index = prepared_tunings
+                            .iter()
+                            .position(|held: &crate::tuning::PreparedTuning| held == tuning)
+                            .unwrap_or_else(|| {
+                                prepared_tunings.push(tuning.clone());
+                                prepared_tunings.len() - 1
+                            });
+                        Some(crate::plan::TuningSlot::new(plan_id, index))
+                    }
+                };
+                note_magnitudes.push(NoteMagnitudeTarget {
+                    node: *slot,
+                    control: spec.control,
+                    magnitude,
+                    tuning,
+                });
+            }
+        }
+        if !has_velocity {
+            return Err(CompileError::NoteScopeWithoutVelocity {
+                node: address.node,
+                scope,
+            });
+        }
+        if let Some(target) = note_targets.get_mut(address.slot.index()) {
+            target.magnitudes = crate::plan::NoteMagnitudeRange::new(
+                start,
+                note_magnitudes.len().saturating_sub(start),
+            );
+        }
+    }
+    Ok(())
 }
 
 /// Schedule the plan's output: the widening it needs, then one write per channel.

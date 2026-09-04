@@ -1725,3 +1725,69 @@ fn a_declared_total_past_what_an_event_count_names_is_reported_and_refused() {
         "a request past every representable store must not be admitted"
     );
 }
+
+#[test]
+fn admission_stays_linear_in_the_node_count() {
+    // A ceiling, not a benchmark. `SOUND-INV-021` added two per-scope figures to the resource
+    // report, and the obvious form of each asks every node whether its scope holds a playable
+    // node — a scan inside a scan. That is quadratic in a plan the profile admits, it runs
+    // twice per compile (the preflight report and the exact one), and an *oversized* plan pays
+    // it **before** the `max_nodes` refusal that would have rejected it. A review of the
+    // finished branch found it.
+    //
+    // Measured on this machine, at 4 096 nodes in release: **479 ms** with the quadratic form
+    // and **4.5 ms** with the linear one. The ceiling below sits between them with two orders
+    // of magnitude of headroom over the linear figure, so it is not a timing comparison a
+    // loaded machine can lose — it fails only for a shape that is not linear.
+    const NODES: u32 = 4_096;
+    const CEILING: std::time::Duration = std::time::Duration::from_millis(400);
+
+    let mut builder = GraphIr::builder().node(
+        NodeId::new(0),
+        IrNodeKind::Constant {
+            level: synth_engine_v2::quantities::Amplitude::UNITY,
+        },
+        ExecutionScope::Voice,
+    );
+    let mut previous = NodeId::new(0);
+    for index in 1..NODES {
+        let id = NodeId::new(index);
+        builder = builder
+            .node(
+                id,
+                IrNodeKind::Gain {
+                    factor: synth_engine_v2::quantities::GainFactor::UNITY,
+                },
+                ExecutionScope::Voice,
+            )
+            .connect(
+                (previous, PortId::FIRST),
+                (id, PortId::FIRST),
+                SignalDomain::Audio,
+            );
+        previous = id;
+    }
+    let output = NodeId::new(NODES);
+    let ir = builder
+        .node(output, IrNodeKind::Output, ExecutionScope::Global)
+        .connect(
+            (previous, PortId::FIRST),
+            (output, PortId::FIRST),
+            SignalDomain::Audio,
+        )
+        .build()
+        .expect("a chain is a readable plan");
+
+    let started = std::time::Instant::now();
+    let outcome = compile(&ir, &RenderConfig::new(profile(256, ChannelLayout::Mono)));
+    let elapsed = started.elapsed();
+    assert!(
+        outcome.into_plan().is_ok(),
+        "the chain has to admit, or the timing measures a refusal path instead"
+    );
+    assert!(
+        elapsed < CEILING,
+        "admitting {NODES} nodes took {elapsed:?}, past the {CEILING:?} ceiling — the report's \
+         per-scope figures are scanning per node again"
+    );
+}

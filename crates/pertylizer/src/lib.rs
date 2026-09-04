@@ -30,6 +30,8 @@ pub mod group_templates;
 pub mod gui;
 pub mod harmony;
 pub mod io;
+#[cfg(any(feature = "v2-lowering", test))]
+pub mod lowering;
 pub mod mcp_bridge;
 pub mod mcp_shared;
 pub mod mod_grid_build;

@@ -23,7 +23,8 @@
 
 use crate::plan::{BufferRegion, InputBinding, NodeStep};
 use crate::quantities::{
-    Amplitude, ChannelLayout, Frequency, GainFactor, NormalizedLevel, ParameterValue, SegmentFrames,
+    Amplitude, ChannelLayout, Frequency, GainFactor, NormalizedLevel, NoteVelocity, ParameterValue,
+    SegmentFrames,
 };
 use crate::time::{PlanPosition, QuantumOffset};
 
@@ -116,6 +117,9 @@ pub const CONSTANT: Kernel = Kernel(constant);
 pub const IMPULSE: Kernel = Kernel(impulse);
 /// See [`SILENCE`].
 pub const SINE: Kernel = Kernel(sine);
+
+/// The band-limited sawtooth.
+pub const SAW: Kernel = Kernel(saw);
 /// See [`SILENCE`].
 pub const GAIN: Kernel = Kernel(gain);
 /// See [`SILENCE`].
@@ -150,6 +154,15 @@ pub enum PreparedNode {
     Sine {
         /// One frame as a fraction of a second, so a frequency becomes a phase step
         /// by one multiply instead of a divide per quantum.
+        seconds_per_frame: f64,
+        /// The frequency the state starts at.
+        frequency: Frequency,
+        /// The peak amplitude the state starts at.
+        amplitude: Amplitude,
+    },
+    /// A sawtooth from a phase accumulator, band-limited at its discontinuity.
+    Saw {
+        /// One frame as a fraction of a second, as a sine's is and for the same reason.
         seconds_per_frame: f64,
         /// The frequency the state starts at.
         frequency: Frequency,
@@ -263,6 +276,19 @@ pub enum NodeState {
         /// positive value: automation that emits the same held gate every quantum would
         /// otherwise restart the note continuously and never let it settle.
         held: bool,
+        /// The scale [`ENVELOPE_VELOCITY`] last set, applied to every emitted sample.
+        ///
+        /// Starts at [`NoteVelocity::FULL`], so a plan rendered before its first note emits
+        /// the envelope it was authored with. That is not a fallback for a missing
+        /// magnitude: `SOUND-INV-021` refuses a plan whose note scope declares no velocity
+        /// destination, so the only way to observe the initial value is to render before
+        /// the first note-on.
+        ///
+        /// **Typed, not a raw `f32`**, because the domain is `[0, 1]` and the parameter path
+        /// can present any finite value. [`NoteVelocity::saturating`] is the documented
+        /// policy that owns it; an independent review found this field holding a bare float
+        /// with the clamp written at the assignment instead.
+        velocity: NoteVelocity,
     },
     /// The two integrator states of a state-variable filter.
     Filter {
@@ -273,6 +299,18 @@ pub enum NodeState {
     },
     /// A phase accumulator and the control values read once per quantum.
     Sine {
+        /// Normalized phase in `[0, 1)`.
+        phase: f64,
+        /// The current frequency.
+        frequency: Frequency,
+        /// The current peak amplitude.
+        amplitude: Amplitude,
+    },
+    /// The same three values a sine keeps, for the sawtooth.
+    ///
+    /// A separate variant rather than a shared one, so that no control write can reach the
+    /// wrong kernel's state through a shape the type system would have accepted.
+    Saw {
         /// Normalized phase in `[0, 1)`.
         phase: f64,
         /// The current frequency.
@@ -311,6 +349,15 @@ impl NodeState {
                 frequency: *frequency,
                 amplitude: *amplitude,
             },
+            PreparedNode::Saw {
+                frequency,
+                amplitude,
+                ..
+            } => Self::Saw {
+                phase: 0.0,
+                frequency: *frequency,
+                amplitude: *amplitude,
+            },
             PreparedNode::Filter { .. } => Self::Filter {
                 band: 0.0,
                 low: 0.0,
@@ -322,6 +369,7 @@ impl NodeState {
                 step: 0.0,
                 remaining: SegmentFrames::NONE,
                 held: false,
+                velocity: NoteVelocity::FULL,
             },
             PreparedNode::Silence
             | PreparedNode::Amplifier
@@ -363,12 +411,22 @@ impl NodeState {
                 SINE_AMPLITUDE => ParameterValue::new(amplitude.as_f32()).ok(),
                 _ => None,
             },
-            Self::Envelope { held, .. } => match control {
+            Self::Saw {
+                frequency,
+                amplitude,
+                ..
+            } => match control {
+                SAW_FREQUENCY => ParameterValue::new(frequency.as_f32()).ok(),
+                SAW_AMPLITUDE => ParameterValue::new(amplitude.as_f32()).ok(),
+                _ => None,
+            },
+            Self::Envelope { held, velocity, .. } => match control {
                 ENVELOPE_GATE => Some(if *held {
                     ParameterValue::ONE
                 } else {
                     ParameterValue::ZERO
                 }),
+                ENVELOPE_VELOCITY => ParameterValue::new(velocity.as_f32()).ok(),
                 _ => None,
             },
             Self::Filter { .. } | Self::Stateless => None,
@@ -386,19 +444,26 @@ impl NodeState {
     /// the renderer hands them to the kernel as [`NodeIo::controls`] instead.
     pub fn set_control(&mut self, control: ControlIndex, value: ParameterValue) {
         match self {
-            Self::Sine {
-                frequency,
-                amplitude,
-                ..
-            } => match control {
-                SINE_FREQUENCY => *frequency = value.into_frequency(),
-                SINE_AMPLITUDE => *amplitude = value.into_amplitude(),
-                _ => {}
-            },
+            // A frequency is **not** here, and it used to be. `SOUND-INV-021` makes it a
+            // pitch destination, and a magnitude a note carries must be in force at the
+            // sample that note's gate rises — so the destination declares itself
+            // sample-positioned, and one destination has one timing whichever payload
+            // addressed it. It reaches the kernel through [`NodeIo::controls`] instead.
+            Self::Sine { amplitude, .. } => {
+                if control == SINE_AMPLITUDE {
+                    *amplitude = value.into_amplitude();
+                }
+            }
+            Self::Saw { amplitude, .. } => {
+                if control == SAW_AMPLITUDE {
+                    *amplitude = value.into_amplitude();
+                }
+            }
             // An envelope has no quantum-rate control. Its gate is sample-positioned
-            // (ADR-0001 clause 14), so the edge law lives in the kernel — the one place
-            // that knows which sample it is — and reaches it through [`NodeIo::controls`]
-            // rather than through here. Two authorities on one edge would be one too many.
+            // (ADR-0001 clause 14) and its velocity is by `SOUND-INV-021`, so both laws
+            // live in the kernel — the one place that knows which sample it is — and reach
+            // it through [`NodeIo::controls`] rather than through here. Two authorities on
+            // one edge would be one too many.
             Self::Envelope { .. } | Self::Filter { .. } | Self::Stateless => {}
         }
     }
@@ -426,10 +491,29 @@ impl ControlIndex {
 
 /// An envelope's gate control.
 pub const ENVELOPE_GATE: ControlIndex = ControlIndex::new(0);
+
+/// An envelope's velocity control: the scale its emitted level is multiplied by.
+///
+/// `SOUND-INV-021`'s velocity destination. It is a **level**, not an edge: a note-on writes
+/// it beside the gate and it stays until the next one writes it, which is why it lives in
+/// state rather than being consumed by the frame it arrives on.
+///
+/// It scales the *emitted* level rather than the attack's target, which is V1's law read at
+/// `crates/synth_modules/src/envelope.rs` and recorded in ADR-0025: V1 attacks to `1.0`,
+/// keeps the authored sustain as its internal target, and multiplies the completed level.
+/// Aiming the attack at the velocity instead would hard-code full sensitivity and would break
+/// on this kernel's own handoff, which assigns `level = 1.0` unconditionally.
+pub const ENVELOPE_VELOCITY: ControlIndex = ControlIndex::new(1);
 /// A sine's frequency control.
 pub const SINE_FREQUENCY: ControlIndex = ControlIndex::new(0);
 /// A sine's amplitude control.
 pub const SINE_AMPLITUDE: ControlIndex = ControlIndex::new(1);
+
+/// A sawtooth's frequency control.
+pub const SAW_FREQUENCY: ControlIndex = ControlIndex::new(0);
+
+/// A sawtooth's amplitude control.
+pub const SAW_AMPLITUDE: ControlIndex = ControlIndex::new(1);
 
 /// What one of a kernel's inputs turned out to be.
 ///
@@ -647,18 +731,163 @@ pub fn sine(prepared: &PreparedNode, state: &mut NodeState, io: &mut NodeIo<'_>)
     else {
         return;
     };
-    // Control values are read **once**, here: a parameter event inside a quantum takes
-    // effect at the next boundary, which is ADR-0001 clause 13's causality made concrete.
-    let increment = f64::from(frequency.as_f32()) * seconds_per_frame;
+    // The amplitude is read **once**, here: it is control-rate, so a parameter event
+    // inside a quantum takes effect at the next boundary — ADR-0001 clause 13's causality
+    // made concrete. The frequency is not, and the loop below says why.
     let peak = f64::from(amplitude.as_f32());
+    let mut increment = f64::from(frequency.as_f32()) * seconds_per_frame;
     let mut running = *phase;
-    for sample in io.out.iter_mut() {
+    let mut due = 0_usize;
+    for (frame, sample) in io.out.iter_mut().enumerate() {
+        // `SOUND-INV-021`'s pitch destination, applied before the frame it names is
+        // written. A note's key describes the note its gate starts, so the frequency has
+        // to be in force at that sample rather than at the boundary after it — otherwise
+        // every note not landing on a boundary sounds its predecessor's pitch for up to a
+        // quantum. `while` rather than `if` because two writes may share a quantum.
+        while let Some(control) = io.controls.get(due) {
+            if control.offset.as_usize() != frame {
+                break;
+            }
+            due += 1;
+            if matches!(control.control, SINE_FREQUENCY) {
+                *frequency = control.value.into_frequency();
+                increment = f64::from(frequency.as_f32()) * seconds_per_frame;
+            }
+        }
         *sample = (peak * (std::f64::consts::TAU * running).sin()) as f32;
         running += increment;
         // Both directions. A negative frequency is legal and means the phase runs
         // backwards, so wrapping only at 1.0 would let it fall below zero and grow
         // without bound — feeding `sin` ever-larger arguments, which loses precision to
         // range reduction instead of staying periodic.
+        if !(0.0..1.0).contains(&running) {
+            running -= running.floor();
+        }
+    }
+    *phase = running;
+}
+
+/// The PolyBLEP residual at a normalized phase, for a step of `dt` per frame.
+///
+/// A sawtooth's discontinuity is a unit step once per period. Sampling it directly puts a
+/// perfect edge into a band-limited signal, and every harmonic above Nyquist folds back — so
+/// the edge is *corrected* rather than filtered: this returns the difference between the ideal
+/// band-limited step and the sampled one, over the two frames that straddle the wrap.
+///
+/// Away from the discontinuity it is exactly zero, which is what keeps the correction local
+/// and the rest of the ramp untouched.
+///
+/// # Its domain, and what happens outside it
+///
+/// The two windows are `[0, dt)` and `(1 - dt, 1)`, so they are disjoint only while
+/// `dt < 0.5` — a frequency below half the sample rate, which is Nyquist. At or above it they
+/// overlap, the first branch wins for phases the second describes, and the residual stops
+/// being small: at `dt = 2.1` and phase `0.9` it returns `-0.327`, which added to a naive
+/// `0.8` gives `1.127` and breaks the kernel's own statement that the ramp runs between the
+/// negated amplitude and it. An independent review found that, with those numbers.
+///
+/// So the correction is **zero outside its domain**, and [`saw`] does not use it there: what
+/// the kernel emits past Nyquist is decided at the kernel, not here.
+///
+/// Real-time legal by inspection: four comparisons and four multiplies, no branch that
+/// allocates, no call that can panic. `dt` is guarded against zero because the residual
+/// divides by it, and a zero-frequency sawtooth is an ordinary thing to ask for.
+#[inline]
+fn poly_blep(phase: f64, dt: f64) -> f64 {
+    // At or above Nyquist the two windows overlap and the residual is no longer a correction.
+    // A non-finite step takes the same branch: it cannot be compared into the domain, so it is
+    // not in it. Spelled as two positive tests rather than one negation, which reads as a
+    // partial-order trap whether or not it is one.
+    if !dt.is_finite() || dt >= 0.5 {
+        return 0.0;
+    }
+    let dt = if dt > 0.0 { dt } else { f64::EPSILON };
+    if phase < dt {
+        // The frame after the wrap.
+        let t = phase / dt;
+        2.0 * t - t * t - 1.0
+    } else if phase > 1.0 - dt {
+        // The frame before it.
+        let t = (phase - 1.0) / dt;
+        t * t + 2.0 * t + 1.0
+    } else {
+        0.0
+    }
+}
+
+/// A band-limited sawtooth, from a phase accumulator.
+///
+/// The naive ramp is `2·phase − 1`, rising from `−1` to `+1` across a period and dropping
+/// discontinuously at the wrap. The PolyBLEP residual above subtracts the aliasing that
+/// discontinuity would otherwise fold into the band.
+///
+/// **Above Nyquist it is silent**, because a sawtooth whose fundamental is at or above
+/// Nyquist has no partial below it.
+///
+/// `SOUND-INV-013` requires this kernel to justify itself by its own checks rather than by
+/// likeness to V1, and the checks are: a rising ramp between the wraps, no DC over whole
+/// periods, amplitude scaling, a guarded divisor at zero frequency, bounded phase at a
+/// negative one, silence past Nyquist, and aliasing measured at the bins the folded partials
+/// actually land in. None of those mentions V1.
+pub fn saw(prepared: &PreparedNode, state: &mut NodeState, io: &mut NodeIo<'_>) {
+    let PreparedNode::Saw {
+        seconds_per_frame, ..
+    } = prepared
+    else {
+        return;
+    };
+    let NodeState::Saw {
+        phase,
+        frequency,
+        amplitude,
+    } = state
+    else {
+        return;
+    };
+    // The amplitude is read once per quantum, exactly as the sine's is; the frequency is a
+    // pitch destination and is applied at the sample it names, for the reason the sine gives.
+    let peak = f64::from(amplitude.as_f32());
+    let mut increment = f64::from(frequency.as_f32()) * seconds_per_frame;
+    // The residual is a function of the step's magnitude. A negative frequency runs the phase
+    // backwards, and the discontinuity is the same size either way.
+    let mut step = increment.abs();
+    // A sawtooth's partials are its fundamental and every multiple of it. Once the
+    // fundamental reaches Nyquist there is no partial below Nyquist at all, so the
+    // band-limited signal is **exactly zero** — silence is the answer rather than a fallback.
+    //
+    // An earlier revision emitted the naive ramp here, reasoning that it was at least bounded.
+    // An independent review showed what that actually produces: at a 48 kHz frequency the
+    // phase advances by one whole period per frame and never moves, so every sample is `-1` —
+    // constant DC from a node whose contract says DC-free. At 24 kHz it alternates `-1, 0`,
+    // which is DC-biased by half the amplitude. Neither is a sawtooth.
+    let mut representable = step.is_finite() && step < 0.5;
+    let mut running = *phase;
+    let mut due = 0_usize;
+    for (frame, sample) in io.out.iter_mut().enumerate() {
+        // `SOUND-INV-021`'s pitch destination, as the sine applies it. The three values
+        // derived from the frequency are re-derived with it, because a stale `step` would
+        // aim the band-limiting correction at the wrong discontinuity width.
+        while let Some(control) = io.controls.get(due) {
+            if control.offset.as_usize() != frame {
+                break;
+            }
+            due += 1;
+            if matches!(control.control, SAW_FREQUENCY) {
+                *frequency = control.value.into_frequency();
+                increment = f64::from(frequency.as_f32()) * seconds_per_frame;
+                step = increment.abs();
+                representable = step.is_finite() && step < 0.5;
+            }
+        }
+        *sample = if representable {
+            let naive = 2.0 * running - 1.0;
+            (peak * (naive - poly_blep(running, step))) as f32
+        } else {
+            0.0
+        };
+        running += increment;
+        // Both directions, for the reason the sine gives: a negative frequency would otherwise
+        // walk the phase below zero without bound.
         if !(0.0..1.0).contains(&running) {
             running -= running.floor();
         }
@@ -729,6 +958,7 @@ pub fn envelope(prepared: &PreparedNode, state: &mut NodeState, io: &mut NodeIo<
         step,
         remaining,
         held,
+        velocity,
     } = state
     else {
         return;
@@ -740,6 +970,7 @@ pub fn envelope(prepared: &PreparedNode, state: &mut NodeState, io: &mut NodeIo<
         step: *step,
         remaining: *remaining,
         held: *held,
+        velocity: *velocity,
     };
 
     let sustain = sustain.as_f32();
@@ -758,12 +989,27 @@ pub fn envelope(prepared: &PreparedNode, state: &mut NodeState, io: &mut NodeIo<
                 break;
             }
             due += 1;
-            if matches!(control.control, ENVELOPE_GATE) {
-                run.gate(control.value, sustain, *attack_frames, *release_frames);
+            match control.control {
+                ENVELOPE_GATE => run.gate(control.value, sustain, *attack_frames, *release_frames),
+                // `SOUND-INV-021`'s velocity destination. A level rather than an edge, so
+                // it is stored and not consumed: it stands until the next note-on writes
+                // it. Written **before** the gate of the note it arrives with, which is
+                // what the renderer's expansion order guarantees and what makes this a
+                // plain assignment rather than a rule about which came first.
+                //
+                // Through the **saturating constructor**, which is where the domain lives:
+                // `NoteVelocity::new` refuses out-of-range input and is what the note
+                // payload is built through, while this path has no way to refuse and so
+                // takes the documented policy the type owns. See that constructor for why
+                // the two differ.
+                ENVELOPE_VELOCITY => {
+                    run.velocity = NoteVelocity::saturating(control.value.as_f32());
+                }
+                _ => {}
             }
         }
         run.hand_over(sustain, *decay_frames);
-        *sample = match run.stage {
+        let level = match run.stage {
             Segment::Idle => 0.0,
             Segment::Sustain => sustain,
             Segment::Attack | Segment::Decay | Segment::Release => {
@@ -776,7 +1022,12 @@ pub fn envelope(prepared: &PreparedNode, state: &mut NodeState, io: &mut NodeIo<
                 value
             }
         };
-        run.level = *sample;
+        // The **unscaled** level is what the run carries forward: every segment's
+        // arithmetic, and the level a gate edge releases from, are in the authored space.
+        // Velocity scales what leaves the node and nothing else, which is V1's law — it
+        // multiplies the completed envelope rather than aiming a segment at the velocity.
+        run.level = level;
+        *sample = level * run.velocity.as_f32();
     }
     // Settled before it is stored, so a quantum that ends exactly on a segment boundary
     // leaves the state on the segment that follows rather than on the exhausted one.
@@ -787,13 +1038,16 @@ pub fn envelope(prepared: &PreparedNode, state: &mut NodeState, io: &mut NodeIo<
     // instead would put a step in the signal that nothing in the plan asked for.
     run.level = run.boundary_level(sustain);
 
-    (*segment, *level, *target, *step, *remaining, *held) = (
+    (
+        *segment, *level, *target, *step, *remaining, *held, *velocity,
+    ) = (
         run.stage,
         run.level,
         run.target,
         run.step,
         run.remaining,
         run.held,
+        run.velocity,
     );
 }
 
@@ -805,6 +1059,7 @@ struct Run {
     step: f32,
     remaining: SegmentFrames,
     held: bool,
+    velocity: NoteVelocity,
 }
 
 impl Run {

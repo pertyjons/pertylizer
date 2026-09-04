@@ -641,7 +641,7 @@ fn a_late_note_edge_takes_effect_at_its_clamped_render_position() {
     let events = synth_engine_v2::schedule::stamp_compiled(
         &mut control,
         &[
-            CompiledEvent::new(SampleTime::new(0), CompiledPayload::NoteOn { slot }),
+            CompiledEvent::new(SampleTime::new(0), common::note_on(slot)),
             CompiledEvent::new(
                 SampleTime::new(clamped_to.as_u64() + GATE),
                 CompiledPayload::NoteOff { slot },

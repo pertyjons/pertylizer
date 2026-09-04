@@ -118,6 +118,7 @@ pub mod stream;
 pub mod tempo;
 pub mod time;
 pub mod transport;
+pub mod tuning;
 pub mod validate;
 
 #[cfg(test)]
@@ -131,3 +132,7 @@ mod arena_reuse;
 #[cfg(test)]
 #[path = "tests/kernels.rs"]
 mod kernel_tests;
+
+#[cfg(test)]
+#[path = "tests/tuning.rs"]
+mod tuning_tests;

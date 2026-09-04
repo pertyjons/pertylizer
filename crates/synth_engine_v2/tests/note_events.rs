@@ -140,6 +140,9 @@ fn voice() -> GraphIr {
             (OUTPUT, PortId::FIRST),
             SignalDomain::Audio,
         )
+        // `SOUND-INV-021`: the sine is a pitch destination in the played node's scope, so
+        // the scope states what a key resolves to.
+        .tuning(ExecutionScope::Voice, common::twelve_tet())
         .declaring(common::compiled_notes(16))
         .build()
         .expect("a readable plan")
@@ -153,7 +156,7 @@ fn note(plan: &CompiledPlan, at: u64, on: bool) -> OfflineEvent {
     // A compiled list names the node on **both** edges — that is how stamping pairs them —
     // while the stamped event names it on the on edge alone, per `SOUND-INV-017`.
     let payload = if on {
-        CompiledPayload::NoteOn { slot }
+        common::note_on(slot)
     } else {
         CompiledPayload::NoteOff { slot }
     };

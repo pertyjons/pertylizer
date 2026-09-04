@@ -26,6 +26,29 @@ use crate::quantities::{
 use crate::validate::{PortDirection, PortSpec};
 use kernels::{ControlIndex, Kernel, PreparedNode};
 
+/// Which magnitude of a note payload a control is the destination of.
+///
+/// `SOUND-INV-021`: a note-on carries exactly two magnitudes beside its gate, and a node
+/// **kind** declares which of its controls each one lands on. A producer names a node and
+/// never a destination, so this is what lets a key reach an oscillator that is not the node
+/// the note was sent to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum NoteMagnitude {
+    /// The key identity, resolved to a frequency through the node's prepared tuning.
+    Pitch,
+    /// The velocity, as the normalized magnitude it was validated as.
+    Velocity,
+}
+
+impl std::fmt::Display for NoteMagnitude {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Pitch => f.write_str("pitch"),
+            Self::Velocity => f.write_str("velocity"),
+        }
+    }
+}
+
 /// One control a node kind exposes, and the parameter identity that addresses it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[must_use]
@@ -39,6 +62,14 @@ pub(crate) struct ControlSpec {
     /// Declared by the kind rather than chosen by the caller: the clause splits on the
     /// *effect*, so a gate is sample-positioned whichever payload addressed it.
     pub(crate) rate: ControlRate,
+    /// Which note magnitude this control is the destination of, where it is one.
+    ///
+    /// `SOUND-INV-021`'s declaration, and it lives beside the rate rather than in a second
+    /// list because the two are one statement: a magnitude has to be in force at the sample
+    /// its note's gate rises, so a destination that is not [`ControlRate::Sample`] cannot
+    /// carry one. `descriptor_destinations_are_sample_positioned` is what holds the pair
+    /// together.
+    pub(crate) magnitude: Option<NoteMagnitude>,
 }
 
 /// Everything the compiler needs to know about a node kind.
@@ -124,15 +155,42 @@ pub(crate) fn descriptor(kind: IrNodeKind) -> Option<NodeDescriptor> {
             kernel: kernels::SINE,
             ports: vec![audio_out()],
             controls: vec![
+                // `SOUND-INV-021`'s pitch destination. Sample-positioned because it is
+                // one: a note's key describes the note its gate starts, so a frequency
+                // that waited for the next boundary would sound the previous note's pitch
+                // for up to a quantum of every note not landing on one.
                 ControlSpec {
                     parameter: parameters::SINE_FREQUENCY,
                     control: kernels::SINE_FREQUENCY,
-                    rate: ControlRate::Quantum,
+                    rate: ControlRate::Sample,
+                    magnitude: Some(NoteMagnitude::Pitch),
                 },
                 ControlSpec {
                     parameter: parameters::SINE_AMPLITUDE,
                     control: kernels::SINE_AMPLITUDE,
                     rate: ControlRate::Quantum,
+                    magnitude: None,
+                },
+            ],
+            in_place_safe: false,
+            note_control: None,
+        },
+        IrNodeKind::Saw { .. } => NodeDescriptor {
+            kernel: kernels::SAW,
+            ports: vec![audio_out()],
+            controls: vec![
+                // A pitch destination, as the sine's is and for the same reason.
+                ControlSpec {
+                    parameter: parameters::SAW_FREQUENCY,
+                    control: kernels::SAW_FREQUENCY,
+                    rate: ControlRate::Sample,
+                    magnitude: Some(NoteMagnitude::Pitch),
+                },
+                ControlSpec {
+                    parameter: parameters::SAW_AMPLITUDE,
+                    control: kernels::SAW_AMPLITUDE,
+                    rate: ControlRate::Quantum,
+                    magnitude: None,
                 },
             ],
             in_place_safe: false,
@@ -168,11 +226,26 @@ pub(crate) fn descriptor(kind: IrNodeKind) -> Option<NodeDescriptor> {
             // rather than at the payload, so addressing it as a parameter and playing the
             // node as a note reach the same control under the same timing law. An earlier
             // revision left this at quantum rate, which is the defect P02-T007 closes.
-            controls: vec![ControlSpec {
-                parameter: parameters::ENVELOPE_GATE,
-                control: kernels::ENVELOPE_GATE,
-                rate: ControlRate::Sample,
-            }],
+            controls: vec![
+                ControlSpec {
+                    parameter: parameters::ENVELOPE_GATE,
+                    control: kernels::ENVELOPE_GATE,
+                    rate: ControlRate::Sample,
+                    magnitude: None,
+                },
+                // `SOUND-INV-021`'s velocity destination, and the reason it is the
+                // envelope's: the invariant requires the played node's scope to declare a
+                // destination that **scales the rendered amplitude**, and an envelope's
+                // output is what an amplifier multiplies its audio by. Putting it on an
+                // oscillator's amplitude instead would replace the patch's authored level
+                // rather than scale it.
+                ControlSpec {
+                    parameter: parameters::ENVELOPE_VELOCITY,
+                    control: kernels::ENVELOPE_VELOCITY,
+                    rate: ControlRate::Sample,
+                    magnitude: Some(NoteMagnitude::Velocity),
+                },
+            ],
             in_place_safe: false,
             note_control: Some(kernels::ENVELOPE_GATE),
         },
@@ -252,6 +325,14 @@ pub(crate) fn prepare(
             frequency,
             amplitude,
         } => PreparedNode::Sine {
+            seconds_per_frame: 1.0 / f64::from(rate.as_f32()),
+            frequency,
+            amplitude,
+        },
+        IrNodeKind::Saw {
+            frequency,
+            amplitude,
+        } => PreparedNode::Saw {
             seconds_per_frame: 1.0 / f64::from(rate.as_f32()),
             frequency,
             amplitude,
@@ -429,7 +510,7 @@ pub fn prepared_payload_bytes(kind: IrNodeKind) -> u64 {
         IrNodeKind::Output | IrNodeKind::Silence | IrNodeKind::Amplifier => 0,
         IrNodeKind::Constant { .. } => size_of::<crate::quantities::Amplitude>(),
         IrNodeKind::Impulse { .. } => size_of::<crate::time::PlanPosition>(),
-        IrNodeKind::Sine { .. } => size_of::<(
+        IrNodeKind::Sine { .. } | IrNodeKind::Saw { .. } => size_of::<(
             f64,
             crate::quantities::Frequency,
             crate::quantities::Amplitude,
@@ -447,13 +528,21 @@ pub fn prepared_payload_bytes(kind: IrNodeKind) -> u64 {
 pub fn state_payload_bytes(kind: IrNodeKind) -> u64 {
     (match kind {
         // Only these keep anything between quanta.
-        IrNodeKind::Sine { .. } => size_of::<(
+        IrNodeKind::Sine { .. } | IrNodeKind::Saw { .. } => size_of::<(
             f64,
             crate::quantities::Frequency,
             crate::quantities::Amplitude,
         )>(),
         IrNodeKind::Filter { .. } => size_of::<(f32, f32)>(),
-        IrNodeKind::Envelope { .. } => size_of::<(kernels::Segment, f32, f32, f32, u32, bool)>(),
+        IrNodeKind::Envelope { .. } => size_of::<(
+            kernels::Segment,
+            f32,
+            f32,
+            f32,
+            u32,
+            bool,
+            crate::quantities::NoteVelocity,
+        )>(),
         IrNodeKind::Output
         | IrNodeKind::Silence
         | IrNodeKind::Amplifier
@@ -483,6 +572,10 @@ mod tests {
                 frequency: crate::quantities::Frequency::ZERO,
                 amplitude: Amplitude::UNITY,
             },
+            IrNodeKind::Saw {
+                frequency: crate::quantities::Frequency::ZERO,
+                amplitude: Amplitude::UNITY,
+            },
             IrNodeKind::Gain {
                 factor: GainFactor::UNITY,
             },
@@ -499,6 +592,53 @@ mod tests {
             },
             IrNodeKind::Output,
         ]
+    }
+
+    #[test]
+    fn descriptor_destinations_are_sample_positioned() {
+        // `SOUND-INV-021`: a note's magnitudes must be in force at the sample its gate
+        // rises. A destination declared at quantum rate could not be — its write would
+        // wait for the boundary after the gate — so the pairing is checked rather than
+        // remembered. This is the assertion `ControlSpec::magnitude`'s documentation
+        // names, and it fails for a kind added with the wrong rate.
+        for kind in every_kind() {
+            let Some(descriptor) = descriptor(kind) else {
+                continue;
+            };
+            for spec in &descriptor.controls {
+                if let Some(magnitude) = spec.magnitude {
+                    assert_eq!(
+                        spec.rate,
+                        ControlRate::Sample,
+                        "{kind:?} declares a {magnitude} destination at quantum rate, which \
+                         cannot be in force at the sample its note's gate rises"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn a_playable_kind_declares_no_magnitude_twice() {
+        // The renderer writes one control per declared destination, so a kind naming the
+        // same control as both a pitch and a velocity destination — or naming one twice —
+        // would produce two writes racing for one value with no rule about which wins.
+        for kind in every_kind() {
+            let Some(descriptor) = descriptor(kind) else {
+                continue;
+            };
+            let mut seen: Vec<ControlIndex> = Vec::new();
+            for spec in &descriptor.controls {
+                if spec.magnitude.is_some() {
+                    assert!(
+                        !seen.contains(&spec.control),
+                        "{kind:?} declares control {:?} as a note destination twice",
+                        spec.control
+                    );
+                    seen.push(spec.control);
+                }
+            }
+        }
     }
 
     #[test]

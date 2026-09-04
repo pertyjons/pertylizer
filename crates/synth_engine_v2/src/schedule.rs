@@ -66,6 +66,10 @@ pub enum CompiledPayload {
     NoteOn {
         /// Which node is played.
         slot: crate::plan::NoteSlot,
+        /// The keyboard position the note names, per `SOUND-INV-021`.
+        key: crate::quantities::KeyIdentity,
+        /// How hard it was struck.
+        velocity: crate::quantities::NoteVelocity,
     },
     /// Let go of the most recent unreleased note on one compiled node.
     ///
@@ -741,7 +745,7 @@ impl CompiledEventScheduler {
 const fn payload_plan(payload: CompiledPayload) -> PlanId {
     match payload {
         CompiledPayload::SetParameter { slot, .. } => slot.plan(),
-        CompiledPayload::NoteOn { slot } | CompiledPayload::NoteOff { slot } => slot.plan(),
+        CompiledPayload::NoteOn { slot, .. } | CompiledPayload::NoteOff { slot } => slot.plan(),
     }
 }
 
@@ -839,7 +843,7 @@ pub fn stamp_into(
         // separate and unchanged.
         match event.payload() {
             CompiledPayload::SetParameter { .. } => {}
-            CompiledPayload::NoteOn { slot } => {
+            CompiledPayload::NoteOn { slot, .. } => {
                 if slot.plan() != expected {
                     return Err(SchedulePrepareError::ForeignPlan {
                         event_index,
@@ -881,7 +885,11 @@ pub fn stamp_into(
             CompiledPayload::SetParameter { slot, value } => {
                 EventPayload::SetParameter { slot, value }
             }
-            CompiledPayload::NoteOn { slot } => {
+            CompiledPayload::NoteOn {
+                slot,
+                key,
+                velocity,
+            } => {
                 let Some(producer) = compiled_producer else {
                     return Err(SchedulePrepareError::NoCompiledNoteProducer { event_index });
                 };
@@ -895,7 +903,11 @@ pub fn stamp_into(
                 open_nodes.push(slot);
                 EventPayload::Note {
                     identity,
-                    edge: NoteEdge::On { slot },
+                    edge: NoteEdge::On {
+                        slot,
+                        key,
+                        velocity,
+                    },
                 }
             }
             CompiledPayload::NoteOff { slot } => {

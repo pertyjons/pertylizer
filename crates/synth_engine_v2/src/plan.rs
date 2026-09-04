@@ -12,6 +12,7 @@
 //! rather than a fallback.
 
 use crate::ir::{NodeId, ParameterId};
+use crate::node::NoteMagnitude;
 use crate::node::kernels::{ControlIndex, Kernel, MAX_INPUTS, PreparedNode};
 use crate::quantities::{ChannelLayout, EventCount, HeldNoteCount, SampleRate};
 use crate::time::FrameCount;
@@ -554,10 +555,64 @@ pub struct ParameterTarget {
     pub rate: ControlRate,
 }
 
+/// One prepared tuning of a plan, by index.
+///
+/// `SOUND-INV-021` requires a pitch-producing node to **reference** a prepared table rather
+/// than copy it, and this is the reference: the table's bytes are charged once to the plan
+/// and one of these is charged per node, so the resource report tells a second scale from a
+/// second node. It carries the plan identity for the reason [`NoteSlot`] does — an index
+/// resolved against another plan does not do nothing, it reads whatever occupies that index.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[must_use]
+pub struct TuningSlot {
+    plan: PlanId,
+    index: usize,
+}
+
+impl TuningSlot {
+    /// A slot. Crate-private for the same reason [`NoteSlot::new`] is.
+    pub(crate) const fn new(plan: PlanId, index: usize) -> Self {
+        Self { plan, index }
+    }
+
+    /// Which plan this slot indexes.
+    pub const fn plan(self) -> PlanId {
+        self.plan
+    }
+
+    /// The index into that plan's tuning table.
+    pub const fn index(self) -> usize {
+        self.index
+    }
+}
+
+/// Where one magnitude of a note-on lands, resolved at admission.
+///
+/// `SOUND-INV-021`'s expansion: a note-on is a gate **and** the magnitudes that describe the
+/// note the gate starts, so it resolves to more than one control write. Admission collects
+/// these from the node kinds within the played node's execution scope, which is what lets a
+/// key reach an oscillator while the producer names only the envelope.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[must_use]
+pub struct NoteMagnitudeTarget {
+    /// Which node instance.
+    pub node: NodeSlot,
+    /// Which of its controls, always at [`ControlRate::Sample`].
+    pub control: ControlIndex,
+    /// Which magnitude it receives.
+    pub magnitude: NoteMagnitude,
+    /// The tuning a [`NoteMagnitude::Pitch`] destination resolves its key through.
+    ///
+    /// `None` for a velocity destination, which resolves nothing: a velocity is already the
+    /// value it is written as, while a key is a keyboard position the plan must map.
+    pub tuning: Option<TuningSlot>,
+}
+
 /// What a note event addresses, resolved to numeric slots at admission.
 ///
-/// The node, and the control on it that a note edge moves. Which control that is belongs
-/// to the node kind: a caller plays a node, and the kind decides what being played means.
+/// The gate node and the control on it that a note edge moves, plus where in the plan's flat
+/// magnitude table this note's expansion lives. Which control the gate is belongs to the node
+/// kind: a caller plays a node, and the kind decides what being played means.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[must_use]
 pub struct NoteTarget {
@@ -565,6 +620,58 @@ pub struct NoteTarget {
     pub node: NodeSlot,
     /// The control a note edge moves, always at [`ControlRate::Sample`].
     pub control: ControlIndex,
+    /// Where this note's magnitude writes live in [`CompiledPlan::note_magnitudes`].
+    ///
+    /// A range into one flat table rather than a `Vec` per note, because the renderer reads
+    /// it on the audio thread: an owned collection per target would put an indirection and a
+    /// second allocation in a structure the render loop indexes.
+    pub magnitudes: NoteMagnitudeRange,
+}
+
+/// Where one note target's magnitude writes live in the plan's flat table.
+///
+/// A **start and a length are two different quantities**, and exposing them as two `usize`
+/// fields makes swapping them compile and puts an unchecked `start + len` at every reader.
+/// Both are private here — the same shape [`BufferRegion`] uses for the arena, and for the
+/// same reason — so the arithmetic exists once, inside
+/// [`CompiledPlan::note_magnitudes_of`], where it is bounds-checked.
+///
+/// The range is still *visible* on [`NoteTarget`], and [`CompiledPlan::note_magnitudes`]
+/// still hands out the whole table: a caller inspecting a plan needs both. What the private
+/// fields remove is a reader **constructing an index** from them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[must_use]
+pub struct NoteMagnitudeRange {
+    start: usize,
+    length: usize,
+}
+
+impl NoteMagnitudeRange {
+    /// An empty range, which is what a note target starts with and what a release expands to.
+    pub const EMPTY: Self = Self {
+        start: 0,
+        length: 0,
+    };
+
+    /// A range the compiler has established over a table it just built.
+    ///
+    /// Crate-private, like [`BufferRegion::raw`] and for the same reason: the bounds come
+    /// from the length of the table the entries were appended to, so the invariant holds by
+    /// construction. Every read goes through [`CompiledPlan::note_magnitudes_of`], which
+    /// bounds itself against the table rather than trusting this.
+    pub(crate) const fn new(start: usize, length: usize) -> Self {
+        Self { start, length }
+    }
+
+    /// How many magnitude writes the note expands to.
+    pub const fn len(self) -> usize {
+        self.length
+    }
+
+    /// Whether the note expands to none.
+    pub const fn is_empty(self) -> bool {
+        self.length == 0
+    }
 }
 
 /// One row of the plan's note address table.
@@ -610,6 +717,19 @@ pub struct CompiledPlan {
     parameter_addresses: Vec<ParameterAddress>,
     note_targets: Vec<NoteTarget>,
     note_addresses: Vec<NoteAddress>,
+    /// Every note target's magnitude writes, flattened.
+    ///
+    /// One table rather than a collection per target, so the renderer indexes into it with
+    /// the range its note target names and never follows a per-note allocation.
+    note_magnitudes: Vec<NoteMagnitudeTarget>,
+    /// The distinct prepared tunings this plan resolves keys through.
+    ///
+    /// Deduplicated at admission by comparing the prepared tables themselves, which is what
+    /// `SOUND-INV-021`'s "one prepared value exists per distinct tuning" means once two
+    /// scopes may name one scale. **Not** by digest: a digest is a 64-bit hash, and two
+    /// scales colliding on one would silently share a table and resolve every key of the
+    /// second through the first.
+    prepared_tunings: Vec<crate::tuning::PreparedTuning>,
     channel_layout: ChannelLayout,
     sample_rate: SampleRate,
     maximum_block_size: FrameCount,
@@ -661,6 +781,8 @@ impl CompiledPlan {
         parameter_addresses: Vec<ParameterAddress>,
         note_targets: Vec<NoteTarget>,
         note_addresses: Vec<NoteAddress>,
+        note_magnitudes: Vec<NoteMagnitudeTarget>,
+        prepared_tunings: Vec<crate::tuning::PreparedTuning>,
         channel_layout: ChannelLayout,
         sample_rate: SampleRate,
         maximum_block_size: FrameCount,
@@ -682,6 +804,8 @@ impl CompiledPlan {
             parameter_addresses,
             note_targets,
             note_addresses,
+            note_magnitudes,
+            prepared_tunings,
             channel_layout,
             sample_rate,
             maximum_block_size,
@@ -782,6 +906,107 @@ impl CompiledPlan {
     /// Indexed by [`NoteSlot`] on the audio thread; never searched.
     pub fn note_targets(&self) -> &[NoteTarget] {
         &self.note_targets
+    }
+
+    /// Every note target's magnitude writes, flattened.
+    ///
+    /// Indexed on the audio thread by the range a [`NoteTarget`] names; never searched.
+    pub fn note_magnitudes(&self) -> &[NoteMagnitudeTarget] {
+        &self.note_magnitudes
+    }
+
+    /// The magnitude writes one note slot expands to.
+    ///
+    /// Takes the **slot** rather than a [`NoteTarget`], and that is what makes it safe: a
+    /// slot carries the plan that issued it, so a slot resolved against another plan is
+    /// refused here instead of returning an in-bounds slice of unrelated entries. A bare
+    /// target carries no provenance and could not be checked at all — an independent review
+    /// found the earlier signature accepting one.
+    ///
+    /// The start-plus-length arithmetic exists once, here, and is bounds-checked. Real-time
+    /// legal: two comparisons and one checked slice of a table the plan owns, with the empty
+    /// slice for anything out of range rather than a panic the audio thread could not
+    /// report.
+    pub fn note_magnitudes_of(&self, slot: NoteSlot) -> &[NoteMagnitudeTarget] {
+        if slot.plan() != self.id {
+            return &[];
+        }
+        let Some(range) = self
+            .note_targets
+            .get(slot.index())
+            .map(|row| row.magnitudes)
+        else {
+            return &[];
+        };
+        let Some(end) = range.start.checked_add(range.length) else {
+            return &[];
+        };
+        self.note_magnitudes.get(range.start..end).unwrap_or(&[])
+    }
+
+    /// The distinct prepared tunings this plan resolves keys through.
+    ///
+    /// Indexed by [`TuningSlot`] on the audio thread, where the read is one array index into
+    /// one prepared table — which is what makes resolving a key real-time legal.
+    pub fn prepared_tunings(&self) -> &[crate::tuning::PreparedTuning] {
+        &self.prepared_tunings
+    }
+
+    /// What one magnitude destination is written with, for a note naming `key` and `velocity`.
+    ///
+    /// **The one place a key becomes a frequency**, which is `SOUND-INV-021`'s "no node
+    /// converts a key to a frequency on its own" made structural: the resolution is the
+    /// plan's, through the prepared tuning the destination's node references, and a kernel
+    /// receives an ordinary control value.
+    ///
+    /// Real-time legal: two array indexes and no arithmetic. `KeyIdentity` is `0..=127` by
+    /// construction and a prepared table is 128 long, so the inner lookup cannot fail; the
+    /// outer one can only fail on a slot from another plan, which is `None` rather than a
+    /// substituted frequency — the audio thread has no honest fallback for "which note is
+    /// this", and writing nothing leaves the previous value, which is at least a note the
+    /// caller asked for at some point.
+    ///
+    /// Both conversions are infallible: a `Frequency` and a `NoteVelocity` are inside the
+    /// finite floats a `ParameterValue` admits.
+    #[must_use]
+    pub fn magnitude_value(
+        &self,
+        magnitude: &NoteMagnitudeTarget,
+        key: crate::quantities::KeyIdentity,
+        velocity: crate::quantities::NoteVelocity,
+    ) -> Option<crate::quantities::ParameterValue> {
+        match magnitude.magnitude {
+            NoteMagnitude::Velocity => Some(crate::quantities::ParameterValue::from_note_velocity(
+                velocity,
+            )),
+            NoteMagnitude::Pitch => {
+                let slot = magnitude.tuning?;
+                if slot.plan() != self.id {
+                    return None;
+                }
+                let tuning = self.prepared_tunings.get(slot.index())?;
+                Some(crate::quantities::ParameterValue::from_frequency(
+                    tuning.frequency_of(key),
+                ))
+            }
+        }
+    }
+
+    /// The most control writes any one of this plan's note-ons expands to, gate included.
+    ///
+    /// What admission charges the timed-control scratch with: `SOUND-INV-021` makes a note-on
+    /// more than one write, and a scratch sized on one write per event would be overrun by
+    /// the very first note whose scope declares a pitch and a velocity destination.
+    pub fn max_writes_per_note(&self) -> crate::quantities::WritesPerNote {
+        self.note_targets
+            .iter()
+            .map(|target| {
+                crate::quantities::WritesPerNote::with_magnitudes(
+                    u32::try_from(target.magnitudes.len()).unwrap_or(u32::MAX),
+                )
+            })
+            .max()
+            .unwrap_or(crate::quantities::WritesPerNote::GATE_ONLY)
     }
 
     /// The slot a playable node compiles to, or `None` if the plan has no such node.

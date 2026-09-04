@@ -131,6 +131,12 @@ fn constant() -> IrNodeKind {
 
 /// The minimal voice path: envelope into the amplifier's control, sine into filter into
 /// amplifier into output.
+/// The tuning the gated fixtures' scope resolves keys through.
+fn twelve_tet() -> synth_engine_v2::tuning::PreparedTuning {
+    synth_engine_v2::tuning::PreparedTuning::equal_temperament()
+        .expect("twelve-tone equal temperament prepares")
+}
+
 fn voice_graph() -> GraphIr {
     GraphIr::builder()
         .node(ENVELOPE, envelope(), ExecutionScope::Voice)
@@ -158,6 +164,10 @@ fn voice_graph() -> GraphIr {
             (AMPLIFIER, AMPLIFIER_CONTROL),
             SignalDomain::Control,
         )
+        // The sine is a pitch destination in the played node's scope, so the scope has to
+        // say what a key resolves to. Nothing here plays one — the baselines are unchanged
+        // by it — but a plan that could not answer is refused at admission.
+        .tuning(ExecutionScope::Voice, twelve_tet())
         .build()
         .expect("the minimal voice path is a readable plan")
 }
@@ -191,6 +201,7 @@ fn reuse_graph() -> GraphIr {
             (AMPLIFIER, AMPLIFIER_CONTROL),
             SignalDomain::Control,
         )
+        .tuning(ExecutionScope::Voice, twelve_tet())
         .build()
         .expect("a disconnected constant beside the voice path is a readable plan")
 }

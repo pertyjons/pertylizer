@@ -28,6 +28,12 @@ gui-egui = [
 ]
 mcp = ["dep:tokio"]
 osc = ["dep:synth_osc"]
+# Opt-in (NOT in default): the Phase 4 Core V2 lowering path. This is the one
+# feature that links the experimental `synth_engine_v2` crate into a shipping
+# target, and `crate_boundary` in that crate is what keeps the exception from
+# widening. Off by default so V1 remains the default renderer and the default
+# build still has no edge to the experimental crate at all.
+v2-lowering = ["dep:synth_engine_v2"]
 # Opt-in audio-callback timing. Keep disabled for normal low-jitter operation.
 rt-profiling = ["synth_engine/rt-profiling"]
 # Opt-in (NOT in default): pulls eframe's `inspection` feature, which links
@@ -48,6 +54,9 @@ synth_modules = { path = "../synth_modules" }
 synth_engine = { path = "../synth_engine" }
 synth_sampler = { path = "../synth_sampler" }
 synth_script = { path = "../synth_script" } # YAMS control-script compiler (non-RT, load/authoring)
+# Experimental Core V2 render core. Optional, and reached only through the
+# non-default `v2-lowering` feature; see that feature and `crate_boundary`.
+synth_engine_v2 = { path = "../synth_engine_v2", optional = true }
 
 # Audio I/O
 cpal = { workspace = true }

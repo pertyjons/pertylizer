@@ -82,15 +82,25 @@ pub fn timed_control_scratch_bytes(
     max_events_per_quantum: EventCount,
     scheduled_records: RecordCount,
     identity_indices: crate::quantities::HeldNoteCount,
+    writes_per_note: crate::quantities::WritesPerNote,
 ) -> u64 {
-    // One quantum's events, **plus** the notes an activation can end at a boundary.
+    // One quantum's events **times what one of them can expand to**, plus the notes an
+    // activation can end at a boundary.
+    //
+    // `SOUND-INV-021` makes a note-on more than one control write — its gate and the
+    // magnitudes describing the note that gate starts — and the invariant requires admission
+    // to charge for the expansion. A budget of one write per event is overrun by the first
+    // note whose scope declares a pitch and a velocity destination, so the worst case is
+    // every event in the quantum being the plan's widest note-on.
     //
     // ADR-0050 clause 5's mass release lowers a gate per note it ends, and a gate reaches a
     // kernel only as a sample-positioned control — so those changes land in this scratch
     // beside the quantum's own. They are not events and are charged to no share, which is
     // exactly why they need room here rather than there: an activation that ended more
-    // notes than a quantum admits events would otherwise have nowhere to put them.
+    // notes than a quantum admits events would otherwise have nowhere to put them. A
+    // release expands to no magnitudes, so it is not multiplied.
     let controls = u64::from(max_events_per_quantum.get())
+        .saturating_mul(u64::from(writes_per_note.get()))
         .saturating_add(u64::from(identity_indices.get()))
         .saturating_mul(size_of::<TimedControl>() as u64);
     // And the queue those gate-downs wait in between adoption and the boundary quantum: one
@@ -268,11 +278,14 @@ impl EventEnvelope {
 /// as sample-positioned effects. Carrying a float here instead would invite the question
 /// of what a gate of `0.5` means, which no caller has ever needed to ask.
 ///
-/// It carries no pitch, velocity or note identity. Nothing in this phase reads any of
-/// them — the envelope has no velocity input and a sine's frequency is an ordinary
-/// control — and a field nothing reads is a contract the phase has not earned. Phase 3's
-/// ingress and Phase 6's voice pool are where they arrive.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// The on edge carries the two magnitudes `SOUND-INV-021` gives it and no others. A
+/// release carries neither: what a note's key and velocity describe is the note the gate
+/// starts, and release velocity is Phase 6's expression model.
+///
+/// **Not `Eq`**, because a velocity is a float. It is `PartialEq` like every other payload
+/// in this module, and nothing compares note edges for identity — that is what the
+/// occurrence is for.
+#[derive(Debug, Clone, Copy, PartialEq)]
 #[must_use]
 pub enum NoteEdge {
     /// The note is played, on this compiled node.
@@ -284,6 +297,13 @@ pub enum NoteEdge {
     On {
         /// Which compiled node is played.
         slot: crate::plan::NoteSlot,
+        /// Which keyboard position the note names.
+        ///
+        /// A **key**, not a frequency: ADR-0025 selects a pre-tuning event contract, so what
+        /// frequency this is belongs to the prepared tuning the plan resolves it through.
+        key: crate::quantities::KeyIdentity,
+        /// How hard it was struck.
+        velocity: crate::quantities::NoteVelocity,
     },
     /// The note is let go. The occurrence knows its node; nothing here has to.
     Off,
@@ -601,6 +621,8 @@ impl PreparedRenderer {
         // bounds both the per-quantum tally and the event scratch.
         let quanta_per_call = max_block.div_ceil(quantum).saturating_add(1);
         let events_per_quantum = plan.max_events_per_quantum().as_usize().unwrap_or(0);
+        // What the widest of this plan's note-ons resolves to, gate included.
+        let writes_per_note = plan.max_writes_per_note().get() as usize;
         // One index entry per scheduled record, from the table the renderer already keeps
         // one state per — so the two cannot be counted differently.
         let records = node_states.len();
@@ -645,8 +667,15 @@ impl PreparedRenderer {
             scratch_len: 0,
             quantum_counts: vec![0; quanta_per_call],
             // ADR-0001 clause 14's storage. One quantum at a time, because an edge is
-            // applied inside the quantum it falls in and nothing outlives that.
-            timed_controls: vec![TimedControl::FILL; events_per_quantum + identity_indices],
+            // applied inside the quantum it falls in and nothing outlives that. Sized on
+            // what a note-on **expands** to since `SOUND-INV-021`, from the plan's own
+            // figure, so preparation takes exactly what admission charged.
+            timed_controls: vec![
+                TimedControl::FILL;
+                events_per_quantum
+                    .saturating_mul(writes_per_note)
+                    .saturating_add(identity_indices)
+            ],
             adoption_gates: vec![TimedControl::FILL; identity_indices],
             adoption_gate_nodes: vec![0; identity_indices],
             adoption_gate_len: 0,

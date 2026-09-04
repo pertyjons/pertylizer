@@ -45,6 +45,33 @@ const MEASUREMENT_CONSUMER: &str = "pertylizer";
 /// reshaped.
 const PERMITTED_DECLARATION: &str = r#"synth_engine_v2 = { path = "../synth_engine_v2" }"#;
 
+/// The **exact** line the Phase 4 lowering exception is permitted to be.
+///
+/// Pinned for the same reason as the declaration above, and separately from it
+/// because the two are different exceptions with different strengths: the
+/// dev-dependency reaches only harnesses that do not ship, while this one is a
+/// normal edge that a feature can switch on. ADR-0056 selects it.
+const PERMITTED_OPTIONAL_DECLARATION: &str =
+    r#"synth_engine_v2 = { path = "../synth_engine_v2", optional = true }"#;
+
+/// The one feature that may enable the optional edge.
+///
+/// Named rather than described, so that a second feature reaching the crate
+/// changes this constant instead of passing quietly. ADR-0056's revisit
+/// condition is exactly that: two would need a rule rather than a name.
+const LOWERING_FEATURE: &str = "pertylizer/v2-lowering";
+
+/// The same feature, unqualified, as the consumer's own `[features]` table spells it.
+const LOWERING_FEATURE_NAME: &str = "v2-lowering";
+
+/// The module tree the lowering feature gates.
+///
+/// Files under this prefix may name the experimental crate; every other file in
+/// the consumer may not. A prefix rather than a file list because the lowerer is
+/// a growing module tree, and a list would have to be edited for every file it
+/// gains — which is the kind of edit that gets made without thought.
+const LOWERING_MODULE_PREFIX: &str = "src/lowering/";
+
 /// The only files permitted to reach the experimental crate from that consumer.
 ///
 /// This is what keeps the exception from widening into a real coupling: the
@@ -78,8 +105,35 @@ const MEASUREMENT_HARNESSES: [&str; 3] = [
 /// crates that reach the named one. The output's first line is the crate
 /// itself; every later line is a dependent.
 fn dependents(edges: &str) -> Vec<String> {
+    dependents_with_features(edges, &[])
+}
+
+/// The same question, asked with extra features switched on.
+///
+/// Separate from [`dependents`] because the two carry different claims.
+/// `dependents` asks what a **default** build links, which is the sentence that
+/// holds the Phase 1 exit gate's deletability claim. This one asks what a build
+/// that opts in links, which is what stops ADR-0056's exception from being a
+/// hole: without it the default answer would stay empty while any number of
+/// crates linked the experimental crate behind features, and nothing would say so.
+fn dependents_with_features(edges: &str, features: &[&str]) -> Vec<String> {
+    let flags: Vec<String> = features
+        .iter()
+        .flat_map(|f| ["--features".to_owned(), (*f).to_owned()])
+        .collect();
+    let borrowed: Vec<&str> = flags.iter().map(String::as_str).collect();
+    dependents_with_flags(edges, &borrowed)
+}
+
+/// The same question again, with arbitrary resolution flags appended.
+///
+/// Split out because `--all-features` is a flag rather than a feature name, and
+/// the strongest form of the question — does *any* feature add an edge — can
+/// only be asked with it.
+fn dependents_with_flags(edges: &str, flags: &[&str]) -> Vec<String> {
     let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".to_owned());
-    let output = std::process::Command::new(cargo)
+    let mut command = std::process::Command::new(cargo);
+    let output = command
         .args([
             "tree",
             "--workspace",
@@ -96,12 +150,16 @@ fn dependents(edges: &str) -> Vec<String> {
             "--target",
             "all",
         ])
+        // After the subcommand, not before it: `cargo --features X tree` is not a
+        // valid invocation and fails before Cargo resolves anything, which would
+        // make this check pass on an error rather than on an empty answer.
+        .args(flags.iter().copied())
         .current_dir(repo_root())
         .output()
         .expect("cargo tree runs");
     assert!(
         output.status.success(),
-        "cargo tree --edges {edges} failed: {}",
+        "cargo tree --edges {edges} {flags:?} failed: {}",
         String::from_utf8_lossy(&output.stderr)
     );
     String::from_utf8_lossy(&output.stdout)
@@ -213,8 +271,38 @@ fn only_the_measurement_harnesses_reach_the_experimental_crate() {
          `{PERMITTED_DECLARATION}`, so the source scan below can rely on the name"
     );
 
+    // ADR-0056's fifth consequence. The optional edge is pinned separately from
+    // the dev edge because it is a different exception: this one is a normal
+    // dependency that a feature switches on, and reshaping it quietly would
+    // reshape what ships.
+    let declared_optional = manifest
+        .lines()
+        .filter(|line| line.trim() == PERMITTED_OPTIONAL_DECLARATION)
+        .count();
+    assert_eq!(
+        declared_optional, 1,
+        "the lowering dependency must be declared exactly once, as \
+         `{PERMITTED_OPTIONAL_DECLARATION}`, so the source scan below can rely on the name"
+    );
+
+    // The module tree may name the crate only because a feature gates it. If the
+    // gate is removed the tree becomes ordinary library code, the scan below keeps
+    // permitting it, and the crate reaches a default build with nothing objecting.
+    let lib = read(&consumer.join("src").join("lib.rs"));
+    // `test` rides beside the feature so that `cargo test --workspace` — which resolves
+    // default features and would otherwise never compile the module — actually runs the
+    // lowering tests. It adds no shipping reach: a `cfg(test)` build is not a build that
+    // ships, and the crate it reaches there is the dev-dependency this file already permits.
+    // An independent review found the tests ungated without it.
+    assert!(
+        lib.contains("#[cfg(any(feature = \"v2-lowering\", test))]\npub mod lowering;"),
+        "the lowering module must be gated on the v2-lowering feature or a test build; \
+         without the gate the permitted module tree below would reach a default build"
+    );
+
     let mut offenders = Vec::new();
     let mut harnesses_found = 0_usize;
+    let mut lowering_found = 0_usize;
     for path in rust_sources(&consumer) {
         let relative = path
             .strip_prefix(&consumer)
@@ -225,6 +313,10 @@ fn only_the_measurement_harnesses_reach_the_experimental_crate() {
         if MEASUREMENT_HARNESSES.contains(&relative.as_str()) {
             if uses {
                 harnesses_found += 1;
+            }
+        } else if relative.starts_with(LOWERING_MODULE_PREFIX) {
+            if uses {
+                lowering_found += 1;
             }
         } else if uses {
             offenders.push(relative);
@@ -241,6 +333,156 @@ fn only_the_measurement_harnesses_reach_the_experimental_crate() {
         MEASUREMENT_HARNESSES.len(),
         "the dev-dependency is declared but the named harnesses do not use it, so this check \
          would pass vacuously"
+    );
+    assert!(
+        lowering_found > 0,
+        "the lowering dependency is declared but no file under `{LOWERING_MODULE_PREFIX}` uses \
+         it, so the permitted prefix would pass vacuously"
+    );
+}
+
+/// Enabling the lowering feature adds exactly one dependent, and no other.
+///
+/// This is ADR-0056's second consequence, and the control on its exception. The
+/// default-features check above is what carries the Phase 1 exit gate's
+/// deletability claim, and on its own it is now weaker than it reads: an optional
+/// dependency that no default feature enables is invisible to it, so any number
+/// of crates could link the experimental crate behind features while it still
+/// reported an empty answer. Asking Cargo again with the one permitted feature
+/// switched on is what sees them.
+///
+/// It asserts the whole list rather than membership, so a second consumer appears
+/// as a failure rather than as an unremarked extra line.
+#[test]
+fn enabling_the_lowering_feature_adds_exactly_one_dependent() {
+    let shipping = dependents_with_features("normal", &[LOWERING_FEATURE]);
+    assert_eq!(
+        shipping,
+        vec![MEASUREMENT_CONSUMER.to_owned()],
+        "`{LOWERING_FEATURE}` may add exactly one normal dependent, and only \
+         `{MEASUREMENT_CONSUMER}`"
+    );
+
+    // A build edge is as fatal to deletability as a normal one, and the feature
+    // must not have created one.
+    let building = dependents_with_features("build", &[LOWERING_FEATURE]);
+    assert!(
+        building.is_empty(),
+        "`{LOWERING_FEATURE}` created a build-dependency edge: {building:?}"
+    );
+}
+
+/// **No** feature of **any** workspace crate adds a second dependent.
+///
+/// The check above names one feature, and an independent review found that
+/// naming is exactly its weakness: a second optional edge — another crate's own
+/// non-default feature, a second feature inside the consumer, or a renamed
+/// dependency — is invisible to an invocation that enables only
+/// `v2-lowering`, so that check would keep reporting one dependent while two
+/// existed. `--all-features` enables every feature of every workspace member at
+/// once, so an edge that any feature combination can switch on is switched on
+/// here.
+///
+/// This is the assertion that actually carries ADR-0056's second consequence;
+/// the named-feature check above carries the narrower claim that the *permitted*
+/// feature does what the record says it does.
+#[test]
+fn no_feature_of_any_crate_adds_a_second_dependent() {
+    let shipping = dependents_with_flags("normal", &["--all-features"]);
+    assert_eq!(
+        shipping,
+        vec![MEASUREMENT_CONSUMER.to_owned()],
+        "with every workspace feature enabled, exactly one crate may reach the experimental \
+         crate through a normal edge, and only `{MEASUREMENT_CONSUMER}`"
+    );
+
+    let building = dependents_with_flags("build", &["--all-features"]);
+    assert!(
+        building.is_empty(),
+        "some feature created a build-dependency edge: {building:?}"
+    );
+}
+
+/// Only `v2-lowering` activates the optional dependency, and nothing forwards to it.
+///
+/// The two tree checks above cannot see this. `--all-features` enables every feature at once,
+/// so a second feature that also activates the dependency produces the *same* single
+/// dependent and every assertion stays green — an independent review found exactly that.
+/// What distinguishes one activating feature from two is not the resolved graph but the
+/// feature table, so this reads the table.
+///
+/// The scan is for the crate's **name**, not for one activation syntax. An earlier form
+/// matched `dep:synth_engine_v2` alone, and an independent review pointed out that Cargo has
+/// more than one way to switch an optional dependency on: `foo = ["synth_engine_v2/some-feature"]`
+/// activates it through the strong dependency-feature syntax and contains no `dep:` at all.
+/// Matching the bare name covers every spelling that can name the crate, and consequence 7's
+/// literal pinning of both declarations is what rules out a renamed alias naming it under some
+/// other word.
+///
+/// A **forwarded** activation is a feature list containing `v2-lowering`, which would let an
+/// innocuous-looking feature switch the edge on at one remove. Neither is permitted, so
+/// `v2-lowering` stays the one name to look for.
+#[test]
+fn only_the_lowering_feature_activates_the_optional_dependency() {
+    let manifest = read(
+        &repo_root()
+            .join("crates")
+            .join(MEASUREMENT_CONSUMER)
+            .join("Cargo.toml"),
+    );
+
+    // The `[features]` table, up to whichever table follows it.
+    let table = manifest
+        .split_once("\n[features]\n")
+        .map(|(_, rest)| rest.split("\n[").next().unwrap_or(rest))
+        .unwrap_or_default();
+    assert!(
+        !table.is_empty(),
+        "the consumer must declare a [features] table for this check to mean anything"
+    );
+
+    let feature_name = |line: &str| -> Option<String> {
+        let (name, _) = line.split_once('=')?;
+        let name = name.trim();
+        (!name.is_empty() && !name.starts_with('#')).then(|| name.to_owned())
+    };
+
+    // A feature's value list may span lines, so track which feature each line belongs to.
+    let mut current: Option<String> = None;
+    let mut direct = Vec::new();
+    let mut forwarding = Vec::new();
+    for line in table.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with('#') {
+            continue;
+        }
+        if let Some(name) = feature_name(trimmed) {
+            current = Some(name);
+        }
+        let Some(name) = current.clone() else {
+            continue;
+        };
+        if trimmed.contains("synth_engine_v2") {
+            direct.push(name.clone());
+        }
+        // The declaration line of `v2-lowering` itself is not a forward to it.
+        if trimmed.contains(LOWERING_FEATURE_NAME) && name != LOWERING_FEATURE_NAME {
+            forwarding.push(name);
+        }
+    }
+    direct.dedup();
+    forwarding.dedup();
+
+    assert_eq!(
+        direct,
+        vec![LOWERING_FEATURE_NAME.to_owned()],
+        "exactly one feature may activate the optional dependency, and only \
+         `{LOWERING_FEATURE_NAME}`"
+    );
+    assert!(
+        forwarding.is_empty(),
+        "these features forward to `{LOWERING_FEATURE_NAME}`, which activates the optional \
+         dependency at one remove: {forwarding:?}"
     );
 }
 

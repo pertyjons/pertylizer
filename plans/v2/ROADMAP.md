@@ -28,7 +28,7 @@ accepted exit review. `NOW.md` owns task activity within an active phase.
 | [1](master-plan.md#phase-1-introduce-the-experimental-sound-core-v2-crate) | Deletable experimental Sound Core renderer | Complete | 0A |
 | [2](master-plan.md#phase-2-minimal-compiled-voice-graph) | One complete compiled voice graph | Complete | 1 |
 | [3](master-plan.md#phase-3-sample-accurate-scheduler-and-block-partition-invariance) | Sample-accurate scheduler and host-block invariance | Complete | 2 |
-| [4](master-plan.md#phase-4-current-project-lowering-and-offline-ab-path) | Current-project lowering and offline V1/V2 comparison | Active | 3 |
+| [4](master-plan.md#phase-4-current-project-lowering-and-offline-ab-path) | Current-project lowering and bounded V2 render | Complete | 3 |
 | [5](master-plan.md#phase-5-declarative-node-and-parameter-api) | Declarative node and parameter API | Not started | 4 |
 | [6](master-plan.md#phase-6-polyphony-and-instrument-runtime) | Polyphony and instrument runtime | Not started | 5 |
 | [7](master-plan.md#phase-7-yams-mod-grid-and-unified-modulation) | YAMS, Mod Grid, and unified modulation | Not started | 6 |
@@ -121,11 +121,31 @@ review block their first real consumers rather than unrelated Phase 4 lowering.
 
 ### Phase 4 — current-project lowering and offline A/B
 
-Outcome: current projects lower to V2 without GUI or live-engine state and can be
-rendered through the same headless comparison path as V1.
+Outcome, as amended on 2026-09-02: current projects lower to V2 without GUI or
+live-engine state and **render through V2** from their own saved bytes, at their
+own pitches and velocities. Rendering them through the *same headless comparison
+path as V1* is **not** delivered here and is carried rather than claimed: the
+development-only offline engine selection that would join the two paths needs a
+parity verdict `P04-R001` refuses and a shared render surface `P04-R004` defers.
+Phase 6 and Phase 10B own the two halves of it.
 
-Exit requires deterministic lowering diagnostics, corpus A/B evidence, and a
-revisioned cancellable long-running job contract.
+Exit requires deterministic lowering diagnostics, every saved project the subset
+can take lowering and rendering from its own pinned bytes at its own pitches and
+velocities, and a lowering that refuses a parity comparison it cannot represent
+rather than offering one.
+
+Exit: [`REV-P04`](reviews/phase-04-exit-review.md) is accepted. Its gate and the
+outcome above were amended on 2026-09-02 under `PROCESS.md`'s phase-exit rule by
+[ADR-0057](decisions/ADR-0057-refuse-parity-verdict-over-a-placed-note.md), which
+owns that decision; the shape of the amendment is in
+[Gate amendment](master-plan.md#gate-amendment-2026-09-02). The phase exits with
+two named residuals. `P04-R001` is V1's two velocity sensitivities and how
+they compose, owned by Phase 6 and blocking the first parity verdict over a
+placed note. `P04-R004` is the revisioned long-running job contract, owned by
+Phase 10A for the revision and Phase 10B for the job service, and blocking the
+first shared render surface. Both fail closed: a lowering that places a note is
+marked `UnsupportedScope` so no comparison may read it, and no streaming,
+progress or cancellation surface reaches V2 to mislead a caller.
 
 ### Phase 5 — declarative nodes and parameters
 

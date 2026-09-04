@@ -23,6 +23,60 @@ use crate::time::{FrameCount, TimeError};
 /// Why a plan was not admitted.
 #[derive(Debug, Clone, Copy, PartialEq, Error)]
 pub enum CompileError {
+    /// One execution scope holds two playable nodes.
+    ///
+    /// `SOUND-INV-021` binds a note's magnitudes by execution scope: a note sent to a node
+    /// reaches every pitch and velocity destination its **scope** declares. Two playable
+    /// nodes in one scope therefore share one set of destinations, so playing either would
+    /// move the other's velocity — and, where the scope has an oscillator, contend for one
+    /// pitch. The plan is refused rather than resolved by declaration order.
+    ///
+    /// The invariant states this over [`crate::ir::ExecutionScope::Voice`], because that is
+    /// where two instruments land and `Voice` names a kind rather than an instance. The
+    /// check is over **every** scope because the reason is: the binding merges within a
+    /// scope, and nothing about that is special to `Voice`. Phase 6 supplies instance
+    /// identity and generalises the binding.
+    #[error(
+        "{first} and {second} are both playable in the {scope:?} scope, which binds one \
+             set of note destinations"
+    )]
+    AmbiguousNoteScope {
+        /// The first playable node found in the scope.
+        first: crate::ir::NodeId,
+        /// The second.
+        second: crate::ir::NodeId,
+        /// The scope holding both.
+        scope: crate::ir::ExecutionScope,
+    },
+
+    /// A playable node's scope declares no destination for a note's velocity.
+    ///
+    /// `SOUND-INV-021` requires velocity to be **audible**: the Phase 4 gate states that a
+    /// fixed-velocity render cannot satisfy it, so a typed velocity reaching nothing would
+    /// satisfy the letter of the invariant and none of its purpose. A scope declaring none is
+    /// refused here rather than rendering every note at one loudness.
+    #[error("{node} is playable, but nothing in its {scope:?} scope receives a note's velocity")]
+    NoteScopeWithoutVelocity {
+        /// The playable node.
+        node: crate::ir::NodeId,
+        /// The scope whose kinds declare no velocity destination.
+        scope: crate::ir::ExecutionScope,
+    },
+
+    /// A scope with a pitch destination states no tuning to resolve keys through.
+    ///
+    /// `SOUND-INV-021` puts the key-to-frequency mapping in the plan, so a pitch destination
+    /// with no prepared tuning has nothing to resolve against. No default is substituted:
+    /// choosing a scale is the authored model's decision and Phase 10A's, and picking one
+    /// here would silently decide what the plan sounds like.
+    #[error("{node} receives a note's pitch, but its {scope:?} scope states no tuning")]
+    ScopeWithoutTuning {
+        /// The node declaring the pitch destination.
+        node: crate::ir::NodeId,
+        /// Its scope.
+        scope: crate::ir::ExecutionScope,
+    },
+
     /// The plan's admitted producer partition could not become an identity table.
     ///
     /// Unreachable through the ordinary path — profile construction and plan admission

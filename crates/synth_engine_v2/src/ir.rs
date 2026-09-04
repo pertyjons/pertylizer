@@ -15,8 +15,10 @@ use crate::quantities::{
     Amplitude, BusCount, CostRatio, CutoffFrequency, EventCount, Frequency, GainFactor,
     HeldNoteCount, InstructionCount, MixChannelCount, NodeCount, NormalizedLevel, PreparedBytes,
     RecordCount, Resonance, ScriptWorkPerQuantum, Seconds, SendCount, SlotCount, VoiceCount,
+    WritesPerNote,
 };
 use crate::time::PlanPosition;
+use crate::tuning::PreparedTuning;
 use thiserror::Error;
 
 /// Define a stable typed identifier.
@@ -173,6 +175,23 @@ pub enum IrNodeKind {
         /// Peak amplitude.
         amplitude: Amplitude,
     },
+    /// A band-limited sawtooth, from the same phase accumulator a sine uses.
+    ///
+    /// Its own kind rather than a `waveform` field on [`Self::Sine`], because `SOUND-INV-013`
+    /// forbids a kernel taking a parameter that selects between laws — and a shape selector is
+    /// exactly that. Two kinds, two kernels, two sets of checks.
+    ///
+    /// **Band-limited by PolyBLEP**, a residual subtracted around the discontinuity rather
+    /// than a filter over the result. A naive ramp folds every harmonic above Nyquist back
+    /// into the audible band, and at the pitches a project authors that is not a subtle
+    /// defect: it is a spray of inharmonic partials that move the wrong way as the pitch
+    /// rises.
+    Saw {
+        /// Starting frequency.
+        frequency: Frequency,
+        /// Peak amplitude. The ramp runs between its negation and it.
+        amplitude: Amplitude,
+    },
     /// One sample of `1.0` at a declared plan position, zero elsewhere.
     Impulse {
         /// Where in the plan the click is.
@@ -271,15 +290,34 @@ impl IrNodeKind {
 pub mod parameters {
     use super::ParameterId;
 
-    /// A sine's frequency in hertz. Control-rate.
+    /// A sine's frequency in hertz.
+    ///
+    /// **Sample-positioned**, because `SOUND-INV-021` makes it a pitch destination: a note's
+    /// key has to be in force at the sample that note's gate rises. A destination has one
+    /// timing whichever payload addressed it, so automating a frequency and playing a note
+    /// reach it under the same law.
     pub const SINE_FREQUENCY: ParameterId = ParameterId::new(0);
     /// A sine's peak amplitude. Control-rate.
     pub const SINE_AMPLITUDE: ParameterId = ParameterId::new(1);
+    /// A sawtooth's frequency in hertz. Sample-positioned, as the sine's is and for the
+    /// same reason.
+    ///
+    /// A `ParameterId` is scoped to its node, so sharing a number with the sine's is not a
+    /// collision — it is the same statement about a different kind.
+    pub const SAW_FREQUENCY: ParameterId = ParameterId::new(0);
+    /// A sawtooth's peak amplitude. Control-rate.
+    pub const SAW_AMPLITUDE: ParameterId = ParameterId::new(1);
     /// An envelope's gate: above zero is held, zero or below is released.
     ///
     /// **Sample-positioned.** It is the same control a note edge moves, so
     /// automating a gate and playing a note reach it under one timing law.
     pub const ENVELOPE_GATE: ParameterId = ParameterId::new(2);
+    /// An envelope's velocity: the scale its emitted level is multiplied by.
+    ///
+    /// **Sample-positioned**, and `SOUND-INV-021`'s velocity destination. Addressable as a
+    /// parameter for the reason the gate is: one destination, one timing, whichever payload
+    /// moved it.
+    pub const ENVELOPE_VELOCITY: ParameterId = ParameterId::new(3);
 }
 
 /// One node in the IR.
@@ -667,6 +705,31 @@ pub enum IrError {
         /// The node it leaves.
         node: NodeId,
     },
+    /// Two tunings claim one execution scope.
+    ///
+    /// `SOUND-INV-021` requires every node of one scope to reference the same prepared
+    /// tuning, so two entries for one scope have no reading — and picking the last would
+    /// let declaration order decide which scale the plan sounds in.
+    #[error("{scope:?} is given a tuning twice")]
+    DuplicateScopeTuning {
+        /// The scope declared twice.
+        scope: ExecutionScope,
+    },
+}
+
+/// What one execution scope declares, accumulated in one pass over a plan's nodes.
+///
+/// `SOUND-INV-021`'s two report figures are both per scope, and computing either by asking
+/// each node about its scope is quadratic in a plan the profile admits.
+#[derive(Debug, Clone, Copy)]
+struct ScopeSummary {
+    scope: ExecutionScope,
+    /// Whether any node of the scope can be sent a note.
+    playable: bool,
+    /// How many pitch and velocity destinations its kinds declare, together.
+    magnitudes: u32,
+    /// How many of those are pitch destinations, which are what reference a tuning.
+    pitch_destinations: u32,
 }
 
 /// A plan, as the compiler receives it.
@@ -676,6 +739,42 @@ pub struct GraphIr {
     nodes: Vec<IrNode>,
     edges: Vec<IrEdge>,
     declarations: PlanDeclarations,
+    tunings: Vec<ScopeTuning>,
+}
+
+/// The tuning one execution scope resolves its keys through.
+///
+/// `SOUND-INV-021` puts the reference on the node and requires every node of one scope to
+/// share it, so the plan states it **per scope** and admission hands each pitch-producing
+/// node the reference its scope names. That is what keeps a scope from resolving two keys
+/// two ways while leaving two scopes free to use two scales.
+///
+/// A scope with no entry is not given a fallback. Admission refuses a plan whose note scope
+/// declares a pitch destination and no tuning, because choosing one here would be this
+/// crate deciding what a project sounds like — which is the authored model's job and Phase
+/// 10A's.
+#[derive(Debug, Clone, PartialEq)]
+#[must_use]
+pub struct ScopeTuning {
+    scope: ExecutionScope,
+    tuning: PreparedTuning,
+}
+
+impl ScopeTuning {
+    /// Bind a prepared tuning to a scope.
+    pub const fn new(scope: ExecutionScope, tuning: PreparedTuning) -> Self {
+        Self { scope, tuning }
+    }
+
+    /// Which scope resolves through it.
+    pub const fn scope(&self) -> ExecutionScope {
+        self.scope
+    }
+
+    /// The prepared table.
+    pub const fn tuning(&self) -> &PreparedTuning {
+        &self.tuning
+    }
 }
 
 impl GraphIr {
@@ -693,8 +792,23 @@ impl GraphIr {
             nodes: Vec::new(),
             edges: Vec::new(),
             declarations: PlanDeclarations::default(),
+            tunings: Vec::new(),
             next_edge: 0,
         }
+    }
+
+    /// The tuning each scope resolves through, in declaration order.
+    pub fn tunings(&self) -> &[ScopeTuning] {
+        &self.tunings
+    }
+
+    /// The tuning `scope` resolves through, if the plan states one.
+    #[must_use]
+    pub fn tuning_of(&self, scope: ExecutionScope) -> Option<&PreparedTuning> {
+        self.tunings
+            .iter()
+            .find(|entry| entry.scope() == scope)
+            .map(ScopeTuning::tuning)
     }
 
     /// The plan's nodes, in declaration order.
@@ -739,6 +853,126 @@ impl GraphIr {
             crate::node::prepared_payload_bytes,
             inserted,
         )
+    }
+
+    /// The bytes this plan's prepared tunings add to its immutable prepared total.
+    ///
+    /// **Exact, and it has to be**: the preflight report is allowed to *refuse* on the
+    /// prepared row — only the arena row and what follows it are exempt — so an upper bound
+    /// here would reject a plan that fits. An independent review found exactly that.
+    ///
+    /// Exactness comes from computing it over the same set admission binds magnitudes over:
+    /// **the scopes holding a playable node**, which one linear pass over the nodes
+    /// establishes. A tuning declared for a scope no note reaches is never prepared and is not
+    /// charged, and a pitch destination outside those scopes is not a reference.
+    /// `the_reported_tuning_charge_is_what_the_plan_holds` ties this figure to the tables the
+    /// compiled plan actually carries, so the two cannot drift.
+    ///
+    /// The split is `SOUND-INV-021`'s and it is the point of the row: one table per
+    /// **distinct** tuning, plus one reference per pitch destination — so a second scale
+    /// reads as a table and a second node as a reference.
+    pub fn tuning_bytes(&self) -> u64 {
+        let mut distinct: Vec<&PreparedTuning> = Vec::new();
+        let mut references = 0_u64;
+        for summary in self.scope_summaries() {
+            if !summary.playable || summary.pitch_destinations == 0 {
+                continue;
+            }
+            references = references.saturating_add(u64::from(summary.pitch_destinations));
+            let Some(tuning) = self.tuning_of(summary.scope) else {
+                // Admission refuses this plan; the row still owes a figure, and the
+                // references are real whether or not a table backs them.
+                continue;
+            };
+            // Compared by **content**, not by digest: a digest is a 64-bit hash, and two
+            // scales colliding on one would be charged as a single table here while
+            // resolving through a single table there. At most one comparison per scope, and
+            // a plan has five.
+            if !distinct.contains(&tuning) {
+                distinct.push(tuning);
+            }
+        }
+        let tables =
+            (distinct.len() as u64).saturating_mul(crate::tuning::PreparedTuning::prepared_bytes());
+        tables
+            .saturating_add(references.saturating_mul(size_of::<crate::plan::TuningSlot>() as u64))
+    }
+
+    /// The most control writes one of this plan's note-ons can expand to, gate included.
+    ///
+    /// `SOUND-INV-021`'s cardinality change, as the resource report needs it: the control
+    /// scratch is sized on it, so a budget of one write per event is overrun by the first
+    /// note whose scope declares a pitch and a velocity destination.
+    ///
+    /// An **upper bound**, and one is enough here: the only row it reaches is the scratch
+    /// row, which `RefuseUpTo::Arena` already exempts from preflight refusal for the same
+    /// reason the arena's own estimate is. `CompiledPlan::max_writes_per_note` is the exact
+    /// figure preparation allocates from, and
+    /// `the_control_scratch_budget_covers_what_preparation_actually_allocates` holds the two
+    /// together.
+    ///
+    /// Never below one: a plan with no playable node still writes a gate per note event it
+    /// could never receive, and a scratch of zero would be a buffer nothing can be put in.
+    pub fn max_writes_per_note(&self) -> WritesPerNote {
+        self.scope_summaries()
+            .into_iter()
+            .filter(|summary| summary.playable)
+            .map(|summary| WritesPerNote::with_magnitudes(summary.magnitudes))
+            .max()
+            .unwrap_or(WritesPerNote::GATE_ONLY)
+    }
+
+    /// What each execution scope declares, in **one pass** over the plan's nodes.
+    ///
+    /// Both figures above are per scope, and the obvious form asks each node whether its scope
+    /// holds a playable node — a scan inside a scan, and then a third for the magnitudes. A
+    /// plan near `max_nodes` pays roughly `N²` node visits for that, twice per compile, and an
+    /// *oversized* plan pays it **before** the refusal that would have rejected it. A review of
+    /// the finished branch found it, and `compile.rs` already carries the same lesson about
+    /// edges.
+    ///
+    /// Linear instead: one descriptor per node, accumulated into an entry per scope. The
+    /// lookup is a scan of that list and stays constant because [`ExecutionScope`] is a closed
+    /// enum of five.
+    fn scope_summaries(&self) -> Vec<ScopeSummary> {
+        let mut summaries: Vec<ScopeSummary> = Vec::new();
+        for node in &self.nodes {
+            let scope = node.scope();
+            let index = match summaries.iter().position(|held| held.scope == scope) {
+                Some(index) => index,
+                None => {
+                    summaries.push(ScopeSummary {
+                        scope,
+                        playable: false,
+                        magnitudes: 0,
+                        pitch_destinations: 0,
+                    });
+                    summaries.len() - 1
+                }
+            };
+            let Some(descriptor) = crate::node::descriptor(node.kind()) else {
+                continue;
+            };
+            let Some(summary) = summaries.get_mut(index) else {
+                continue;
+            };
+            if descriptor.note_control.is_some() {
+                summary.playable = true;
+            }
+            for spec in &descriptor.controls {
+                match spec.magnitude {
+                    Some(crate::node::NoteMagnitude::Pitch) => {
+                        summary.magnitudes = summary.magnitudes.saturating_add(1);
+                        summary.pitch_destinations = summary.pitch_destinations.saturating_add(1);
+                    }
+                    Some(crate::node::NoteMagnitude::Velocity) => {
+                        summary.magnitudes = summary.magnitudes.saturating_add(1);
+                    }
+                    None => {}
+                }
+            }
+        }
+        summaries
     }
 
     /// The mutable state bytes this plan's nodes occupy, with the node responsible.
@@ -879,6 +1113,7 @@ pub struct GraphIrBuilder {
     nodes: Vec<IrNode>,
     edges: Vec<IrEdge>,
     declarations: PlanDeclarations,
+    tunings: Vec<ScopeTuning>,
     next_edge: u32,
 }
 
@@ -886,6 +1121,17 @@ impl GraphIrBuilder {
     /// Add a node.
     pub fn node(mut self, id: NodeId, kind: IrNodeKind, scope: ExecutionScope) -> Self {
         self.nodes.push(IrNode::new(id, kind, scope));
+        self
+    }
+
+    /// State the tuning one execution scope resolves its keys through.
+    ///
+    /// Declaring a second one for the same scope refuses at [`Self::build`] rather than
+    /// overwriting: `SOUND-INV-021` requires one prepared value per scope, and silently
+    /// keeping the last of two would decide by declaration order which scale a plan sounds
+    /// in.
+    pub fn tuning(mut self, scope: ExecutionScope, tuning: PreparedTuning) -> Self {
+        self.tunings.push(ScopeTuning::new(scope, tuning));
         self
     }
 
@@ -942,10 +1188,21 @@ impl GraphIrBuilder {
                 });
             }
         }
+        for (index, entry) in self.tunings.iter().enumerate() {
+            if self.tunings[..index]
+                .iter()
+                .any(|earlier| earlier.scope() == entry.scope())
+            {
+                return Err(IrError::DuplicateScopeTuning {
+                    scope: entry.scope(),
+                });
+            }
+        }
         Ok(GraphIr {
             nodes: self.nodes,
             edges: self.edges,
             declarations: self.declarations,
+            tunings: self.tunings,
         })
     }
 }

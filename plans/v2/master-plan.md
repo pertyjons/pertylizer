@@ -343,9 +343,15 @@ an exhaustive V1 audit cannot block the render-core evidence the rest of the
 plan depends on.
 
 Some 0B decisions gate an earlier phase, as recorded in the register's target
-phase: ADR-0027 before Phase 5, ADR-0025 before Phase 6, and ADR-0024 and
+phase: ADR-0027 before Phase 5, ADR-0025 before **Phase 4**, and ADR-0024 and
 ADR-0036 before Phase 9. Accept each by its earlier entry gate even if the
 remaining Phase 0B work continues in parallel.
+
+ADR-0025's deadline moved forward from Phase 6 to Phase 4 when `P04-R001` found
+that ADR-0047's coupled-decision clause blocks Phase 4's note payload on it. The
+frozen Phase 0B decomposition and ADR-0047's own body still read "before
+Phase 6"; both predate the finding and are left as the historical records they
+are. `NOW.md` is the authority on what is blocked.
 
 ### Work
 
@@ -866,17 +872,319 @@ ownership then have one authoritative meaning.
 
 ### Exit gate
 
-- [ ] At least three existing saved projects lower and render through V2 without
-      hand-rebuilding their patches in tests.
-- [ ] Their note pitch and velocity reach the V2 note payload through typed
+Amended on 2026-09-02 under `PROCESS.md`'s phase-exit rule; the amendment, its
+authority and its cost are recorded in [Gate amendment](#gate-amendment-2026-09-02)
+below. Three bullets changed: one count is corrected to what the repository
+holds, and two are rewritten not to claim behaviour this phase defers. The
+deferred behaviour is carried by `P04-R001` and `P04-R004` rather than dropped.
+
+- [x] Every saved project in the repository that the Phase 4 subset can take —
+      the set `P04-R002` measures, rather than a hand-picked count — lowers and
+      renders through V2 without hand-rebuilding its patch in tests.
+- [x] Their note pitch and velocity reach the V2 note payload through typed
       values; an unpitched or fixed-velocity render cannot satisfy the first
       bullet.
-- [ ] Unsupported modules and targets produce structured diagnostics naming the
+- [x] A lowering carries a fidelity verdict derived from its own diagnostics,
+      and one that cannot represent what a project asked for refuses a parity
+      comparison rather than offering one. A parity **verdict** over a placed
+      note additionally needs V1's velocity composition, which is Phase 6's and
+      is carried as `P04-R001`.
+- [x] Unsupported modules and targets produce structured diagnostics naming the
       project object and reason.
-- [ ] V1 remains the default for GUI, MCP, CLI, and release rendering.
-- [ ] The lowerer contains compatibility knowledge; the V2 render plan does not.
-- [ ] Offline V2 rendering can stream, report progress, and cancel without
-      changing its deterministic output when allowed to finish.
+- [x] V1 remains the default for GUI, MCP, CLI, and release rendering.
+- [x] The lowerer contains compatibility knowledge; the V2 render plan does not.
+- [x] The bounded in-process smoke render is the only **V2** render surface this
+      phase builds: no streaming sink, progress channel, cancellation, shared
+      `RenderRequest`/`RenderResult` or multi-project A/B reaches V2, which is
+      ADR-0028's third standing constraint honoured rather than approximated.
+      V1's own `ExportProgress` and `RenderReceipt` are the known cost that
+      record already names; nothing is added beside them. The contract itself is
+      carried as `P04-R004`.
+
+### Gate amendment, 2026-09-02
+
+Recorded here rather than applied silently. `PROCESS.md` permits a phase to exit
+with residual obligations only when "the current gate is rewritten not to claim
+the deferred behavior", and a rewrite nobody can see is indistinguishable from a
+gate that never asked.
+
+**The durable record is [ADR-0057](decisions/ADR-0057-refuse-parity-verdict-over-a-placed-note.md),
+which owns this amendment's rationale.** It is required rather than optional: the
+choice below was an explicit product choice by the user, which is `PROCESS.md`'s
+fifth durable-decision trigger, and it binds obligations to Phase 6, 10A and 10B.
+An independent review caught this record missing while the rationale lived only in
+this section, which the roadmap classifies as historical design material. What
+follows is the amendment's shape; the decision, its options and its falsifier are
+ADR-0057's.
+
+**Authority.** The user, on 2026-09-02, with the alternatives and their costs put
+side by side first. Two of the three are product choices rather than engineering
+ones: what a lowered payload means, and how many saved projects the repository is
+expected to hold.
+
+| Bullet | Before | After | Why |
+|---|---|---|---|
+| 1 | At least three existing saved projects lower and render through V2 | Every saved project the Phase 4 subset can take does | `P04-R002` measured two, and no third exists to add |
+| 3 | Corpus A/B evidence exists for those projects | The lowering carries a fidelity verdict and refuses a comparison it cannot represent | `P04-R001`: the velocity composition parity needs is Phase 6's |
+| 7 | Offline V2 rendering can stream, report progress, and cancel | This phase builds no streaming, progress, cancellation or shared render surface | `P04-R004`: a *revisioned* contract needs Phase 10A and Phase 10B |
+| Outcome (`ROADMAP.md`) | Projects can be rendered through the same headless comparison path as V1 | Projects lower and render through V2 from their own saved bytes; joining the two paths is carried | Both `P04-R001` and `P04-R004`: the join needs a parity verdict and a shared render surface, and neither may exist here |
+
+**What was declined for the parity bullet, and what it would have cost.** Three
+routes existed; the first two were not taken.
+
+1. *A bounded composition in the lowerer.* Send the product of V1's two response
+   factors — not of the two sensitivity settings, which are `1 × 1` at the
+   defaults — as the one magnitude the payload carries, which would make parity
+   claimable in this phase. Declined: the payload would then carry an amplitude
+   scale rather than how hard the note was struck, which ADR-0025 declined on its
+   own merits, so that record would need amending rather than working around; and
+   it would move the `0.5` peak ratio
+   `a_saved_notes_own_velocity_reaches_the_render` pins.
+2. *Make Phase 6 a prerequisite of this exit.* Declined because the amendment
+   alone does not remove the cycle — Phase 6 depends on Phase 5, which depends on
+   this phase — so the phase order or the law's ownership would have to move with
+   it.
+3. *Carry it as a named residual.* **Chosen.** `PROCESS.md`'s four conditions are
+   checked under `P04-R001` below, and the same four under `P04-R004`.
+
+**What the amendment does, stated plainly: it narrows the phase's outcome.** An
+independent review put this exactly right — the roadmap's outcome sentence named
+rendering "through the same headless comparison path as V1", the exit review
+records the offline engine selection joining those paths as *not done*, and an
+amendment that rewrote the bullets while leaving that sentence standing would
+have claimed the deferred behaviour in the one place `PROCESS.md` cares about.
+The sentence is therefore amended too, and the phase exits with a smaller outcome
+than it was given.
+
+**What survives the narrowing, and why it is bounding rather than deletion.** The
+first pass refused this route on the ground that the rewrite "would delete the
+phase's own outcome rather than bound it — a lowering that renders nothing
+faithfully is not 'current projects rendered through the same headless comparison
+path as V1'". What has changed is the first half of that sentence. Saved projects
+now lower **and render** through V2 at their own pitches and velocities, from
+their own pinned bytes, without their patches being rebuilt in a test; the first
+two bullets are unchanged in substance and both pass. What leaves the outcome is
+the **join** between the two render paths — a parity verdict this phase may not
+issue and a shared render surface it may not build — and each half is carried by
+a named obligation with an owner rather than dropped. A reader who wants the
+comparison path itself should read this exit as delivering its V2 side only.
+
+### P04-R001: V1 composes two velocity sensitivities and V2 applies one
+
+**Accepted as a named residual on 2026-09-02.** This record was a blocking obligation while the
+note payload carried neither pitch nor velocity, and the gate was left unchanged for exactly
+that reason: rewriting it then would have deleted the phase's own outcome. The payload half is
+now discharged, what remains is smaller than what this record was created for, and the third
+gate bullet is rewritten around it.
+
+**What is discharged.**
+[ADR-0025](decisions/ADR-0025-tuning-representation-and-ownership.md) was accepted with option
+B on 2026-09-02 and `SOUND-INV-021` was written with the acceptance. A note-on carries a
+validated key identity and a velocity; the plan holds one `PreparedTuning` that every
+pitch-producing node references; admission charges the expansion a note-on becomes; and a saved
+note's own magnitudes, with its placement's transpose applied, reach the payload and render.
+Both eligible corpus cases render from their own pinned bytes. The work list's precondition —
+"before rendering the first saved pitched note, close P03-R003 with minimum typed pitch and
+velocity payload semantics" — is met and `P03-R003` is closed. The second gate bullet passes.
+
+**What remains, as the number it is.** V1 consumes one saved velocity **twice**, under two
+independent sensitivities: the envelope multiplies its emitted level by `1 − sens × (1 − v)`,
+and voice output then applies `(1 − amp_sens) + amp_sens × v`. At V1's own defaults both
+sensitivities are `1`, so both factors reduce to `v` and V1's product carries the velocity
+squared where V2 carries it once. For the corpus's saved velocity of `0.756` that is `0.572`
+against `0.756` — audible, not a rounding difference.
+
+**Owner: Phase 6 — and as a residual that closes no cycle.** `SOUND-INV-021` and ADR-0025 both
+put the composition on Phase 6, which is where the *full* law already sits. What this plan
+forbids is naming Phase 6 a **prerequisite** of this phase's exit: Phase 6 depends on Phase 5,
+which depends on this phase, so a prerequisite would close a cycle. A residual is the opposite
+relation. Phase 4 exits without it and `PROCESS.md` binds the obligation forward — "a later
+phase that expands into one of them inherits the obligation before that expansion, even if the
+roadmap named a later deadline" — so Phase 6 inherits it before it builds the law it owns. The
+dependency still runs 4 → 5 → 6 and nothing points back.
+
+**Its first real consumer** is the first parity verdict over a **lowered** outcome that places a
+note: a corpus A/B comparison, or the development-only offline engine selection in the render and
+analysis harnesses. None exists, and none may be built while the refusal stands. The scope is the
+lowered outcome rather than every controlled V1/V2 comparison — EVD-0013's harness builds its own
+fixture patches and compiles a V2 graph directly, never producing a lowered outcome, and is
+untouched by this.
+
+**The corpus's own claims are unjudged rather than met, and that is what the refusal protects.**
+Both eligible cases declare claims a parity run would judge: `CORPUS-0001-P1` and
+`CORPUS-0009-P2` are `exact-parity` pitch and onset claims, which the payload now represents,
+and `CORPUS-0001-P2` is a `feature-parity` claim that the envelope's attack, decay, sustain and
+release landmarks stay within measurement tolerance of V1's. That last one is the claim this
+residual actually holds: at the corpus's saved velocity the sustain level differs by the factor
+above, which is 2.4 dB and far outside the tolerance EVD-0013 measured the accepted envelope
+difference at. No verdict has been issued against any of them, and the `UnsupportedScope` marker
+is what keeps an unjudged claim from being read as a satisfied one. Phase 6's first parity run
+judges them.
+
+**Fails closed, and the closure is executable rather than recorded.** A lowering that places
+any note raises one `OwnedByLaterPhase` diagnostic naming the capability — "V1's two velocity
+sensitivities and how they compose, which V2 applies as one scale on the envelope" — and its
+owner, "Phase 6, with the composition law". `Fidelity` is **derived** from the diagnostics
+rather than set, so an outcome carrying that diagnostic and claiming `Faithful` is not
+constructible, and `admits_parity_comparison` is false for it. That derivation is the control,
+and it is not an encapsulation: a lowered outcome's samples and diagnostics are public, so what
+keeps a caller from comparing them unasked is that no comparator exists and ADR-0057 clause 5
+refuses building one. `LOWER-INV-003` is where that rule now lives. It is raised once per lowering
+that produces a performance, rather than once per note, because it is a property of how this
+lowerer composes velocity and not of any note the project holds. A lowering refused earlier
+never reaches the marker and does not need to: its own refusal already makes the outcome
+`UnsupportedScope`, which is the condition a comparison caller obeys.
+`a_render_that_places_a_note_still_refuses_a_parity_comparison` asserts the marker, the named
+owner, and the count of one over a four-note song.
+
+**Why the render is nevertheless admissible.** The precondition the work list wrote, and
+`SOUND-INV-017` restates, is on rendering a saved **pitched** note without typed pitch and
+velocity payload semantics. Those semantics now exist, so the precondition is met and the
+render proceeds. The fidelity marker governs **reporting**, which is where the remaining gap
+is. That division is the correction the first implementation of this obligation needed in the
+other direction — it treated the marker as sufficient while the precondition was on the render
+— and it is stated here so it is not re-derived.
+
+**No dependent phase's guarantee is weakened.** Phase 5 depends on this phase's lowerer, its
+typed boundary and its diagnostics, none of which the composition law touches; and nothing
+persisted, real-time or protocol-bearing is involved, because the deferred item is an
+amplitude law inside an offline render whose comparison is refused.
+
+### P04-R002: the repository supplies two eligible saved projects, not three
+
+The first gate bullet asks for three saved projects, and the repository contains two the Phase
+4 subset can take. That is **measured rather than counted by hand**:
+`exactly_two_saved_projects_in_the_repository_lower_to_a_plan` lowers every `.ptz` the
+repository holds — the ten pinned corpus cases and the eighteen shipped examples, both the
+plain `.ptz` form and the sample-embedding `.ptz.zip` bundle, every instrument of each rather
+than the first — and asserts the eligible set exactly, so a project
+that becomes eligible is as much a change to this obligation as one that stops being.
+
+The eligible pair is `CORPUS-0001` and `CORPUS-0009`. Why each of the others is not:
+
+- `CORPUS-0002` requires voice allocation and stealing, which Phase 6 owns.
+- `CORPUS-0010` requires two simultaneous note streams through one shared instrument at
+  independent track gains, which needs Phase 6 and Phase 8 together.
+- `CORPUS-0004` authors a `reverb` on a return bus and a `compressor` on the master chain,
+  neither of which the node registry has.
+- Six pinned cases and every shipped example author a module type with no V2 counterpart. The
+  closest miss is `Chrome & Graph Teaching Demo`, whose voice patch maps entirely but whose
+  song carries three note graphs — a transform on the notes a pattern plays, which the lowerer
+  refuses because rendering the authored notes instead would sound a stream V1 never plays.
+
+**The measurement found a defect while establishing the count.** `CORPUS-0004` first counted as
+*eligible*, because the lowerer read only the instrument's voice patch and never the project's
+global state — so a reverb send and a master compressor were silently absent rather than
+refused. The lowerer now reads the master chain, the return-bus chains, each track's **enabled**
+sends, the project master volume and the global glide, and the count is two.
+
+The obligation therefore resolves one way rather than two: no third saved project exists to
+add, so meeting the bullet needs either a new project authored for it — which would be
+satisfying a count rather than demonstrating a capability — or an amendment recording that the
+repository holds two. **The choice is the user's**, and Phase 4 owns nothing further here; the
+scope is every saved project the repository holds rather than the pinned corpus alone.
+
+**Discharged by amendment on 2026-09-02.** The user chose the amendment rather than a project
+authored to satisfy a count. The first gate bullet now asks for every saved project the Phase 4
+subset can take, which is what
+`exactly_two_saved_projects_in_the_repository_lower_to_a_plan` measures, instead of a fixed
+three. The count is therefore evidence rather than a target: that test asserts the eligible set
+**exactly**, so a change in either direction fails it and is seen rather than silently
+satisfying or silently missing a number. This obligation is closed rather than carried, and
+nothing about it waits for a later phase.
+
+### P04-R004: the job contract cannot be accepted in this phase
+
+The gate's last bullet asks offline V2 rendering to stream, report progress and cancel, and
+`ROADMAP.md` states the phase's exit as needing "a revisioned cancellable long-running job
+contract". [ADR-0028](decisions/ADR-0028-long-running-job-contract.md) is that contract, and it
+is `Deferred` "no later than Phase 4 exit". It cannot meet that deadline.
+
+**Why.** ADR-0028's declared scope includes retention and stale-result labelling as well as the
+streaming sink, and the word that blocks it is *revisioned*. A **project revision** is, in the
+glossary's own words, "a stable version of the canonical document used by history, save,
+compilation, optimistic concurrency, and revision-pinned jobs" — an identity **Phase 10A**
+creates when it gives the document one content revision. Capturing a job's immutable
+project/asset snapshot from that revision is **Phase 10B**'s, which is where the work list puts
+the revision-pinned job service. Phase 4 has neither, so a contract it accepted would name a
+revision that does not exist.
+
+An ADR has no partially-accepted status, so accepting ADR-0028 for the render core alone and
+leaving retention, stale-result labelling and the revision identity open is not an acceptance.
+
+**Owner.** Phase 10A for the canonical revision; Phase 10B for the job service that captures a
+snapshot from one, and for the frontend surfaces this record already leaves there.
+
+**Nothing proceeds meanwhile, and that is the point.** ADR-0028's third standing constraint
+refuses streaming, progress, cancellation, multi-project A/B, a shared render request/result
+and frontend integration *as task selections* until it is accepted. Building them and calling
+the result provisional would not honour that constraint; it would work around it. So the gate's
+last bullet is blocked rather than approximated, and `PROCESS.md`'s rule applies — the work
+that depends on the conflict stops.
+
+What this phase contributes instead is the evidence the record was waiting for: the workflow
+analysis of every render and analysis caller, done here and recorded in ADR-0028.
+
+**Accepted as a named residual on 2026-09-02, and the gate is rewritten with it.** The
+obligation itself does not move: acceptance is still Phase 10B's, and all three standing
+constraints hold until then. What changed is that Phase 4 no longer waits for it. The gate's
+last bullet asked offline V2 rendering to stream, report progress and cancel; it now asks the
+opposite — that this phase build none of them — which turns the constraint already governing
+the work into something checkable.
+
+`PROCESS.md`'s four conditions hold. The gate is rewritten not to claim the deferred behaviour.
+The behaviour fails closed rather than accepting and silently ignoring the unsupported case: no
+partial streaming, progress or cancellation surface reaches V2, because constraint 3 refuses
+them as task selections, and the bounded in-process smoke render is V2's only render path. V1's
+existing blocking renders and its `ExportProgress` are untouched, which is the cost this record
+accepted rather than a second mechanism built beside it. The owner is named — Phase 10A for the canonical revision, Phase
+10B for the job service that captures a snapshot from one — and the obligation blocks its first
+real consumer, which is the first shared render request, multi-project A/B batch, or GUI, CLI
+or MCP render surface. And no guarantee a dependent phase needs is weakened: Phase 5 depends on
+this phase's lowerer and typed boundary, not on its render orchestration.
+
+The risk this record listed as "the deferral is extended through Phase 4", whose stated control
+was that "Phase 4 cannot exit while this record remains deferred", is therefore realised under
+a different control. The exit happens; what holds the line is constraint 3 together with the
+rewritten bullet, rather than a blocked phase.
+
+**Revisit condition.** ADR-0028 is accepted in Phase 10B, against that analysis, once Phase
+10A's canonical revision exists for it to name.
+
+### P04-R003: no V2 node rendered a sawtooth — **discharged**
+
+Nine of the ten pinned corpus projects author a `sawtooth` oscillator; the tenth
+authors a `sine` and is out of scope for other reasons. V2's node registry had a
+sine and no other oscillator, and no work-list item covered the gap.
+
+**Closed.** V2 has a band-limited sawtooth node kind, and `CORPUS-0001` now lowers from its
+own pinned bytes, compiles, schedules its own notes and sounds. The waveform is a **node
+kind** rather than a field on the sine, because `SOUND-INV-013` forbids a kernel taking a
+parameter that selects between laws and a shape selector is exactly that; and the kernel
+justifies itself by its own checks rather than by likeness to V1, as that invariant also
+requires — a rising ramp between wraps, no DC over whole periods, amplitude scaling, a
+guarded divisor at zero frequency, bounded phase at a negative one, silence at and past
+Nyquist, and band-limiting measured **at the bins the aliases actually fold into**.
+
+Silence past Nyquist is a derivation rather than a fallback: a sawtooth's partials are its
+fundamental and every multiple of it, so once the fundamental reaches Nyquist no partial is
+below it and the band-limited signal is exactly zero. Two earlier revisions got that wrong in
+different ways — one let the correction run outside its domain and produced `1.127` at unity
+amplitude, the other emitted the naive ramp, which at a 48 kHz frequency never advances the
+phase and is therefore constant `-1`, DC from a node whose contract says DC-free. Both are now
+tests.
+
+That last check is the load-bearing one and its first form was too weak: a sum of squared
+first differences is a high-pass over the whole spectrum and cannot tell a folded partial from
+a legitimate harmonic. It now measures named bins. A 5 kHz sawtooth at 48 kHz puts legitimate
+harmonics at 5, 10, 15 and 20 kHz and folds its fifth through ninth to 23, 18, 13, 8 and
+3 kHz, where nothing legitimate lives. Measured, the correction leaves those aliases at 0.372,
+0.221, 0.108, 0.036 and 0.004 of the naive ramp's, while the fundamental keeps 0.965 of its
+level. The discriminator is the pair at comparable frequencies: the 8 kHz alias keeps 0.036
+where the 10 kHz harmonic keeps 0.865, which no uniform attenuator can do — and a mutation
+substituting one fails the check.
+
+A waveform V2 still has no node for is refused by name and by project object.
 
 ## Phase 5: Declarative node and parameter API
 

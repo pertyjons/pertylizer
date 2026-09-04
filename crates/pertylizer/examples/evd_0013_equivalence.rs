@@ -212,6 +212,18 @@ fn write_fixtures(dir: &Path) -> Result<(), Box<dyn std::error::Error>> {
 
 /// V2's `voice-mono` graph at a stereo profile — ADR-0041 clause 16's first
 /// baseline fixture, which is also EVD-0012's governing shape.
+/// The tuning the V2 arm resolves its key through.
+///
+/// `SOUND-INV-021` puts the key-to-frequency mapping in the plan, so the arm's frequency now
+/// arrives through the note rather than through the oscillator's prepared value. That does not
+/// change what this record measures: **measured, not assumed** — every one of E3a's six points
+/// is an exact octave of A, and `TuningTable::equal_temperament` reproduces 110, 220, 440, 880,
+/// 1760 and 3520 Hz bit-for-bit, so both arms still receive one frequency by construction.
+fn twelve_tet() -> synth_engine_v2::tuning::PreparedTuning {
+    synth_engine_v2::tuning::PreparedTuning::equal_temperament()
+        .expect("twelve-tone equal temperament prepares")
+}
+
 fn v2_graph(frequency: f32, cutoff_hz: f32) -> GraphIr {
     GraphIr::builder()
         .node(
@@ -262,6 +274,7 @@ fn v2_graph(frequency: f32, cutoff_hz: f32) -> GraphIr {
             (OUTPUT, PortId::FIRST),
             SignalDomain::Audio,
         )
+        .tuning(ExecutionScope::Voice, twelve_tet())
         .declaring(synth_engine_v2::ir::PlanDeclarations {
             // A plan that starts notes must say who starts them: the identity range a
             // compiled note-on mints from is partitioned across declared producers.
@@ -277,7 +290,11 @@ fn v2_graph(frequency: f32, cutoff_hz: f32) -> GraphIr {
 }
 
 /// One V2 arm, rendered offline as interleaved stereo `f32`.
-fn v2_samples(frequency: f32, cutoff_hz: f32) -> Result<Vec<f32>, Box<dyn std::error::Error>> {
+fn v2_samples(
+    midi: u8,
+    frequency: f32,
+    cutoff_hz: f32,
+) -> Result<Vec<f32>, Box<dyn std::error::Error>> {
     let profile = HostProfile::harness(
         SampleRate::new(SAMPLE_RATE as f32).map_err(|e| format!("a valid rate: {e:?}"))?,
         FrameCount::new(BLOCK),
@@ -295,7 +312,20 @@ fn v2_samples(frequency: f32, cutoff_hz: f32) -> Result<Vec<f32>, Box<dyn std::e
     // note ends. `render_offline` is latency-compensated, so its first output
     // sample is plan sample 0.
     let events = [
-        OfflineEvent::new(SampleTime::ZERO, CompiledPayload::NoteOn { slot }),
+        OfflineEvent::new(
+            SampleTime::ZERO,
+            CompiledPayload::NoteOn {
+                slot,
+                // **The arm's own key**, not a fixed one. Since `SOUND-INV-021` the note's key
+                // resolves through the plan's tuning and reaches the oscillator, so a constant
+                // here would render every sweep point at one pitch and E1 and E3a would be
+                // comparing arms that are not at the same frequency. An independent review
+                // found exactly that.
+                key: synth_engine_v2::quantities::KeyIdentity::new(midi)
+                    .map_err(|e| format!("the sweep's MIDI notes are keyboard positions: {e:?}"))?,
+                velocity: synth_engine_v2::quantities::NoteVelocity::FULL,
+            },
+        ),
         OfflineEvent::new(
             SampleTime::new(NOTE_OFF_FRAME),
             CompiledPayload::NoteOff { slot },
@@ -314,7 +344,7 @@ fn render_v2(dir: &Path) -> Result<(), Box<dyn std::error::Error>> {
     let wav = dir.join("wav");
     std::fs::create_dir_all(&wav)?;
     for arm in arms() {
-        let samples = v2_samples(arm.frequency, arm.cutoff_hz)?;
+        let samples = v2_samples(arm.midi, arm.frequency, arm.cutoff_hz)?;
         let path = wav.join(format!("v2-{}.wav", arm.name));
         write_wav(&path, &samples)?;
         println!("{}", path.display());
@@ -323,7 +353,7 @@ fn render_v2(dir: &Path) -> Result<(), Box<dyn std::error::Error>> {
         // null need it: a determinism defect would not be arm-specific, and
         // fifty extra renders would say nothing the first two do not.
         if arm.name == "aligned" || arm.name == "null" {
-            let repeat = v2_samples(arm.frequency, arm.cutoff_hz)?;
+            let repeat = v2_samples(arm.midi, arm.frequency, arm.cutoff_hz)?;
             let path = wav.join(format!("v2-{}-b.wav", arm.name));
             write_wav(&path, &repeat)?;
             println!("{}", path.display());

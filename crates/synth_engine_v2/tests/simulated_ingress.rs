@@ -182,7 +182,7 @@ fn compiled_note(plan: &CompiledPlan, time: u64, on: bool) -> PlanEvent {
         .resolve_note(ENVELOPE)
         .expect("the envelope accepts note edges");
     let payload = if on {
-        CompiledPayload::NoteOn { slot }
+        common::note_on(slot)
     } else {
         CompiledPayload::NoteOff { slot }
     };
@@ -240,7 +240,13 @@ fn render_ingress(partition: &[usize]) -> (Vec<f32>, PreparedRenderer, Publicati
     // Through the control, because the off-thread half owns the minter: an identity from
     // any other table is one this renderer refuses as foreign.
     let identity = control
-        .offer_note_on(&mut store, SampleTime::new(ON), note)
+        .offer_note_on(
+            &mut store,
+            SampleTime::new(ON),
+            note,
+            common::any_key(),
+            synth_engine_v2::quantities::NoteVelocity::FULL,
+        )
         .expect("the note-on takes a slot, a hold and an identity");
     control
         .offer_note_off(&mut store, SampleTime::new(OFF), identity)
@@ -352,7 +358,13 @@ fn a_release_discharges_the_hold_when_it_takes_the_slot_that_hold_reserved() {
     let note = plan.resolve_note(ENVELOPE).expect("the envelope plays");
 
     let identity = control
-        .offer_note_on(&mut store, SampleTime::new(ON), note)
+        .offer_note_on(
+            &mut store,
+            SampleTime::new(ON),
+            note,
+            common::any_key(),
+            synth_engine_v2::quantities::NoteVelocity::FULL,
+        )
         .expect("the note-on is admitted");
     assert_eq!(
         store.holds_outstanding(),
@@ -412,11 +424,23 @@ fn a_note_on_that_cannot_take_all_three_resources_is_dropped_with_the_resource_n
     // identities are still free, so nothing but the hold can explain the refusal.
     for frame in 0..2 {
         let _open = control
-            .offer_note_on(&mut store, SampleTime::new(frame), note)
+            .offer_note_on(
+                &mut store,
+                SampleTime::new(frame),
+                note,
+                common::any_key(),
+                synth_engine_v2::quantities::NoteVelocity::FULL,
+            )
             .expect("the entitlement covers two");
     }
     let refused = control
-        .offer_note_on(&mut store, SampleTime::new(2), note)
+        .offer_note_on(
+            &mut store,
+            SampleTime::new(2),
+            note,
+            common::any_key(),
+            synth_engine_v2::quantities::NoteVelocity::FULL,
+        )
         .expect_err("the third exceeds the hold entitlement");
     assert_eq!(
         refused,
@@ -463,7 +487,13 @@ fn a_stream_is_served_by_one_ingress_store() {
     let note = plan.resolve_note(ENVELOPE).expect("the envelope plays");
 
     let identity = control
-        .offer_note_on(&mut first, SampleTime::new(ON), note)
+        .offer_note_on(
+            &mut first,
+            SampleTime::new(ON),
+            note,
+            common::any_key(),
+            synth_engine_v2::quantities::NoteVelocity::FULL,
+        )
         .expect("the first store is latched by first use");
     let refused = control
         .offer_note_off(&mut second, SampleTime::new(OFF), identity)
@@ -524,7 +554,13 @@ fn a_note_on_is_refused_when_the_queue_has_no_room_for_the_release_it_would_owe(
     // Stamps stay non-decreasing: the store refuses a past it has already left, so the
     // fixture's filler decides where the note has to sit.
     let identity = control
-        .offer_note_on(&mut probe, SampleTime::new(depth as u64), note)
+        .offer_note_on(
+            &mut probe,
+            SampleTime::new(depth as u64),
+            note,
+            common::any_key(),
+            synth_engine_v2::quantities::NoteVelocity::FULL,
+        )
         .expect("two free slots hold a note-on and its reservation");
     control
         .offer_note_off(&mut probe, SampleTime::new(depth as u64 + Q), identity)
@@ -546,7 +582,13 @@ fn a_note_on_is_refused_when_the_queue_has_no_room_for_the_release_it_would_owe(
             .expect("a parameter write needs one slot");
     }
     let refused = control
-        .offer_note_on(&mut store, SampleTime::new(depth as u64), note)
+        .offer_note_on(
+            &mut store,
+            SampleTime::new(depth as u64),
+            note,
+            common::any_key(),
+            synth_engine_v2::quantities::NoteVelocity::FULL,
+        )
         .expect_err("one free slot cannot hold a note-on and its release");
     assert_eq!(
         refused,
@@ -566,7 +608,13 @@ fn a_release_naming_no_open_note_is_refused_at_the_boundary_rather_than_queued()
     let note = plan.resolve_note(ENVELOPE).expect("the envelope plays");
 
     let identity = control
-        .offer_note_on(&mut store, SampleTime::new(0), note)
+        .offer_note_on(
+            &mut store,
+            SampleTime::new(0),
+            note,
+            common::any_key(),
+            synth_engine_v2::quantities::NoteVelocity::FULL,
+        )
         .expect("the note-on is admitted");
     control
         .offer_note_off(&mut store, SampleTime::new(Q), identity)
@@ -640,7 +688,13 @@ fn an_activation_is_refused_once_a_stream_has_adopted_a_live_store() {
 
     // One offer adopts the store, and from there the stream is out of clause 8's scope.
     let identity = control
-        .offer_note_on(&mut store, SampleTime::new(ON), note)
+        .offer_note_on(
+            &mut store,
+            SampleTime::new(ON),
+            note,
+            common::any_key(),
+            synth_engine_v2::quantities::NoteVelocity::FULL,
+        )
         .expect("the note-on is admitted");
     let request = ActivationRequest {
         at: SampleTime::new(8 * Q),
@@ -714,14 +768,26 @@ fn the_live_boundary_s_drops_reach_the_structured_report_with_the_cause_kept() {
     for frame in 0..4 {
         open.push(
             control
-                .offer_note_on(&mut store, SampleTime::new(frame), note)
+                .offer_note_on(
+                    &mut store,
+                    SampleTime::new(frame),
+                    note,
+                    common::any_key(),
+                    synth_engine_v2::quantities::NoteVelocity::FULL,
+                )
                 .expect("the entitlement covers four"),
         );
     }
     for frame in 4..6 {
         assert!(
             control
-                .offer_note_on(&mut store, SampleTime::new(frame), note)
+                .offer_note_on(
+                    &mut store,
+                    SampleTime::new(frame),
+                    note,
+                    common::any_key(),
+                    synth_engine_v2::quantities::NoteVelocity::FULL
+                )
                 .is_err()
         );
     }
@@ -810,7 +876,13 @@ fn a_note_and_its_release_at_one_render_position_apply_in_the_order_they_were_of
     let (rendered, store) = drive(
         |control, store, note| {
             let identity = control
-                .offer_note_on(store, SampleTime::new(ON), note)
+                .offer_note_on(
+                    store,
+                    SampleTime::new(ON),
+                    note,
+                    common::any_key(),
+                    synth_engine_v2::quantities::NoteVelocity::FULL,
+                )
                 .expect("the note-on is admitted");
             control
                 .offer_note_off(store, SampleTime::new(ON), identity)
@@ -844,7 +916,13 @@ fn an_entry_whose_destination_is_past_the_window_waits_for_the_call_that_reaches
         .expect("the live producer has a store");
     let note = plan.resolve_note(ENVELOPE).expect("the envelope plays");
     let identity = control
-        .offer_note_on(&mut store, SampleTime::new(ON), note)
+        .offer_note_on(
+            &mut store,
+            SampleTime::new(ON),
+            note,
+            common::any_key(),
+            synth_engine_v2::quantities::NoteVelocity::FULL,
+        )
         .expect("the note-on is admitted");
     control
         .offer_note_off(&mut store, SampleTime::new(OFF), identity)
@@ -1026,7 +1104,13 @@ fn an_orphan_release_reaches_the_structured_report_and_not_the_drop_count() {
     let note = plan.resolve_note(ENVELOPE).expect("the envelope plays");
 
     let identity = control
-        .offer_note_on(&mut store, SampleTime::new(ON), note)
+        .offer_note_on(
+            &mut store,
+            SampleTime::new(ON),
+            note,
+            common::any_key(),
+            synth_engine_v2::quantities::NoteVelocity::FULL,
+        )
         .expect("the note-on is admitted");
     control
         .offer_note_off(&mut store, SampleTime::new(OFF), identity)
@@ -1107,7 +1191,13 @@ fn a_store_this_stream_never_adopted_is_refused_by_the_drain() {
     let mut publication = arbiter();
 
     let identity = control
-        .offer_note_on(&mut adopted, SampleTime::new(ON), note)
+        .offer_note_on(
+            &mut adopted,
+            SampleTime::new(ON),
+            note,
+            common::any_key(),
+            synth_engine_v2::quantities::NoteVelocity::FULL,
+        )
         .expect("the first offer adopts the store");
     assert!(adopted.adopted_by().is_some());
     assert!(stranger.adopted_by().is_none());
@@ -1156,10 +1246,22 @@ fn a_store_cannot_be_carried_to_a_second_stream() {
     let note = plan.resolve_note(ENVELOPE).expect("the envelope plays");
 
     let _identity = first
-        .offer_note_on(&mut store, SampleTime::new(ON), note)
+        .offer_note_on(
+            &mut store,
+            SampleTime::new(ON),
+            note,
+            common::any_key(),
+            synth_engine_v2::quantities::NoteVelocity::FULL,
+        )
         .expect("the first stream adopts the store");
     let refused = second
-        .offer_note_on(&mut store, SampleTime::new(OFF), note)
+        .offer_note_on(
+            &mut store,
+            SampleTime::new(OFF),
+            note,
+            common::any_key(),
+            synth_engine_v2::quantities::NoteVelocity::FULL,
+        )
         .expect_err("a second stream may not use another stream's store");
     assert!(matches!(refused, IngressRefused::ForeignStream { .. }));
 }
@@ -1184,15 +1286,33 @@ fn a_refused_store_leaves_the_stream_able_to_use_its_own() {
     let note = plan.resolve_note(ENVELOPE).expect("the envelope plays");
 
     let _held = first
-        .offer_note_on(&mut foreign, SampleTime::new(ON), note)
+        .offer_note_on(
+            &mut foreign,
+            SampleTime::new(ON),
+            note,
+            common::any_key(),
+            synth_engine_v2::quantities::NoteVelocity::FULL,
+        )
         .expect("the first stream adopts its own store");
     second
-        .offer_note_on(&mut foreign, SampleTime::new(ON), note)
+        .offer_note_on(
+            &mut foreign,
+            SampleTime::new(ON),
+            note,
+            common::any_key(),
+            synth_engine_v2::quantities::NoteVelocity::FULL,
+        )
         .expect_err("the second stream may not use the first's store");
 
     // And it can still use its own, which a poisoned latch would refuse.
     let _adopted = second
-        .offer_note_on(&mut owned, SampleTime::new(ON), note)
+        .offer_note_on(
+            &mut owned,
+            SampleTime::new(ON),
+            note,
+            common::any_key(),
+            synth_engine_v2::quantities::NoteVelocity::FULL,
+        )
         .expect("the refusal left this stream able to adopt its own store");
 }
 
@@ -1288,7 +1408,13 @@ fn a_simulated_stamp_inside_the_horizon_is_admitted_and_moves_no_arrival_counter
     let note = plan.resolve_note(ENVELOPE).expect("the envelope plays");
 
     let identity = control
-        .offer_note_on(&mut store, SampleTime::new(ON), note)
+        .offer_note_on(
+            &mut store,
+            SampleTime::new(ON),
+            note,
+            common::any_key(),
+            synth_engine_v2::quantities::NoteVelocity::FULL,
+        )
         .expect("a stamp inside the horizon is admitted");
     control
         .offer_note_off(&mut store, SampleTime::new(OFF), identity)
@@ -1396,7 +1522,13 @@ fn a_store_cannot_be_adopted_between_a_candidates_build_and_its_offer() {
         .expect_err("a parameter offer may not adopt a store under an outstanding candidate");
     assert!(matches!(refused, IngressRefused::CandidateOutstanding));
     let refused = control
-        .offer_note_on(&mut store, SampleTime::new(ON), note)
+        .offer_note_on(
+            &mut store,
+            SampleTime::new(ON),
+            note,
+            common::any_key(),
+            synth_engine_v2::quantities::NoteVelocity::FULL,
+        )
         .expect_err("nor may a note offer");
     assert!(matches!(refused, IngressRefused::CandidateOutstanding));
     assert!(
@@ -1410,7 +1542,13 @@ fn a_store_cannot_be_adopted_between_a_candidates_build_and_its_offer() {
         .withdraw(candidate)
         .expect("the candidate withdraws");
     let _open = control
-        .offer_note_on(&mut store, SampleTime::new(ON), note)
+        .offer_note_on(
+            &mut store,
+            SampleTime::new(ON),
+            note,
+            common::any_key(),
+            synth_engine_v2::quantities::NoteVelocity::FULL,
+        )
         .expect("with no candidate outstanding the store is adopted");
 }
 
@@ -1518,7 +1656,13 @@ fn a_note_slot_from_another_plan_is_refused_before_it_can_mint() {
     let foreign = plan_b.resolve_note(ENVELOPE).expect("the envelope plays");
 
     let refused = control
-        .offer_note_on(&mut store, SampleTime::ZERO, foreign)
+        .offer_note_on(
+            &mut store,
+            SampleTime::ZERO,
+            foreign,
+            common::any_key(),
+            synth_engine_v2::quantities::NoteVelocity::FULL,
+        )
         .expect_err("a slot naming another plan may not mint");
     assert!(matches!(
         refused,
@@ -1530,7 +1674,13 @@ fn a_note_slot_from_another_plan_is_refused_before_it_can_mint() {
     let local = plan_a.resolve_note(ENVELOPE).expect("the envelope plays");
     assert!(
         control
-            .offer_note_on(&mut store, SampleTime::ZERO, local)
+            .offer_note_on(
+                &mut store,
+                SampleTime::ZERO,
+                local,
+                common::any_key(),
+                synth_engine_v2::quantities::NoteVelocity::FULL
+            )
             .is_ok(),
         "a refused foreign slot must leave the entitlement and the queue untouched"
     );
@@ -1557,7 +1707,13 @@ fn the_horizon_pair_a_simulated_stamp_beyond_it_is_refused_and_one_inside_admitt
 
     // One sample past the horizon: refused, and the refusal names both times.
     let beyond = SampleTime::new(horizon + 1);
-    match control.offer_note_on(&mut store, beyond, note) {
+    match control.offer_note_on(
+        &mut store,
+        beyond,
+        note,
+        common::any_key(),
+        synth_engine_v2::quantities::NoteVelocity::FULL,
+    ) {
         Err(synth_engine_v2::ingress::IngressRefused::BeyondHorizon { time, horizon_end }) => {
             assert_eq!(time, beyond);
             assert_eq!(horizon_end, SampleTime::new(horizon));
@@ -1574,7 +1730,13 @@ fn the_horizon_pair_a_simulated_stamp_beyond_it_is_refused_and_one_inside_admitt
     // off by one in the closing direction, or if it refuses everything.
     assert!(
         control
-            .offer_note_on(&mut store, SampleTime::new(horizon), note)
+            .offer_note_on(
+                &mut store,
+                SampleTime::new(horizon),
+                note,
+                common::any_key(),
+                synth_engine_v2::quantities::NoteVelocity::FULL
+            )
             .is_ok(),
         "the horizon's own sample is inside it"
     );

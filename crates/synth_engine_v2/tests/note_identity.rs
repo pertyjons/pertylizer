@@ -87,12 +87,21 @@ fn two_voices_declaring(declarations: PlanDeclarations) -> GraphIr {
             ExecutionScope::Voice,
         )
         .node(FAST_AMPLIFIER, IrNodeKind::Amplifier, ExecutionScope::Voice)
+        // The slow chain is in **another scope**, and it has to be: `SOUND-INV-021` binds a
+        // note's magnitudes by execution scope, so two playable nodes sharing one scope
+        // would each move the other's velocity, and admission refuses that plan. The scopes
+        // are otherwise inert here — nothing in this file plays a magnitude — so this is
+        // what keeps the fixture two independently addressable notes.
         .node(
             SLOW_ENVELOPE,
             envelope(slow_release()),
-            ExecutionScope::Voice,
+            ExecutionScope::InstrumentInstance,
         )
-        .node(SLOW_AMPLIFIER, IrNodeKind::Amplifier, ExecutionScope::Voice)
+        .node(
+            SLOW_AMPLIFIER,
+            IrNodeKind::Amplifier,
+            ExecutionScope::InstrumentInstance,
+        )
         .node(OUTPUT, IrNodeKind::Output, ExecutionScope::Global)
         .connect(
             (SOURCE, PortId::FIRST),
@@ -127,7 +136,7 @@ fn two_voices_declaring(declarations: PlanDeclarations) -> GraphIr {
 fn edge(plan: &CompiledPlan, node: NodeId, at: u64, on: bool) -> OfflineEvent {
     let slot = plan.resolve_note(node).expect("an envelope can be played");
     let payload = if on {
-        CompiledPayload::NoteOn { slot }
+        common::note_on(slot)
     } else {
         CompiledPayload::NoteOff { slot }
     };
@@ -280,7 +289,7 @@ fn a_release_replayed_after_its_note_ended_moves_no_node() {
     let first = synth_engine_v2::schedule::stamp_compiled(
         &mut control,
         &[
-            CompiledEvent::new(SampleTime::new(0), CompiledPayload::NoteOn { slot: fast }),
+            CompiledEvent::new(SampleTime::new(0), common::note_on(fast)),
             CompiledEvent::new(SampleTime::new(1), CompiledPayload::NoteOff { slot: fast }),
         ],
     )
@@ -301,8 +310,8 @@ fn a_release_replayed_after_its_note_ended_moves_no_node() {
     let opened = synth_engine_v2::schedule::stamp_compiled(
         &mut control,
         &[
-            CompiledEvent::new(SampleTime::new(Q), CompiledPayload::NoteOn { slot: fast }),
-            CompiledEvent::new(SampleTime::new(Q), CompiledPayload::NoteOn { slot: slow }),
+            CompiledEvent::new(SampleTime::new(Q), common::note_on(fast)),
+            CompiledEvent::new(SampleTime::new(Q), common::note_on(slow)),
         ],
     )
     .expect("the plan declares a compiled note producer");
@@ -362,7 +371,7 @@ fn an_occurrence_from_another_plan_is_refused_rather_than_applied() {
         &mut theirs_control,
         &[CompiledEvent::new(
             SampleTime::new(0),
-            CompiledPayload::NoteOn { slot },
+            common::note_on(slot),
         )],
     )
     .expect("the plan declares a compiled note producer");
@@ -448,7 +457,7 @@ fn a_plan_that_declares_no_note_producer_cannot_stamp_a_note() {
         &mut control,
         &[CompiledEvent::new(
             SampleTime::new(0),
-            CompiledPayload::NoteOn { slot },
+            common::note_on(slot),
         )],
     )
     .expect_err("no producer, no occurrence");
@@ -527,12 +536,7 @@ fn the_compiled_producer_is_looked_up_rather_than_assumed_to_be_the_first() {
     let _epoch = renderer.epoch();
 
     let opens: Vec<CompiledEvent> = (0..COMPILED_RANGE)
-        .map(|index| {
-            CompiledEvent::new(
-                SampleTime::new(u64::from(index)),
-                CompiledPayload::NoteOn { slot },
-            )
-        })
+        .map(|index| CompiledEvent::new(SampleTime::new(u64::from(index)), common::note_on(slot)))
         .collect();
     synth_engine_v2::schedule::stamp_compiled(&mut control, &opens)
         .expect("eight simultaneous notes fit the compiled producer's eight admitted indices");
@@ -543,7 +547,7 @@ fn the_compiled_producer_is_looked_up_rather_than_assumed_to_be_the_first() {
         &mut control,
         &[CompiledEvent::new(
             SampleTime::new(u64::from(COMPILED_RANGE)),
-            CompiledPayload::NoteOn { slot },
+            common::note_on(slot),
         )],
     )
     .expect_err("a ninth simultaneous note is over-emission against an eight-wide range");
@@ -589,7 +593,7 @@ fn a_note_slot_from_another_plan_is_refused_at_stamping() {
         &mut control,
         &[CompiledEvent::new(
             SampleTime::ZERO,
-            CompiledPayload::NoteOn { slot: foreign },
+            common::note_on(foreign),
         )],
     )
     .expect_err("a node address from another plan is not this plan's to play");
@@ -634,7 +638,7 @@ fn a_producers_range_bounds_its_polyphony_rather_than_a_pieces_note_count() {
     for play in 0..PLAYS {
         events.push(CompiledEvent::new(
             SampleTime::new(play * Q),
-            CompiledPayload::NoteOn { slot },
+            common::note_on(slot),
         ));
         events.push(CompiledEvent::new(
             SampleTime::new(play * Q + 1),
@@ -649,8 +653,8 @@ fn a_producers_range_bounds_its_polyphony_rather_than_a_pieces_note_count() {
     let refused = synth_engine_v2::schedule::stamp_compiled(
         &mut control,
         &[
-            CompiledEvent::new(SampleTime::ZERO, CompiledPayload::NoteOn { slot }),
-            CompiledEvent::new(SampleTime::new(1), CompiledPayload::NoteOn { slot }),
+            CompiledEvent::new(SampleTime::ZERO, common::note_on(slot)),
+            CompiledEvent::new(SampleTime::new(1), common::note_on(slot)),
         ],
     )
     .expect_err("two sounding at once is over-emission against a one-note producer");
@@ -671,7 +675,7 @@ fn a_producers_range_bounds_its_polyphony_rather_than_a_pieces_note_count() {
     synth_engine_v2::schedule::stamp_compiled(
         &mut control,
         &[
-            CompiledEvent::new(SampleTime::ZERO, CompiledPayload::NoteOn { slot }),
+            CompiledEvent::new(SampleTime::ZERO, common::note_on(slot)),
             CompiledEvent::new(SampleTime::new(1), CompiledPayload::NoteOff { slot }),
         ],
     )
@@ -760,7 +764,7 @@ fn a_refused_list_leaves_the_minter_as_it_found_it() {
     let refused = synth_engine_v2::schedule::stamp_compiled(
         &mut control,
         &[
-            CompiledEvent::new(SampleTime::ZERO, CompiledPayload::NoteOn { slot }),
+            CompiledEvent::new(SampleTime::ZERO, common::note_on(slot)),
             CompiledEvent::new(SampleTime::new(1), CompiledPayload::NoteOff { slot }),
             CompiledEvent::new(SampleTime::new(2), CompiledPayload::NoteOff { slot }),
         ],
@@ -778,7 +782,7 @@ fn a_refused_list_leaves_the_minter_as_it_found_it() {
     synth_engine_v2::schedule::stamp_compiled(
         &mut control,
         &[
-            CompiledEvent::new(SampleTime::ZERO, CompiledPayload::NoteOn { slot }),
+            CompiledEvent::new(SampleTime::ZERO, common::note_on(slot)),
             CompiledEvent::new(SampleTime::new(1), CompiledPayload::NoteOff { slot }),
         ],
     )
@@ -806,7 +810,7 @@ fn an_orphan_names_the_occurrence_it_refused() {
     let first = synth_engine_v2::schedule::stamp_compiled(
         &mut control,
         &[
-            CompiledEvent::new(SampleTime::ZERO, CompiledPayload::NoteOn { slot }),
+            CompiledEvent::new(SampleTime::ZERO, common::note_on(slot)),
             CompiledEvent::new(SampleTime::new(1), CompiledPayload::NoteOff { slot }),
         ],
     )
@@ -871,7 +875,7 @@ fn an_orphan_release_is_counted_rather_than_silently_skipped() {
     let first = synth_engine_v2::schedule::stamp_compiled(
         &mut control,
         &[
-            CompiledEvent::new(SampleTime::ZERO, CompiledPayload::NoteOn { slot }),
+            CompiledEvent::new(SampleTime::ZERO, common::note_on(slot)),
             CompiledEvent::new(SampleTime::new(1), CompiledPayload::NoteOff { slot }),
         ],
     )
@@ -943,10 +947,7 @@ fn stamping_uses_the_streams_own_epoch_and_a_foreign_renderer_refuses_the_schedu
 
     let stamped = synth_engine_v2::schedule::stamp_compiled(
         &mut control,
-        &[CompiledEvent::new(
-            SampleTime::ZERO,
-            CompiledPayload::NoteOn { slot },
-        )],
+        &[CompiledEvent::new(SampleTime::ZERO, common::note_on(slot))],
     )
     .expect("the plan declares a compiled note producer");
     assert_eq!(
@@ -969,10 +970,7 @@ fn stamping_uses_the_streams_own_epoch_and_a_foreign_renderer_refuses_the_schedu
     );
     let stream = AdmittedCompiledStream::admit(
         other_control.plan(),
-        &[PlanEvent::new(
-            PlanPosition::ZERO,
-            CompiledPayload::NoteOn { slot },
-        )],
+        &[PlanEvent::new(PlanPosition::ZERO, common::note_on(slot))],
     )
     .expect("one note fits the compiled share");
     let mut schedule = CompiledEventScheduler::prepare(&mut control, &stream)

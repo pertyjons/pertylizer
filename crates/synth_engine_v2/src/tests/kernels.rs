@@ -444,3 +444,276 @@ fn the_widening_writes_every_channel_of_every_frame() {
         }
     }
 }
+
+// ---------------------------------------------------------------------------
+// The band-limited sawtooth
+// ---------------------------------------------------------------------------
+//
+// `SOUND-INV-013` requires a node kind to justify itself by executable checks of its own
+// rather than by likeness to V1, so none of these compares against V1's oscillator. They
+// check what a sawtooth *is*: a ramp that rises between wraps, carries no DC over a whole
+// number of periods, scales with its amplitude, and — the one that motivates the kernel
+// existing at all — puts less energy near Nyquist than the naive ramp it corrects.
+
+/// A prepared sawtooth at `hz`, for a 48 kHz stream.
+fn saw_at(hz: f32, peak: f32) -> PreparedNode {
+    PreparedNode::Saw {
+        seconds_per_frame: 1.0 / 48_000.0,
+        frequency: crate::quantities::Frequency::new(hz).expect("finite"),
+        amplitude: crate::quantities::Amplitude::new(peak).expect("finite"),
+    }
+}
+
+/// The naive ramp the kernel corrects, for the same phase walk.
+///
+/// Written here rather than exposed by the kernel, because a kernel that could produce
+/// either shape would be one taking a parameter that selects between laws — which
+/// `SOUND-INV-013` forbids. This is the test's own reference, not a mode.
+fn naive_saw(hz: f64, peak: f64, frames: usize) -> Vec<f32> {
+    let increment = hz / 48_000.0;
+    let mut phase = 0.0_f64;
+    let mut out = Vec::with_capacity(frames);
+    for _ in 0..frames {
+        out.push((peak * (2.0 * phase - 1.0)) as f32);
+        phase += increment;
+        if !(0.0..1.0).contains(&phase) {
+            phase -= phase.floor();
+        }
+    }
+    out
+}
+
+/// The magnitude of one DFT bin, evaluated directly.
+///
+/// A first-difference sum was the earlier instrument and it was the wrong one: it is a
+/// high-pass over the **whole** sampled spectrum, so it cannot separate a folded partial from
+/// a legitimate harmonic, and any short edge smoother would reduce it. An independent review
+/// said so. This measures one named frequency instead, which is what a claim about aliasing
+/// needs.
+///
+/// `bin` is in cycles per window, so a window of `samples.len()` frames at 48 kHz puts
+/// `f · len / 48000` at frequency `f`. Every frequency used below is an exact integer bin, so
+/// there is no leakage to argue about.
+fn bin_magnitude(samples: &[f32], bin: usize) -> f64 {
+    let n = samples.len() as f64;
+    let (mut re, mut im) = (0.0_f64, 0.0_f64);
+    for (index, sample) in samples.iter().enumerate() {
+        let angle = -std::f64::consts::TAU * bin as f64 * index as f64 / n;
+        re += f64::from(*sample) * angle.cos();
+        im += f64::from(*sample) * angle.sin();
+    }
+    (re * re + im * im).sqrt() / n
+}
+
+#[test]
+fn a_sawtooth_rises_between_its_wraps() {
+    let prepared = saw_at(1_000.0, 1.0);
+    let mut state = NodeState::initial(&prepared);
+    let rendered = run(crate::node::kernels::saw, &prepared, &mut state, 96);
+
+    // 1 kHz at 48 kHz is 48 frames per period, so a wrap falls every 48 samples. Between
+    // them the ramp must be monotonically rising; the correction touches only the frames
+    // straddling a wrap.
+    let mut rising = 0;
+    for pair in rendered.windows(2) {
+        if pair[1] > pair[0] {
+            rising += 1;
+        }
+    }
+    assert!(
+        rising >= 90,
+        "a sawtooth rises everywhere but at its wraps; only {rising} of 95 steps rose"
+    );
+}
+
+#[test]
+fn a_sawtooth_carries_no_dc_over_whole_periods() {
+    let prepared = saw_at(1_000.0, 1.0);
+    let mut state = NodeState::initial(&prepared);
+    // Ten whole periods, exactly.
+    let rendered = run(crate::node::kernels::saw, &prepared, &mut state, 480);
+
+    let mean: f64 = rendered.iter().map(|s| f64::from(*s)).sum::<f64>() / 480.0;
+    assert!(
+        mean.abs() < 1e-3,
+        "a sawtooth over whole periods is DC-free; mean was {mean}"
+    );
+}
+
+/// The claim the kernel exists for, measured at the bins the aliases actually land in.
+///
+/// A 5 kHz sawtooth at 48 kHz has legitimate harmonics at 5, 10, 15 and 20 kHz. Its fifth
+/// harmonic is 25 kHz, past the 24 kHz Nyquist, and folds to 23 kHz; the sixth folds to
+/// 18 kHz, the seventh to 13 kHz, the eighth to 8 kHz and the ninth to 3 kHz. None of those
+/// five frequencies carries a legitimate partial, so energy there **is** aliasing and nothing
+/// else. A 480-frame window puts all of them on exact bins.
+#[test]
+fn band_limiting_removes_energy_from_the_bins_the_aliases_fold_into() {
+    let prepared = saw_at(5_000.0, 1.0);
+    let mut state = NodeState::initial(&prepared);
+    let limited = run(crate::node::kernels::saw, &prepared, &mut state, 480);
+    let naive = naive_saw(5_000.0, 1.0, 480);
+
+    // Frequency to bin, for a 480-frame window at 48 kHz: f / 100.
+    for alias_hz in [23_000, 18_000, 13_000, 8_000, 3_000] {
+        let bin = alias_hz / 100;
+        let corrected = bin_magnitude(&limited, bin);
+        let uncorrected = bin_magnitude(&naive, bin);
+        assert!(
+            corrected < uncorrected * 0.4,
+            "the correction must remove most of the alias at {alias_hz} Hz: {corrected} \
+             against {uncorrected}"
+        );
+    }
+
+    // And it must leave the real harmonics alone, which is what stops the test being
+    // satisfied by attenuation.
+    // The fundamental survives almost untouched, which no uniform attenuator would allow.
+    let fundamental = bin_magnitude(&limited, 50) / bin_magnitude(&naive, 50);
+    assert!(
+        fundamental > 0.9,
+        "the correction is local to the discontinuity, so the fundamental keeps its level; \
+         it kept {fundamental}"
+    );
+
+    // And the discriminator: at *comparable* frequencies an alias is suppressed far more
+    // than a harmonic. A first-order correction does roll the upper harmonics off — measured,
+    // the 20 kHz harmonic keeps 0.545 — but the 8 kHz alias keeps 0.036, an order of
+    // magnitude less than the 10 kHz harmonic beside it. Attenuation alone cannot separate
+    // two bins that close.
+    let harmonic_10k = bin_magnitude(&limited, 100) / bin_magnitude(&naive, 100);
+    let alias_8k = bin_magnitude(&limited, 80) / bin_magnitude(&naive, 80);
+    assert!(
+        alias_8k * 10.0 < harmonic_10k,
+        "the 8 kHz alias must be suppressed far more than the 10 kHz harmonic: {alias_8k} \
+         against {harmonic_10k}"
+    );
+}
+
+/// At or above Nyquist a sawtooth has no partial below Nyquist, so it is silent.
+///
+/// Two earlier revisions got this wrong in different ways, and both are worth a test. The
+/// first let the residual run outside its domain and produced `1.127` at unity amplitude. The
+/// second emitted the naive ramp, which at a 48 kHz frequency never advances the phase and so
+/// is constant `-1` — DC from a node whose contract says DC-free — and at 24 kHz alternates
+/// `-1, 0`, biased by half the amplitude. Silence is neither.
+#[test]
+fn a_sawtooth_at_or_past_nyquist_is_silent() {
+    for hz in [24_000.0, 30_000.0, 48_000.0, 100_800.0, 1_000_000.0] {
+        let prepared = saw_at(hz, 1.0);
+        let mut state = NodeState::initial(&prepared);
+        let rendered = run(crate::node::kernels::saw, &prepared, &mut state, 256);
+
+        assert!(
+            rendered.iter().all(|s| *s == 0.0),
+            "a sawtooth at {hz} Hz has no partial below Nyquist, so it is silent"
+        );
+    }
+}
+
+/// Just below Nyquist it still sounds, so the silence is a boundary rather than a cliff that
+/// swallows the audible range.
+#[test]
+fn a_sawtooth_just_below_nyquist_still_sounds() {
+    let prepared = saw_at(23_000.0, 1.0);
+    let mut state = NodeState::initial(&prepared);
+    let rendered = run(crate::node::kernels::saw, &prepared, &mut state, 256);
+
+    assert!(
+        rendered.iter().any(|s| *s != 0.0),
+        "23 kHz is below the 24 kHz Nyquist and must still be rendered"
+    );
+    assert!(
+        rendered.iter().all(|s| s.is_finite() && s.abs() <= 1.0),
+        "and it stays inside its stated amplitude"
+    );
+}
+
+/// The phase keeps advancing while a sawtooth is silent, so automation back into range
+/// resumes where it would have been rather than where it stopped.
+#[test]
+fn a_silent_sawtooth_still_advances_its_phase() {
+    let prepared = saw_at(48_000.0, 1.0);
+    let mut state = NodeState::initial(&prepared);
+    let _ = run(crate::node::kernels::saw, &prepared, &mut state, 64);
+
+    let NodeState::Saw { phase, .. } = state else {
+        panic!("a prepared sawtooth starts in the sawtooth state");
+    };
+    assert!(
+        phase.is_finite() && (0.0..1.0).contains(&phase),
+        "the phase stays wrapped and finite while the output is silent; it was {phase}"
+    );
+}
+
+/// And the correction is local: at a low frequency the two are nearly the same signal.
+///
+/// This is what stops the previous test passing for the wrong reason — a kernel that simply
+/// attenuated everything would satisfy it and fail this.
+#[test]
+fn the_correction_is_local_to_the_wrap() {
+    let prepared = saw_at(50.0, 1.0);
+    let mut state = NodeState::initial(&prepared);
+    let limited = run(crate::node::kernels::saw, &prepared, &mut state, 960);
+    let naive = naive_saw(50.0, 1.0, 960);
+
+    // 50 Hz at 48 kHz is 960 frames per period, so exactly one wrap falls in this window.
+    // Away from it the two signals must agree to the sample.
+    let differing = limited
+        .iter()
+        .zip(&naive)
+        .filter(|(a, b)| (f64::from(**a) - f64::from(**b)).abs() > 1e-6)
+        .count();
+    assert!(
+        differing <= 4,
+        "the residual is two frames wide at one wrap, so at most a handful may differ; \
+         {differing} did"
+    );
+}
+
+#[test]
+fn a_sawtooth_scales_with_its_amplitude() {
+    let loud = saw_at(1_000.0, 1.0);
+    let quiet = saw_at(1_000.0, 0.25);
+    let mut loud_state = NodeState::initial(&loud);
+    let mut quiet_state = NodeState::initial(&quiet);
+
+    let loud = run(crate::node::kernels::saw, &loud, &mut loud_state, 192);
+    let quiet = run(crate::node::kernels::saw, &quiet, &mut quiet_state, 192);
+    for (l, q) in loud.iter().zip(&quiet) {
+        assert!(
+            (f64::from(*l) * 0.25 - f64::from(*q)).abs() < 1e-6,
+            "a quarter amplitude is a quarter of every sample"
+        );
+    }
+}
+
+/// A zero frequency must not divide by zero in the residual.
+#[test]
+fn a_sawtooth_at_zero_frequency_is_finite_and_still() {
+    let prepared = saw_at(0.0, 1.0);
+    let mut state = NodeState::initial(&prepared);
+    let rendered = run(crate::node::kernels::saw, &prepared, &mut state, 64);
+
+    assert!(
+        rendered.iter().all(|s| s.is_finite()),
+        "the residual guards its divisor, so a still phase is finite"
+    );
+    assert!(
+        rendered.windows(2).all(|w| (w[1] - w[0]).abs() < 1e-6),
+        "a frequency of zero does not advance the phase, so the output does not move"
+    );
+}
+
+/// A negative frequency runs the phase backwards and stays bounded.
+#[test]
+fn a_sawtooth_at_a_negative_frequency_stays_bounded() {
+    let prepared = saw_at(-1_000.0, 1.0);
+    let mut state = NodeState::initial(&prepared);
+    let rendered = run(crate::node::kernels::saw, &prepared, &mut state, 480);
+
+    assert!(
+        rendered.iter().all(|s| s.is_finite() && s.abs() <= 1.01),
+        "the phase wraps in both directions, so it cannot walk out of range"
+    );
+}

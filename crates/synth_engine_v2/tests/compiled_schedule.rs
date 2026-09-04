@@ -114,7 +114,7 @@ fn compiled_note(plan: &CompiledPlan, time: u64, on: bool) -> PlanEvent {
     // A compiled list names the node on **both** edges, which is how preparation pairs
     // them; the stamped event names it on the on edge alone.
     let payload = if on {
-        CompiledPayload::NoteOn { slot }
+        common::note_on(slot)
     } else {
         CompiledPayload::NoteOff { slot }
     };
