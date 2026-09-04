@@ -506,6 +506,10 @@ impl Frequency {
     /// Silence's frequency.
     pub const ZERO: Self = Self(0.0);
 
+    /// Concert A, 440 Hz — the resting pitch a declaration presents for a pitched source
+    /// and the frequency the lowerer prepares an oscillator with before a note reaches it.
+    pub const A4: Self = Self(440.0);
+
     /// A frequency. Must be finite.
     pub fn new(hz: f32) -> Result<Self, QuantityError> {
         if hz.is_finite() {

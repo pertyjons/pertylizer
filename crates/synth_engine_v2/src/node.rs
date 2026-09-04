@@ -49,12 +49,85 @@ impl std::fmt::Display for NoteMagnitude {
     }
 }
 
+/// The unit a parameter is stated in, and with it the domain its values may take.
+///
+/// `P05-S006`. A unit names the quantity, and the quantity's own newtype already states the
+/// domain — so this carries no second range that could disagree with the type: a
+/// [`Self::Hertz`] value is any finite number, negative included, because
+/// [`crate::quantities::Frequency`] says a negative frequency runs the phase backwards;
+/// a [`Self::NormalizedLevel`] is `[0, 1]` because [`crate::quantities::NormalizedLevel`]
+/// refuses anything else. A narrower range than the type's would be a semantic change to
+/// what the IR admits, which no declaration may make on its own.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ParameterUnit {
+    /// Cycles per second; any finite value, negative runs backwards.
+    Hertz,
+    /// A linear amplitude; any finite value, negative inverts.
+    LinearAmplitude,
+    /// A level in `[0, 1]`.
+    NormalizedLevel,
+    /// A gate: zero or below is released, above zero is held.
+    Gate,
+}
+
+/// A parameter's resting value, carried in its own quantity type.
+///
+/// The value and its unit are one thing: a `Hertz` default is a [`crate::quantities::Frequency`]
+/// and cannot be read as a level, which a bare `f32` beside a unit field could — an
+/// independent review found that shape. The unit is derived from the variant, so the two
+/// cannot disagree.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum ParameterDefault {
+    /// A frequency in hertz.
+    Hertz(crate::quantities::Frequency),
+    /// A linear amplitude.
+    LinearAmplitude(crate::quantities::Amplitude),
+    /// A level in `[0, 1]`.
+    NormalizedLevel(crate::quantities::NormalizedLevel),
+    /// A gate value: zero or below released, above zero held.
+    Gate(crate::quantities::ParameterValue),
+}
+
+impl ParameterDefault {
+    /// The unit this default is stated in, and so the parameter's domain.
+    #[must_use]
+    pub const fn unit(self) -> ParameterUnit {
+        match self {
+            Self::Hertz(_) => ParameterUnit::Hertz,
+            Self::LinearAmplitude(_) => ParameterUnit::LinearAmplitude,
+            Self::NormalizedLevel(_) => ParameterUnit::NormalizedLevel,
+            Self::Gate(_) => ParameterUnit::Gate,
+        }
+    }
+
+    /// The value as the number it is, for a consumer that has already read the unit.
+    #[must_use]
+    pub fn as_f32(self) -> f32 {
+        match self {
+            Self::Hertz(value) => value.as_f32(),
+            Self::LinearAmplitude(value) => value.as_f32(),
+            Self::NormalizedLevel(value) => value.as_f32(),
+            Self::Gate(value) => value.as_f32(),
+        }
+    }
+}
+
 /// One control a node kind exposes, and the parameter identity that addresses it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 #[must_use]
 pub(crate) struct ControlSpec {
     /// What a caller names.
     pub(crate) parameter: ParameterId,
+    /// What discovery calls it. Unique within its kind; a test holds it to that.
+    pub(crate) name: &'static str,
+    /// The value discovery presents when nothing has been authored, in its own quantity
+    /// type, which also states the unit and so the domain.
+    ///
+    /// Not what the IR uses — every IR field is authored — and not what the lowerer uses,
+    /// which takes V1's own descriptor default for a key V1 omits. It is the declaration's
+    /// statement of the kind's resting value, which is also what its state starts at where
+    /// the state has a resting value at all: a gate released, a velocity full.
+    pub(crate) default: ParameterDefault,
     /// What the node's state calls it.
     pub(crate) control: ControlIndex,
     /// When moving it takes effect, per ADR-0001 clause 14.
@@ -273,6 +346,39 @@ fn prepare_envelope(
     })
 }
 
+/// A node kind's stable identity, for discovery and for anything that persists a choice.
+///
+/// Distinct from the kind's display name, which may be renamed, and from [`IrNodeKind`],
+/// which carries a node's authored values. An independent review found discovery exposing
+/// only the label, so that renaming `"low-pass filter"` would have changed its identity.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum NodeKindId {
+    /// Zeros.
+    Silence,
+    /// A constant level.
+    Constant,
+    /// One click at a plan position.
+    Impulse,
+    /// A sine.
+    Sine,
+    /// A band-limited sawtooth.
+    Saw,
+    /// A fixed gain.
+    Gain,
+    /// An amplifier driven by a control input.
+    Amplifier,
+    /// A low-pass filter.
+    Filter,
+    /// An envelope.
+    Envelope,
+}
+
+/// The stable identity of a node's kind, or `None` for the output node, which has none.
+#[must_use]
+pub fn kind_id(kind: IrNodeKind) -> Option<NodeKindId> {
+    declaration(kind).map(|declared| declared.id)
+}
+
 /// What one node kind declares about itself, in one place.
 ///
 /// Phase 5's first slice, `P05-S001`, and the shape every later kind moves to. Before it,
@@ -293,6 +399,10 @@ fn prepare_envelope(
 #[derive(Debug)]
 #[must_use]
 pub(crate) struct NodeDeclaration {
+    /// The kind's stable identity. Unique across kinds; a test holds it to that.
+    pub(crate) id: NodeKindId,
+    /// What discovery calls the kind — a display label, renamable. Unique too.
+    pub(crate) name: &'static str,
     /// The kernel that renders it.
     pub(crate) kernel: Kernel,
     /// The ports it declares. Stream-independent for every kind but the output node,
@@ -337,18 +447,24 @@ impl NodeDeclaration {
 /// note's key has to be in force at the sample its gate rises, so the destination is
 /// sample-positioned. The byte attributions name the kernel's prepared and state layouts
 /// — a phase accumulator beside its frequency and amplitude — as the report charges them.
-pub(crate) const SAW: NodeDeclaration = NodeDeclaration {
+pub(crate) static SAW: NodeDeclaration = NodeDeclaration {
+    id: NodeKindId::Saw,
+    name: "sawtooth",
     kernel: kernels::SAW,
     ports: &[AUDIO_OUT],
     controls: &[
         ControlSpec {
             parameter: parameters::SAW_FREQUENCY,
+            name: "frequency",
+            default: ParameterDefault::Hertz(crate::quantities::Frequency::A4),
             control: kernels::SAW_FREQUENCY,
             rate: ControlRate::Sample,
             magnitude: Some(NoteMagnitude::Pitch),
         },
         ControlSpec {
             parameter: parameters::SAW_AMPLITUDE,
+            name: "amplitude",
+            default: ParameterDefault::LinearAmplitude(crate::quantities::Amplitude::UNITY),
             control: kernels::SAW_AMPLITUDE,
             rate: ControlRate::Quantum,
             magnitude: None,
@@ -388,18 +504,24 @@ const CONTROL_OUT: PortSpec = PortSpec::new(
 /// multiplies its audio by. The byte attributions name the kernel's layouts: three segment
 /// lengths and a sustain level prepared; a segment, three levels, a remaining count, the
 /// gate and the velocity kept between quanta.
-pub(crate) const ENVELOPE: NodeDeclaration = NodeDeclaration {
+pub(crate) static ENVELOPE: NodeDeclaration = NodeDeclaration {
+    id: NodeKindId::Envelope,
+    name: "envelope",
     kernel: kernels::ENVELOPE,
     ports: &[CONTROL_OUT],
     controls: &[
         ControlSpec {
             parameter: parameters::ENVELOPE_GATE,
+            name: "gate",
+            default: ParameterDefault::Gate(crate::quantities::ParameterValue::ZERO),
             control: kernels::ENVELOPE_GATE,
             rate: ControlRate::Sample,
             magnitude: None,
         },
         ControlSpec {
             parameter: parameters::ENVELOPE_VELOCITY,
+            name: "velocity",
+            default: ParameterDefault::NormalizedLevel(crate::quantities::NormalizedLevel::FULL),
             control: kernels::ENVELOPE_VELOCITY,
             rate: ControlRate::Sample,
             magnitude: Some(NoteMagnitude::Velocity),
@@ -422,7 +544,9 @@ pub(crate) const ENVELOPE: NodeDeclaration = NodeDeclaration {
 };
 
 /// The sine, declared once — `P05-S003`. The sawtooth's shape with the sine's kernel.
-pub(crate) const SINE: NodeDeclaration = NodeDeclaration {
+pub(crate) static SINE: NodeDeclaration = NodeDeclaration {
+    id: NodeKindId::Sine,
+    name: "sine",
     kernel: kernels::SINE,
     ports: &[AUDIO_OUT],
     controls: &[
@@ -431,12 +555,16 @@ pub(crate) const SINE: NodeDeclaration = NodeDeclaration {
         // the next boundary would sound the previous note's pitch for up to a quantum.
         ControlSpec {
             parameter: parameters::SINE_FREQUENCY,
+            name: "frequency",
+            default: ParameterDefault::Hertz(crate::quantities::Frequency::A4),
             control: kernels::SINE_FREQUENCY,
             rate: ControlRate::Sample,
             magnitude: Some(NoteMagnitude::Pitch),
         },
         ControlSpec {
             parameter: parameters::SINE_AMPLITUDE,
+            name: "amplitude",
+            default: ParameterDefault::LinearAmplitude(crate::quantities::Amplitude::UNITY),
             control: kernels::SINE_AMPLITUDE,
             rate: ControlRate::Quantum,
             magnitude: None,
@@ -458,7 +586,9 @@ pub(crate) const SINE: NodeDeclaration = NodeDeclaration {
 };
 
 /// Zeros, declared once — `P05-S003`. No control, nothing prepared, nothing kept.
-pub(crate) const SILENCE: NodeDeclaration = NodeDeclaration {
+pub(crate) static SILENCE: NodeDeclaration = NodeDeclaration {
+    id: NodeKindId::Silence,
+    name: "silence",
     kernel: kernels::SILENCE,
     ports: &[AUDIO_OUT],
     controls: &[],
@@ -470,7 +600,9 @@ pub(crate) const SILENCE: NodeDeclaration = NodeDeclaration {
 };
 
 /// A constant level, declared once — `P05-S003`. The level is prepared; nothing is kept.
-pub(crate) const CONSTANT: NodeDeclaration = NodeDeclaration {
+pub(crate) static CONSTANT: NodeDeclaration = NodeDeclaration {
+    id: NodeKindId::Constant,
+    name: "constant",
     kernel: kernels::CONSTANT,
     ports: &[AUDIO_OUT],
     controls: &[],
@@ -482,7 +614,9 @@ pub(crate) const CONSTANT: NodeDeclaration = NodeDeclaration {
 };
 
 /// One click at a plan position, declared once — `P05-S003`. The position is prepared.
-pub(crate) const IMPULSE: NodeDeclaration = NodeDeclaration {
+pub(crate) static IMPULSE: NodeDeclaration = NodeDeclaration {
+    id: NodeKindId::Impulse,
+    name: "impulse",
     kernel: kernels::IMPULSE,
     ports: &[AUDIO_OUT],
     controls: &[],
@@ -512,7 +646,9 @@ const AMPLIFIER_CONTROL_IN: PortSpec = PortSpec::new(
 /// The amplifier, declared once — `P05-S004`. Audio in, control in, audio out, and nothing
 /// prepared or kept: each output sample is its input sample times its control sample, so
 /// writing the result over the audio input changes nothing about it (ADR-0005 clause 5).
-pub(crate) const AMPLIFIER: NodeDeclaration = NodeDeclaration {
+pub(crate) static AMPLIFIER: NodeDeclaration = NodeDeclaration {
+    id: NodeKindId::Amplifier,
+    name: "amplifier",
     kernel: kernels::AMPLIFIER,
     ports: &[AUDIO_IN, AMPLIFIER_CONTROL_IN, AUDIO_OUT],
     controls: &[],
@@ -525,7 +661,9 @@ pub(crate) const AMPLIFIER: NodeDeclaration = NodeDeclaration {
 
 /// A fixed gain, declared once — `P05-S004`. The factor is prepared; nothing is kept; and a
 /// gain scales each sample independently, so one buffer serves as input and output.
-pub(crate) const GAIN: NodeDeclaration = NodeDeclaration {
+pub(crate) static GAIN: NodeDeclaration = NodeDeclaration {
+    id: NodeKindId::Gain,
+    name: "gain",
     kernel: kernels::GAIN,
     ports: &[AUDIO_IN, AUDIO_OUT],
     controls: &[],
@@ -540,7 +678,9 @@ pub(crate) const GAIN: NodeDeclaration = NodeDeclaration {
 /// history samples kept. A biquad reads each input sample before it writes that sample's
 /// output and its history is in its state rather than in the buffer, so writing over its
 /// input changes nothing about its result.
-pub(crate) const FILTER: NodeDeclaration = NodeDeclaration {
+pub(crate) static FILTER: NodeDeclaration = NodeDeclaration {
+    id: NodeKindId::Filter,
+    name: "low-pass filter",
     kernel: kernels::FILTER,
     ports: &[AUDIO_IN, AUDIO_OUT],
     controls: &[],
@@ -550,6 +690,108 @@ pub(crate) const FILTER: NodeDeclaration = NodeDeclaration {
     prepared_bytes: size_of::<[f32; 3]>() as u64,
     state_bytes: size_of::<(f32, f32)>() as u64,
 };
+
+/// Every declaration, for the surfaces that walk kinds rather than resolve one.
+///
+/// Discovery reads this; `declaration` resolves a kind to one of these. A test holds the
+/// two together — every kind's declaration is one of these, **by address**, which is why
+/// the declarations are `static` rather than `const`: a `const` is materialised at each
+/// use and has no single address to compare — so a kind declared but left out here cannot
+/// be discovered, and one listed here but not resolvable cannot compile.
+static DECLARED: [&NodeDeclaration; 9] = [
+    &SILENCE, &CONSTANT, &IMPULSE, &SINE, &SAW, &GAIN, &AMPLIFIER, &FILTER, &ENVELOPE,
+];
+
+/// One port, as discovery presents it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PortDescription {
+    /// The port's identity on its node.
+    pub id: crate::ir::PortId,
+    /// Input or output.
+    pub direction: PortDirection,
+    /// The signal domain it carries.
+    pub domain: SignalDomain,
+    /// The channel layout it carries.
+    pub layout: ChannelLayout,
+}
+
+/// One addressable parameter, as discovery presents it.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ParameterDescription {
+    /// The identity a caller addresses it by, scoped to its node.
+    pub id: ParameterId,
+    /// Its name, unique within the kind.
+    pub name: &'static str,
+    /// Its unit, and so its domain — derived from the default's own type.
+    pub unit: ParameterUnit,
+    /// The value presented when nothing has been authored, in its own quantity type.
+    pub default: ParameterDefault,
+    /// When a change to it takes effect.
+    pub rate: ControlRate,
+    /// Which note magnitude lands on it, where one does.
+    pub magnitude: Option<NoteMagnitude>,
+}
+
+/// One node kind, as discovery presents it.
+///
+/// `P05-S006`, and the Phase 5 exit gate's second bullet in its V2 form: this and the
+/// compiler's crate-private `descriptor` are both derived from the same crate-private
+/// `NodeDeclaration`, so what discovery says a kind has is what admission validates
+/// against. The output node is not
+/// here, because it has no declaration: it is the renderer's boundary, not a kind a graph
+/// author picks.
+#[derive(Debug, Clone, PartialEq)]
+pub struct KindDescription {
+    /// The kind's stable identity.
+    pub id: NodeKindId,
+    /// The kind's display name, unique across kinds and renamable.
+    pub name: &'static str,
+    /// Its ports.
+    pub ports: Vec<PortDescription>,
+    /// Its addressable parameters.
+    pub parameters: Vec<ParameterDescription>,
+    /// Whether a note can play it.
+    pub playable: bool,
+    /// Whether it may write its output over its first input.
+    pub in_place_safe: bool,
+}
+
+/// Every declared kind, as discovery presents it — derived from the declarations and
+/// stating nothing of its own.
+#[must_use]
+pub fn catalog() -> Vec<KindDescription> {
+    DECLARED
+        .iter()
+        .map(|declared| KindDescription {
+            id: declared.id,
+            name: declared.name,
+            ports: declared
+                .ports
+                .iter()
+                .map(|port| PortDescription {
+                    id: port.id(),
+                    direction: port.direction(),
+                    domain: port.domain(),
+                    layout: port.layout(),
+                })
+                .collect(),
+            parameters: declared
+                .controls
+                .iter()
+                .map(|control| ParameterDescription {
+                    id: control.parameter,
+                    name: control.name,
+                    unit: control.default.unit(),
+                    default: control.default,
+                    rate: control.rate,
+                    magnitude: control.magnitude,
+                })
+                .collect(),
+            playable: declared.note_control.is_some(),
+            in_place_safe: declared.in_place_safe,
+        })
+        .collect()
+}
 
 /// The declaration a kind has, where it has moved to one.
 ///
@@ -957,6 +1199,70 @@ mod tests {
         );
     }
 
+    /// `P05-S006`: what discovery presents is derived from the declarations and states
+    /// nothing of its own, and the names it presents can be looked up.
+    ///
+    /// Each catalog entry is compared field by field against the declaration it came from
+    /// and against the descriptor admission reads, so a catalog that restated a port or a
+    /// parameter — the only way discovery and validation could disagree — fails here. Names
+    /// are unique across kinds and within a kind, because a discovery surface whose names
+    /// collide cannot be addressed by name.
+    #[test]
+    fn discovery_is_derived_from_the_declarations_admission_reads() {
+        let catalog = catalog();
+        assert_eq!(catalog.len(), DECLARED.len());
+        let mut kind_names = std::collections::BTreeSet::new();
+        let mut kind_ids = std::collections::BTreeSet::new();
+        for (entry, declared) in catalog.iter().zip(DECLARED) {
+            assert_eq!(entry.id, declared.id);
+            assert!(
+                kind_ids.insert(entry.id),
+                "{:?} is declared twice",
+                entry.id
+            );
+            assert_eq!(entry.name, declared.name);
+            assert!(
+                kind_names.insert(entry.name),
+                "{} is declared twice",
+                entry.name
+            );
+            let ports: Vec<PortDescription> = entry.ports.clone();
+            assert_eq!(ports.len(), declared.ports.len(), "{}", entry.name);
+            for (port, spec) in ports.iter().zip(declared.ports) {
+                assert_eq!(
+                    (port.id, port.direction, port.domain, port.layout),
+                    (spec.id(), spec.direction(), spec.domain(), spec.layout()),
+                    "{}",
+                    entry.name
+                );
+            }
+            assert_eq!(
+                entry.parameters.len(),
+                declared.controls.len(),
+                "{}",
+                entry.name
+            );
+            let mut parameter_names = std::collections::BTreeSet::new();
+            for (parameter, spec) in entry.parameters.iter().zip(declared.controls) {
+                assert_eq!(parameter.id, spec.parameter, "{}", entry.name);
+                assert_eq!(parameter.name, spec.name, "{}", entry.name);
+                assert_eq!(parameter.unit, spec.default.unit(), "{}", entry.name);
+                assert_eq!(parameter.default, spec.default, "{}", entry.name);
+                assert_eq!(parameter.rate, spec.rate, "{}", entry.name);
+                assert_eq!(parameter.magnitude, spec.magnitude, "{}", entry.name);
+                assert!(
+                    parameter_names.insert(parameter.name),
+                    "{}: {} twice",
+                    entry.name,
+                    parameter.name
+                );
+                assert!(parameter.default.as_f32().is_finite());
+            }
+            assert_eq!(entry.playable, declared.note_control.is_some());
+            assert_eq!(entry.in_place_safe, declared.in_place_safe);
+        }
+    }
+
     /// `P05-S001`, extended by `P05-S002`: every registry fact about a declared kind is the
     /// declaration's.
     ///
@@ -1015,6 +1321,16 @@ mod tests {
                     | (IrNodeKind::Envelope { .. }, PreparedNode::Envelope { .. })
             );
             assert!(matches_kind, "{kind:?} prepared as {prepared:?}");
+            // The kind resolves to the identity its declaration states.
+            assert_eq!(kind_id(kind), Some(declared.id), "{kind:?}");
+            // And the kind's declaration is one discovery walks — by address, so a second
+            // declaration with equal contents would not satisfy it.
+            assert!(
+                DECLARED
+                    .iter()
+                    .any(|listed| std::ptr::eq(*listed, declared)),
+                "{kind:?}'s declaration is not in `DECLARED`, so it cannot be discovered"
+            );
             // What each kind prepares and keeps, so a zero written where a layout belongs
             // — or a layout where nothing is kept — is caught by kind.
             let (prepares, keeps) = match kind {

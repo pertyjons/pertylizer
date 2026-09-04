@@ -416,3 +416,79 @@ fn a_declared_kind_appears_in_the_registry_only_by_deferring_to_its_declaration(
         offending.join("\n  ")
     );
 }
+
+/// `P05-S006`: what discovery says a kind's ports are is what the compiler validates against.
+///
+/// Both surfaces derive from one declaration, and this is the check across the crate's
+/// public boundary that they still agree: for every catalog entry, the port set the
+/// compiler's own `ports` reports for that kind — looked up by the catalog's stable
+/// identity, never its label — equals the catalog's, field by field. The output node has
+/// no catalog entry, because it has no declaration.
+#[test]
+fn discovery_and_validation_describe_the_same_ports() {
+    use synth_engine_v2::node::{NodeKindId, PortDescription, catalog, kind_id, ports};
+    use synth_engine_v2::quantities::{CutoffFrequency, Resonance, Seconds};
+
+    let sample = |id: NodeKindId| -> IrNodeKind {
+        match id {
+            NodeKindId::Silence => IrNodeKind::Silence,
+            NodeKindId::Constant => IrNodeKind::Constant {
+                level: Amplitude::new(0.5).expect("finite"),
+            },
+            NodeKindId::Impulse => IrNodeKind::Impulse {
+                position: PlanPosition::ZERO,
+            },
+            NodeKindId::Sine => sine(440.0),
+            NodeKindId::Saw => IrNodeKind::Saw {
+                frequency: Frequency::new(440.0).expect("finite"),
+                amplitude: Amplitude::new(0.5).expect("finite"),
+            },
+            NodeKindId::Gain => IrNodeKind::Gain {
+                factor: GainFactor::new(0.5).expect("finite"),
+            },
+            NodeKindId::Amplifier => IrNodeKind::Amplifier,
+            NodeKindId::Filter => IrNodeKind::Filter {
+                cutoff: CutoffFrequency::new(1_000.0).expect("positive"),
+                resonance: Resonance::BUTTERWORTH,
+            },
+            NodeKindId::Envelope => IrNodeKind::Envelope {
+                attack: Seconds::ZERO,
+                decay: Seconds::ZERO,
+                sustain: synth_engine_v2::quantities::NormalizedLevel::FULL,
+                release: Seconds::ZERO,
+            },
+        }
+    };
+
+    let entries = catalog();
+    assert_eq!(
+        entries.len(),
+        9,
+        "every kind but the output node is discoverable"
+    );
+    for entry in entries {
+        // Looked up by the stable identity, never by the display label: a renamed kind is
+        // still the same kind, and this is what holds the label apart from the identity.
+        let kind = sample(entry.id);
+        assert_eq!(kind_id(kind), Some(entry.id), "{}", entry.name);
+        let validated: Vec<PortDescription> = ports(kind, ChannelLayout::Mono)
+            .iter()
+            .map(|port| PortDescription {
+                id: port.id(),
+                direction: port.direction(),
+                domain: port.domain(),
+                layout: port.layout(),
+            })
+            .collect();
+        assert_eq!(
+            entry.ports, validated,
+            "{}: discovery and validation disagree",
+            entry.name
+        );
+        assert!(
+            !entry.parameters.is_empty() || !entry.playable,
+            "{}",
+            entry.name
+        );
+    }
+}
