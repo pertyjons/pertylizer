@@ -44,9 +44,9 @@ make a declaration the single source for tap capability without deciding ownersh
 
 | Task | State | Current boundary |
 |---|---|---|
-| Phase 5 slice 1 | Not selected | The first bounded vertical slice of the [Phase 5 work list](master-plan.md#phase-5-declarative-node-and-parameter-api); the natural candidate is the module declaration as single source for one native kind, since every later bullet reads it |
-| `LegacyPolyModuleAdapter` conversion-cost measurement | Not started | Owed by the Phase 5 work list's adapter bullet: the adapter is transitional and measured separately, before the exit gate's "not required by the renderer itself" can be judged |
-| Executable guard for `SOUND-INV-012` | Not started | The Sound Core contract's closed renderer-control-flow claim has no executable guard; Phase 5's native node API is the first change that could reopen it, so the guard precedes that change |
+| P05-S001 — one declaration for one kind | **Selected** 2026-09-04 | Collapse what `synth_engine_v2` says about the `Saw` kind — today four `match kind` arm sets in `node.rs` (`descriptor`, `ports`, `prepared_payload_bytes`, `state_payload_bytes`), the `parameters::SAW_*` ids in `ir.rs`, and the kernel binding — into **one declaration** that those functions derive from. `Saw` because it is Phase 4's own kind and its frequency is a pitch destination, so `SOUND-INV-021`'s magnitudes are exercised. **Completion check:** (1) the `SOUND-INV-012` guard below lands first and gets the invariant its missing conformance row; (2) a test asserts the derivation for `Saw` — changing one field of the declaration changes the descriptor, the port set and both byte counts together, and no `Saw` arm remains in those four functions — mutation-verified in both directions; (3) the sawtooth renders bit-identically: EVD-0012's and EVD-0013's digests reproduce and the workspace tests pass. **Out of scope, by decision:** `ParamSpec` modulation laws, central parameter slots, the legacy adapter, discovery surfaces and a second kind — each is a later slice, and a field no consumer reads is not built here. Real-time boundary: the kernel binding sits in the purity-scanned region, so the core Rust gate and one independent review apply |
+| Executable guard for `SOUND-INV-012` | In P05-S001, first | The Sound Core contract's closed renderer-control-flow claim has no conformance row. The loop is already kind-blind — nothing under `render/` or in `node/kernels.rs` names an `IrNodeKind` — so the guard is a source scan beside `render_loop_purity`'s existing ones asserting exactly that, mutation-verified by naming a kind in the hot path. It precedes the declaration change because that change is the first that could reopen the claim |
+| `LegacyPolyModuleAdapter` conversion-cost measurement | Not started | Owed by the Phase 5 work list's adapter bullet: the adapter is transitional and measured separately, before the exit gate's "not required by the renderer itself" can be judged. Not before a second native kind exists to adapt against |
 
 Inherited before it builds: nothing from Phase 4's residuals binds Phase 5 — `P04-R001` is
 Phase 6's and `P04-R004` is Phase 10A/10B's.
@@ -98,8 +98,8 @@ residuals block their own first consumers — a parity verdict over a placed not
 shared render surface — and neither is Phase 5 work. The Phase 3 residuals block only their
 named consumers.
 
-Two streams are active: Phase 5, with no slice selected yet, and Phase 0B, with `P00B-T003`
+Two streams are active: Phase 5, with `P05-S001` selected, and Phase 0B, with `P00B-T003`
 as its selected slice.
 
-Next action: **select Phase 5's first slice** under `PROCESS.md`'s slice rule — one bounded
-vertical slice with an observable completion check, put here only when it is the selected one.
+Next action: **build `P05-S001`**, guard first, on a branch off `main`; its completion check is
+in the table above and is what its commit and review are judged against.
