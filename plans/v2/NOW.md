@@ -1,6 +1,6 @@
 # Core V2: Current Work
 
-Last updated: 2026-09-02
+Last updated: 2026-09-04
 
 This file contains only active Core V2 state, blockers and next actions. Durable
 contracts live in ADRs and specifications; completed Phase 3 coordination
@@ -9,7 +9,7 @@ history is indexed in
 and Phase 4's durable record is [REV-P04](reviews/phase-04-exit-review.md)
 together with its section in the [master plan](master-plan.md#phase-4-current-project-lowering-and-offline-ab-path).
 
-## Phase 4 — closed
+## Phase 4 — closed and merged
 
 [REV-P04](reviews/phase-04-exit-review.md) is **Accepted**: saved projects lower and render
 through V2 from their own pinned bytes, at their own pitches and velocities. Its gate and the
@@ -17,7 +17,8 @@ roadmap outcome were amended on 2026-09-02 under `PROCESS.md`'s phase-exit rule,
 delivers the V2 side of the headless comparison path rather than the join between the two
 paths.
 [ADR-0057](decisions/ADR-0057-refuse-parity-verdict-over-a-placed-note.md) owns that decision;
-the two obligations it carries are active state and stay below.
+the two obligations it carries are active state and stay below. The branch was squash-merged
+to `main` on 2026-09-04 after thirteen independent reads, the last two over the whole squash.
 
 ## Phase 4 residual obligations
 
@@ -30,6 +31,25 @@ discharged rather than carried.
 | P04-R004 | [ADR-0028](decisions/ADR-0028-long-running-job-contract.md) is `Deferred`: a *revisioned* job contract needs Phase 10A's canonical revision and Phase 10B's job capture | All three standing constraints hold until acceptance in Phase 10B. Constraint 3 refuses streaming, progress, cancellation, multi-project A/B and a shared render request/result as **task selections**, so that work does not proceed under another name |
 
 ## Active streams
+
+### Phase 5 — active since 2026-09-04
+
+Activated by selection, as the Phase 4 exit said it would be. Its entry prerequisite is met:
+[ADR-0027](decisions/ADR-0027-observation-and-analyzer-ownership.md), observation and analyzer
+ownership, is **Accepted** with the master plan's split ownership — a persisted analyzer node
+owns authored intent only, a compiler-declared tap is the only subscribable point, the host owns
+bounded lossy subscriptions admitted by the profile, analysis runs on workers, and one versioned
+telemetry facade serves GUI, OSC and the visualizer. The declarative node API can therefore
+make a declaration the single source for tap capability without deciding ownership by accident.
+
+| Task | State | Current boundary |
+|---|---|---|
+| Phase 5 slice 1 | Not selected | The first bounded vertical slice of the [Phase 5 work list](master-plan.md#phase-5-declarative-node-and-parameter-api); the natural candidate is the module declaration as single source for one native kind, since every later bullet reads it |
+| `LegacyPolyModuleAdapter` conversion-cost measurement | Not started | Owed by the Phase 5 work list's adapter bullet: the adapter is transitional and measured separately, before the exit gate's "not required by the renderer itself" can be judged |
+| Executable guard for `SOUND-INV-012` | Not started | The Sound Core contract's closed renderer-control-flow claim has no executable guard; Phase 5's native node API is the first change that could reopen it, so the guard precedes that change |
+
+Inherited before it builds: nothing from Phase 4's residuals binds Phase 5 — `P04-R001` is
+Phase 6's and `P04-R004` is Phase 10A/10B's.
 
 ### Phase 0B — active in parallel
 
@@ -56,8 +76,6 @@ Phase 3 is complete. Its exit review accepted these bounded residuals:
 
 ## Later-owned work
 
-- Phase 5 owns the `LegacyPolyModuleAdapter` conversion-cost measurement and an
-  executable guard for `SOUND-INV-012`'s closed renderer-control-flow claim.
 - Phase 6 owns `P04-R001`'s composition law, and `SOUND-INV-021`'s **bend** clause, which is
   not built: a per-note bend is a continuous offset in cents applied after resolution, carried
   by the event ADR-0047 clause 9 reserves, and neither the event nor the offset exists. Nothing
@@ -75,16 +93,13 @@ Phase 3 is complete. Its exit review accepted these bounded residuals:
 
 ## Current blockers
 
-**None for Phase 4, which is closed.** Its two residuals block their own first consumers — a
-parity verdict over a placed note, and the first shared render surface — and neither is work in
-progress. The Phase 3 residuals block only their named consumers.
+**None for Phase 5's entry.** ADR-0027 is accepted and Phase 4 is merged. Phase 4's two
+residuals block their own first consumers — a parity verdict over a placed note, and the first
+shared render surface — and neither is Phase 5 work. The Phase 3 residuals block only their
+named consumers.
 
-Phase 0B remains the one active stream, with `P00B-T003` as its selected slice.
+Two streams are active: Phase 5, with no slice selected yet, and Phase 0B, with `P00B-T003`
+as its selected slice.
 
-Next action: **select the next stream.** This exit removes Phase 4 as Phase 5's dependency; it
-does not make Phase 5 ready. Phase 5 has its own entry prerequisite — ADR-0027, observation and
-analyzer ownership, is `Proposed` and the [master plan](master-plan.md#phase-5-declarative-node-and-parameter-api)
-requires it `Accepted` before Phase 5 implementation begins, so the declarative node API does
-not make GUI buffers or protocol subscriptions part of authored DSP state. Activating Phase 5
-therefore starts with that decision. Activation is a selection rather than a consequence of
-this exit, so it is recorded here when it is made.
+Next action: **select Phase 5's first slice** under `PROCESS.md`'s slice rule — one bounded
+vertical slice with an observable completion check, put here only when it is the selected one.

@@ -5,8 +5,8 @@
 | Status           | Current                                |
 | Phase            | 00A                                    |
 | Created          | 2026-08-13                             |
-| Last reviewed    | 2026-09-01 |
-| Based on         | ADR-0021, ADR-0001, ADR-0032, ADR-0037, ADR-0038, ADR-0043, ADR-0046, ADR-0050, ADR-0053, ADR-0054 |
+| Last reviewed    | 2026-09-04 |
+| Based on         | ADR-0021, ADR-0001, ADR-0032, ADR-0037, ADR-0038, ADR-0043, ADR-0046, ADR-0050, ADR-0053, ADR-0054, ADR-0027 |
 | Invariant prefix | HOST                                   |
 | Supersedes       | —                                      |
 | Superseded by    | —                                      |
@@ -31,7 +31,7 @@ The field set below is complete against the master plan's initial Phase 1 list. 
 [Corrections](#corrections); the full review result is [REV-P00A](../reviews/phase-00a-exit-review.md), not duplicated
 here.
 
-Fields owned by decisions that are still `Proposed` — ADR-0009, ADR-0024, ADR-0027, and ADR-0034 — are marked
+Fields owned by decisions that are still `Proposed` — ADR-0009, ADR-0024, and ADR-0034 — are marked
 in the field tables and listed under [*Unresolved questions*](#unresolved-questions). None of them blocks Phase 1.
 
 ## Scope
@@ -111,6 +111,7 @@ A limit that is reported and never enforced. Exceeding it produces a `CompileWar
 | ADR | Decision it fixes here |
 |-----|------------------------|
 | [ADR-0021](../decisions/ADR-0021-host-profile-and-admission-policy.md) | That `HostProfile` is an immutable preparation input holding render-preparation capacity; that its capability fields come from queried capability; that only profile-owned entries participate in admission; that a node declares its intrinsic capacity into admission without becoming a profile field; that exceeding a limit never rewrites authored data; that runtime *dropping* is reserved for live bounded queues while limits under other boundaries are enforced at their own admission, retention, or presentation point — the sentence HOST-INV-019 and HOST-INV-020 rest on; that the `Lossy retention/presentation budget` class exists and what it may never bound; that compilation returns a `ResourceReport` with requested, available, and dominant contributors; that P00A-T005 owns the numbers |
+| [ADR-0027](../decisions/ADR-0027-observation-and-analyzer-ownership.md) | That an observation subscription is host-owned, bounded and lossy, admitted against the taps a compiled plan already holds, and can neither fail nor change a compilation |
 | [ADR-0001](../decisions/ADR-0001-internal-render-quantum.md) | That the quantum is a compile-time constant and **not** a profile field (clause 1); that both carries are sized `maximum_block_size + Q` and preallocated at preparation (clause 5); that the output carry is primed with `Q` frames of silence so that any `N` can be served, including `N < Q` (clause 6) — which is why HOST-INV-012 has no lower bound on `maximum_block_size`; that added latency is a constant `Q` frames and a named contributor in the latency accounting (clause 7); that a late event is clamped forward and counted (clause 16, as ADR-0043 superseded it) |
 | [ADR-0032](../decisions/ADR-0032-sample-time-and-event-timestamps.md) | The time types the profile's frame-denominated fields are expressed in — `FrameCount` for a horizon, a latency contribution, and a quantum (clause 2); that the forward event horizon is a single profile field binding ingress provenance only (clause 21); that the backward direction has no budget; that a profile's sample rate, layout, and capacity are fixed for the life of a stream epoch (clause 12) |
 | [ADR-0053](../decisions/ADR-0053-simulated-ingress-provenance.md) | A deterministic simulated ingress producer stamps its own provenance, which the forward horizon binds like any other ingress |
@@ -589,6 +590,23 @@ open owner is a starting point recorded honestly, not a rule invented here.
     stream's anchor, so nothing in the new stream carries the automation value that was in force when the transport
     passed it. That is a correctness rule and not an optimisation.
 
+23. **HOST-INV-023 — a subscription is the host's, bounded, lossy, and invisible to the plan.**
+    [ADR-0027](../decisions/ADR-0027-observation-and-analyzer-ownership.md) decides ownership; this states what
+    the host must do. A runtime subscription names a tap the compiled plan already holds (`SOUND-INV-022`) and
+    owns everything the tap does not: the bounded rings or atomics, the generation and revision tags, the
+    decimation, and the consumer's lifetime. It is admitted by the host against the plan's admitted taps and
+    the profile's session budgets, and that admission can refuse a subscription; it can neither fail nor change
+    a compilation, a plan, a semantic project digest, or an audio sample. A slow consumer loses observations and
+    receives drop and staleness metadata; it never blocks rendering — this is the *lossy* class `HOST-INV-019`
+    bounds, and a subscription's storage is such a field. A persisted analyzer or monitor node carries only
+    authored intent and parameters; no buffer, frame cache, subscriber list, freeze snapshot, meter peak or
+    connection state is ever a persisted field of one, and a schema that carries one is a defect rather than a
+    format version.
+
+    **Not built.** No subscription surface exists in V2. Phase 5's first observation slice builds the
+    subscription over the tap it declares, and Phase 9 verifies the live contract — saturation, staleness
+    metadata, consumer lifetime under a real host — which this invariant states and cannot yet evidence.
+
 
 ## Staged producer calibration
 
@@ -1035,7 +1053,7 @@ allocate to absorb an over-full quantum.
 
 | Field | Type | Default | Basis | Replaces | Revisit |
 |-------|------|---------|-------|----------|---------|
-| `max_observation_taps` | `TapCount` | 128 | V1 carry-over; the silent drop becomes a compile error. **ADR-0027 owns what a tap is** | `LIMIT-0020`, `LIMIT-0062` | Phase 5 |
+| `max_observation_taps` | `TapCount` | 128 | V1 carry-over; the silent drop becomes a compile error. **ADR-0027, accepted, says what a tap is**: a compiler-declared signal point with a declared type, rate and cost, the only thing a subscription may name | `LIMIT-0020`, `LIMIT-0062` | Phase 5 |
 | `telemetry_ring_frames` | `FrameCount` | 4 096 | V1 carry-over. **Lossy** (HOST-INV-019) — but a **behaviour change**, not a carry-over of behaviour: V1 drops the *newest* samples, as recorded by `LIMIT-0021`. **Since `bac88c0c` the loss is no longer silent**: `read_samples_into` returns the omitted count under `#[must_use]`, which satisfies ADR-0038 part 1 condition 3 in its data-paired form. What is still missing is presentation — no GUI surface draws the gap — so HOST-INV-019's *expose the loss* condition is met at the API and not yet at the surface | `LIMIT-0021` | Phase 5 |
 | `analyzer_fft_size` | `FrameCount` | 2 048 | V1 carry-over. A resolution budget; the size travels with the payload | `LIMIT-0022` | Phase 5 |
 
@@ -1371,6 +1389,7 @@ obligations owned by the phase in the rightmost column.
 | HOST-INV-019 | The telemetry ring is overrun and the reader can distinguish a complete window from an overwritten one | 5 |
 | HOST-INV-020 | A take reaching each recording capacity stops, is counted, and keeps every event recorded before the stop; no note is dropped and no earlier note is overwritten | 9 |
 | HOST-INV-021 | Profile construction rejects zero for each share and `release_hold_capacity`, a release share one event below hold capacity, an identity index space one below `max_held_notes`, a share sum above the total and each other plan-independent relation separately; release-share equality and larger values are accepted when the total sum fits, and any remaining total slack is asserted unusable, including a disabled producer's positive share. Plan admission rejects each internal, session, destination, retained-future and hold declaration without changing the fixed shares; two sources that fit individually but overflow a plan-wide authored aggregate are rejected unless the compiler proves them mutually exclusive. Compiled admission rejects the exact first over-full half-open `Q`-frame window under every anchor phase; loop activation rejects a tail/head collision and a loop shorter than `Q` whose repeated copies overfill one quantum, leaving prior transport state unchanged. Replacing the tempo map re-admits both compiled and runtime envelopes and leaves the old pair active on failure. Authored runtime expansion covers destination convergence, future retention and simultaneous holds, then materializes once; a mutation above any share or declaration takes the terminal fault rather than consuming slack or dropping a suffix. A full late live snapshot fits and clamps every event, while the next external event beyond source capacity drops and counts. A complete session snapshot and the largest legal locate catch-up publish without delay; the command beyond reserved source storage is refused before timestamped acceptance. Live and authored hold entitlements are isolated; a note-on plus hold publishes atomically and its later release survives a saturated ordinary live queue, while the refused-note-on mirror produces a counted **never-minted** release, not an orphan — the producer minted no identity for a note-on it never sent, whereas an orphan carries an identity that names no live note, through a freed index, a superseded generation or a retired one. Converging live, session and authored mass-release causes remain in their own admitted shares and redeem affected holds without a second release event. An indivisible multi-event batch publishes all or none. An admitted internal producer reaches its separate arena maximum without mutating sealed external input; the first event above it takes the fault. A forged over-full external batch and an internal over-emit both silence the complete current and every later callback, invalidate both carries, publish `needs_reprepare`, render no later quantum, and attribute the fault. Per-share and total high-water marks are asserted below and at the limit | 3 |
+| HOST-INV-023 | **Not built.** Owed by Phase 5's first observation slice: a subscription refused for capacity leaves the plan and its digest unchanged; a saturated subscriber receives drop and staleness metadata while the render's samples equal an unobserved render's. Phase 9 verifies the live contract | 5, 9 |
 | `max_scheduled_events_in_flight` (HOST-INV-021's sizing relation, no invariant of its own) | The derived default equals `compiled_event_share * max_quanta_per_callback + 4 096` events, checked with compiled products below, equal to and above 4,096 events; overflow fails construction. Plan admission charges the plan-wide aggregate of retained authored future events above the compiled floor. At the exact admitted bound every event publishes on time; a mutation one event above its declaration takes the producer fault rather than delaying an event | 3 |
 | HOST-INV-020, and the retirement budget | A plan swap with `max_active_voices` sounding retires every voice with a crossfade and refuses none, so `max_concurrent_retiring_voices` cannot bind at its derived default | 9 |
 
@@ -1379,7 +1398,7 @@ obligations owned by the phase in the rightmost column.
 | Question | Blocking? | ADR or task |
 |----------|-----------|-------------|
 | Whether a live host supports layouts beyond the Sound Core specification's currently admitted counts, and whether the profile carries a layout set or one layout. The pass-5 audit found that a multichannel device constructs `Multi(n)`, while V1's internal buffers remain mono/stereo and its output adapter now explicitly silences surplus channels | **Yes for Phase 9**, which queries a real device; no for the current offline renderer. Carrying `Multi(n)` does not itself claim support | Sound Core render contract, Phase 9 |
-| What an observation tap is and who owns the analyzer surface; the three capacities here may become one registration budget | No — the capacities stand whatever the taps mean | ADR-0027, Phase 5 |
+| Whether the three observation capacities here become one registration budget, now that ADR-0027 says what a tap is and who owns the analyzer surface | No — the three capacities stand until it is decided; nothing here closes it | Phase 5, with the first tap declaration |
 | The retirement crossfade's value, and whether ADR-0009 wants a concurrent-retirement budget below `max_active_voices` — which it may only take together with a defined behaviour for reaching it | No — V1's 128 frames compiles today, and the derived budget cannot bind | ADR-0009, Phase 9 |
 | Recording take and commit semantics, which may change what a "recorded event" is | No | ADR-0024, Phase 9 |
 | What a send is, which may change whether `max_sends_per_channel` is per channel or per bus | No | ADR-0034, Phase 8 |
@@ -1390,7 +1409,7 @@ obligations owned by the phase in the rightmost column.
 | ~~**What V2's live renderer-ingress streams are, and what bounds them.**~~ **Resolved in Phase 3.** V1 has no timestamped ingress queue to carry over — `LIMIT-0013` is engine egress and `LIMIT-0012` carries commands. Phase 3 named every live source store and capacity exactly once as *Live bounded queue* in the [closed renderer-ingress source-store registry](#renderer-ingress-source-store-registry) and includes the complete eligible snapshot in HOST-INV-021's live-share lower bound; session/transport storage is separately covered by that invariant's session relation | Resolved by the Phase 3 ingress and publication boundary | Phase 3 |
 | Where `LIMIT-0004`'s **job-admission error** is delivered. The ledger requires an out-of-range job to be refused with an error naming the requested rate and this field's range. Profile construction refuses an out-of-range *stream*, which is a floor rather than that error: a job asks for a rate before a profile exists | No for Phase 1, which has no job layer, and no for Phase 4, which builds none: `P04-R004` moved ADR-0028's acceptance to Phase 10B, so the job admission this error belongs to does not exist until then. **Yes for Phase 10B**, which cannot close with the disposition undelivered | ADR-0028, Phase 10B |
 | Whether `max_nodes` should be anchored independently rather than computed from `max_active_voices`, which is itself only measurement-anchored | No | Phase 2 exit |
-| Whether `max_mix_channels` and `max_observation_taps` should be coupled so that every mix channel is guaranteed a tap | No — the report names which budget bound the plan | ADR-0027, Phase 8 |
+| Whether `max_mix_channels` and `max_observation_taps` should be coupled so that every mix channel is guaranteed a tap | No — the report names which budget bound the plan | Phase 8 |
 | Where a profile is stored and who may edit it — application settings, host configuration, or neither | No — Phase 1 constructs it in code | ADR-0013, ADR-0029, Phase 10A |
 | Whether the forward horizon survives calibration evidence, and whether a mis-calibrated anchor should widen it or fail preparation | No — the current value rejects and counts, which is the diagnostic | ADR-0022, Phase 9 exit |
 | Whether `max_fan_out_per_port` should exist at all, or whether the edge budget alone suffices | No | Phase 2 exit |
