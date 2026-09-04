@@ -249,6 +249,74 @@ pub(crate) const ENVELOPE: NodeDeclaration = NodeDeclaration {
     )>() as u64,
 };
 
+/// The sine, declared once — `P05-S003`. The sawtooth's shape with the sine's kernel.
+pub(crate) const SINE: NodeDeclaration = NodeDeclaration {
+    kernel: kernels::SINE,
+    ports: &[AUDIO_OUT],
+    controls: &[
+        // `SOUND-INV-021`'s pitch destination. Sample-positioned because it is one: a
+        // note's key describes the note its gate starts, so a frequency that waited for
+        // the next boundary would sound the previous note's pitch for up to a quantum.
+        ControlSpec {
+            parameter: parameters::SINE_FREQUENCY,
+            control: kernels::SINE_FREQUENCY,
+            rate: ControlRate::Sample,
+            magnitude: Some(NoteMagnitude::Pitch),
+        },
+        ControlSpec {
+            parameter: parameters::SINE_AMPLITUDE,
+            control: kernels::SINE_AMPLITUDE,
+            rate: ControlRate::Quantum,
+            magnitude: None,
+        },
+    ],
+    in_place_safe: false,
+    note_control: None,
+    prepared_bytes: size_of::<(
+        f64,
+        crate::quantities::Frequency,
+        crate::quantities::Amplitude,
+    )>() as u64,
+    state_bytes: size_of::<(
+        f64,
+        crate::quantities::Frequency,
+        crate::quantities::Amplitude,
+    )>() as u64,
+};
+
+/// Zeros, declared once — `P05-S003`. No control, nothing prepared, nothing kept.
+pub(crate) const SILENCE: NodeDeclaration = NodeDeclaration {
+    kernel: kernels::SILENCE,
+    ports: &[AUDIO_OUT],
+    controls: &[],
+    in_place_safe: false,
+    note_control: None,
+    prepared_bytes: 0,
+    state_bytes: 0,
+};
+
+/// A constant level, declared once — `P05-S003`. The level is prepared; nothing is kept.
+pub(crate) const CONSTANT: NodeDeclaration = NodeDeclaration {
+    kernel: kernels::CONSTANT,
+    ports: &[AUDIO_OUT],
+    controls: &[],
+    in_place_safe: false,
+    note_control: None,
+    prepared_bytes: size_of::<crate::quantities::Amplitude>() as u64,
+    state_bytes: 0,
+};
+
+/// One click at a plan position, declared once — `P05-S003`. The position is prepared.
+pub(crate) const IMPULSE: NodeDeclaration = NodeDeclaration {
+    kernel: kernels::IMPULSE,
+    ports: &[AUDIO_OUT],
+    controls: &[],
+    in_place_safe: false,
+    note_control: None,
+    prepared_bytes: size_of::<crate::time::PlanPosition>() as u64,
+    state_bytes: 0,
+};
+
 /// The declaration a kind has, where it has moved to one.
 ///
 /// The **only** per-kind `match` a declared kind appears in, besides [`prepare`]'s. Every
@@ -260,6 +328,10 @@ pub(crate) fn declaration(kind: IrNodeKind) -> Option<&'static NodeDeclaration> 
     match kind {
         IrNodeKind::Saw { .. } => Some(&SAW),
         IrNodeKind::Envelope { .. } => Some(&ENVELOPE),
+        IrNodeKind::Sine { .. } => Some(&SINE),
+        IrNodeKind::Silence => Some(&SILENCE),
+        IrNodeKind::Constant { .. } => Some(&CONSTANT),
+        IrNodeKind::Impulse { .. } => Some(&IMPULSE),
         _ => None,
     }
 }
@@ -284,51 +356,11 @@ pub(crate) fn descriptor(kind: IrNodeKind) -> Option<NodeDescriptor> {
     let declared = declaration(kind);
     let descriptor = match kind {
         IrNodeKind::Output => return None,
-        IrNodeKind::Silence => NodeDescriptor {
-            kernel: kernels::SILENCE,
-            ports: vec![audio_out()],
-            controls: Vec::new(),
-            in_place_safe: false,
-            note_control: None,
-        },
-        IrNodeKind::Constant { .. } => NodeDescriptor {
-            kernel: kernels::CONSTANT,
-            ports: vec![audio_out()],
-            controls: Vec::new(),
-            in_place_safe: false,
-            note_control: None,
-        },
-        IrNodeKind::Impulse { .. } => NodeDescriptor {
-            kernel: kernels::IMPULSE,
-            ports: vec![audio_out()],
-            controls: Vec::new(),
-            in_place_safe: false,
-            note_control: None,
-        },
-        IrNodeKind::Sine { .. } => NodeDescriptor {
-            kernel: kernels::SINE,
-            ports: vec![audio_out()],
-            controls: vec![
-                // `SOUND-INV-021`'s pitch destination. Sample-positioned because it is
-                // one: a note's key describes the note its gate starts, so a frequency
-                // that waited for the next boundary would sound the previous note's pitch
-                // for up to a quantum of every note not landing on one.
-                ControlSpec {
-                    parameter: parameters::SINE_FREQUENCY,
-                    control: kernels::SINE_FREQUENCY,
-                    rate: ControlRate::Sample,
-                    magnitude: Some(NoteMagnitude::Pitch),
-                },
-                ControlSpec {
-                    parameter: parameters::SINE_AMPLITUDE,
-                    control: kernels::SINE_AMPLITUDE,
-                    rate: ControlRate::Quantum,
-                    magnitude: None,
-                },
-            ],
-            in_place_safe: false,
-            note_control: None,
-        },
+        // Declared: each arm defers and states nothing.
+        IrNodeKind::Silence => return declared.map(NodeDeclaration::descriptor),
+        IrNodeKind::Constant { .. } => return declared.map(NodeDeclaration::descriptor),
+        IrNodeKind::Impulse { .. } => return declared.map(NodeDeclaration::descriptor),
+        IrNodeKind::Sine { .. } => return declared.map(NodeDeclaration::descriptor),
         // Declared: the arm defers and states nothing. `tests/node_representation.rs` holds
         // every arm of a declared kind to that form.
         IrNodeKind::Saw { .. } => return declared.map(NodeDeclaration::descriptor),
@@ -612,15 +644,12 @@ pub fn prepared_payload_bytes(kind: IrNodeKind) -> u64 {
     (match kind {
         // Declared: the arm defers and states nothing.
         IrNodeKind::Saw { .. } => return declared.map_or(0, |d| d.prepared_bytes),
+        IrNodeKind::Silence => return declared.map_or(0, |d| d.prepared_bytes),
+        IrNodeKind::Constant { .. } => return declared.map_or(0, |d| d.prepared_bytes),
+        IrNodeKind::Impulse { .. } => return declared.map_or(0, |d| d.prepared_bytes),
+        IrNodeKind::Sine { .. } => return declared.map_or(0, |d| d.prepared_bytes),
         // The output node has no kernel, so it carries no prepared data of its own.
-        IrNodeKind::Output | IrNodeKind::Silence | IrNodeKind::Amplifier => 0,
-        IrNodeKind::Constant { .. } => size_of::<crate::quantities::Amplitude>(),
-        IrNodeKind::Impulse { .. } => size_of::<crate::time::PlanPosition>(),
-        IrNodeKind::Sine { .. } => size_of::<(
-            f64,
-            crate::quantities::Frequency,
-            crate::quantities::Amplitude,
-        )>(),
+        IrNodeKind::Output | IrNodeKind::Amplifier => 0,
         IrNodeKind::Gain { .. } => size_of::<crate::quantities::GainFactor>(),
         IrNodeKind::Filter { .. } => size_of::<[f32; 3]>(),
         IrNodeKind::Envelope { .. } => return declared.map_or(0, |d| d.prepared_bytes),
@@ -634,20 +663,13 @@ pub fn state_payload_bytes(kind: IrNodeKind) -> u64 {
     (match kind {
         // Declared: the arm defers and states nothing.
         IrNodeKind::Saw { .. } => return declared.map_or(0, |d| d.state_bytes),
-        // Only these keep anything between quanta.
-        IrNodeKind::Sine { .. } => size_of::<(
-            f64,
-            crate::quantities::Frequency,
-            crate::quantities::Amplitude,
-        )>(),
+        IrNodeKind::Sine { .. } => return declared.map_or(0, |d| d.state_bytes),
+        IrNodeKind::Silence => return declared.map_or(0, |d| d.state_bytes),
+        IrNodeKind::Constant { .. } => return declared.map_or(0, |d| d.state_bytes),
+        IrNodeKind::Impulse { .. } => return declared.map_or(0, |d| d.state_bytes),
         IrNodeKind::Filter { .. } => size_of::<(f32, f32)>(),
         IrNodeKind::Envelope { .. } => return declared.map_or(0, |d| d.state_bytes),
-        IrNodeKind::Output
-        | IrNodeKind::Silence
-        | IrNodeKind::Amplifier
-        | IrNodeKind::Constant { .. }
-        | IrNodeKind::Impulse { .. }
-        | IrNodeKind::Gain { .. } => 0,
+        IrNodeKind::Output | IrNodeKind::Amplifier | IrNodeKind::Gain { .. } => 0,
     }) as u64
 }
 
@@ -794,11 +816,7 @@ mod tests {
             .into_iter()
             .filter(|kind| declaration(*kind).is_some())
             .collect();
-        assert_eq!(
-            declared.len(),
-            2,
-            "the sawtooth and the envelope are declared so far"
-        );
+        assert_eq!(declared.len(), 6, "six kinds are declared so far");
 
         for kind in declared {
             let declared = declaration(kind).expect("filtered on it");
@@ -819,9 +837,20 @@ mod tests {
                 "{kind:?}"
             );
             assert_eq!(state_payload_bytes(kind), declared.state_bytes, "{kind:?}");
-            assert!(
-                declared.prepared_bytes > 0 && declared.state_bytes > 0,
-                "{kind:?}: both declared kinds prepare something and keep something"
+            // What each kind prepares and keeps, so a zero written where a layout belongs
+            // — or a layout where nothing is kept — is caught by kind.
+            let (prepares, keeps) = match kind {
+                IrNodeKind::Saw { .. } | IrNodeKind::Sine { .. } | IrNodeKind::Envelope { .. } => {
+                    (true, true)
+                }
+                IrNodeKind::Constant { .. } | IrNodeKind::Impulse { .. } => (true, false),
+                IrNodeKind::Silence => (false, false),
+                other => panic!("{other:?} is declared but this test does not know its shape"),
+            };
+            assert_eq!(
+                (declared.prepared_bytes > 0, declared.state_bytes > 0),
+                (prepares, keeps),
+                "{kind:?}"
             );
         }
 

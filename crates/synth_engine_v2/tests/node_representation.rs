@@ -314,7 +314,7 @@ fn a_widened_signal_is_copied_by_a_scheduled_kernel() {
 /// The registry's functions match exhaustively over `IrNodeKind`, so a declared kind still
 /// appears in each of them; what the declaration removes is the *fact* those arms used to
 /// carry. This holds every arm of every declared kind to one of three forms: the declaration's
-/// own (`Some(&NAME)`), `prepare`'s field destructuring (the one arm that stays until
+/// own (`Some(&NAME)`), a line inside `prepare` (the one function whose arms stay until
 /// parameters are slots), or an exact one-line forwarding arm — the declaration's descriptor,
 /// or one declared field through the `Option`'s `0` fallback. An arm restating a port, a
 /// control or a byte count, or forwarding through a second expression, matches none and fails
@@ -325,13 +325,37 @@ fn a_widened_signal_is_copied_by_a_scheduled_kernel() {
 /// kind to that match without adding it here is caught by the count check below.
 #[test]
 fn a_declared_kind_appears_in_the_registry_only_by_deferring_to_its_declaration() {
-    const DECLARED: [(&str, &str); 2] = [("Saw", "SAW"), ("Envelope", "ENVELOPE")];
+    // The variant as it is spelled in a pattern — fieldless kinds have no `{ .. }` — and
+    // the declaration constant it forwards to.
+    const DECLARED: [(&str, &str); 6] = [
+        ("Saw { .. }", "SAW"),
+        ("Envelope { .. }", "ENVELOPE"),
+        ("Sine { .. }", "SINE"),
+        ("Silence", "SILENCE"),
+        ("Constant { .. }", "CONSTANT"),
+        ("Impulse { .. }", "IMPULSE"),
+    ];
 
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/node.rs");
     let source = std::fs::read_to_string(&path)
         .unwrap_or_else(|e| panic!("cannot read {}: {e}", path.display()));
     // Production code only: the test module names kinds freely.
     let production = source.split("#[cfg(test)]").next().unwrap_or("");
+    // `prepare`'s body, by line: the one function whose arms may hold a fact. Its extent
+    // is from its signature to the first line that is a bare `}` — the function's own
+    // closing brace at column zero — so an exemption cannot leak to another function.
+    let prepare_start = production
+        .lines()
+        .position(|line| line.starts_with("pub(crate) fn prepare("))
+        .expect("node.rs declares `prepare`");
+    let prepare_end = production
+        .lines()
+        .enumerate()
+        .skip(prepare_start)
+        .find(|(_, line)| *line == "}")
+        .map(|(index, _)| index)
+        .expect("`prepare` closes");
+    let in_prepare = |index: usize| (prepare_start..=prepare_end).contains(&index);
     let declared_arms = production
         .lines()
         .filter(|line| line.trim().ends_with("),") && line.contains("=> Some(&"))
@@ -344,13 +368,13 @@ fn a_declared_kind_appears_in_the_registry_only_by_deferring_to_its_declaration(
     );
 
     let mut offending = Vec::new();
-    for (kind, constant) in DECLARED {
-        let variant = format!("IrNodeKind::{kind}");
-        let declares = format!("{variant} {{ .. }} => Some(&{constant}),");
-        let prepares = format!("{variant} {{");
-        let descriptor =
-            format!("{variant} {{ .. }} => return declared.map(NodeDeclaration::descriptor),");
-        let field_prefix = format!("{variant} {{ .. }} => return declared.map_or(0, |d| d.");
+    for (pattern, constant) in DECLARED {
+        let name = pattern.split(' ').next().unwrap_or(pattern);
+        let variant = format!("IrNodeKind::{name}");
+        let arm = format!("IrNodeKind::{pattern} =>");
+        let declares = format!("{arm} Some(&{constant}),");
+        let descriptor = format!("{arm} return declared.map(NodeDeclaration::descriptor),");
+        let field_prefix = format!("{arm} return declared.map_or(0, |d| d.");
         let mut seen = 0;
         for (index, line) in production.lines().enumerate() {
             let trimmed = line.trim();
@@ -358,23 +382,25 @@ fn a_declared_kind_appears_in_the_registry_only_by_deferring_to_its_declaration(
                 continue;
             }
             seen += 1;
+            // `prepare`'s arms build the kind's prepared data from its IR fields, and are
+            // the only arms allowed to hold a fact until parameters are slots. The exemption
+            // is by **position** — inside `prepare` — not by what the line says: an earlier
+            // revision accepted any line mentioning `PreparedNode::`, which a trailing
+            // comment could supply, and an independent review found it.
+            let prepares = in_prepare(index);
             let field_forward = trimmed
                 .strip_prefix(field_prefix.as_str())
                 .and_then(|rest| rest.strip_suffix("),"))
                 .is_some_and(|field| {
                     !field.is_empty() && field.chars().all(|c| c.is_ascii_lowercase() || c == '_')
                 });
-            if !(trimmed == declares
-                || trimmed == prepares
-                || trimmed == descriptor
-                || field_forward)
-            {
+            if !(trimmed == declares || prepares || trimmed == descriptor || field_forward) {
                 offending.push(format!("{}:{} {trimmed}", path.display(), index + 1));
             }
         }
         assert!(
             seen >= 3,
-            "the scan expects {kind}'s declaration, `prepare` arm and at least one forwarding \
+            "the scan expects {name}'s declaration, `prepare` arm and at least one forwarding \
              arm; it found {seen} mentions, so it is reading the wrong file or the shape moved"
         );
     }
