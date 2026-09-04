@@ -67,7 +67,106 @@ pub enum ParameterUnit {
     /// A level in `[0, 1]`.
     NormalizedLevel,
     /// A gate: zero or below is released, above zero is held.
+    ///
+    /// The slot resolves a gate under [`ModulationLaw::ThresholdedBoolean`], so what a kernel
+    /// reads is exactly zero or exactly one, and its own test — above zero — agrees with
+    /// the law's threshold on every value the slot can hand it.
     Gate,
+}
+
+/// How a parameter's layers combine into the one value a kernel reads.
+///
+/// [ADR-0007](../../../plans/v2/decisions/ADR-0007-parameter-modulation-laws.md)'s closed
+/// set, stated by `SOUND-INV-023`. A declaration names exactly one per addressable
+/// parameter; the parameter slot applies it in one place — `render::slot` — and a kernel
+/// never composes. The arithmetic of each, over a resolved base `b` and a modulation sum
+/// `m` in the law's own units, is the record's and lives on `ModulationLaw::resolve` in
+/// that module; the identity `m` each law has — the sum an unmodulated slot holds — is
+/// [`Self::identity`].
+///
+/// Not exhaustive by intention: adding a law is an amendment to the record with its
+/// arithmetic stated, and every match over this enum is exhaustive so that the amendment
+/// cannot be half made.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ModulationLaw {
+    /// `clamp(b + m, 0, 1)`, `m` in normalized units.
+    NormalizedAdditive,
+    /// `clamp(b + m, −1, 1)`, `m` in bipolar units.
+    BipolarAdditive,
+    /// `b × 2^(m / 12)`, `b` in hertz and `m` in semitones. Pitch and cutoff, as V1
+    /// computes them.
+    SemitoneAdditive,
+    /// `b × 10^(m / 20)`, `b` a linear amplitude and `m` in decibels.
+    DecibelAdditive,
+    /// `b + m` in the parameter's physical unit, then the type's clamp.
+    PhysicalLinearAdditive,
+    /// `b × m`, `m` a linear factor.
+    MultiplicativeGain,
+    /// `b + m ≥ 0.5`, resolved to exactly one or exactly zero. Only where the declaration
+    /// explicitly supports it; a boolean without that support is [`Self::NotModulatable`].
+    ThresholdedBoolean,
+    /// A choice, a reference, or an unsupported boolean: the base is the value, and a write
+    /// from any other layer is refused at admission — the compiler gives such a parameter
+    /// no slot, so no event can address it.
+    NotModulatable,
+}
+
+/// A modulation sum `m`, in the units of the law it is composed under.
+///
+/// Its own type rather than a bare `f32` because it is a persistent field of the parameter
+/// slot, not an intermediate: a semitone offset and a decibel offset are both sums, and
+/// neither is a parameter value. Finite by construction, so the one way composition can
+/// leave the finite domain is a law's exponential of a finite sum, which the slot
+/// saturates.
+#[derive(Debug, Clone, Copy, PartialEq)]
+#[must_use]
+pub struct ModulationSum(f32);
+
+impl ModulationSum {
+    /// A sum. Must be finite.
+    pub fn new(sum: f32) -> Result<Self, crate::quantities::QuantityError> {
+        if sum.is_finite() {
+            Ok(Self(sum))
+        } else {
+            Err(crate::quantities::QuantityError::NotFinite {
+                quantity: "ModulationSum",
+                value: sum,
+            })
+        }
+    }
+
+    /// The raw sum, for the law's arithmetic.
+    #[must_use]
+    pub const fn as_f32(self) -> f32 {
+        self.0
+    }
+}
+
+impl ModulationLaw {
+    /// The modulation sum under which the law resolves to its base: what an unmodulated
+    /// slot holds, and what every modulator contributes when it contributes nothing.
+    pub const fn identity(self) -> ModulationSum {
+        match self {
+            Self::MultiplicativeGain => ModulationSum(1.0),
+            Self::NormalizedAdditive
+            | Self::BipolarAdditive
+            | Self::SemitoneAdditive
+            | Self::DecibelAdditive
+            | Self::PhysicalLinearAdditive
+            | Self::ThresholdedBoolean
+            | Self::NotModulatable => ModulationSum(0.0),
+        }
+    }
+
+    /// Whether a layer other than the base may write the parameter at all.
+    ///
+    /// `false` only for [`Self::NotModulatable`], and the compiler reads it: a control whose
+    /// law refuses every write gets no parameter slot, which is how "refused at admission"
+    /// is spelled — an address that does not resolve, rather than an event that is ignored.
+    #[must_use]
+    pub const fn admits_writes(self) -> bool {
+        !matches!(self, Self::NotModulatable)
+    }
 }
 
 /// A parameter's resting value, carried in its own quantity type.
@@ -110,6 +209,19 @@ impl ParameterDefault {
             Self::Gate(value) => value.as_f32(),
         }
     }
+
+    /// The value as a control write carries it. Infallible: each quantity type is finite by
+    /// construction, and every widening is the type's own.
+    pub const fn as_parameter_value(self) -> crate::quantities::ParameterValue {
+        match self {
+            Self::Hertz(value) => crate::quantities::ParameterValue::from_frequency(value),
+            Self::LinearAmplitude(value) => {
+                crate::quantities::ParameterValue::from_amplitude(value)
+            }
+            Self::NormalizedLevel(value) => crate::quantities::ParameterValue::from_level(value),
+            Self::Gate(value) => value,
+        }
+    }
 }
 
 /// One control a node kind exposes, and the parameter identity that addresses it.
@@ -128,6 +240,14 @@ pub(crate) struct ControlSpec {
     /// statement of the kind's resting value, which is also what its state starts at where
     /// the state has a resting value at all: a gate released, a velocity full.
     pub(crate) default: ParameterDefault,
+    /// How its layers combine — `SOUND-INV-023`'s one law per parameter.
+    ///
+    /// Beside the default because the two state the parameter's domain together: the
+    /// default's type is the unit the law's base is in, and the law's `m` is in the units
+    /// the record pairs with it. `a_declared_control_pairs_its_law_with_its_unit` holds the
+    /// pairing, so a law whose arithmetic is meaningless for the unit — a semitone offset on
+    /// a level — cannot be declared by mistake.
+    pub(crate) law: ModulationLaw,
     /// What the node's state calls it.
     pub(crate) control: ControlIndex,
     /// When moving it takes effect, per ADR-0001 clause 14.
@@ -429,6 +549,20 @@ pub(crate) struct NodeDeclaration {
 }
 
 impl NodeDeclaration {
+    /// The bytes the renderer holds for this kind's parameter slots: one `SlotState` per
+    /// control that admits a write, since a not-modulatable control compiles to no slot.
+    /// Charged to `mutable_state_bytes` through [`slot_payload_bytes`], so the report's
+    /// figure and preparation's allocation are one count.
+    #[must_use]
+    pub(crate) fn slot_bytes(&self) -> u64 {
+        let slots = self
+            .controls
+            .iter()
+            .filter(|control| control.law.admits_writes())
+            .count() as u64;
+        slots.saturating_mul(size_of::<crate::render::slot::SlotState>() as u64)
+    }
+
     /// The descriptor admission reads, derived rather than restated.
     fn descriptor(&self) -> NodeDescriptor {
         NodeDescriptor {
@@ -457,6 +591,7 @@ pub(crate) static SAW: NodeDeclaration = NodeDeclaration {
             parameter: parameters::SAW_FREQUENCY,
             name: "frequency",
             default: ParameterDefault::Hertz(crate::quantities::Frequency::A4),
+            law: ModulationLaw::SemitoneAdditive,
             control: kernels::SAW_FREQUENCY,
             rate: ControlRate::Sample,
             magnitude: Some(NoteMagnitude::Pitch),
@@ -465,6 +600,7 @@ pub(crate) static SAW: NodeDeclaration = NodeDeclaration {
             parameter: parameters::SAW_AMPLITUDE,
             name: "amplitude",
             default: ParameterDefault::LinearAmplitude(crate::quantities::Amplitude::UNITY),
+            law: ModulationLaw::DecibelAdditive,
             control: kernels::SAW_AMPLITUDE,
             rate: ControlRate::Quantum,
             magnitude: None,
@@ -514,6 +650,7 @@ pub(crate) static ENVELOPE: NodeDeclaration = NodeDeclaration {
             parameter: parameters::ENVELOPE_GATE,
             name: "gate",
             default: ParameterDefault::Gate(crate::quantities::ParameterValue::ZERO),
+            law: ModulationLaw::ThresholdedBoolean,
             control: kernels::ENVELOPE_GATE,
             rate: ControlRate::Sample,
             magnitude: None,
@@ -522,6 +659,7 @@ pub(crate) static ENVELOPE: NodeDeclaration = NodeDeclaration {
             parameter: parameters::ENVELOPE_VELOCITY,
             name: "velocity",
             default: ParameterDefault::NormalizedLevel(crate::quantities::NormalizedLevel::FULL),
+            law: ModulationLaw::NormalizedAdditive,
             control: kernels::ENVELOPE_VELOCITY,
             rate: ControlRate::Sample,
             magnitude: Some(NoteMagnitude::Velocity),
@@ -557,6 +695,7 @@ pub(crate) static SINE: NodeDeclaration = NodeDeclaration {
             parameter: parameters::SINE_FREQUENCY,
             name: "frequency",
             default: ParameterDefault::Hertz(crate::quantities::Frequency::A4),
+            law: ModulationLaw::SemitoneAdditive,
             control: kernels::SINE_FREQUENCY,
             rate: ControlRate::Sample,
             magnitude: Some(NoteMagnitude::Pitch),
@@ -565,6 +704,7 @@ pub(crate) static SINE: NodeDeclaration = NodeDeclaration {
             parameter: parameters::SINE_AMPLITUDE,
             name: "amplitude",
             default: ParameterDefault::LinearAmplitude(crate::quantities::Amplitude::UNITY),
+            law: ModulationLaw::DecibelAdditive,
             control: kernels::SINE_AMPLITUDE,
             rate: ControlRate::Quantum,
             magnitude: None,
@@ -726,6 +866,8 @@ pub struct ParameterDescription {
     pub unit: ParameterUnit,
     /// The value presented when nothing has been authored, in its own quantity type.
     pub default: ParameterDefault,
+    /// How its layers combine, from ADR-0007's closed set.
+    pub law: ModulationLaw,
     /// When a change to it takes effect.
     pub rate: ControlRate,
     /// Which note magnitude lands on it, where one does.
@@ -783,6 +925,7 @@ pub fn catalog() -> Vec<KindDescription> {
                     name: control.name,
                     unit: control.default.unit(),
                     default: control.default,
+                    law: control.law,
                     rate: control.rate,
                     magnitude: control.magnitude,
                 })
@@ -1053,6 +1196,19 @@ pub fn prepared_payload_bytes(kind: IrNodeKind) -> u64 {
     }) as u64
 }
 
+/// The bytes the renderer holds for one kind's parameter slots — `SOUND-INV-023`'s
+/// composition state, one per control that admits a write.
+///
+/// Beside the state payload rather than inside it, because a slot is not part of the node's
+/// state record: the record bound `a_declared_payload_never_exceeds_the_record_that_holds_it`
+/// holds is over the state alone. `HOST` admits parameter slots through
+/// `mutable_state_bytes` rather than as a count of their own, so
+/// [`crate::ir::GraphIr::mutable_bytes`] sums this with the state payload per node.
+#[must_use]
+pub fn slot_payload_bytes(kind: IrNodeKind) -> u64 {
+    declaration(kind).map_or(0, NodeDeclaration::slot_bytes)
+}
+
 /// The mutable payload one kind carries, for the same attribution and by the same rule.
 #[must_use]
 pub fn state_payload_bytes(kind: IrNodeKind) -> u64 {
@@ -1248,6 +1404,7 @@ mod tests {
                 assert_eq!(parameter.name, spec.name, "{}", entry.name);
                 assert_eq!(parameter.unit, spec.default.unit(), "{}", entry.name);
                 assert_eq!(parameter.default, spec.default, "{}", entry.name);
+                assert_eq!(parameter.law, spec.law, "{}", entry.name);
                 assert_eq!(parameter.rate, spec.rate, "{}", entry.name);
                 assert_eq!(parameter.magnitude, spec.magnitude, "{}", entry.name);
                 assert!(
@@ -1387,5 +1544,51 @@ mod tests {
                 .any(|c| c.magnitude == Some(NoteMagnitude::Velocity)
                     && c.rate == ControlRate::Sample)
         );
+    }
+
+    #[test]
+    fn a_declared_control_pairs_its_law_with_its_unit() {
+        // `SOUND-INV-023`: one law per parameter, and a law whose arithmetic reads the
+        // base in a unit the parameter is not stated in — a semitone offset on a level, a
+        // decibel offset on a gate — is a declaration error this holds against every kind.
+        // The pairing is the record's: a frequency is semitone-additive, a linear
+        // amplitude decibel-additive, a level normalized-additive, and a gate thresholded
+        // because the envelope explicitly supports it. A kind declaring a control in a
+        // fifth unit extends this table, not the exemptions.
+        for declared in DECLARED {
+            for spec in declared.controls {
+                let expected = match spec.default.unit() {
+                    ParameterUnit::Hertz => ModulationLaw::SemitoneAdditive,
+                    ParameterUnit::LinearAmplitude => ModulationLaw::DecibelAdditive,
+                    ParameterUnit::NormalizedLevel => ModulationLaw::NormalizedAdditive,
+                    ParameterUnit::Gate => ModulationLaw::ThresholdedBoolean,
+                };
+                assert_eq!(
+                    spec.law,
+                    expected,
+                    "{}'s {} is a {:?} parameter under {:?}",
+                    declared.name,
+                    spec.name,
+                    spec.default.unit(),
+                    spec.law
+                );
+            }
+        }
+
+        // And every note destination admits a write: a gate is an override-layer write and a
+        // magnitude is one too, so a not-modulatable control can be neither. The compiler
+        // refuses a plan whose declaration breaks this; this is what keeps that unreachable.
+        for declared in DECLARED {
+            for spec in declared.controls {
+                let destination =
+                    spec.magnitude.is_some() || declared.note_control == Some(spec.control);
+                assert!(
+                    !destination || spec.law.admits_writes(),
+                    "{}'s {} is a note destination that admits no write",
+                    declared.name,
+                    spec.name
+                );
+            }
+        }
     }
 }

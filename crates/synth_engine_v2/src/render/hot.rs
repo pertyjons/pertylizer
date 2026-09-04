@@ -150,8 +150,8 @@ impl PreparedRenderer {
                     value: crate::quantities::ParameterValue::ZERO,
                 };
                 self.adoption_gate_len = self.adoption_gate_len.saturating_add(1);
-                if let Some(entry) = self.adoption_gate_nodes.get_mut(self.adoption_gate_len - 1) {
-                    *entry = target.node.index();
+                if let Some(entry) = self.adoption_gate_slots.get_mut(self.adoption_gate_len - 1) {
+                    *entry = target.parameter.index();
                 }
             }
         }
@@ -368,12 +368,18 @@ impl PreparedRenderer {
                 if matches!(target.rate, ControlRate::Sample) {
                     return;
                 }
+                // `SOUND-INV-023`: an override-layer write, composed through the slot
+                // before it reaches state — the modulation in force stays in force.
+                let Some(composed) = self.parameter_slots.get_mut(slot.index()) else {
+                    return;
+                };
+                let resolved = composed.write_override(value);
                 // A `ParameterValue` is finite by construction, so this assignment cannot
                 // poison a phase accumulator — which is why the type exists rather than a
                 // check here, where no diagnostic could be produced. What the control
                 // *means* is the node state's, which is the last place it is known.
                 if let Some(state) = self.node_states.get_mut(target.node.index()) {
-                    state.set_control(target.control, value);
+                    state.set_control(target.control, resolved);
                 }
             }
         }
@@ -401,8 +407,11 @@ impl PreparedRenderer {
         // the first quantum the new mapping governs. They are counted with the quantum's own
         // changes so that the prefix sum sizes every node's run once.
         for index in 0..self.adoption_gate_len {
-            let Some(node) = self.adoption_gate_nodes.get(index).copied() else {
+            let Some(slot) = self.adoption_gate_slots.get(index).copied() else {
                 break;
+            };
+            let Some(node) = self.slot_node(slot) else {
+                continue;
             };
             if let Some(count) = self.control_starts.get_mut(node + 1) {
                 *count = count.saturating_add(1);
@@ -425,8 +434,7 @@ impl PreparedRenderer {
                 break;
             }
             last += 1;
-            if let Some(target) = event.target {
-                let node = target.node;
+            if let Some(node) = event.target.and_then(|target| self.slot_node(target.slot)) {
                 // Counted at `node + 1`, so the prefix sum below turns the counts into
                 // starts in place: entry `n` becomes where node `n`'s run begins.
                 if let Some(count) = self.control_starts.get_mut(node + 1) {
@@ -461,28 +469,13 @@ impl PreparedRenderer {
         // The adoption gates first, because they sit at offset zero and a run has to come out
         // ascending by offset. Every event in this quantum is at or after that boundary.
         for index in 0..self.adoption_gate_len {
-            let (Some(node), Some(gate)) = (
-                self.adoption_gate_nodes.get(index).copied(),
+            let (Some(slot), Some(gate)) = (
+                self.adoption_gate_slots.get(index).copied(),
                 self.adoption_gates.get(index).copied(),
             ) else {
                 break;
             };
-            let (Some(base), Some(filled)) = (
-                self.control_starts.get(node).copied(),
-                self.control_fill.get(node).copied(),
-            ) else {
-                continue;
-            };
-            let Some(slot) = self
-                .timed_controls
-                .get_mut(base.saturating_add(filled) as usize)
-            else {
-                continue;
-            };
-            *slot = gate;
-            if let Some(fill) = self.control_fill.get_mut(node) {
-                *fill = fill.saturating_add(1);
-            }
+            self.push_timed_control(slot, gate.offset, gate.value);
         }
         // Spent: they belong to the boundary quantum and to no other.
         self.adoption_gate_len = 0;
@@ -530,8 +523,7 @@ impl PreparedRenderer {
                         continue;
                     };
                     self.push_timed_control(
-                        magnitude.node.index(),
-                        magnitude.control,
+                        magnitude.parameter.index(),
                         event.position.quantum_offset(),
                         value,
                     );
@@ -541,25 +533,43 @@ impl PreparedRenderer {
             else {
                 continue;
             };
-            let (node, control) = (target.node, target.control);
-            self.push_timed_control(node, control, event.position.quantum_offset(), value);
+            self.push_timed_control(target.slot, event.position.quantum_offset(), value);
         }
     }
 
-    /// Append one control change to a node's run.
+    /// The node a parameter slot's control belongs to, from the target table.
+    fn slot_node(&self, slot: usize) -> Option<usize> {
+        self.plan
+            .parameter_targets()
+            .get(slot)
+            .map(|target| target.node.index())
+    }
+
+    /// Append one control change to a node's run, composed through its parameter slot.
     ///
-    /// The one place a run is written, so the gate and the magnitudes `SOUND-INV-021` adds
-    /// beside it are placed by the same rule — and the counting sort's two passes stay
-    /// symmetric, because a second inline copy of this is how a run comes to be filled past
-    /// what pass one counted. Every step is bounds-checked; an out-of-range node or a full
-    /// run writes nothing rather than panicking on the audio thread.
+    /// The one place a run is written, so the gate, the magnitudes `SOUND-INV-021` adds
+    /// beside it and an adopted activation's gate-downs are placed by the same rule — and
+    /// the counting sort's two passes stay symmetric, because a second inline copy of this
+    /// is how a run comes to be filled past what pass one counted. It is also the one place
+    /// a sample-positioned write meets `SOUND-INV-023`'s slot: the value a caller sent is
+    /// the override layer, and what the kernel is handed is the slot's resolved value, so a
+    /// modulation in force on the destination is composed into a note's pitch as it is
+    /// into an automated one. Every step is bounds-checked; a slot the plan has no row for
+    /// or a full run writes nothing rather than panicking on the audio thread.
     fn push_timed_control(
         &mut self,
-        node: usize,
-        control: crate::node::kernels::ControlIndex,
+        slot: usize,
         offset: crate::time::QuantumOffset,
         value: crate::quantities::ParameterValue,
     ) {
+        let (Some(target), Some(composed)) = (
+            self.plan.parameter_targets().get(slot).copied(),
+            self.parameter_slots.get_mut(slot),
+        ) else {
+            return;
+        };
+        let (node, control) = (target.node.index(), target.control);
+        let value = composed.write_override(value);
         let (Some(base), Some(filled)) = (
             self.control_starts.get(node).copied(),
             self.control_fill.get(node).copied(),
@@ -626,10 +636,7 @@ impl PreparedRenderer {
                     .parameter_targets()
                     .get(slot.index())
                     .filter(|row| matches!(row.rate, ControlRate::Sample))
-                    .map(|row| ResolvedTarget {
-                        node: row.node.index(),
-                        control: row.control,
-                    }),
+                    .map(|_| ResolvedTarget { slot: slot.index() }),
             };
             if let Some(slot) = self.event_scratch.get_mut(index) {
                 slot.target = target;
@@ -637,14 +644,13 @@ impl PreparedRenderer {
         }
     }
 
-    /// Where a note slot's edge lands.
+    /// Where a note slot's edge lands: the gate control's parameter slot.
     fn note_target(&self, slot: crate::plan::NoteSlot) -> Option<ResolvedTarget> {
         self.plan
             .note_targets()
             .get(slot.index())
             .map(|row| ResolvedTarget {
-                node: row.node.index(),
-                control: row.control,
+                slot: row.parameter.index(),
             })
     }
 

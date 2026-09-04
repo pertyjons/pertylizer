@@ -1072,8 +1072,11 @@ impl StreamControl {
     /// ADR-0051 clause 1's batch: one row per prepared target, at the requested time.
     ///
     /// A target with a write before the destination carries it; one with none carries the
-    /// value it was **prepared** with, because a control survives an activation in node state
-    /// and a skipped target would keep whatever the pre-seek position left. Covering every
+    /// value it was **prepared** with — the target row's stored base, which is also the
+    /// slot's — because a control survives an activation in node state and a skipped target
+    /// would keep whatever the pre-seek position left. Either way the renderer takes the
+    /// value as an **override-layer** write (`SOUND-INV-023`) and re-derives modulation from
+    /// the slot, never from a flattened figure. Covering every
     /// target is also what makes the size exactly the prepared-target count, which is the
     /// quantity the plan-dependent session-share admission checks — that count plus one for
     /// ADR-0050 clause 5's boundary mass release, and `first_refusal` acts on it.
@@ -1085,16 +1088,7 @@ impl StreamControl {
         let targets = self.plan.parameter_targets();
         let mut batch = Vec::with_capacity(targets.len());
         for (index, target) in targets.iter().enumerate() {
-            let value = values.get(index).copied().flatten().or_else(|| {
-                self.plan
-                    .prepared_nodes()
-                    .get(target.node.index())
-                    .map(crate::node::kernels::NodeState::initial)
-                    .and_then(|state| state.control_value(target.control))
-            });
-            let Some(value) = value else {
-                continue;
-            };
+            let value = values.get(index).copied().flatten().unwrap_or(target.base);
             batch.push(crate::render::TimedEvent::new(
                 crate::render::EventEnvelope::new(
                     self.epoch,

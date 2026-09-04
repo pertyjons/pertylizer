@@ -539,14 +539,26 @@ pub enum PlanOp {
 ///
 /// A node instance and one of its controls. Neither is an identity: the renderer indexes
 /// its state table and hands the control index to the state, which is the last place the
-/// meaning of "control 0" lives.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// meaning of "control 0" lives. Since `P05-S007a` a row also carries what the renderer's
+/// parameter slot composes with — the law, the unit and the stored base — because the
+/// slot is prepared from this table and the render loop reads nothing else about a kind.
+#[derive(Debug, Clone, Copy, PartialEq)]
 #[must_use]
 pub struct ParameterTarget {
     /// Which node instance.
     pub node: NodeSlot,
     /// Which of its controls.
     pub control: ControlIndex,
+    /// How its layers combine, `SOUND-INV-023`'s law, from the declaration.
+    pub law: crate::node::ModulationLaw,
+    /// The unit whose clamp follows the law's arithmetic.
+    pub unit: crate::node::ParameterUnit,
+    /// The stored base: the value the node was prepared with, which is the authored one.
+    ///
+    /// What the slot's base layer starts as and what `SOUND-INV-018`'s catch-up restores
+    /// for a target no write reached before the destination. One figure for both, here,
+    /// so the two cannot come to differ.
+    pub base: crate::quantities::ParameterValue,
     /// When moving it takes effect.
     ///
     /// Compiled from what the node kind declares, so the renderer reads it rather than
@@ -599,6 +611,12 @@ pub struct NoteMagnitudeTarget {
     pub node: NodeSlot,
     /// Which of its controls, always at [`ControlRate::Sample`].
     pub control: ControlIndex,
+    /// The parameter slot of that control, through which the write is composed.
+    ///
+    /// `SOUND-INV-023`: a magnitude is an override-layer write like any other, and the
+    /// renderer resolves it through the same slot a `SetParameter` to the control would use,
+    /// so a modulation in force on the destination is not lost to a note's arrival.
+    pub parameter: ParameterSlot,
     /// Which magnitude it receives.
     pub magnitude: NoteMagnitude,
     /// The tuning a [`NoteMagnitude::Pitch`] destination resolves its key through.
@@ -620,6 +638,9 @@ pub struct NoteTarget {
     pub node: NodeSlot,
     /// The control a note edge moves, always at [`ControlRate::Sample`].
     pub control: ControlIndex,
+    /// The parameter slot of that control. A gate edge is composed through it like every
+    /// other write, for the reason [`NoteMagnitudeTarget::parameter`] gives.
+    pub parameter: ParameterSlot,
     /// Where this note's magnitude writes live in [`CompiledPlan::note_magnitudes`].
     ///
     /// A range into one flat table rather than a `Vec` per note, because the renderer reads

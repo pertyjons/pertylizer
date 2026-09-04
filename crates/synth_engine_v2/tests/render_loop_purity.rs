@@ -44,8 +44,9 @@ use std::path::{Path, PathBuf};
 /// more: it is the only file in the region that **writes back** into a producer's own
 /// storage while the call runs, so an allocation there would be one the producing half
 /// never sees.
-const REGION: [&str; 6] = [
+const REGION: [&str; 7] = [
     "src/render/hot.rs",
+    "src/render/slot.rs",
     "src/schedule/hot.rs",
     "src/publish/hot.rs",
     "src/identity/hot.rs",
@@ -265,6 +266,21 @@ fn the_check_is_reading_the_file_it_thinks_it_is() {
         );
     }
 
+    let slot = read_region_file("src/render/slot.rs");
+    assert!(slot.len() > 1_000, "render/slot.rs is unexpectedly small");
+    // The slot is where a law is applied and where a write is composed; if either moved,
+    // the composition scan below would be reading a file that composes nothing.
+    for expected in [
+        "impl SlotState",
+        "fn write_override",
+        "fn resolve(self, base: ParameterValue",
+    ] {
+        assert!(
+            slot.contains(expected),
+            "render/slot.rs does not contain `{expected}`; the parameter slot moved and this              check is now scanning the wrong thing"
+        );
+    }
+
     let scheduler = scheduler_hot_path_source();
     assert!(
         scheduler.len() > 1_000,
@@ -383,12 +399,13 @@ fn every_call_the_render_loop_makes_is_inside_the_checked_region() {
         .map(|name| name.trim().to_owned())
         .collect();
 
-    // Control flow, visibility and attributes, none of which are calls. `pub(crate)` and
-    // `#[derive(..)]` are both an identifier followed by a parenthesis and are neither
-    // reachable code nor nameable as a function.
+    // Control flow, visibility and attributes, none of which are calls. `pub(crate)`,
+    // `#[derive(..)]` and `#[cfg(..)]` are each an identifier followed by a parenthesis and
+    // are neither reachable code nor nameable as a function. `cfg` is here because the slot
+    // module compiles its modulation seam for tests only, until Phase 7 gives it a caller.
     let syntax = [
         "if", "while", "for", "match", "return", "loop", "else", "fn", "let", "move", "pub",
-        "derive",
+        "derive", "cfg",
     ];
 
     // `std` on slices, `Option`, iterators and primitives: bounds-checked accessors,
@@ -475,6 +492,23 @@ fn every_call_the_render_loop_makes_is_inside_the_checked_region() {
         "min",
         "max",
         "abs",
+        // The parameter slot's two exponential laws (`SOUND-INV-023`): `f32::exp2` for the
+        // semitone law and `f32::powf` for the decibel law. Both are pure libm calls on a
+        // value the slot owns — no allocation, no lock, and no panic: an overflow is an
+        // infinity, which `ParameterValue::saturating` then holds to the finite domain.
+        // They run per **write**, not per frame; `SOUND-INV-024`'s per-frame advance is an
+        // add, and lands in the same file under the same scan.
+        "exp2",
+        "powf",
+        // `f32::clamp`, in the slot's two additive laws and the level's domain hold. It can
+        // panic only on an inverted or `NaN` range, so the composition scan below holds
+        // every `clamp` in the region to two literal bounds — the same argument the
+        // `saturating` entry makes for the one clamp that lives outside the region.
+        "clamp",
+        // `ModulationLaw::identity`: a `const fn` match over the law enum returning the sum an
+        // unmodulated slot holds. Read once, when a slot is prepared, and it neither
+        // allocates, locks nor panics.
+        "identity",
         // `NoteVelocity::saturating` is the documented policy holding a parameter-written
         // velocity inside `[0, 1]`, which is the destination's domain — `SOUND-INV-021` puts
         // the *refusing* constructor on the note payload, and the parameter path has only
@@ -849,6 +883,7 @@ fn the_render_loop_imports_no_free_function() {
     // a scheduler or kernel file that was accidentally removed from `REGION`.
     for (required, floor) in [
         ("src/render/hot.rs", 6),
+        ("src/render/slot.rs", 2),
         ("src/schedule/hot.rs", 2),
         ("src/publish/hot.rs", 2),
         ("src/identity/hot.rs", 2),
@@ -887,6 +922,117 @@ fn the_region_modules_are_all_scanned() {
             "`{module}` is trusted by the call and import scans but is not in the scanned region"
         );
     }
+}
+
+#[test]
+fn a_kernel_composes_nothing_and_the_law_is_applied_in_one_place() {
+    // `SOUND-INV-023`'s last clause, by scan. A kernel reads one resolved value: the kernel
+    // file names no law, calls no composition, and carries neither exponential the two
+    // exponential laws are made of. And the law's arithmetic is defined once, in the slot
+    // module, so two native kinds cannot compose one law differently — neither composes,
+    // and there is one `resolve` to disagree with.
+    let kernels = strip_comments(&read_region_file("src/node/kernels.rs"));
+    for forbidden in [
+        "ModulationLaw",
+        "SlotState",
+        ".resolve(",
+        "write_override",
+        ".exp2(",
+        ".powf(",
+        "hold_to_domain",
+    ] {
+        assert!(
+            !kernels.contains(forbidden),
+            "node/kernels.rs contains `{forbidden}`: a kernel is composing, which              `SOUND-INV-023` forbids"
+        );
+    }
+
+    // The control: the slot file does contain every one of those, so the scan above is
+    // looking for names that exist.
+    let slot = strip_comments(&read_region_file("src/render/slot.rs"));
+    for expected in [
+        "ModulationLaw",
+        "SlotState",
+        "write_override",
+        ".exp2(",
+        ".powf(",
+        "hold_to_domain",
+    ] {
+        assert!(
+            slot.contains(expected),
+            "render/slot.rs does not contain `{expected}`, so the kernel scan is looking for              a name nothing uses"
+        );
+    }
+
+    // Every `clamp` in the region has two literal bounds, which is the condition under
+    // which `f32::clamp` cannot panic and the reason the call scan carries it. A bound that
+    // is a name — a value the caller computed — is what this refuses.
+    let literal_clamp = regex_free_literal_clamp;
+    for (file, source) in region_sources() {
+        for (line_number, line) in code_lines(&source) {
+            let mut rest = line.as_str();
+            while let Some(at) = rest.find(".clamp(") {
+                let args = &rest[at + ".clamp(".len()..];
+                assert!(
+                    literal_clamp(args),
+                    "{file}:{line_number}: `{}` clamps to a bound that is not a literal, which is \
+                     the one way `f32::clamp` can panic on the audio thread",
+                    line.trim()
+                );
+                rest = args;
+            }
+        }
+    }
+
+    // One definition of the law's arithmetic in the whole crate, and it is the slot's.
+    let mut definitions = Vec::new();
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let mut pending = vec![root];
+    while let Some(dir) = pending.pop() {
+        for entry in std::fs::read_dir(&dir).expect("the source tree is readable") {
+            let path = entry.expect("a readable entry").path();
+            if path.is_dir() {
+                pending.push(path);
+            } else if path.extension().is_some_and(|ext| ext == "rs") {
+                let text = std::fs::read_to_string(&path).expect("a readable file");
+                if strip_comments(&text).contains("fn resolve(self, base: ParameterValue") {
+                    definitions.push(path);
+                }
+            }
+        }
+    }
+    assert_eq!(
+        definitions.len(),
+        1,
+        "the law's arithmetic is defined in {definitions:?}; `SOUND-INV-023` puts it in one          place"
+    );
+    assert!(
+        definitions[0].ends_with("render/slot.rs"),
+        "the law's arithmetic is defined in {:?} rather than the slot",
+        definitions[0]
+    );
+}
+
+/// Whether `args` — the text after `.clamp(` — opens with two numeric literals and a
+/// closing parenthesis: `0.0, 1.0)`, `-1.0, 1.0)`, or with an `f32` suffix.
+fn regex_free_literal_clamp(args: &str) -> bool {
+    let Some((inside, _)) = args.split_once(')') else {
+        return false;
+    };
+    let mut bounds = inside.split(',');
+    let (Some(low), Some(high), None) = (bounds.next(), bounds.next(), bounds.next()) else {
+        return false;
+    };
+    let is_literal = |text: &str| {
+        let text = text.trim().trim_end_matches("_f32").trim_end_matches("f32");
+        !text.is_empty()
+            && text
+                .strip_prefix('-')
+                .unwrap_or(text)
+                .chars()
+                .all(|c| c.is_ascii_digit() || c == '.' || c == '_')
+    };
+    is_literal(low) && is_literal(high)
 }
 
 /// A `Kernel` cannot be built outside `node::kernels`, and this checks what follows from

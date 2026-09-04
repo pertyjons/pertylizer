@@ -452,10 +452,14 @@ pub(crate) struct DueEvent {
 }
 
 /// Where a sample-positioned event's effect lands, resolved once per call.
+///
+/// The index of the **parameter slot** it writes, since `P05-S007a`: the node and the
+/// control are the target table's row at that index, and the slot state the write is
+/// composed through is the parallel table's. One index for both is what keeps a write from
+/// reaching a kernel by a path the slot does not see.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct ResolvedTarget {
-    pub(crate) node: usize,
-    pub(crate) control: crate::node::kernels::ControlIndex,
+    pub(crate) slot: usize,
 }
 
 impl DueEvent {
@@ -535,6 +539,12 @@ pub struct PreparedRenderer {
     /// discovering it needs an allocation on the audio thread.
     input_carry: Vec<f32>,
     node_states: Vec<NodeState>,
+    /// `SOUND-INV-023`'s parameter slots, one per row of the plan's target table and
+    /// parallel to it by construction. Every write the loop makes to a control — a
+    /// `SetParameter`, a note's gate or magnitude, an adopted activation's gate-down — is
+    /// composed through the slot at the same index before it reaches node state or a
+    /// kernel's control run.
+    parameter_slots: Vec<slot::SlotState>,
     /// Whether the plan writes the carry at all, decided once at preparation so the
     /// loop does not re-derive a topology fact per quantum.
     has_output: bool,
@@ -561,12 +571,13 @@ pub struct PreparedRenderer {
     /// Preallocated to the identity partition — the most notes that can be sounding at once
     /// — and written by index. `adoption_gate_len` says how much is live.
     adoption_gates: Vec<TimedControl>,
-    /// Which node each queued gate-down moves, in the same order.
+    /// Which parameter slot each queued gate-down writes, in the same order.
     ///
     /// Beside the control rather than inside it because [`TimedControl`] is what a kernel is
-    /// handed and a kernel already knows which node it is: adding a node field there would
-    /// put a value in the hot slice that nothing reads.
-    adoption_gate_nodes: Vec<usize>,
+    /// handed and a kernel already knows which node it is: adding a field there would put a
+    /// value in the hot slice that nothing reads. The slot rather than the node, because the
+    /// slot's target row names the node and the write is composed through the slot.
+    adoption_gate_slots: Vec<usize>,
     adoption_gate_len: usize,
     /// Where each node's run of [`Self::timed_controls`] starts, plus a terminator.
     ///
@@ -616,6 +627,12 @@ impl PreparedRenderer {
             .iter()
             .map(NodeState::initial)
             .collect();
+        // One slot per target row, from the row itself, for the same reason.
+        let parameter_slots: Vec<slot::SlotState> = plan
+            .parameter_targets()
+            .iter()
+            .map(|target| slot::SlotState::prepared(target.law, target.unit, target.base))
+            .collect();
 
         // A call renders at most one quantum more than its frame count spans, so this
         // bounds both the per-quantum tally and the event scratch.
@@ -662,6 +679,7 @@ impl PreparedRenderer {
             live_notes,
             input_carry: vec![0.0; carry_frames_capacity.saturating_mul(channels)],
             node_states,
+            parameter_slots,
             has_output,
             event_scratch: vec![DueEvent::FILL; events_per_quantum.saturating_mul(quanta_per_call)],
             scratch_len: 0,
@@ -677,7 +695,7 @@ impl PreparedRenderer {
                     .saturating_add(identity_indices)
             ],
             adoption_gates: vec![TimedControl::FILL; identity_indices],
-            adoption_gate_nodes: vec![0; identity_indices],
+            adoption_gate_slots: vec![0; identity_indices],
             adoption_gate_len: 0,
             control_starts: vec![0; records.saturating_add(1)],
             control_fill: vec![0; records],
@@ -693,6 +711,39 @@ impl PreparedRenderer {
     /// This stream's epoch.
     pub const fn epoch(&self) -> StreamEpoch {
         self.epoch
+    }
+
+    /// Write one parameter slot's modulation sum, in its law's units.
+    ///
+    /// **`P05-S007a`'s seam, off the audio thread.** `SOUND-INV-023`'s modulation layer has
+    /// no producer until Phase 7's modulation edges, and this is what stands in for one so
+    /// that the layer's composition is tested rather than claimed: a modulation in force
+    /// survives an override write and an activation's catch-up, and reaches the kernel
+    /// composed. A quantum-rate target takes the re-resolved value now, as an `apply` of a
+    /// write would; a sample-positioned target takes it at its next positioned write, which
+    /// is the only path a value has to such a kernel until `P05-S007b`'s per-frame read.
+    /// A slot index the plan has no row for writes nothing.
+    ///
+    /// Compiled for tests only, which is what a seam with no production caller is: the
+    /// attribute comes off with Phase 7's first modulator.
+    #[cfg(test)]
+    pub(crate) fn modulate(
+        &mut self,
+        slot: crate::plan::ParameterSlot,
+        sum: crate::node::ModulationSum,
+    ) {
+        let Some(target) = self.plan.parameter_targets().get(slot.index()).copied() else {
+            return;
+        };
+        let Some(state) = self.parameter_slots.get_mut(slot.index()) else {
+            return;
+        };
+        let resolved = state.modulate(sum);
+        if matches!(target.rate, crate::plan::ControlRate::Quantum)
+            && let Some(node) = self.node_states.get_mut(target.node.index())
+        {
+            node.set_control(target.control, resolved);
+        }
     }
 
     /// The render clock: input frames consumed so far.
@@ -742,7 +793,7 @@ impl PreparedRenderer {
             .len()
             .saturating_add(self.adoption_gates.len())
             .saturating_mul(size_of::<TimedControl>())
-            .saturating_add(self.adoption_gate_nodes.len() * size_of::<usize>())
+            .saturating_add(self.adoption_gate_slots.len() * size_of::<usize>())
             .saturating_add(
                 self.control_starts
                     .len()
@@ -785,6 +836,14 @@ impl PreparedRenderer {
 #[path = "render/hot.rs"]
 mod hot;
 
+/// The parameter slot, inside the scanned region for the reason its header gives.
+#[path = "render/slot.rs"]
+pub(crate) mod slot;
+
 #[cfg(test)]
 #[path = "tests/render_scratch.rs"]
 mod scratch_tests;
+
+#[cfg(test)]
+#[path = "tests/parameter_slot.rs"]
+mod parameter_slot_tests;

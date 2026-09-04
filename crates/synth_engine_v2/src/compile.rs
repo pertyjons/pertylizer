@@ -725,10 +725,17 @@ fn build_rows(
     // below. That is why the row has one number to report rather than a worst case to search
     // for, which is what the plan-dependent admission of this share compares. See the note
     // on that row below for the boundary release it is charged alongside.
+    // Over the controls that **admit a write**: `SOUND-INV-023`'s not-modulatable control
+    // compiles to no target, so the batch has no row for it and the charge must not either.
     let catch_up = ir.nodes().iter().fold(0_u64, |total, node| {
         total.saturating_add(
-            crate::node::descriptor(node.kind()).map_or(0, |descriptor| descriptor.controls.len())
-                as u64,
+            crate::node::descriptor(node.kind()).map_or(0, |descriptor| {
+                descriptor
+                    .controls
+                    .iter()
+                    .filter(|control| control.law.admits_writes())
+                    .count()
+            }) as u64,
         )
     });
     // Plus **one** for ADR-0050 clause 5's boundary mass release, which ADR-0046 clause 6
@@ -1241,11 +1248,27 @@ fn lower(
         slots.insert(*id, out);
         node_slots.insert(*id, node_slot);
 
+        // Where this node's own slots begin, so its note control is found among them
+        // rather than by a search over every node before it.
+        let first_slot = parameter_targets.len();
         for spec in &descriptor.controls {
+            // `SOUND-INV-023`: a not-modulatable parameter takes no write from any layer but
+            // the base, and the base is the IR. Refused at admission means it never
+            // resolves — no slot, no address — rather than an event the renderer ignores.
+            if !spec.law.admits_writes() {
+                continue;
+            }
             let slot = ParameterSlot::new(plan_id, parameter_targets.len());
             parameter_targets.push(ParameterTarget {
                 node: node_slot,
                 control: spec.control,
+                law: spec.law,
+                unit: spec.default.unit(),
+                // The value the node was prepared with, which the kind's state starts at;
+                // the declaration's resting value only where a state carries none.
+                base: crate::node::kernels::NodeState::initial(&prepared)
+                    .control_value(spec.control)
+                    .unwrap_or(spec.default.as_parameter_value()),
                 rate: spec.rate,
             });
             parameter_addresses.push(ParameterAddress {
@@ -1259,10 +1282,22 @@ fn lower(
         // caller plays the node and never learns which control being played moves — which
         // is what lets Phase 6's voice pool address a voice without knowing its graph.
         if let Some(control) = descriptor.note_control {
+            // The gate's own parameter slot, which its edges are composed through. Absent
+            // only if the gate declared itself not-modulatable, which the declaration tests
+            // forbid for a note control; refused rather than played around.
+            let Some(parameter) = parameter_targets
+                .get(first_slot..)
+                .and_then(|own| own.iter().position(|target| target.control == control))
+                .map(|offset| ParameterSlot::new(plan_id, first_slot + offset))
+            else {
+                fault = fault.or(Some(CompileError::DestinationWithoutSlot { node: *id }));
+                continue;
+            };
             let slot = NoteSlot::new(plan_id, note_targets.len());
             note_targets.push(NoteTarget {
                 node: node_slot,
                 control,
+                parameter,
                 // Filled by `bind_note_magnitudes` below, which needs every node scheduled
                 // before it can collect a scope's destinations: a played node may be
                 // lowered before the oscillator its key reaches.
@@ -1280,6 +1315,7 @@ fn lower(
         ir,
         plan_id,
         &node_slots,
+        &parameter_targets,
         &note_addresses,
         &mut note_targets,
         &mut note_magnitudes,
@@ -1327,10 +1363,16 @@ fn lower(
 ///   render with extra steps;
 /// - a pitch destination whose scope states no tuning, because a key with nothing to
 ///   resolve against has no frequency and this crate may not invent one.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the binder reads the lowering's tables by name; bundling them would hide which \
+              of them a destination is resolved against"
+)]
 fn bind_note_magnitudes(
     ir: &GraphIr,
     plan_id: crate::plan::PlanId,
     node_slots: &HashMap<NodeId, NodeSlot>,
+    parameter_targets: &[ParameterTarget],
     note_addresses: &[NoteAddress],
     note_targets: &mut [NoteTarget],
     note_magnitudes: &mut Vec<NoteMagnitudeTarget>,
@@ -1341,6 +1383,21 @@ fn bind_note_magnitudes(
         .iter()
         .map(|node| (node.id(), node.scope()))
         .collect();
+    // The slot of each (node, control), indexed once: a destination is resolved by one
+    // lookup rather than a search over the target table per destination, which an
+    // independent review found quadratic in the node count for a scope of many pitch
+    // destinations — and lowering runs before the exact budget refusal.
+    let slot_of: HashMap<(NodeSlot, crate::node::kernels::ControlIndex), ParameterSlot> =
+        parameter_targets
+            .iter()
+            .enumerate()
+            .map(|(index, target)| {
+                (
+                    (target.node, target.control),
+                    ParameterSlot::new(plan_id, index),
+                )
+            })
+            .collect();
 
     // Two playable nodes in one scope share one set of destinations, so playing either
     // would move the other's velocity. Checked over the note addresses, which is exactly
@@ -1411,9 +1468,16 @@ fn bind_note_magnitudes(
                         Some(crate::plan::TuningSlot::new(plan_id, index))
                     }
                 };
+                // Composed through the control's own slot, so a destination a note reaches
+                // is one a `SetParameter` reaches the same way. A magnitude on a control
+                // with no slot is a declaration the tests forbid; refused here, not skipped.
+                let Some(parameter) = slot_of.get(&(*slot, spec.control)).copied() else {
+                    return Err(CompileError::DestinationWithoutSlot { node: node.id() });
+                };
                 note_magnitudes.push(NoteMagnitudeTarget {
                     node: *slot,
                     control: spec.control,
+                    parameter,
                     magnitude,
                     tuning,
                 });

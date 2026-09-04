@@ -976,11 +976,28 @@ impl GraphIr {
     }
 
     /// The mutable state bytes this plan's nodes occupy, with the node responsible.
+    ///
+    /// One state record per scheduled record, plus the parameter slots (`SOUND-INV-023`)
+    /// each node's writable controls need: `HOST` admits slots through this row rather than
+    /// as a count of their own, and the renderer allocates exactly this many — one
+    /// `SlotState` per parameter target, which is one per writable control per node. The
+    /// attribution stays the node whose state payload is widest; a slot belongs to its
+    /// node and is charged with it.
     pub fn mutable_bytes(&self, inserted: u64) -> (PreparedBytes, IrObject) {
-        self.aggregate_bytes(
+        let (records, dominant) = self.aggregate_bytes(
             crate::node::state_bytes_per_node(),
-            crate::node::state_payload_bytes,
+            |kind| {
+                crate::node::state_payload_bytes(kind)
+                    .saturating_add(crate::node::slot_payload_bytes(kind))
+            },
             inserted,
+        );
+        let slots = self.nodes.iter().fold(0_u64, |total, node| {
+            total.saturating_add(crate::node::slot_payload_bytes(node.kind()))
+        });
+        (
+            PreparedBytes::measured(records.get().saturating_add(slots)),
+            dominant,
         )
     }
 

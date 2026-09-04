@@ -260,6 +260,18 @@ pub enum CompileError {
         /// The node whose kind reached the wrong preparation.
         node: crate::ir::NodeId,
     },
+    /// A note destination — a gate or a magnitude — on a control with no parameter slot.
+    ///
+    /// The same class as [`Self::DeclaredForAnotherKind`]: a static inconsistency of the
+    /// registry. `SOUND-INV-023` composes every write through the control's slot, and a
+    /// control declared not-modulatable has none — so a declaration naming one as a note
+    /// control or a magnitude destination is wrong, a test holds every declaration to that,
+    /// and this is what refuses the plan if the pairing is ever broken.
+    #[error("{node} declares a note destination on a parameter that admits no write")]
+    DestinationWithoutSlot {
+        /// The node whose declaration names the destination.
+        node: crate::ir::NodeId,
+    },
 
     /// An edge names a port the node does not declare.
     #[error("{edge} names {node} {port}, which is not an {needed} port it declares")]

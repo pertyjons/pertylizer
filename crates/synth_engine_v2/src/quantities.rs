@@ -892,6 +892,36 @@ impl ParameterValue {
         Amplitude(self.0)
     }
 
+    /// An amplitude as the value a control write carries. Infallible: an [`Amplitude`] is
+    /// finite by construction.
+    pub const fn from_amplitude(amplitude: Amplitude) -> Self {
+        Self(amplitude.0)
+    }
+
+    /// A level as the value a control write carries. Infallible: `[0, 1]` is inside the
+    /// finite floats.
+    pub const fn from_level(level: NormalizedLevel) -> Self {
+        Self(level.0)
+    }
+
+    /// A value from arithmetic that may have left the finite domain, by the documented
+    /// saturating policy: an overflow becomes the widest finite value of its sign, and a
+    /// `NaN` — which only `0 × ∞` produces where the arithmetic is a law's — becomes zero,
+    /// because a zero base is zero under every law.
+    ///
+    /// The one place a parameter value is built from arithmetic rather than from a typed
+    /// quantity: `SOUND-INV-023`'s composition runs on the audio thread, where nothing can
+    /// refuse, and a law's exponential can overflow for a modulation sum nothing bounds
+    /// yet. `SOUND-INV-024`'s segment then only ever interpolates between two of these,
+    /// which cannot leave the domain.
+    pub fn saturating(value: f32) -> Self {
+        if value.is_nan() {
+            Self(0.0)
+        } else {
+            Self(value.clamp(f32::MIN, f32::MAX))
+        }
+    }
+
     /// A value. Must be finite.
     pub fn new(value: f32) -> Result<Self, QuantityError> {
         if value.is_finite() {
