@@ -297,16 +297,18 @@ pub enum NodeState {
         /// The low-pass integrator.
         low: f32,
     },
-    /// A phase accumulator and the control values read once per quantum.
+    /// A phase accumulator and the sample-positioned frequency.
+    ///
+    /// No amplitude: it is a quantum-rate control, and since `SOUND-INV-024` a kernel reads
+    /// such a control per frame from its slot's buffer rather than from a state field the
+    /// renderer wrote once per quantum — the segment lives in the slot, not here.
     Sine {
         /// Normalized phase in `[0, 1)`.
         phase: f64,
         /// The current frequency.
         frequency: Frequency,
-        /// The current peak amplitude.
-        amplitude: Amplitude,
     },
-    /// The same three values a sine keeps, for the sawtooth.
+    /// The same two values a sine keeps, for the sawtooth.
     ///
     /// A separate variant rather than a shared one, so that no control write can reach the
     /// wrong kernel's state through a shape the type system would have accepted.
@@ -315,8 +317,6 @@ pub enum NodeState {
         phase: f64,
         /// The current frequency.
         frequency: Frequency,
-        /// The current peak amplitude.
-        amplitude: Amplitude,
     },
 }
 
@@ -340,23 +340,13 @@ impl NodeState {
     #[must_use]
     pub const fn initial(prepared: &PreparedNode) -> Self {
         match prepared {
-            PreparedNode::Sine {
-                frequency,
-                amplitude,
-                ..
-            } => Self::Sine {
+            PreparedNode::Sine { frequency, .. } => Self::Sine {
                 phase: 0.0,
                 frequency: *frequency,
-                amplitude: *amplitude,
             },
-            PreparedNode::Saw {
-                frequency,
-                amplitude,
-                ..
-            } => Self::Saw {
+            PreparedNode::Saw { frequency, .. } => Self::Saw {
                 phase: 0.0,
                 frequency: *frequency,
-                amplitude: *amplitude,
             },
             PreparedNode::Filter { .. } => Self::Filter {
                 band: 0.0,
@@ -380,44 +370,22 @@ impl NodeState {
         }
     }
 
-    /// What a control holds, for a caller that must restore it.
+    /// What this state holds for one of its sample-positioned controls, for a test that
+    /// reads the kernel's own record of the last write it applied.
     ///
-    /// The symmetric reader of [`Self::set_control`], and it exists for ADR-0051's catch-up
-    /// batch: a locate restores **every** prepared target, and a target with no write before
-    /// the destination is restored to the value it was prepared with. A batch that skipped
-    /// those would leave whatever the pre-seek position set, which is exactly the value the
-    /// seek was supposed to leave behind.
-    ///
-    /// **An envelope's gate answers here even though [`Self::set_control`] ignores it**, and
-    /// the asymmetry is the point rather than an oversight. A gate is sample-positioned, so
-    /// the edge law belongs to the kernel and nothing quantum-rate may move it — but a gate
-    /// can be *raised* by automation rather than by a note, and such a gate has no live-note
-    /// entry for the boundary mass release to find. If the batch skipped it, seeking back
-    /// past the automation that raised it would leave it high with nothing able to lower it.
-    ///
-    /// Off the audio thread. `None` only where the kind has no such control.
-    ///
-    /// Crate-private: the one caller is `StreamControl::catch_up`, and a restoration hook this
-    /// specific is not a commitment worth making to a downstream reader.
+    /// `None` where the kind keeps no such control. Test-only since `P05-S007b`: the
+    /// stored base a slot starts from is [`authored_value`]'s, and no production path reads
+    /// state back.
+    #[cfg(test)]
     #[must_use]
     pub(crate) fn control_value(&self, control: ControlIndex) -> Option<ParameterValue> {
         match self {
-            Self::Sine {
-                frequency,
-                amplitude,
-                ..
-            } => match control {
+            Self::Sine { frequency, .. } => match control {
                 SINE_FREQUENCY => ParameterValue::new(frequency.as_f32()).ok(),
-                SINE_AMPLITUDE => ParameterValue::new(amplitude.as_f32()).ok(),
                 _ => None,
             },
-            Self::Saw {
-                frequency,
-                amplitude,
-                ..
-            } => match control {
+            Self::Saw { frequency, .. } => match control {
                 SAW_FREQUENCY => ParameterValue::new(frequency.as_f32()).ok(),
-                SAW_AMPLITUDE => ParameterValue::new(amplitude.as_f32()).ok(),
                 _ => None,
             },
             Self::Envelope { held, velocity, .. } => match control {
@@ -432,40 +400,46 @@ impl NodeState {
             Self::Filter { .. } | Self::Stateless => None,
         }
     }
+}
 
-    /// Move one of this node's **quantum-rate** controls.
-    ///
-    /// The index is the node kind's own, resolved at admission from the parameter
-    /// identity a caller addressed. An index this state does not have does nothing: the
-    /// pairing is the compiler's, and the audio thread cannot report a defect in it.
-    ///
-    /// Sample-positioned controls do not come through here. ADR-0001 clause 14 puts them
-    /// at the offset their render position names, which is inside a kernel's own loop, so
-    /// the renderer hands them to the kernel as [`NodeIo::controls`] instead.
-    pub fn set_control(&mut self, control: ControlIndex, value: ParameterValue) {
-        match self {
-            // A frequency is **not** here, and it used to be. `SOUND-INV-021` makes it a
-            // pitch destination, and a magnitude a note carries must be in force at the
-            // sample that note's gate rises — so the destination declares itself
-            // sample-positioned, and one destination has one timing whichever payload
-            // addressed it. It reaches the kernel through [`NodeIo::controls`] instead.
-            Self::Sine { amplitude, .. } => {
-                if control == SINE_AMPLITUDE {
-                    *amplitude = value.into_amplitude();
-                }
-            }
-            Self::Saw { amplitude, .. } => {
-                if control == SAW_AMPLITUDE {
-                    *amplitude = value.into_amplitude();
-                }
-            }
-            // An envelope has no quantum-rate control. Its gate is sample-positioned
-            // (ADR-0001 clause 14) and its velocity is by `SOUND-INV-021`, so both laws
-            // live in the kernel — the one place that knows which sample it is — and reach
-            // it through [`NodeIo::controls`] rather than through here. Two authorities on
-            // one edge would be one too many.
-            Self::Envelope { .. } | Self::Filter { .. } | Self::Stateless => {}
-        }
+/// The value a prepared record carries for one of its controls, where it carries one.
+///
+/// `SOUND-INV-023`'s **stored base**: what the node was prepared with, which is the
+/// authored value. Read once, at admission, to seed the parameter slot; the compiler takes
+/// the declaration's resting value where the record carries none, which is the envelope's
+/// gate and velocity. Off the audio thread.
+#[must_use]
+pub(crate) fn authored_value(
+    prepared: &PreparedNode,
+    control: ControlIndex,
+) -> Option<ParameterValue> {
+    match prepared {
+        PreparedNode::Sine {
+            frequency,
+            amplitude,
+            ..
+        } => match control {
+            SINE_FREQUENCY => Some(ParameterValue::from_frequency(*frequency)),
+            SINE_AMPLITUDE => Some(ParameterValue::from_amplitude(*amplitude)),
+            _ => None,
+        },
+        PreparedNode::Saw {
+            frequency,
+            amplitude,
+            ..
+        } => match control {
+            SAW_FREQUENCY => Some(ParameterValue::from_frequency(*frequency)),
+            SAW_AMPLITUDE => Some(ParameterValue::from_amplitude(*amplitude)),
+            _ => None,
+        },
+        PreparedNode::Silence
+        | PreparedNode::Constant { .. }
+        | PreparedNode::Impulse { .. }
+        | PreparedNode::Gain { .. }
+        | PreparedNode::Envelope { .. }
+        | PreparedNode::Filter { .. }
+        | PreparedNode::Amplifier
+        | PreparedNode::Copy => None,
     }
 }
 
@@ -569,11 +543,40 @@ pub struct NodeIo<'a> {
     /// event-boundary quantum split clause 15 reserves for Phase 3: the schedule is still
     /// walked exactly once, and only the node the edge names sees it.
     pub controls: &'a [TimedControl],
+    /// This node's quantum-rate controls, one value per frame each, in the declaration's
+    /// control order — `SOUND-INV-024`'s segment, already advanced by the slot.
+    ///
+    /// A kernel reads one value per sample from here and never advances anything: the
+    /// renderer advanced every slot before the schedule walk, so what a frame reads is the
+    /// segment's value at that frame, and its last frame reads exactly the target. Indexed
+    /// through [`ramp_of`], which is how a kernel with one such control names it.
+    pub ramps: &'a [f32],
+}
+
+/// The per-frame values of a node's `index`-th quantum-rate control, from its ramps.
+///
+/// A kernel reads `buffer.get(frame).or(buffer.last())`: exactly the frame's value inside a
+/// quantum, which is the only length the renderer ever asks for, and the segment's last
+/// value held for a run longer than one — a test harness's shape, never the loop's.
+///
+/// A free function over the slice rather than a method on [`NodeIo`], so a kernel can hold
+/// it across the loop that writes `io.out`: the two are disjoint fields, and a method would
+/// borrow the whole. Empty rather than a panic for an index the node has no buffer for,
+/// which a kernel then reads as silence: a declaration naming a control the renderer did
+/// not prepare a buffer for is a registry inconsistency, and the one thing the audio thread
+/// can do about it is not trap.
+#[must_use]
+pub fn ramp_of(ramps: &[f32], index: usize) -> &[f32] {
+    let quantum = crate::time::QUANTUM_FRAMES as usize;
+    let start = index.saturating_mul(quantum);
+    ramps
+        .get(start..start.saturating_add(quantum))
+        .unwrap_or(&[])
 }
 
 /// One control change at a resolved offset inside the quantum.
 ///
-/// The sample-positioned twin of [`NodeState::set_control`]: the same node-local control
+/// The sample-positioned twin of a slot's quantum-rate buffer: the same node-local control
 /// index and the same value, plus the offset the change happens at. The renderer builds
 /// these from the events a quantum is due; a kernel applies them as it reaches each frame.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -619,6 +622,7 @@ pub fn bind<'a>(
     step: &NodeStep,
     position: Option<PlanPosition>,
     controls: &'a [TimedControl],
+    ramps: &'a [f32],
 ) -> Option<NodeIo<'a>> {
     let mut out: Option<&'a mut [f32]> = None;
     let mut inputs = [InputBuffer::Unpatched; MAX_INPUTS];
@@ -679,6 +683,7 @@ pub fn bind<'a>(
         inputs,
         position,
         controls,
+        ramps,
     })
 }
 
@@ -723,18 +728,14 @@ pub fn sine(prepared: &PreparedNode, state: &mut NodeState, io: &mut NodeIo<'_>)
     else {
         return;
     };
-    let NodeState::Sine {
-        phase,
-        frequency,
-        amplitude,
-    } = state
-    else {
+    let NodeState::Sine { phase, frequency } = state else {
         return;
     };
-    // The amplitude is read **once**, here: it is control-rate, so a parameter event
-    // inside a quantum takes effect at the next boundary — ADR-0001 clause 13's causality
-    // made concrete. The frequency is not, and the loop below says why.
-    let peak = f64::from(amplitude.as_f32());
+    // The amplitude is quantum-rate: a parameter event inside a quantum takes effect at
+    // the next boundary — ADR-0001 clause 13's causality made concrete — and from there
+    // the slot's segment (`SOUND-INV-024`) supplies one value per frame, read below. The
+    // frequency is sample-positioned, and the loop says why.
+    let peak = ramp_of(io.ramps, 0);
     let mut increment = f64::from(frequency.as_f32()) * seconds_per_frame;
     let mut running = *phase;
     let mut due = 0_usize;
@@ -754,7 +755,8 @@ pub fn sine(prepared: &PreparedNode, state: &mut NodeState, io: &mut NodeIo<'_>)
                 increment = f64::from(frequency.as_f32()) * seconds_per_frame;
             }
         }
-        *sample = (peak * (std::f64::consts::TAU * running).sin()) as f32;
+        let amplitude = f64::from(peak.get(frame).or(peak.last()).copied().unwrap_or(0.0));
+        *sample = (amplitude * (std::f64::consts::TAU * running).sin()) as f32;
         running += increment;
         // Both directions. A negative frequency is legal and means the phase runs
         // backwards, so wrapping only at 1.0 would let it fall below zero and grow
@@ -836,17 +838,13 @@ pub fn saw(prepared: &PreparedNode, state: &mut NodeState, io: &mut NodeIo<'_>) 
     else {
         return;
     };
-    let NodeState::Saw {
-        phase,
-        frequency,
-        amplitude,
-    } = state
-    else {
+    let NodeState::Saw { phase, frequency } = state else {
         return;
     };
-    // The amplitude is read once per quantum, exactly as the sine's is; the frequency is a
-    // pitch destination and is applied at the sample it names, for the reason the sine gives.
-    let peak = f64::from(amplitude.as_f32());
+    // The amplitude is read per frame from the slot's segment, exactly as the sine's is;
+    // the frequency is a pitch destination and is applied at the sample it names, for the
+    // reason the sine gives.
+    let peak = ramp_of(io.ramps, 0);
     let mut increment = f64::from(frequency.as_f32()) * seconds_per_frame;
     // The residual is a function of the step's magnitude. A negative frequency runs the phase
     // backwards, and the discontinuity is the same size either way.
@@ -881,7 +879,8 @@ pub fn saw(prepared: &PreparedNode, state: &mut NodeState, io: &mut NodeIo<'_>) 
         }
         *sample = if representable {
             let naive = 2.0 * running - 1.0;
-            (peak * (naive - poly_blep(running, step))) as f32
+            let amplitude = f64::from(peak.get(frame).or(peak.last()).copied().unwrap_or(0.0));
+            (amplitude * (naive - poly_blep(running, step))) as f32
         } else {
             0.0
         };

@@ -978,11 +978,11 @@ impl GraphIr {
     /// The mutable state bytes this plan's nodes occupy, with the node responsible.
     ///
     /// One state record per scheduled record, plus the parameter slots (`SOUND-INV-023`)
-    /// each node's writable controls need: `HOST` admits slots through this row rather than
-    /// as a count of their own, and the renderer allocates exactly this many — one
-    /// `SlotState` per parameter target, which is one per writable control per node. The
-    /// attribution stays the node whose state payload is widest; a slot belongs to its
-    /// node and is charged with it.
+    /// each node's writable controls need — slot, buffer offset and per-frame buffer — and
+    /// the per-node run table of those buffers (`SOUND-INV-024`): `HOST` admits slots
+    /// through this row rather than as a count of their own, and the renderer allocates
+    /// exactly this much. The attribution stays the node whose state payload is widest; a
+    /// slot belongs to its node and is charged with it.
     pub fn mutable_bytes(&self, inserted: u64) -> (PreparedBytes, IrObject) {
         let (records, dominant) = self.aggregate_bytes(
             crate::node::state_bytes_per_node(),
@@ -995,8 +995,13 @@ impl GraphIr {
         let slots = self.nodes.iter().fold(0_u64, |total, node| {
             total.saturating_add(crate::node::slot_payload_bytes(node.kind()))
         });
+        // The per-node run table of `SOUND-INV-024`'s buffers: one entry per scheduled
+        // record and a terminator, sized exactly as preparation sizes it.
+        let table = u64::from(self.scheduled_records(inserted).get())
+            .saturating_add(1)
+            .saturating_mul(crate::node::ramp_table_bytes_per_record());
         (
-            PreparedBytes::measured(records.get().saturating_add(slots)),
+            PreparedBytes::measured(records.get().saturating_add(slots).saturating_add(table)),
             dominant,
         )
     }

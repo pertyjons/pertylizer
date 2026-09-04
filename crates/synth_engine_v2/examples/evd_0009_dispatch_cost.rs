@@ -69,9 +69,34 @@ use synth_engine_v2::render::{
     AudioBlockMut, EventEnvelope, EventPayload, Renderer, TimedEvent, TimedEvents,
 };
 use synth_engine_v2::stream::StreamControl;
+
 use synth_engine_v2::time::{
     FrameCount, PlanPosition, QUANTUM_FRAMES, QuantumOffset, SampleTime, StreamAnchor, TimeSource,
 };
+
+/// One quantum of the sine's **authored** amplitude, for its per-frame amplitude read
+/// (`SOUND-INV-024`): a constant buffer is what an unsmoothed slot fills, and it has to be
+/// the fixture's own amplitude rather than unity, because the hand-built arms are compared
+/// with the crate's renderer over the same plan — an independent review found a unity ramp
+/// making that comparison one of two different signals. Seeded once in `main` from the
+/// prepared record, and read through [`sine_ramp`]; every other kernel here has no
+/// quantum-rate control and is handed nothing.
+static SINE_RAMP: std::sync::OnceLock<[f32; synth_engine_v2::time::QUANTUM_FRAMES as usize]> =
+    std::sync::OnceLock::new();
+
+/// The sine's ramp, once seeded; empty before, which the kernel reads as silence.
+fn sine_ramp() -> &'static [f32] {
+    SINE_RAMP.get().map_or(&[][..], |ramp| &ramp[..])
+}
+
+/// Seed the sine's ramp from the prepared record's amplitude.
+fn seed_sine_ramp(prepared: &PreparedNode) {
+    let amplitude = match prepared {
+        PreparedNode::Sine { amplitude, .. } => amplitude.as_f32(),
+        _ => 1.0,
+    };
+    let _ = SINE_RAMP.set([amplitude; synth_engine_v2::time::QUANTUM_FRAMES as usize]);
+}
 
 /// A raised gate at the first sample of the quantum about to be rendered.
 fn held_gate() -> TimedControl {
@@ -141,6 +166,15 @@ fn voice_path() -> GraphIr {
             (AMPLIFIER, PortId::FIRST),
             (OUTPUT, PortId::FIRST),
             SignalDomain::Audio,
+        )
+        // `SOUND-INV-021`: a voice scope with a pitch destination names its tuning. The
+        // harness rendered before that clause and its fixture was not updated with it, so it
+        // panicked at admission on every run since; the gate compiles examples and never runs
+        // them, which is how that stayed unseen.
+        .tuning(
+            ExecutionScope::Voice,
+            synth_engine_v2::tuning::PreparedTuning::equal_temperament()
+                .expect("twelve-tone equal temperament prepares"),
         )
         .build()
         .expect("the minimal voice path is a readable plan")
@@ -252,6 +286,7 @@ impl Hand {
                 inputs: [InputBuffer::Unpatched; MAX_INPUTS],
                 position: None,
                 controls: &[held_gate()],
+                ramps: &[],
             },
         );
     }
@@ -274,6 +309,7 @@ impl Hand {
                 inputs: [InputBuffer::Unpatched; MAX_INPUTS],
                 position: None,
                 controls: &[],
+                ramps: sine_ramp(),
             },
         );
         filter(
@@ -285,6 +321,7 @@ impl Hand {
                 inputs: [InputBuffer::InPlace, InputBuffer::Unpatched],
                 position: None,
                 controls: &[],
+                ramps: &[],
             },
         );
         envelope(
@@ -296,6 +333,7 @@ impl Hand {
                 inputs: [InputBuffer::Unpatched; MAX_INPUTS],
                 position: None,
                 controls: &[],
+                ramps: &[],
             },
         );
         amplifier(
@@ -307,6 +345,7 @@ impl Hand {
                 inputs: [InputBuffer::InPlace, InputBuffer::Patched(&self.control)],
                 position: None,
                 controls: &[],
+                ramps: &[],
             },
         );
         // The plan's last operation, which the renderer performs and which a hand-written
@@ -421,6 +460,7 @@ impl Table {
                         inputs: [InputBuffer::Unpatched; MAX_INPUTS],
                         position: None,
                         controls: &[held_gate()],
+                        ramps: &[],
                     },
                 );
             }
@@ -451,6 +491,7 @@ impl Table {
                 step,
                 None,
                 &[],
+                sine_ramp(),
             );
             black_box(&io);
         }
@@ -476,6 +517,7 @@ impl Table {
                 step,
                 None,
                 &[],
+                sine_ramp(),
             ) else {
                 continue;
             };
@@ -522,6 +564,7 @@ impl Table {
                 step,
                 None,
                 &[],
+                sine_ramp(),
             ) else {
                 continue;
             };
@@ -549,6 +592,7 @@ impl Table {
                 step,
                 None,
                 &[],
+                sine_ramp(),
             ) else {
                 continue;
             };
@@ -629,6 +673,13 @@ fn main() {
     let plan = compile(&voice_path(), &RenderConfig::new(profile()))
         .into_plan()
         .expect("the minimal voice path is admitted");
+    if let Some(sine) = plan
+        .prepared_nodes()
+        .iter()
+        .find(|node| matches!(node, PreparedNode::Sine { .. }))
+    {
+        seed_sine_ramp(sine);
+    }
 
     // The hand-written arm mirrors the compiler's buffer assignment, so a plan that no
     // longer matches it must fail loudly rather than be compared against a different

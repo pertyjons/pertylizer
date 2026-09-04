@@ -8,27 +8,45 @@
 //! region because it runs on the audio thread — an override write arrives as an event
 //! and is composed where it is applied.
 //!
-//! What is **not** here yet, by `P05-S007a`'s cut: `SOUND-INV-024`'s segment. Every
-//! resolved value is a step today; the segment is `P05-S007b`'s and lands in this struct.
-//! Nor is a modulator: the sum is written by [`SlotState::modulate`], which Phase 7's
-//! modulation edges will call per quantum and which a crate-private test seam calls
-//! today, so that the override-leaves-modulation-in-force property is a tested fact
-//! rather than a claim about code with no caller.
+//! `SOUND-INV-024`'s segment lives here too, since `P05-S007b`: a resolved value is the
+//! segment's **target**, the slot advances toward it by one add per frame into a buffer the
+//! kernel reads per frame, and the segment's last frame reads exactly the target. Every
+//! declared policy is `Smoothing::None` today, so every write is still a step; the
+//! mechanism is exercised through a crate-private, test-only policy seam until a
+//! declaration smooths. What is **not** here: a modulator. The sum is written by
+//! [`SlotState::modulate`], which Phase 7's modulation edges will call per quantum and
+//! which a test seam calls today, so that the override-leaves-modulation-in-force
+//! property is a tested fact rather than a claim about code with no caller.
 
-use crate::node::{ModulationLaw, ModulationSum, ParameterUnit};
+use crate::node::{ModulationLaw, ModulationSum, ParameterUnit, Smoothing};
 use crate::quantities::ParameterValue;
+use crate::time::QUANTUM_FRAMES;
 
-/// One addressable parameter's layers and law.
+/// The bytes one quantum-rate slot's control buffer takes: one `f32` per frame of a quantum.
+pub(crate) const RAMP_BUFFER_BYTES: u64 = (QUANTUM_FRAMES as u64) * (size_of::<f32>() as u64);
+
+/// One addressable parameter's layers, law and segment.
 ///
-/// `Copy` and three values wide beyond the two enums, because the renderer keeps one per
-/// parameter target in a table it indexes on the audio thread, prepared once. The values
-/// keep their types — a validated parameter value stays one, and the sum is a
-/// [`ModulationSum`] — because they persist; only the law's arithmetic is over raw floats.
+/// `Copy`, because the renderer keeps one per parameter target in a table it indexes on
+/// the audio thread, prepared once. The values keep their types — a validated parameter
+/// value stays one, and the sum is a [`ModulationSum`] — because they persist; only the
+/// law's arithmetic and the segment's add are over raw floats.
 #[derive(Debug, Clone, Copy, PartialEq)]
 #[must_use]
 pub(crate) struct SlotState {
     law: ModulationLaw,
     unit: ParameterUnit,
+    /// The segment length a retarget takes, from the declaration's policy.
+    frames: u32,
+    /// The segment: what the last frame read, where it is going, how far it has to go, and
+    /// the add per frame that takes it there. `remaining == 0` is a step already taken.
+    value: ParameterValue,
+    target: ParameterValue,
+    increment: f32,
+    remaining: u32,
+    /// Set by an adoption and spent by the next write: `SOUND-INV-018`'s catch-up is that
+    /// write for every slot, and an activation never ramps.
+    seed_next: bool,
     /// The stored base: the value the node was prepared with.
     base: ParameterValue,
     /// The override layer, which replaces the base while present. A caller's
@@ -41,28 +59,113 @@ pub(crate) struct SlotState {
 }
 
 impl SlotState {
-    /// A slot at rest: base in place, no override, the law's identity as its sum.
-    pub(crate) const fn prepared(
+    /// A slot at rest: base in place, no override, the law's identity as its sum, and the
+    /// segment standing on the base with nothing remaining.
+    pub(crate) fn prepared(
         law: ModulationLaw,
         unit: ParameterUnit,
+        smoothing: Smoothing,
         base: ParameterValue,
     ) -> Self {
-        Self {
+        let mut slot = Self {
             law,
             unit,
+            frames: smoothing.frames(),
+            value: base,
+            target: base,
+            increment: 0.0,
+            remaining: 0,
+            seed_next: false,
             base,
             override_value: None,
             modulation: law.identity(),
-        }
+        };
+        // Through the same composition every later value takes, so a base outside its
+        // law's domain — which admission does not refuse — starts clamped as it will read.
+        let resolved = slot.resolved();
+        slot.value = resolved;
+        slot.target = resolved;
+        slot
     }
 
-    /// An override-layer write, and the value the kernel reads as a result.
+    /// An override-layer write, and the value the kernel reads as a result **now**: the
+    /// segment's current value, which is the new target only under a `None` policy.
     ///
     /// Replaces the base only — the modulation stays in force, which is the clause an
     /// automated pitch still bends under.
     pub(crate) fn write_override(&mut self, value: ParameterValue) -> ParameterValue {
         self.override_value = Some(value);
-        self.resolved()
+        self.retarget()
+    }
+
+    /// Re-derive the resolved value and make it the segment's target.
+    ///
+    /// ADR-0006 clause 3: a retarget continues from the **current** value, never from the
+    /// previous target, so a write mid-segment cannot jump. A seeded slot — one an adoption
+    /// marked — takes the value as a step and clears the mark, which is what makes an
+    /// activation's catch-up land in force on its first frame. The add per frame is fixed
+    /// here so the loop's advance is one add.
+    fn retarget(&mut self) -> ParameterValue {
+        let target = self.resolved();
+        self.target = target;
+        let seeded = core::mem::take(&mut self.seed_next);
+        if self.frames == 0 || seeded {
+            self.value = target;
+            self.remaining = 0;
+            self.increment = 0.0;
+        } else {
+            self.remaining = self.frames;
+            // In `f64`: two legal finite endpoints of opposite sign can be further apart
+            // than `f32` holds, and an overflowed delta would make the first advance
+            // saturate to the target instead of ramping. The per-frame add is narrowed
+            // once the division has brought it back into range; only a one-frame segment
+            // between such endpoints cannot be, and its one frame is the target by rule.
+            let delta = f64::from(target.as_f32()) - f64::from(self.value.as_f32());
+            self.increment = (delta / f64::from(self.frames)) as f32;
+        }
+        self.value
+    }
+
+    /// Mark the slot so that its next write is a step: an adoption's catch-up seeds the
+    /// segment with current equal to target and nothing remaining (`SOUND-INV-024`).
+    pub(crate) fn seed(&mut self) {
+        self.seed_next = true;
+    }
+
+    /// Advance the segment through one quantum, writing the value each frame reads.
+    ///
+    /// **Before the kernel reads**: frame `k` of a segment of `N` reads
+    /// `start + (target − start) × (k + 1) / N`, as one add per frame, and the segment's
+    /// last frame reads exactly the target rather than the sum's rounding of it — V1's
+    /// own filter convention. Every later frame holds the target. A slot with nothing
+    /// remaining fills its value.
+    pub(crate) fn advance(&mut self, out: &mut [f32]) {
+        for frame in out.iter_mut() {
+            if self.remaining > 0 {
+                self.remaining -= 1;
+                self.value = if self.remaining == 0 {
+                    self.target
+                } else {
+                    ParameterValue::saturating(self.value.as_f32() + self.increment)
+                };
+            }
+            *frame = self.value.as_f32();
+        }
+    }
+
+    /// What the kernel reads on the next frame, without advancing.
+    #[cfg(test)]
+    pub(crate) const fn current(&self) -> ParameterValue {
+        self.value
+    }
+
+    /// Override the declared policy with a segment length in frames.
+    ///
+    /// Test-only, until a declaration smooths: every declared policy is `None`, and this is
+    /// what lets the segment's own facts be tested rather than claimed.
+    #[cfg(test)]
+    pub(crate) fn smooth_over(&mut self, frames: u32) {
+        self.frames = frames;
     }
 
     /// The modulation sum, and the value the kernel reads as a result.
@@ -72,7 +175,7 @@ impl SlotState {
     #[cfg(test)]
     pub(crate) fn modulate(&mut self, sum: ModulationSum) -> ParameterValue {
         self.modulation = sum;
-        self.resolved()
+        self.retarget()
     }
 
     /// The layers composed: the override where present, else the base; the law; the clamp.

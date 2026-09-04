@@ -104,9 +104,34 @@ use synth_engine_v2::render::{
     AudioBlockMut, EventEnvelope, EventPayload, Renderer, TimedEvent, TimedEvents,
 };
 use synth_engine_v2::stream::StreamControl;
+
 use synth_engine_v2::time::{
     FrameCount, PlanPosition, QUANTUM_FRAMES, QuantumOffset, SampleTime, StreamAnchor, TimeSource,
 };
+
+/// One quantum of the sine's **authored** amplitude, for its per-frame amplitude read
+/// (`SOUND-INV-024`): a constant buffer is what an unsmoothed slot fills, and it has to be
+/// the fixture's own amplitude rather than unity, because the hand-built arms are compared
+/// with the crate's renderer over the same plan — an independent review found a unity ramp
+/// making that comparison one of two different signals. Seeded once in `main` from the
+/// prepared record, and read through [`sine_ramp`]; every other kernel here has no
+/// quantum-rate control and is handed nothing.
+static SINE_RAMP: std::sync::OnceLock<[f32; synth_engine_v2::time::QUANTUM_FRAMES as usize]> =
+    std::sync::OnceLock::new();
+
+/// The sine's ramp, once seeded; empty before, which the kernel reads as silence.
+fn sine_ramp() -> &'static [f32] {
+    SINE_RAMP.get().map_or(&[][..], |ramp| &ramp[..])
+}
+
+/// Seed the sine's ramp from the prepared record's amplitude.
+fn seed_sine_ramp(prepared: &PreparedNode) {
+    let amplitude = match prepared {
+        PreparedNode::Sine { amplitude, .. } => amplitude.as_f32(),
+        _ => 1.0,
+    };
+    let _ = SINE_RAMP.set([amplitude; synth_engine_v2::time::QUANTUM_FRAMES as usize]);
+}
 
 /// A raised gate at the first sample of the quantum about to be rendered.
 ///
@@ -186,6 +211,15 @@ fn voice_path(cutoff: f32, attack: f32, decay: f32, sustain: f32, release: f32) 
             (AMPLIFIER, PortId::FIRST),
             (OUTPUT, PortId::FIRST),
             SignalDomain::Audio,
+        )
+        // `SOUND-INV-021`: a voice scope with a pitch destination names its tuning. The
+        // harness rendered before that clause and its fixture was not updated with it, so it
+        // panicked at admission on every run since; the gate compiles examples and never runs
+        // them, which is how that stayed unseen.
+        .tuning(
+            ExecutionScope::Voice,
+            synth_engine_v2::tuning::PreparedTuning::equal_temperament()
+                .expect("twelve-tone equal temperament prepares"),
         )
         .build()
         .expect("the minimal voice path is a readable plan")
@@ -666,6 +700,7 @@ impl Planar {
                 inputs: [InputBuffer::Unpatched; MAX_INPUTS],
                 position: None,
                 controls: &[],
+                ramps: sine_ramp(),
             },
         );
         call_filter(
@@ -677,6 +712,7 @@ impl Planar {
                 inputs: [InputBuffer::InPlace, InputBuffer::Unpatched],
                 position: None,
                 controls: &[],
+                ramps: &[],
             },
         );
         call_envelope(
@@ -688,6 +724,7 @@ impl Planar {
                 inputs: [InputBuffer::Unpatched; MAX_INPUTS],
                 position: None,
                 controls: &self.pending_gate,
+                ramps: &[],
             },
         );
         let (out, control) = two(&mut self.arena, self.left, self.control_left);
@@ -700,6 +737,7 @@ impl Planar {
                 inputs: [InputBuffer::InPlace, InputBuffer::Patched(control)],
                 position: None,
                 controls: &[],
+                ramps: &[],
             },
         );
         // The widening, into the slot the envelope has finished with.
@@ -713,6 +751,7 @@ impl Planar {
                 inputs: [InputBuffer::Patched(source), InputBuffer::Unpatched],
                 position: None,
                 controls: &[],
+                ramps: &[],
             },
         );
         // The queued gate edge is consumed by this quantum and by no later one, which is
@@ -731,6 +770,7 @@ impl Planar {
                 inputs: [InputBuffer::Unpatched; MAX_INPUTS],
                 position: None,
                 controls: &[],
+                ramps: sine_ramp(),
             },
         );
         let (out, source) = two(&mut self.arena, self.right, self.left);
@@ -743,6 +783,7 @@ impl Planar {
                 inputs: [InputBuffer::Patched(source), InputBuffer::Unpatched],
                 position: None,
                 controls: &[],
+                ramps: &[],
             },
         );
         call_filter(
@@ -754,6 +795,7 @@ impl Planar {
                 inputs: [InputBuffer::InPlace, InputBuffer::Unpatched],
                 position: None,
                 controls: &[],
+                ramps: &[],
             },
         );
         call_filter(
@@ -765,6 +807,7 @@ impl Planar {
                 inputs: [InputBuffer::InPlace, InputBuffer::Unpatched],
                 position: None,
                 controls: &[],
+                ramps: &[],
             },
         );
         call_envelope(
@@ -776,6 +819,7 @@ impl Planar {
                 inputs: [InputBuffer::Unpatched; MAX_INPUTS],
                 position: None,
                 controls: &self.pending_gate,
+                ramps: &[],
             },
         );
         let (out, control) = two(&mut self.arena, self.left, self.control_left);
@@ -788,6 +832,7 @@ impl Planar {
                 inputs: [InputBuffer::InPlace, InputBuffer::Patched(control)],
                 position: None,
                 controls: &[],
+                ramps: &[],
             },
         );
         let (out, control) = two(&mut self.arena, self.right, self.control_left);
@@ -800,6 +845,7 @@ impl Planar {
                 inputs: [InputBuffer::InPlace, InputBuffer::Patched(control)],
                 position: None,
                 controls: &[],
+                ramps: &[],
             },
         );
         self.write_carry();
@@ -824,6 +870,7 @@ impl Planar {
                 inputs: [InputBuffer::Unpatched; MAX_INPUTS],
                 position: None,
                 controls: &[],
+                ramps: sine_ramp(),
             },
         );
         let (out, source) = two(&mut self.arena, self.right, self.left);
@@ -836,6 +883,7 @@ impl Planar {
                 inputs: [InputBuffer::Patched(source), InputBuffer::Unpatched],
                 position: None,
                 controls: &[],
+                ramps: &[],
             },
         );
         call_filter(
@@ -847,6 +895,7 @@ impl Planar {
                 inputs: [InputBuffer::InPlace, InputBuffer::Unpatched],
                 position: None,
                 controls: &[],
+                ramps: &[],
             },
         );
         call_filter(
@@ -858,6 +907,7 @@ impl Planar {
                 inputs: [InputBuffer::InPlace, InputBuffer::Unpatched],
                 position: None,
                 controls: &[],
+                ramps: &[],
             },
         );
         call_envelope(
@@ -869,6 +919,7 @@ impl Planar {
                 inputs: [InputBuffer::Unpatched; MAX_INPUTS],
                 position: None,
                 controls: &self.pending_gate,
+                ramps: &[],
             },
         );
         let (out, control) = two(&mut self.arena, self.left, self.control_left);
@@ -881,6 +932,7 @@ impl Planar {
                 inputs: [InputBuffer::InPlace, InputBuffer::Patched(control)],
                 position: None,
                 controls: &[],
+                ramps: &[],
             },
         );
         call_envelope(
@@ -892,6 +944,7 @@ impl Planar {
                 inputs: [InputBuffer::Unpatched; MAX_INPUTS],
                 position: None,
                 controls: &self.pending_gate,
+                ramps: &[],
             },
         );
         let (out, control) = two(&mut self.arena, self.right, self.control_right);
@@ -904,6 +957,7 @@ impl Planar {
                 inputs: [InputBuffer::InPlace, InputBuffer::Patched(control)],
                 position: None,
                 controls: &[],
+                ramps: &[],
             },
         );
         self.write_carry();
@@ -1075,6 +1129,7 @@ impl Interleaved {
                 inputs: [InputBuffer::Unpatched; MAX_INPUTS],
                 position: None,
                 controls: &[],
+                ramps: sine_ramp(),
             },
         );
         call_filter(
@@ -1086,6 +1141,7 @@ impl Interleaved {
                 inputs: [InputBuffer::InPlace, InputBuffer::Unpatched],
                 position: None,
                 controls: &[],
+                ramps: &[],
             },
         );
         call_envelope(
@@ -1097,6 +1153,7 @@ impl Interleaved {
                 inputs: [InputBuffer::Unpatched; MAX_INPUTS],
                 position: None,
                 controls: &self.pending_gate,
+                ramps: &[],
             },
         );
         let (out, control) = two(&mut self.arena, self.mono, self.control_left);
@@ -1109,6 +1166,7 @@ impl Interleaved {
                 inputs: [InputBuffer::InPlace, InputBuffer::Patched(control)],
                 position: None,
                 controls: &[],
+                ramps: &[],
             },
         );
         let (out, source) = two(&mut self.arena, self.stereo, self.mono);
@@ -1121,6 +1179,7 @@ impl Interleaved {
                 inputs: [InputBuffer::Patched(source), InputBuffer::Unpatched],
                 position: None,
                 controls: &[],
+                ramps: &[],
             },
         );
         self.write_carry();
@@ -1140,6 +1199,7 @@ impl Interleaved {
                 inputs: [InputBuffer::Unpatched; MAX_INPUTS],
                 position: None,
                 controls: &[],
+                ramps: sine_ramp(),
             },
         );
         let (out, source) = two(&mut self.arena, self.stereo, self.mono);
@@ -1152,6 +1212,7 @@ impl Interleaved {
                 inputs: [InputBuffer::Patched(source), InputBuffer::Unpatched],
                 position: None,
                 controls: &[],
+                ramps: &[],
             },
         );
         filter_interleaved(
@@ -1163,6 +1224,7 @@ impl Interleaved {
                 inputs: [InputBuffer::InPlace, InputBuffer::Unpatched],
                 position: None,
                 controls: &[],
+                ramps: &[],
             },
         );
         call_envelope(
@@ -1174,6 +1236,7 @@ impl Interleaved {
                 inputs: [InputBuffer::Unpatched; MAX_INPUTS],
                 position: None,
                 controls: &self.pending_gate,
+                ramps: &[],
             },
         );
         let (out, control) = two(&mut self.arena, self.stereo, self.control_left);
@@ -1186,6 +1249,7 @@ impl Interleaved {
                 inputs: [InputBuffer::InPlace, InputBuffer::Patched(control)],
                 position: None,
                 controls: &[],
+                ramps: &[],
             },
         );
         self.write_carry();
@@ -1205,6 +1269,7 @@ impl Interleaved {
                 inputs: [InputBuffer::Unpatched; MAX_INPUTS],
                 position: None,
                 controls: &[],
+                ramps: sine_ramp(),
             },
         );
         let (out, source) = two(&mut self.arena, self.stereo, self.mono);
@@ -1217,6 +1282,7 @@ impl Interleaved {
                 inputs: [InputBuffer::Patched(source), InputBuffer::Unpatched],
                 position: None,
                 controls: &[],
+                ramps: &[],
             },
         );
         filter_interleaved_split(
@@ -1228,6 +1294,7 @@ impl Interleaved {
                 inputs: [InputBuffer::InPlace, InputBuffer::Unpatched],
                 position: None,
                 controls: &[],
+                ramps: &[],
             },
         );
         call_envelope(
@@ -1239,6 +1306,7 @@ impl Interleaved {
                 inputs: [InputBuffer::Unpatched; MAX_INPUTS],
                 position: None,
                 controls: &self.pending_gate,
+                ramps: &[],
             },
         );
         call_envelope(
@@ -1250,6 +1318,7 @@ impl Interleaved {
                 inputs: [InputBuffer::Unpatched; MAX_INPUTS],
                 position: None,
                 controls: &self.pending_gate,
+                ramps: &[],
             },
         );
         let (out, left, right) = three(
@@ -1267,6 +1336,7 @@ impl Interleaved {
                 inputs: [InputBuffer::Patched(left), InputBuffer::Patched(right)],
                 position: None,
                 controls: &[],
+                ramps: &[],
             },
         );
         self.write_carry();
@@ -1337,6 +1407,7 @@ impl Steps {
                 step,
                 None,
                 &[],
+                sine_ramp(),
             );
             black_box(&io);
         }
@@ -1505,6 +1576,7 @@ fn main() {
         amplifier: prepared_of(&stereo, |node| matches!(node, PreparedNode::Amplifier)),
         copy: prepared_of(&stereo, |node| matches!(node, PreparedNode::Copy)),
     };
+    seed_sine_ramp(&records.sine);
     assert!(
         records.filter_left != records.filter_right
             && records.envelope_left != records.envelope_right,

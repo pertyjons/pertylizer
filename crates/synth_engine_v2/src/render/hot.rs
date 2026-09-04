@@ -112,6 +112,13 @@ impl PreparedRenderer {
             self.diagnostics.count_late_activation();
         }
 
+        // `SOUND-INV-024`: an activation never ramps. The catch-up that follows this
+        // adoption writes every prepared target, and each slot takes that write as a step
+        // whatever its policy — seeded with current equal to target and nothing remaining.
+        for slot in &mut self.parameter_slots {
+            slot.seed();
+        }
+
         self.adoption_gate_len = 0;
         for index in 0..activation.producers.len() {
             let Some(producer) = activation.producers.get(index).copied() else {
@@ -368,18 +375,14 @@ impl PreparedRenderer {
                 if matches!(target.rate, ControlRate::Sample) {
                     return;
                 }
-                // `SOUND-INV-023`: an override-layer write, composed through the slot
-                // before it reaches state — the modulation in force stays in force.
-                let Some(composed) = self.parameter_slots.get_mut(slot.index()) else {
-                    return;
-                };
-                let resolved = composed.write_override(value);
-                // A `ParameterValue` is finite by construction, so this assignment cannot
-                // poison a phase accumulator — which is why the type exists rather than a
-                // check here, where no diagnostic could be produced. What the control
-                // *means* is the node state's, which is the last place it is known.
-                if let Some(state) = self.node_states.get_mut(target.node.index()) {
-                    state.set_control(target.control, resolved);
+                // `SOUND-INV-023`: an override-layer write, composed through the slot —
+                // the modulation in force stays in force — and `SOUND-INV-024`: the
+                // resolved value is the slot's new target, which its segment reaches over
+                // the declared policy and the kernel reads per frame from the slot's
+                // buffer. Nothing is written to node state here; the state no longer
+                // carries a quantum-rate control at all.
+                if let Some(composed) = self.parameter_slots.get_mut(slot.index()) {
+                    let _ = composed.write_override(value);
                 }
             }
         }
@@ -671,6 +674,22 @@ impl PreparedRenderer {
         // place engine time and plan time meet.
         let plan_start = self.plan_position_of(quantum_start);
 
+        // `SOUND-INV-024`: every quantum-rate slot advances **before** any kernel reads, one
+        // add per frame into its buffer. The one place a segment moves.
+        for index in 0..self.parameter_slots.len() {
+            let Some(offset) = self.ramp_offsets.get(index).copied() else {
+                break;
+            };
+            let (Some(slot), Some(buffer)) = (
+                self.parameter_slots.get_mut(index),
+                self.ramp_buffers
+                    .get_mut(offset..offset.saturating_add(quantum)),
+            ) else {
+                continue;
+            };
+            slot.advance(buffer);
+        }
+
         for index in 0..self.plan.ops().len() {
             // Borrowed, not copied. A step is the widest thing the schedule holds and a
             // prepared record is the widest variant of its enum; copying either per node
@@ -705,12 +724,20 @@ impl PreparedRenderer {
                         .timed_controls
                         .get(start as usize..end as usize)
                         .unwrap_or(&[]);
+                    let (Some(ramp_start), Some(ramp_end)) = (
+                        self.ramp_starts.get(step.node().index()).copied(),
+                        self.ramp_starts.get(step.node().index() + 1).copied(),
+                    ) else {
+                        continue;
+                    };
+                    let ramps = self.ramp_buffers.get(ramp_start..ramp_end).unwrap_or(&[]);
                     let Some(mut io) = kernels::bind(
                         &mut self.buffers,
                         self.plan.regions(),
                         step,
                         plan_start,
                         gates,
+                        ramps,
                     ) else {
                         continue;
                     };

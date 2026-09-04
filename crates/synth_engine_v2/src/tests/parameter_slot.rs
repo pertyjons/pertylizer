@@ -142,6 +142,7 @@ fn an_override_replaces_the_base_and_leaves_the_modulation_in_force() {
     let mut slot = SlotState::prepared(
         ModulationLaw::SemitoneAdditive,
         ParameterUnit::Hertz,
+        crate::node::Smoothing::None,
         value(440.0),
     );
     assert_eq!(slot.resolved(), value(440.0));
@@ -152,6 +153,7 @@ fn an_override_replaces_the_base_and_leaves_the_modulation_in_force() {
     let mut level = SlotState::prepared(
         ModulationLaw::NormalizedAdditive,
         ParameterUnit::NormalizedLevel,
+        crate::node::Smoothing::None,
         value(0.5),
     );
     assert_eq!(level.modulate(sum(0.3)), value(0.8));
@@ -161,6 +163,7 @@ fn an_override_replaces_the_base_and_leaves_the_modulation_in_force() {
     let gain = SlotState::prepared(
         ModulationLaw::MultiplicativeGain,
         ParameterUnit::LinearAmplitude,
+        crate::node::Smoothing::None,
         value(0.5),
     );
     assert_eq!(gain.resolved(), value(0.5));
@@ -174,11 +177,213 @@ fn a_law_that_leaves_the_finite_domain_saturates_rather_than_poisoning_state() {
     let mut slot = SlotState::prepared(
         ModulationLaw::SemitoneAdditive,
         ParameterUnit::Hertz,
+        crate::node::Smoothing::None,
         value(440.0),
     );
     assert_eq!(slot.modulate(sum(1.0e9)), value(f32::MAX));
     assert_eq!(slot.write_override(value(-1.0)), value(f32::MIN));
     assert_eq!(slot.write_override(value(0.0)), value(0.0));
+}
+
+// --- the segment (SOUND-INV-024) ------------------------------------------------------------
+
+#[test]
+fn a_segment_reads_past_its_start_on_its_first_frame_and_exactly_its_target_on_its_last() {
+    // ADR-0006 as SOUND-INV-024 states it: frame `k` of `N` reads `start + (target − start)
+    // × (k + 1) / N`. So the first frame is already past the start, the last is exactly the
+    // target — not the sum's rounding of it — and every later frame holds it.
+    let mut slot = SlotState::prepared(
+        ModulationLaw::DecibelAdditive,
+        ParameterUnit::LinearAmplitude,
+        crate::node::Smoothing::None,
+        value(0.0),
+    );
+    slot.smooth_over(10);
+    assert_eq!(
+        slot.write_override(value(1.0)),
+        value(0.0),
+        "a retarget reads the current value"
+    );
+    let mut frames = [0.0_f32; 16];
+    slot.advance(&mut frames);
+    assert!(
+        frames[0] > 0.0,
+        "the first frame reads past the start: {}",
+        frames[0]
+    );
+    assert!(
+        (frames[0] - 0.1).abs() < 1e-6,
+        "the first frame reads one tenth of the way"
+    );
+    for pair in frames[..10].windows(2) {
+        assert!(pair[1] > pair[0], "the segment is monotone: {frames:?}");
+    }
+    assert_eq!(frames[9], 1.0, "the last frame reads exactly the target");
+    assert!(
+        frames[10..].iter().all(|f| *f == 1.0),
+        "every later frame holds it"
+    );
+    assert_eq!(slot.current(), value(1.0));
+
+    // A `None` policy is a step read on its first frame.
+    let mut step = SlotState::prepared(
+        ModulationLaw::DecibelAdditive,
+        ParameterUnit::LinearAmplitude,
+        crate::node::Smoothing::None,
+        value(0.0),
+    );
+    assert_eq!(step.write_override(value(1.0)), value(1.0));
+    let mut frames = [0.0_f32; 4];
+    step.advance(&mut frames);
+    assert_eq!(frames, [1.0; 4]);
+}
+
+#[test]
+fn a_retarget_mid_segment_continues_from_the_current_value_not_the_previous_target() {
+    // ADR-0006 clause 3. Halfway toward 1.0 the slot is at 0.5; a write of 0.0 then starts
+    // from 0.5 and reaches 0.0 over a whole new segment, never from the 1.0 it was heading
+    // for — which would have made the next frame jump to 0.9.
+    let mut slot = SlotState::prepared(
+        ModulationLaw::DecibelAdditive,
+        ParameterUnit::LinearAmplitude,
+        crate::node::Smoothing::None,
+        value(0.0),
+    );
+    slot.smooth_over(10);
+    let _ = slot.write_override(value(1.0));
+    let mut first = [0.0_f32; 5];
+    slot.advance(&mut first);
+    assert!(
+        (slot.current().as_f32() - 0.5).abs() < 1e-6,
+        "halfway: {:?}",
+        slot.current()
+    );
+    assert_eq!(slot.write_override(value(0.0)), slot.current());
+    let mut second = [0.0_f32; 10];
+    slot.advance(&mut second);
+    assert!(
+        (second[0] - 0.45).abs() < 1e-6,
+        "continues from 0.5 downward: {second:?}"
+    );
+    assert_eq!(second[9], 0.0, "and reaches the new target exactly");
+}
+
+#[test]
+fn a_seeded_slot_takes_its_next_write_as_a_step_whatever_its_policy() {
+    // SOUND-INV-024's last clause on the slot alone: an activation seeds every slot, so the
+    // catch-up that follows lands with current equal to target and nothing remaining. The
+    // seed is spent by that one write; the write after it ramps again.
+    let mut slot = SlotState::prepared(
+        ModulationLaw::DecibelAdditive,
+        ParameterUnit::LinearAmplitude,
+        crate::node::Smoothing::None,
+        value(0.0),
+    );
+    slot.smooth_over(10);
+    slot.seed();
+    assert_eq!(
+        slot.write_override(value(1.0)),
+        value(1.0),
+        "seeded: a step"
+    );
+    assert_eq!(
+        slot.write_override(value(0.0)),
+        value(1.0),
+        "spent: a segment again"
+    );
+}
+
+#[test]
+fn the_kernel_reads_the_segment_per_frame_and_a_step_policy_renders_as_before() {
+    // Through the renderer: a sine at amplitude 0 written to 1 at the boundary. Under the
+    // declared `None` policy quantum 1 is at full amplitude from its first frame; under a
+    // one-quantum segment (the test seam) its envelope rises across quantum 1 and is full
+    // from quantum 2 — and the sine's own phase is untouched by either, which is what the
+    // per-frame read from the slot's buffer buys over a state field the kernel read once.
+    let plan = admit(&sine_alone(0.0));
+    let amplitude = plan
+        .resolve_parameter(OSCILLATOR, parameters::SINE_AMPLITUDE)
+        .expect("the sine declares an amplitude");
+    let write = [PlanEvent::new(
+        PlanPosition::new(Q),
+        CompiledPayload::SetParameter {
+            slot: amplitude,
+            value: ParameterValue::ONE,
+        },
+    )];
+    let stepped = render(&plan, &[], &write, 4);
+    let ramped = render_smoothed(&plan, amplitude, QUANTUM_FRAMES, &write, 4);
+    // The renderer primes one quantum of silence, so plan quantum `n` is output quantum
+    // `n + 1`: the write at `Q` takes effect at plan quantum 1, output quantum 2.
+    let q = Q as usize;
+    let (from, to) = (2 * q, 3 * q);
+    assert!(stepped[..from].iter().all(|s| *s == 0.0) && ramped[..from].iter().all(|s| *s == 0.0));
+    // Quantum 1: the step is a plain sine; the ramp is that sine scaled by (k + 1) / 64.
+    for k in 0..q {
+        let scale = (k + 1) as f32 / q as f32;
+        let expected = stepped[from + k] * scale;
+        assert!(
+            (ramped[from + k] - expected).abs() < 1e-6,
+            "frame {k} of the segment: {} against {expected}",
+            ramped[from + k]
+        );
+    }
+    // From quantum 2 on the two are identical: the segment ended exactly on its target.
+    assert_eq!(&stepped[to..], &ramped[to..]);
+    assert!(peak(&stepped[from..to]) > 0.5, "the step sounds at once");
+}
+
+#[test]
+fn an_activation_never_ramps_even_under_a_smoothing_policy() {
+    // The catch-up restores the amplitude a write before the destination set, and the
+    // first quantum the new mapping governs reads it in force — not the first frame of a
+    // segment toward it — even though the slot's policy would ramp any other write.
+    let plan = admit(&sine_alone(0.0));
+    let amplitude = plan
+        .resolve_parameter(OSCILLATOR, parameters::SINE_AMPLITUDE)
+        .expect("the sine declares an amplitude");
+    let (mut control, mut renderer) =
+        StreamControl::open(plan.clone(), ORIGIN).expect("the stream opens");
+    renderer.smooth_over(amplitude, QUANTUM_FRAMES);
+    let mut arbiter = arbiter();
+    let quiet = AdmittedCompiledStream::admit(&plan, &[]).expect("an empty stream fits");
+    let mut scheduler =
+        CompiledEventScheduler::prepare(&mut control, &quiet).expect("an empty stream prepares");
+    let events = vec![PlanEvent::new(
+        PlanPosition::ZERO,
+        CompiledPayload::SetParameter {
+            slot: amplitude,
+            value: ParameterValue::ONE,
+        },
+    )];
+    let stream = AdmittedCompiledStream::admit(&plan, &events).expect("the stream fits");
+    let activation = control
+        .plan_activation(
+            &stream,
+            ActivationRequest {
+                at: SampleTime::new(4 * Q),
+                position: PlanPosition::new(8 * Q),
+                loop_interval: None,
+            },
+        )
+        .expect("the seek builds");
+    scheduler
+        .offer(&mut renderer, activation)
+        .expect("the offer is accepted");
+    let out = drive(&mut scheduler, &mut renderer, &mut arbiter, 16 * Q as usize);
+    // The renderer primes one quantum, so engine time `4Q` is output frame `5Q`.
+    let q = Q as usize;
+    let first = &out[5 * q..6 * q];
+    assert!(
+        out[..5 * q].iter().all(|s| *s == 0.0),
+        "silent before the destination"
+    );
+    assert!(
+        peak(first) > 0.9,
+        "the first quantum after the activation peaks at {}, so the restored amplitude ramped \
+         rather than landing in force",
+        peak(first)
+    );
 }
 
 // --- the renderer: every write path reaches the kernel through the slot -------------------
@@ -374,7 +579,7 @@ fn the_slots_the_renderer_holds_are_charged_to_the_mutable_state_row() {
     let ir = voice();
     let plan = admit(&ir);
     let (renderer, _) = open_and_render(&plan, &[], &[], 1);
-    let held = renderer.parameter_slots.len() * size_of::<SlotState>();
+    let held = renderer.slot_bytes_held();
     let slot_term: u64 = ir
         .nodes()
         .iter()
@@ -397,10 +602,16 @@ fn the_slots_the_renderer_holds_are_charged_to_the_mutable_state_row() {
         .sum();
     let (reported, _) = ir.mutable_bytes(0);
     let records = u64::from(ir.scheduled_records(0).get());
+    let table = renderer.ramp_table_bytes_held() as u64;
+    assert_eq!(
+        table,
+        (records + 1) * crate::node::ramp_table_bytes_per_record(),
+        "the run table is one entry per record plus a terminator"
+    );
     assert_eq!(
         reported.get(),
-        records * crate::node::state_bytes_per_node() + slot_term,
-        "the mutable row is one state record per scheduled record plus the slots"
+        records * crate::node::state_bytes_per_node() + slot_term + table,
+        "the mutable row is one state record per scheduled record, the slots and the table"
     );
     assert!(state_only <= records * crate::node::state_bytes_per_node());
 }
@@ -534,6 +745,29 @@ fn render(
     quanta: u64,
 ) -> Vec<f32> {
     open_and_render(plan, modulation, events, quanta).1
+}
+
+/// Render with one slot's policy overridden to a segment of `frames`.
+fn render_smoothed(
+    plan: &CompiledPlan,
+    slot: ParameterSlot,
+    frames: u32,
+    events: &[PlanEvent],
+    quanta: u64,
+) -> Vec<f32> {
+    let (mut control, mut renderer) =
+        StreamControl::open(plan.clone(), ORIGIN).expect("the stream opens");
+    renderer.smooth_over(slot, frames);
+    let stream = AdmittedCompiledStream::admit(plan, events).expect("the stream fits");
+    let mut scheduler =
+        CompiledEventScheduler::prepare(&mut control, &stream).expect("the stream prepares");
+    let mut arbiter = arbiter();
+    drive(
+        &mut scheduler,
+        &mut renderer,
+        &mut arbiter,
+        (quanta * Q) as usize,
+    )
 }
 
 /// Render four quanta and read what one node's state holds for one control afterwards.

@@ -1264,10 +1264,10 @@ fn lower(
                 control: spec.control,
                 law: spec.law,
                 unit: spec.default.unit(),
-                // The value the node was prepared with, which the kind's state starts at;
-                // the declaration's resting value only where a state carries none.
-                base: crate::node::kernels::NodeState::initial(&prepared)
-                    .control_value(spec.control)
+                smoothing: spec.smoothing,
+                // The value the node was prepared with; the declaration's resting value
+                // where the prepared record carries none — a gate released, a velocity full.
+                base: crate::node::kernels::authored_value(&prepared, spec.control)
                     .unwrap_or(spec.default.as_parameter_value()),
                 rate: spec.rate,
             });

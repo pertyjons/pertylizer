@@ -74,6 +74,34 @@ pub enum ParameterUnit {
     Gate,
 }
 
+/// How long a parameter takes to reach a new resolved value — `SOUND-INV-024`'s
+/// smoothing policy, declared per parameter.
+///
+/// ADR-0006 decides the ramp's shape and leaves its duration to the declaration. The policy
+/// is `None` for a gate and for every `ControlRate::Sample` destination, whose timing
+/// `SOUND-INV-016` owns; `a_sample_positioned_control_declares_no_smoothing` holds every
+/// declaration to that. No declared parameter smooths yet: an oscillator's amplitude is the
+/// one quantum-rate control, and whether it de-zippers over a quantum as V1's level does is
+/// a delivered-behaviour decision the `SOUND-INV-024` conformance row records as open.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Smoothing {
+    /// A step: the new value is read on its first frame.
+    None,
+    /// A linear segment over exactly one quantum, ADR-0006's de-zipper length.
+    Quantum,
+}
+
+impl Smoothing {
+    /// The segment length in frames.
+    #[must_use]
+    pub const fn frames(self) -> u32 {
+        match self {
+            Self::None => 0,
+            Self::Quantum => crate::time::QUANTUM_FRAMES,
+        }
+    }
+}
+
 /// How a parameter's layers combine into the one value a kernel reads.
 ///
 /// [ADR-0007](../../../plans/v2/decisions/ADR-0007-parameter-modulation-laws.md)'s closed
@@ -248,6 +276,8 @@ pub(crate) struct ControlSpec {
     /// pairing, so a law whose arithmetic is meaningless for the unit — a semitone offset on
     /// a level — cannot be declared by mistake.
     pub(crate) law: ModulationLaw,
+    /// How long it takes to reach a new resolved value — `SOUND-INV-024`'s policy.
+    pub(crate) smoothing: Smoothing,
     /// What the node's state calls it.
     pub(crate) control: ControlIndex,
     /// When moving it takes effect, per ADR-0001 clause 14.
@@ -549,18 +579,30 @@ pub(crate) struct NodeDeclaration {
 }
 
 impl NodeDeclaration {
-    /// The bytes the renderer holds for this kind's parameter slots: one `SlotState` per
-    /// control that admits a write, since a not-modulatable control compiles to no slot.
-    /// Charged to `mutable_state_bytes` through [`slot_payload_bytes`], so the report's
-    /// figure and preparation's allocation are one count.
+    /// The bytes the renderer holds for this kind's parameter slots: one `SlotState` and
+    /// one buffer-offset index per control that admits a write, since a not-modulatable
+    /// control compiles to no slot, plus one quantum of control values per such control at
+    /// quantum rate — the buffer a kernel reads its per-frame value from
+    /// (`SOUND-INV-024`). Charged to `mutable_state_bytes` through
+    /// [`slot_payload_bytes`], so the report's figure and preparation's allocation are one
+    /// count; the per-node run table the renderer keeps beside these is charged there too,
+    /// per scheduled record.
     #[must_use]
     pub(crate) fn slot_bytes(&self) -> u64 {
-        let slots = self
+        let writable = self
             .controls
             .iter()
-            .filter(|control| control.law.admits_writes())
-            .count() as u64;
-        slots.saturating_mul(size_of::<crate::render::slot::SlotState>() as u64)
+            .filter(|control| control.law.admits_writes());
+        writable.fold(0_u64, |total, control| {
+            let buffer = match control.rate {
+                ControlRate::Quantum => crate::render::slot::RAMP_BUFFER_BYTES,
+                ControlRate::Sample => 0,
+            };
+            total
+                .saturating_add(size_of::<crate::render::slot::SlotState>() as u64)
+                .saturating_add(size_of::<usize>() as u64)
+                .saturating_add(buffer)
+        })
     }
 
     /// The descriptor admission reads, derived rather than restated.
@@ -592,6 +634,7 @@ pub(crate) static SAW: NodeDeclaration = NodeDeclaration {
             name: "frequency",
             default: ParameterDefault::Hertz(crate::quantities::Frequency::A4),
             law: ModulationLaw::SemitoneAdditive,
+            smoothing: Smoothing::None,
             control: kernels::SAW_FREQUENCY,
             rate: ControlRate::Sample,
             magnitude: Some(NoteMagnitude::Pitch),
@@ -601,6 +644,7 @@ pub(crate) static SAW: NodeDeclaration = NodeDeclaration {
             name: "amplitude",
             default: ParameterDefault::LinearAmplitude(crate::quantities::Amplitude::UNITY),
             law: ModulationLaw::DecibelAdditive,
+            smoothing: Smoothing::None,
             control: kernels::SAW_AMPLITUDE,
             rate: ControlRate::Quantum,
             magnitude: None,
@@ -614,11 +658,7 @@ pub(crate) static SAW: NodeDeclaration = NodeDeclaration {
         crate::quantities::Frequency,
         crate::quantities::Amplitude,
     )>() as u64,
-    state_bytes: size_of::<(
-        f64,
-        crate::quantities::Frequency,
-        crate::quantities::Amplitude,
-    )>() as u64,
+    state_bytes: size_of::<(f64, crate::quantities::Frequency)>() as u64,
 };
 
 /// The control-rate output an envelope declares.
@@ -651,6 +691,7 @@ pub(crate) static ENVELOPE: NodeDeclaration = NodeDeclaration {
             name: "gate",
             default: ParameterDefault::Gate(crate::quantities::ParameterValue::ZERO),
             law: ModulationLaw::ThresholdedBoolean,
+            smoothing: Smoothing::None,
             control: kernels::ENVELOPE_GATE,
             rate: ControlRate::Sample,
             magnitude: None,
@@ -660,6 +701,7 @@ pub(crate) static ENVELOPE: NodeDeclaration = NodeDeclaration {
             name: "velocity",
             default: ParameterDefault::NormalizedLevel(crate::quantities::NormalizedLevel::FULL),
             law: ModulationLaw::NormalizedAdditive,
+            smoothing: Smoothing::None,
             control: kernels::ENVELOPE_VELOCITY,
             rate: ControlRate::Sample,
             magnitude: Some(NoteMagnitude::Velocity),
@@ -696,6 +738,7 @@ pub(crate) static SINE: NodeDeclaration = NodeDeclaration {
             name: "frequency",
             default: ParameterDefault::Hertz(crate::quantities::Frequency::A4),
             law: ModulationLaw::SemitoneAdditive,
+            smoothing: Smoothing::None,
             control: kernels::SINE_FREQUENCY,
             rate: ControlRate::Sample,
             magnitude: Some(NoteMagnitude::Pitch),
@@ -705,6 +748,7 @@ pub(crate) static SINE: NodeDeclaration = NodeDeclaration {
             name: "amplitude",
             default: ParameterDefault::LinearAmplitude(crate::quantities::Amplitude::UNITY),
             law: ModulationLaw::DecibelAdditive,
+            smoothing: Smoothing::None,
             control: kernels::SINE_AMPLITUDE,
             rate: ControlRate::Quantum,
             magnitude: None,
@@ -718,11 +762,7 @@ pub(crate) static SINE: NodeDeclaration = NodeDeclaration {
         crate::quantities::Frequency,
         crate::quantities::Amplitude,
     )>() as u64,
-    state_bytes: size_of::<(
-        f64,
-        crate::quantities::Frequency,
-        crate::quantities::Amplitude,
-    )>() as u64,
+    state_bytes: size_of::<(f64, crate::quantities::Frequency)>() as u64,
 };
 
 /// Zeros, declared once — `P05-S003`. No control, nothing prepared, nothing kept.
@@ -868,6 +908,8 @@ pub struct ParameterDescription {
     pub default: ParameterDefault,
     /// How its layers combine, from ADR-0007's closed set.
     pub law: ModulationLaw,
+    /// How long it takes to reach a new resolved value, from ADR-0006's shape.
+    pub smoothing: Smoothing,
     /// When a change to it takes effect.
     pub rate: ControlRate,
     /// Which note magnitude lands on it, where one does.
@@ -926,6 +968,7 @@ pub fn catalog() -> Vec<KindDescription> {
                     unit: control.default.unit(),
                     default: control.default,
                     law: control.law,
+                    smoothing: control.smoothing,
                     rate: control.rate,
                     magnitude: control.magnitude,
                 })
@@ -1197,7 +1240,8 @@ pub fn prepared_payload_bytes(kind: IrNodeKind) -> u64 {
 }
 
 /// The bytes the renderer holds for one kind's parameter slots — `SOUND-INV-023`'s
-/// composition state, one per control that admits a write.
+/// composition state, one per control that admits a write, with `SOUND-INV-024`'s
+/// per-frame buffer and its offset.
 ///
 /// Beside the state payload rather than inside it, because a slot is not part of the node's
 /// state record: the record bound `a_declared_payload_never_exceeds_the_record_that_holds_it`
@@ -1207,6 +1251,15 @@ pub fn prepared_payload_bytes(kind: IrNodeKind) -> u64 {
 #[must_use]
 pub fn slot_payload_bytes(kind: IrNodeKind) -> u64 {
     declaration(kind).map_or(0, NodeDeclaration::slot_bytes)
+}
+
+/// The bytes the renderer keeps per scheduled record beside its state: the entry of the
+/// per-node run table that hands a kernel its quantum-rate buffers (`SOUND-INV-024`).
+/// One `usize` per record plus a terminator, which [`crate::ir::GraphIr::mutable_bytes`]
+/// charges with the records.
+#[must_use]
+pub const fn ramp_table_bytes_per_record() -> u64 {
+    size_of::<usize>() as u64
 }
 
 /// The mutable payload one kind carries, for the same attribution and by the same rule.
@@ -1405,6 +1458,7 @@ mod tests {
                 assert_eq!(parameter.unit, spec.default.unit(), "{}", entry.name);
                 assert_eq!(parameter.default, spec.default, "{}", entry.name);
                 assert_eq!(parameter.law, spec.law, "{}", entry.name);
+                assert_eq!(parameter.smoothing, spec.smoothing, "{}", entry.name);
                 assert_eq!(parameter.rate, spec.rate, "{}", entry.name);
                 assert_eq!(parameter.magnitude, spec.magnitude, "{}", entry.name);
                 assert!(
@@ -1571,6 +1625,22 @@ mod tests {
                     spec.name,
                     spec.default.unit(),
                     spec.law
+                );
+            }
+        }
+
+        // `SOUND-INV-024`: the policy is `None` for a gate and for every sample-positioned
+        // destination, whose timing `SOUND-INV-016` owns — a smoothed gate or pitch would
+        // land somewhere other than its render position.
+        for declared in DECLARED {
+            for spec in declared.controls {
+                let sample_positioned = matches!(spec.rate, ControlRate::Sample)
+                    || matches!(spec.default.unit(), ParameterUnit::Gate);
+                assert!(
+                    !sample_positioned || spec.smoothing == Smoothing::None,
+                    "{}'s {} is sample-positioned and declares smoothing",
+                    declared.name,
+                    spec.name
                 );
             }
         }

@@ -545,6 +545,16 @@ pub struct PreparedRenderer {
     /// composed through the slot at the same index before it reaches node state or a
     /// kernel's control run.
     parameter_slots: Vec<slot::SlotState>,
+    /// `SOUND-INV-024`'s control buffers: one quantum of values per quantum-rate slot,
+    /// written by the slot's advance before the schedule walk and read per frame by the
+    /// kernel. Sample-positioned slots have none; their writes land as timed controls.
+    ramp_buffers: Vec<f32>,
+    /// Where each quantum-rate slot's buffer starts in [`Self::ramp_buffers`], by slot
+    /// index; `usize::MAX` for a slot that has none.
+    ramp_offsets: Vec<usize>,
+    /// Where each node's run of buffers starts, plus a terminator — the slice a kernel is
+    /// handed as its ramps, in its declaration's control order.
+    ramp_starts: Vec<usize>,
     /// Whether the plan writes the carry at all, decided once at preparation so the
     /// loop does not re-derive a topology fact per quantum.
     has_output: bool,
@@ -631,8 +641,37 @@ impl PreparedRenderer {
         let parameter_slots: Vec<slot::SlotState> = plan
             .parameter_targets()
             .iter()
-            .map(|target| slot::SlotState::prepared(target.law, target.unit, target.base))
+            .map(|target| {
+                slot::SlotState::prepared(target.law, target.unit, target.smoothing, target.base)
+            })
             .collect();
+        // One quantum of values per quantum-rate slot, laid out node by node in target
+        // order — which is declaration order, because the compiler pushes a node's controls
+        // contiguously — so a node's ramps are one slice.
+        let mut ramp_offsets = Vec::with_capacity(parameter_slots.len());
+        let mut ramp_starts = vec![0_usize; plan.prepared_nodes().len().saturating_add(1)];
+        let mut running = 0_usize;
+        for target in plan.parameter_targets() {
+            match target.rate {
+                crate::plan::ControlRate::Quantum => {
+                    ramp_offsets.push(running);
+                    running = running.saturating_add(quantum);
+                }
+                crate::plan::ControlRate::Sample => ramp_offsets.push(usize::MAX),
+            }
+            if let Some(next) = ramp_starts.get_mut(target.node.index().saturating_add(1)) {
+                *next = running;
+            }
+        }
+        // A node with no quantum-rate control inherits the previous node's end, so every
+        // node's slice is well-formed and empty where it has nothing.
+        for index in 1..ramp_starts.len() {
+            let previous = ramp_starts.get(index - 1).copied().unwrap_or(0);
+            if let Some(start) = ramp_starts.get_mut(index) {
+                *start = (*start).max(previous);
+            }
+        }
+        let ramp_buffers = vec![0.0_f32; running];
 
         // A call renders at most one quantum more than its frame count spans, so this
         // bounds both the per-quantum tally and the event scratch.
@@ -680,6 +719,9 @@ impl PreparedRenderer {
             input_carry: vec![0.0; carry_frames_capacity.saturating_mul(channels)],
             node_states,
             parameter_slots,
+            ramp_buffers,
+            ramp_offsets,
+            ramp_starts,
             has_output,
             event_scratch: vec![DueEvent::FILL; events_per_quantum.saturating_mul(quanta_per_call)],
             scratch_len: 0,
@@ -719,10 +761,11 @@ impl PreparedRenderer {
     /// no producer until Phase 7's modulation edges, and this is what stands in for one so
     /// that the layer's composition is tested rather than claimed: a modulation in force
     /// survives an override write and an activation's catch-up, and reaches the kernel
-    /// composed. A quantum-rate target takes the re-resolved value now, as an `apply` of a
-    /// write would; a sample-positioned target takes it at its next positioned write, which
-    /// is the only path a value has to such a kernel until `P05-S007b`'s per-frame read.
-    /// A slot index the plan has no row for writes nothing.
+    /// composed. A quantum-rate target retargets its segment now, as an `apply` of a write
+    /// would, and the kernel reads the result per frame from the slot's buffer; a
+    /// sample-positioned target takes it at its next positioned write, which is the only
+    /// path a value has to such a kernel. A slot index the plan has no row for writes
+    /// nothing.
     ///
     /// Compiled for tests only, which is what a seam with no production caller is: the
     /// attribute comes off with Phase 7's first modulator.
@@ -732,18 +775,37 @@ impl PreparedRenderer {
         slot: crate::plan::ParameterSlot,
         sum: crate::node::ModulationSum,
     ) {
-        let Some(target) = self.plan.parameter_targets().get(slot.index()).copied() else {
-            return;
-        };
-        let Some(state) = self.parameter_slots.get_mut(slot.index()) else {
-            return;
-        };
-        let resolved = state.modulate(sum);
-        if matches!(target.rate, crate::plan::ControlRate::Quantum)
-            && let Some(node) = self.node_states.get_mut(target.node.index())
-        {
-            node.set_control(target.control, resolved);
+        if let Some(state) = self.parameter_slots.get_mut(slot.index()) {
+            let _ = state.modulate(sum);
         }
+    }
+
+    /// Override one slot's declared smoothing policy with a segment length in frames.
+    ///
+    /// Test-only, beside [`Self::modulate`] and for the same reason: no declaration smooths
+    /// yet, and `SOUND-INV-024`'s facts are tested through this rather than claimed.
+    #[cfg(test)]
+    pub(crate) fn smooth_over(&mut self, slot: crate::plan::ParameterSlot, frames: u32) {
+        if let Some(state) = self.parameter_slots.get_mut(slot.index()) {
+            state.smooth_over(frames);
+        }
+    }
+
+    /// The bytes preparation holds for the parameter slots and their control buffers, for
+    /// the test that compares the charge with what is held.
+    #[cfg(test)]
+    pub(crate) fn slot_bytes_held(&self) -> usize {
+        self.parameter_slots
+            .len()
+            .saturating_mul(size_of::<slot::SlotState>())
+            .saturating_add(self.ramp_buffers.len().saturating_mul(size_of::<f32>()))
+            .saturating_add(self.ramp_offsets.len().saturating_mul(size_of::<usize>()))
+    }
+
+    /// The bytes preparation holds for the per-node run table of those buffers.
+    #[cfg(test)]
+    pub(crate) fn ramp_table_bytes_held(&self) -> usize {
+        self.ramp_starts.len().saturating_mul(size_of::<usize>())
     }
 
     /// The render clock: input frames consumed so far.

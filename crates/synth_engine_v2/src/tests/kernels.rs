@@ -35,15 +35,29 @@ fn run_with(
     controls: &[TimedControl],
 ) -> Vec<f32> {
     let mut out = vec![0.0; frames];
+    // One quantum of the prepared amplitude, which is what an unsmoothed slot fills: the
+    // kernel reads its quantum-rate control per frame from here (`SOUND-INV-024`).
+    let ramps = [amplitude_of(prepared); crate::time::QUANTUM_FRAMES as usize];
     let mut io = NodeIo {
         out: &mut out,
         channels: crate::quantities::ChannelLayout::Mono,
         inputs: [InputBuffer::Unpatched; MAX_INPUTS],
         position: None,
         controls,
+        ramps: &ramps,
     };
     kernel(prepared, state, &mut io);
     out
+}
+
+/// The amplitude a prepared oscillator was authored with, or unity where the kind has none.
+fn amplitude_of(prepared: &PreparedNode) -> f32 {
+    match prepared {
+        PreparedNode::Sine { amplitude, .. } | PreparedNode::Saw { amplitude, .. } => {
+            amplitude.as_f32()
+        }
+        _ => 1.0,
+    }
 }
 
 /// An envelope whose segments each last `frames` frames at the given sustain level.
@@ -305,29 +319,24 @@ fn a_zero_length_attack_is_instantaneous_rather_than_infinite() {
 }
 
 #[test]
-fn a_control_index_the_state_does_not_have_changes_nothing() {
-    // The constants in `set_control` are matched as **patterns**, and a name that is not
+fn a_control_index_the_record_does_not_have_reads_as_nothing() {
+    // The constants in `authored_value` are matched as **patterns**, and a name that is not
     // a constant in scope would silently become a binding that matches everything — which
-    // would make every parameter of a node move every one of its controls. This is what
-    // that failure would look like from outside.
-    //
-    // Over the sine, which is the state with quantum-rate controls to confuse: an
-    // envelope has none since P02-T007 moved its gate to the sample-positioned path, so
-    // the pattern-binding failure would be invisible there.
+    // would make every parameter of a node read as its first control's value. This is what
+    // that failure would look like from outside: an index the kind does not declare.
     let prepared = PreparedNode::Sine {
         seconds_per_frame: 1.0 / 48_000.0,
         frequency: crate::quantities::Frequency::new(440.0).expect("finite"),
         amplitude: crate::quantities::Amplitude::UNITY,
     };
-    let mut state = NodeState::initial(&prepared);
-    state.set_control(
-        crate::node::kernels::ControlIndex::new(7),
-        ParameterValue::new(1.0).expect("finite"),
+    assert_eq!(
+        crate::node::kernels::authored_value(&prepared, crate::node::kernels::ControlIndex::new(7)),
+        None,
+        "an index this kind does not declare read as a value"
     );
     assert_eq!(
-        state,
-        NodeState::initial(&prepared),
-        "an index this state does not have moved something"
+        crate::node::kernels::authored_value(&prepared, crate::node::kernels::SINE_AMPLITUDE),
+        Some(ParameterValue::new(1.0).expect("finite"))
     );
 }
 
@@ -425,6 +434,7 @@ fn the_widening_writes_every_channel_of_every_frame() {
             inputs,
             position: None,
             controls: &[],
+            ramps: &[],
         };
         copy(
             &PreparedNode::Copy,

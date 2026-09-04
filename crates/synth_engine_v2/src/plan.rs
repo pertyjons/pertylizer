@@ -553,6 +553,8 @@ pub struct ParameterTarget {
     pub law: crate::node::ModulationLaw,
     /// The unit whose clamp follows the law's arithmetic.
     pub unit: crate::node::ParameterUnit,
+    /// How long a new resolved value takes to be reached, `SOUND-INV-024`'s policy.
+    pub smoothing: crate::node::Smoothing,
     /// The stored base: the value the node was prepared with, which is the authored one.
     ///
     /// What the slot's base layer starts as and what `SOUND-INV-018`'s catch-up restores

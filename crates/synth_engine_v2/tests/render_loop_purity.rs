@@ -500,6 +500,18 @@ fn every_call_the_render_loop_makes_is_inside_the_checked_region() {
         // add, and lands in the same file under the same scan.
         "exp2",
         "powf",
+        // `ParameterValue::from_frequency` and `from_amplitude`: `const fn` widenings of a
+        // finite newtype into the control-write value, used by `authored_value` in the
+        // kernel file — an admission-time read of a prepared record, in the region because
+        // the record's variants are matched there. Neither allocates, locks nor panics.
+        "from_frequency",
+        "from_amplitude",
+        // `Option::or` and `slice::last`: a select between two options and a bounds-checked
+        // accessor returning `Option`. `SOUND-INV-024`'s per-frame read holds the segment's
+        // last value for a frame past its buffer — a length only a test harness asks for —
+        // rather than indexing past it.
+        "or",
+        "last",
         // `f32::clamp`, in the slot's two additive laws and the level's domain hold. It can
         // panic only on an inverted or `NaN` range, so the composition scan below holds
         // every `clamp` in the region to two literal bounds — the same argument the
