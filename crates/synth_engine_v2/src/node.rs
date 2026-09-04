@@ -114,6 +114,165 @@ fn audio_out() -> PortSpec {
     AUDIO_OUT
 }
 
+/// A declared kind's preparation: its prepared record from its IR fields and the rate.
+pub(crate) type PrepareFn =
+    fn(NodeId, IrNodeKind, SampleRate) -> Result<PreparedNode, CompileError>;
+
+/// What a declaration answers when handed a kind that is not its own.
+fn declared_for_another_kind(node: NodeId) -> CompileError {
+    CompileError::DeclaredForAnotherKind { node }
+}
+
+/// A frame as a fraction of a second, so a frequency becomes a phase step by one
+/// multiply instead of a divide per quantum.
+fn seconds_per_frame(rate: SampleRate) -> f64 {
+    1.0 / f64::from(rate.as_f32())
+}
+
+fn prepare_silence(
+    node: NodeId,
+    kind: IrNodeKind,
+    _: SampleRate,
+) -> Result<PreparedNode, CompileError> {
+    let IrNodeKind::Silence = kind else {
+        return Err(declared_for_another_kind(node));
+    };
+    Ok(PreparedNode::Silence)
+}
+
+fn prepare_constant(
+    node: NodeId,
+    kind: IrNodeKind,
+    _: SampleRate,
+) -> Result<PreparedNode, CompileError> {
+    let IrNodeKind::Constant { level } = kind else {
+        return Err(declared_for_another_kind(node));
+    };
+    Ok(PreparedNode::Constant { level })
+}
+
+fn prepare_impulse(
+    node: NodeId,
+    kind: IrNodeKind,
+    _: SampleRate,
+) -> Result<PreparedNode, CompileError> {
+    let IrNodeKind::Impulse { position } = kind else {
+        return Err(declared_for_another_kind(node));
+    };
+    Ok(PreparedNode::Impulse { position })
+}
+
+fn prepare_sine(
+    node: NodeId,
+    kind: IrNodeKind,
+    rate: SampleRate,
+) -> Result<PreparedNode, CompileError> {
+    let IrNodeKind::Sine {
+        frequency,
+        amplitude,
+    } = kind
+    else {
+        return Err(declared_for_another_kind(node));
+    };
+    Ok(PreparedNode::Sine {
+        seconds_per_frame: seconds_per_frame(rate),
+        frequency,
+        amplitude,
+    })
+}
+
+fn prepare_saw(
+    node: NodeId,
+    kind: IrNodeKind,
+    rate: SampleRate,
+) -> Result<PreparedNode, CompileError> {
+    let IrNodeKind::Saw {
+        frequency,
+        amplitude,
+    } = kind
+    else {
+        return Err(declared_for_another_kind(node));
+    };
+    Ok(PreparedNode::Saw {
+        seconds_per_frame: seconds_per_frame(rate),
+        frequency,
+        amplitude,
+    })
+}
+
+fn prepare_gain(
+    node: NodeId,
+    kind: IrNodeKind,
+    _: SampleRate,
+) -> Result<PreparedNode, CompileError> {
+    let IrNodeKind::Gain { factor } = kind else {
+        return Err(declared_for_another_kind(node));
+    };
+    Ok(PreparedNode::Gain { factor })
+}
+
+fn prepare_amplifier(
+    node: NodeId,
+    kind: IrNodeKind,
+    _: SampleRate,
+) -> Result<PreparedNode, CompileError> {
+    let IrNodeKind::Amplifier = kind else {
+        return Err(declared_for_another_kind(node));
+    };
+    Ok(PreparedNode::Amplifier)
+}
+
+fn prepare_filter(
+    node: NodeId,
+    kind: IrNodeKind,
+    rate: SampleRate,
+) -> Result<PreparedNode, CompileError> {
+    let IrNodeKind::Filter { cutoff, resonance } = kind else {
+        return Err(declared_for_another_kind(node));
+    };
+    low_pass(node, cutoff, resonance, rate)
+}
+
+fn prepare_envelope(
+    node: NodeId,
+    kind: IrNodeKind,
+    rate: SampleRate,
+) -> Result<PreparedNode, CompileError> {
+    let IrNodeKind::Envelope {
+        attack,
+        decay,
+        sustain,
+        release,
+    } = kind
+    else {
+        return Err(declared_for_another_kind(node));
+    };
+    // Each segment as the frames it lasts. The level a segment moves *through* is not
+    // prepared, because it is not known until the segment starts: a note let go during
+    // its attack releases from wherever it had reached.
+    let mut frames = [SegmentFrames::NONE; 3];
+    for (slot, duration) in frames.iter_mut().zip([attack, decay, release]) {
+        match frames_in(duration, rate) {
+            Some(count) => *slot = count,
+            None => {
+                return Err(CompileError::NodeNotPreparable {
+                    node,
+                    fault: PreparationFault::SegmentTooLong {
+                        duration,
+                        limit: u32::MAX,
+                    },
+                });
+            }
+        }
+    }
+    Ok(PreparedNode::Envelope {
+        attack_frames: frames[0],
+        decay_frames: frames[1],
+        release_frames: frames[2],
+        sustain,
+    })
+}
+
 /// What one node kind declares about itself, in one place.
 ///
 /// Phase 5's first slice, `P05-S001`, and the shape every later kind moves to. Before it,
@@ -121,13 +280,16 @@ fn audio_out() -> PortSpec {
 /// its descriptor, its prepared and mutable byte attribution — so a kind's facts could
 /// disagree with each other and nothing asked. A declaration is one value the registry
 /// functions **derive** from through [`declaration`], so the facts cannot disagree. The
-/// registry functions still match exhaustively over every kind, so a declared kind keeps
-/// an arm in each — but that arm **defers** to the declaration and states nothing, and
-/// `tests/node_representation.rs` holds every arm of a declared kind to that form.
+/// descriptor and the two byte attributions still match exhaustively over every kind, so
+/// a declared kind keeps an arm in each — but that arm **defers** to the declaration and
+/// states nothing, and `tests/node_representation.rs` holds every arm of a declared kind
+/// to that form; [`prepare`] has no arm at all and forwards to the declaration's entry.
 ///
-/// The prepared-data construction is **not** here yet: [`prepare`] still reads the kind's
-/// own IR fields, because the IR carries them per variant. When parameters become slots
-/// that arm moves too; until then it is the one other place a declared kind is named.
+/// Preparation is here too, as `P05-S005` moved it: each declaration names the function
+/// that builds its prepared record from its own IR fields, so [`prepare`] has no arm per
+/// kind and the four registry functions all derive from one value. The IR still carries
+/// a kind's stored base as typed variant fields; when parameters become slots the
+/// preparation reads them there, and the declaration's entry stays where it is.
 #[derive(Debug)]
 #[must_use]
 pub(crate) struct NodeDeclaration {
@@ -142,6 +304,14 @@ pub(crate) struct NodeDeclaration {
     pub(crate) in_place_safe: bool,
     /// The control a note edge moves, where the kind can be played at all.
     pub(crate) note_control: Option<ControlIndex>,
+    /// How this kind's prepared data is built from its IR fields, against the stream's
+    /// rate — the master plan's *off-thread preparation*, as the kind's own entry.
+    ///
+    /// Takes the kind by value and reads its own variant's fields — a fieldless kind still
+    /// matches its variant — and a kind that is not this declaration's is refused as
+    /// [`CompileError::DeclaredForAnotherKind`], which [`declaration`]'s pairing makes
+    /// unreachable and a test holds it to.
+    pub(crate) prepare: PrepareFn,
     /// The immutable payload this kind is charged for, per node, in the resource report.
     pub(crate) prepared_bytes: u64,
     /// The mutable payload this kind is charged for, per node, in the resource report.
@@ -186,6 +356,7 @@ pub(crate) const SAW: NodeDeclaration = NodeDeclaration {
     ],
     in_place_safe: false,
     note_control: None,
+    prepare: prepare_saw,
     prepared_bytes: size_of::<(
         f64,
         crate::quantities::Frequency,
@@ -236,6 +407,7 @@ pub(crate) const ENVELOPE: NodeDeclaration = NodeDeclaration {
     ],
     in_place_safe: false,
     note_control: Some(kernels::ENVELOPE_GATE),
+    prepare: prepare_envelope,
     prepared_bytes: size_of::<(SegmentFrames, SegmentFrames, SegmentFrames, NormalizedLevel)>()
         as u64,
     state_bytes: size_of::<(
@@ -272,6 +444,7 @@ pub(crate) const SINE: NodeDeclaration = NodeDeclaration {
     ],
     in_place_safe: false,
     note_control: None,
+    prepare: prepare_sine,
     prepared_bytes: size_of::<(
         f64,
         crate::quantities::Frequency,
@@ -291,6 +464,7 @@ pub(crate) const SILENCE: NodeDeclaration = NodeDeclaration {
     controls: &[],
     in_place_safe: false,
     note_control: None,
+    prepare: prepare_silence,
     prepared_bytes: 0,
     state_bytes: 0,
 };
@@ -302,6 +476,7 @@ pub(crate) const CONSTANT: NodeDeclaration = NodeDeclaration {
     controls: &[],
     in_place_safe: false,
     note_control: None,
+    prepare: prepare_constant,
     prepared_bytes: size_of::<crate::quantities::Amplitude>() as u64,
     state_bytes: 0,
 };
@@ -313,6 +488,7 @@ pub(crate) const IMPULSE: NodeDeclaration = NodeDeclaration {
     controls: &[],
     in_place_safe: false,
     note_control: None,
+    prepare: prepare_impulse,
     prepared_bytes: size_of::<crate::time::PlanPosition>() as u64,
     state_bytes: 0,
 };
@@ -342,6 +518,7 @@ pub(crate) const AMPLIFIER: NodeDeclaration = NodeDeclaration {
     controls: &[],
     in_place_safe: true,
     note_control: None,
+    prepare: prepare_amplifier,
     prepared_bytes: 0,
     state_bytes: 0,
 };
@@ -354,6 +531,7 @@ pub(crate) const GAIN: NodeDeclaration = NodeDeclaration {
     controls: &[],
     in_place_safe: true,
     note_control: None,
+    prepare: prepare_gain,
     prepared_bytes: size_of::<crate::quantities::GainFactor>() as u64,
     state_bytes: 0,
 };
@@ -368,13 +546,15 @@ pub(crate) const FILTER: NodeDeclaration = NodeDeclaration {
     controls: &[],
     in_place_safe: true,
     note_control: None,
+    prepare: prepare_filter,
     prepared_bytes: size_of::<[f32; 3]>() as u64,
     state_bytes: size_of::<(f32, f32)>() as u64,
 };
 
 /// The declaration a kind has, where it has moved to one.
 ///
-/// The **only** per-kind `match` a declared kind appears in, besides [`prepare`]'s. Every
+/// The **only** per-kind `match` that carries a fact about a declared kind — its own
+/// `prepare_*` function destructures its variant, and every other arm forwards here. Every
 /// registry function asks here first and falls back to its own arms for the kinds that
 /// have not moved yet, so migration is one kind at a time and a kind cannot be half
 /// declared: its descriptor and both byte attributions come from the same value or none of
@@ -475,63 +655,12 @@ pub(crate) fn prepare(
     kind: IrNodeKind,
     rate: SampleRate,
 ) -> Result<PreparedNode, CompileError> {
-    Ok(match kind {
+    match declaration(kind) {
+        Some(declared) => (declared.prepare)(node, kind, rate),
         // The output node has no kernel and no prepared data of its own; it is given a
         // record so that the prepared and state tables stay indexed by the same slot.
-        IrNodeKind::Output | IrNodeKind::Silence => PreparedNode::Silence,
-        IrNodeKind::Constant { level } => PreparedNode::Constant { level },
-        IrNodeKind::Impulse { position } => PreparedNode::Impulse { position },
-        IrNodeKind::Sine {
-            frequency,
-            amplitude,
-        } => PreparedNode::Sine {
-            seconds_per_frame: 1.0 / f64::from(rate.as_f32()),
-            frequency,
-            amplitude,
-        },
-        IrNodeKind::Saw {
-            frequency,
-            amplitude,
-        } => PreparedNode::Saw {
-            seconds_per_frame: 1.0 / f64::from(rate.as_f32()),
-            frequency,
-            amplitude,
-        },
-        IrNodeKind::Gain { factor } => PreparedNode::Gain { factor },
-        IrNodeKind::Amplifier => PreparedNode::Amplifier,
-        IrNodeKind::Filter { cutoff, resonance } => return low_pass(node, cutoff, resonance, rate),
-        IrNodeKind::Envelope {
-            attack,
-            decay,
-            sustain,
-            release,
-        } => {
-            // Each segment as the frames it lasts. The level a segment moves *through* is
-            // not prepared, because it is not known until the segment starts: a note let
-            // go during its attack releases from wherever it had reached.
-            let mut frames = [SegmentFrames::NONE; 3];
-            for (slot, duration) in frames.iter_mut().zip([attack, decay, release]) {
-                match frames_in(duration, rate) {
-                    Some(count) => *slot = count,
-                    None => {
-                        return Err(CompileError::NodeNotPreparable {
-                            node,
-                            fault: PreparationFault::SegmentTooLong {
-                                duration,
-                                limit: u32::MAX,
-                            },
-                        });
-                    }
-                }
-            }
-            PreparedNode::Envelope {
-                attack_frames: frames[0],
-                decay_frames: frames[1],
-                release_frames: frames[2],
-                sustain,
-            }
-        }
-    })
+        None => Ok(PreparedNode::Silence),
+    }
 }
 
 /// How many frames a duration lasts at a rate, or `None` where that is not a frame count.
@@ -869,6 +998,23 @@ mod tests {
                 "{kind:?}"
             );
             assert_eq!(state_payload_bytes(kind), declared.state_bytes, "{kind:?}");
+            // The declaration's preparation builds **this** kind's record: a declaration
+            // wired to another kind's `prepare_*` is refused rather than rendered.
+            let rate = SampleRate::new(48_000.0).expect("a real rate");
+            let prepared = prepare(NodeId::new(0), kind, rate).expect("a declared kind prepares");
+            let matches_kind = matches!(
+                (kind, &prepared),
+                (IrNodeKind::Silence, PreparedNode::Silence)
+                    | (IrNodeKind::Constant { .. }, PreparedNode::Constant { .. })
+                    | (IrNodeKind::Impulse { .. }, PreparedNode::Impulse { .. })
+                    | (IrNodeKind::Sine { .. }, PreparedNode::Sine { .. })
+                    | (IrNodeKind::Saw { .. }, PreparedNode::Saw { .. })
+                    | (IrNodeKind::Gain { .. }, PreparedNode::Gain { .. })
+                    | (IrNodeKind::Amplifier, PreparedNode::Amplifier)
+                    | (IrNodeKind::Filter { .. }, PreparedNode::Filter { .. })
+                    | (IrNodeKind::Envelope { .. }, PreparedNode::Envelope { .. })
+            );
+            assert!(matches_kind, "{kind:?} prepared as {prepared:?}");
             // What each kind prepares and keeps, so a zero written where a layout belongs
             // — or a layout where nothing is kept — is caught by kind.
             let (prepares, keeps) = match kind {

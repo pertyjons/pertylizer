@@ -247,6 +247,20 @@ pub enum CompileError {
         fault: PreparationFault,
     },
 
+    /// The registry handed a node's kind to another kind's preparation.
+    ///
+    /// A static inconsistency of the registry rather than a property of the stream, which
+    /// is why it is not a [`Self::NodeNotPreparable`] fault: `node::declaration` pairs a
+    /// kind with its own declaration and a test holds every kind to that pairing, so this
+    /// is unreachable by construction — and refused rather than rendered as silence if the
+    /// pairing is ever wrong, because a plan that admits and renders the wrong node's
+    /// silence is the failure this crate's boundary rule forbids.
+    #[error("{node}'s declaration prepares another kind; the node registry is inconsistent")]
+    DeclaredForAnotherKind {
+        /// The node whose kind reached the wrong preparation.
+        node: crate::ir::NodeId,
+    },
+
     /// An edge names a port the node does not declare.
     #[error("{edge} names {node} {port}, which is not an {needed} port it declares")]
     UnknownPort {

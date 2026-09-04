@@ -47,7 +47,8 @@ make a declaration the single source for tap capability without deciding ownersh
 | P05-S001 — one declaration for one kind | **Merged** to `main` 2026-09-04 as `51d3cf45` | `NodeDeclaration` exists and `Saw` is declared through it; `SOUND-INV-012` has its conformance row in the [Sound Core contract](specs/spec-sound-core-render-contract.md#conformance-tests), which is the durable record of what the slice holds |
 | P05-S002 — the first playable declared kind | **Merged** to `main` 2026-09-04 as `120a8e98` | `Envelope` is declared through `NodeDeclaration` with its note control and velocity destination; the form scan takes a stated list of declared kinds |
 | P05-S003 — the remaining sources | **Merged** to `main` 2026-09-04 as `b7200890` | `Sine`, `Silence`, `Constant` and `Impulse` declared; the scan exempts `prepare`'s arms by position |
-| P05-S004 — the kinds with inputs | **Built** 2026-09-04, awaiting its gate and review | `Amplifier`, `Gain` and `Filter` are declared — the first with input ports, including the amplifier's control input on `AMPLIFIER_CONTROL`, and the first with `in_place_safe: true` — so **every kind but the output node is declared**, and `descriptor`'s own match has one arm left, the output node's `None`. The derivation test states each kind's shape (the amplifier prepares and keeps nothing; the gain prepares its factor; the filter keeps two history samples). **Out of scope:** `prepare`, modulation laws, slots, adapter, discovery, as before |
+| P05-S004 — the kinds with inputs | **Merged** to `main` 2026-09-04 as `36c132fd` | `Amplifier`, `Gain` and `Filter` declared, so every kind but the output node is declared through `NodeDeclaration` |
+| P05-S005 — the declaration owns preparation | **Built** 2026-09-04, awaiting its gate and review | Each declaration names its `prepare` function — the master plan's *off-thread preparation*, as the kind's own entry — so the registry's `prepare` has no arm per kind and all four registry functions derive from one value. A declaration handed another kind's IR is refused as `PreparationFault::DeclaredForAnotherKind` rather than rendered as silence; `declaration`'s pairing makes it unreachable and the derivation test holds every kind to preparing its own record. The scan's exemption is each kind's own `prepare_<kind>` function by line range, keyed by name, so one kind's variant inside another's preparation is caught. **Completion check, as built:** three mutations — a declaration wired to another kind's preparation, a per-kind arm restored in `prepare`, a variant destructured in the wrong preparation — are caught; renders bit-identical. **What this does not do:** the IR still carries each kind's stored base as typed variant fields; parameters as central slots need `ParamSpec` (slice 6), and the composition law and modulation laws are ADR-0006/ADR-0007, `Proposed` without a record — a user decision before slice 7 |
 | Executable guard for `SOUND-INV-012` | **Built** in P05-S001 | The invariant has its conformance row now. Kind-blindness of the region was already held by `the_render_loop_makes_no_topology_or_naming_decision`; what was missing and is added is `the_render_loop_dispatches_every_node_through_one_site` — exactly one `Kernel::run` site in the hot path and no kernel called by name — mutation-verified by a second dispatch line and by a direct kernel call |
 | `LegacyPolyModuleAdapter` conversion-cost measurement | Not started | Owed by the Phase 5 work list's adapter bullet: the adapter is transitional and measured separately, before the exit gate's "not required by the renderer itself" can be judged. Not before a second native kind exists to adapt against |
 
@@ -101,9 +102,10 @@ residuals block their own first consumers — a parity verdict over a placed not
 shared render surface — and neither is Phase 5 work. The Phase 3 residuals block only their
 named consumers.
 
-Two streams are active: Phase 5, with `P05-S004` selected, and Phase 0B, with `P00B-T003`
+Two streams are active: Phase 5, with `P05-S005` selected, and Phase 0B, with `P00B-T003`
 as its selected slice.
 
-Next action: **gate, review and commit `P05-S004`** on `feat/v2-phase5-s004`, then squash-merge
-it to `main` under the merge rule. After the merge, slice 5 makes parameters central slots so
-`prepare`'s arm can move into the declaration.
+Next action: **gate, review and commit `P05-S005`** on `feat/v2-phase5-s005`, then squash-merge
+it to `main` under the merge rule. After the merge, slice 6 gives the declaration a `ParamSpec`
+per parameter — unit, range, default — read by compilation; ADR-0006 and ADR-0007 are drafted
+for the user's decision before slice 7 composes the parameter layers.
