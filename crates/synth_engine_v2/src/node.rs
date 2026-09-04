@@ -317,6 +317,61 @@ pub(crate) const IMPULSE: NodeDeclaration = NodeDeclaration {
     state_bytes: 0,
 };
 
+/// The mono audio input on the first port, for the kinds that take one.
+const AUDIO_IN: PortSpec = PortSpec::new(
+    crate::ir::PortId::FIRST,
+    PortDirection::Input,
+    SignalDomain::Audio,
+    ChannelLayout::Mono,
+);
+
+/// The amplifier's control input, on [`AMPLIFIER_CONTROL`].
+const AMPLIFIER_CONTROL_IN: PortSpec = PortSpec::new(
+    AMPLIFIER_CONTROL,
+    PortDirection::Input,
+    SignalDomain::Control,
+    ChannelLayout::Mono,
+);
+
+/// The amplifier, declared once — `P05-S004`. Audio in, control in, audio out, and nothing
+/// prepared or kept: each output sample is its input sample times its control sample, so
+/// writing the result over the audio input changes nothing about it (ADR-0005 clause 5).
+pub(crate) const AMPLIFIER: NodeDeclaration = NodeDeclaration {
+    kernel: kernels::AMPLIFIER,
+    ports: &[AUDIO_IN, AMPLIFIER_CONTROL_IN, AUDIO_OUT],
+    controls: &[],
+    in_place_safe: true,
+    note_control: None,
+    prepared_bytes: 0,
+    state_bytes: 0,
+};
+
+/// A fixed gain, declared once — `P05-S004`. The factor is prepared; nothing is kept; and a
+/// gain scales each sample independently, so one buffer serves as input and output.
+pub(crate) const GAIN: NodeDeclaration = NodeDeclaration {
+    kernel: kernels::GAIN,
+    ports: &[AUDIO_IN, AUDIO_OUT],
+    controls: &[],
+    in_place_safe: true,
+    note_control: None,
+    prepared_bytes: size_of::<crate::quantities::GainFactor>() as u64,
+    state_bytes: 0,
+};
+
+/// The low-pass filter, declared once — `P05-S004`. Three coefficients prepared, two
+/// history samples kept. A biquad reads each input sample before it writes that sample's
+/// output and its history is in its state rather than in the buffer, so writing over its
+/// input changes nothing about its result.
+pub(crate) const FILTER: NodeDeclaration = NodeDeclaration {
+    kernel: kernels::FILTER,
+    ports: &[AUDIO_IN, AUDIO_OUT],
+    controls: &[],
+    in_place_safe: true,
+    note_control: None,
+    prepared_bytes: size_of::<[f32; 3]>() as u64,
+    state_bytes: size_of::<(f32, f32)>() as u64,
+};
+
 /// The declaration a kind has, where it has moved to one.
 ///
 /// The **only** per-kind `match` a declared kind appears in, besides [`prepare`]'s. Every
@@ -332,7 +387,12 @@ pub(crate) fn declaration(kind: IrNodeKind) -> Option<&'static NodeDeclaration> 
         IrNodeKind::Silence => Some(&SILENCE),
         IrNodeKind::Constant { .. } => Some(&CONSTANT),
         IrNodeKind::Impulse { .. } => Some(&IMPULSE),
-        _ => None,
+        IrNodeKind::Amplifier => Some(&AMPLIFIER),
+        IrNodeKind::Gain { .. } => Some(&GAIN),
+        IrNodeKind::Filter { .. } => Some(&FILTER),
+        // The output node has no kernel and no declaration: writing the stream's channels
+        // is the renderer's boundary rather than a node's work.
+        IrNodeKind::Output => None,
     }
 }
 
@@ -354,57 +414,22 @@ fn audio_in(port: crate::ir::PortId) -> PortSpec {
 /// the one place a plan meets the layout the host asked for.
 pub(crate) fn descriptor(kind: IrNodeKind) -> Option<NodeDescriptor> {
     let declared = declaration(kind);
-    let descriptor = match kind {
-        IrNodeKind::Output => return None,
-        // Declared: each arm defers and states nothing.
-        IrNodeKind::Silence => return declared.map(NodeDeclaration::descriptor),
-        IrNodeKind::Constant { .. } => return declared.map(NodeDeclaration::descriptor),
-        IrNodeKind::Impulse { .. } => return declared.map(NodeDeclaration::descriptor),
-        IrNodeKind::Sine { .. } => return declared.map(NodeDeclaration::descriptor),
-        // Declared: the arm defers and states nothing. `tests/node_representation.rs` holds
-        // every arm of a declared kind to that form.
-        IrNodeKind::Saw { .. } => return declared.map(NodeDeclaration::descriptor),
-        IrNodeKind::Amplifier => NodeDescriptor {
-            kernel: kernels::AMPLIFIER,
-            ports: vec![
-                audio_in(crate::ir::PortId::FIRST),
-                PortSpec::new(
-                    AMPLIFIER_CONTROL,
-                    PortDirection::Input,
-                    SignalDomain::Control,
-                    ChannelLayout::Mono,
-                ),
-                audio_out(),
-            ],
-            controls: Vec::new(),
-            // Each output sample depends on its own input sample and nothing else, so
-            // writing the result over the audio input changes nothing about it.
-            in_place_safe: true,
-            note_control: None,
-        },
-        // Declared: the arm defers and states nothing.
-        IrNodeKind::Envelope { .. } => return declared.map(NodeDeclaration::descriptor),
-        IrNodeKind::Filter { .. } => NodeDescriptor {
-            kernel: kernels::FILTER,
-            ports: vec![audio_in(crate::ir::PortId::FIRST), audio_out()],
-            controls: Vec::new(),
-            // A biquad reads each input sample before it writes that sample's output, and
-            // the history it needs is in its state rather than in the buffer, so writing
-            // over its input changes nothing about its result.
-            in_place_safe: true,
-            note_control: None,
-        },
-        IrNodeKind::Gain { .. } => NodeDescriptor {
-            kernel: kernels::GAIN,
-            ports: vec![audio_in(crate::ir::PortId::FIRST), audio_out()],
-            controls: Vec::new(),
-            // A gain scales each sample independently, so reading and writing one buffer
-            // changes nothing about its result.
-            in_place_safe: true,
-            note_control: None,
-        },
-    };
-    Some(descriptor)
+    // Every kind but the output node is declared, so every arm below defers to its
+    // declaration and states nothing; `tests/node_representation.rs` holds each to that
+    // form. The match stays exhaustive rather than collapsing to `declared.map(..)` so that
+    // a kind added to the IR is a compile error here until `declaration` knows it.
+    match kind {
+        IrNodeKind::Output => None,
+        IrNodeKind::Silence => declared.map(NodeDeclaration::descriptor),
+        IrNodeKind::Constant { .. } => declared.map(NodeDeclaration::descriptor),
+        IrNodeKind::Impulse { .. } => declared.map(NodeDeclaration::descriptor),
+        IrNodeKind::Sine { .. } => declared.map(NodeDeclaration::descriptor),
+        IrNodeKind::Saw { .. } => declared.map(NodeDeclaration::descriptor),
+        IrNodeKind::Envelope { .. } => declared.map(NodeDeclaration::descriptor),
+        IrNodeKind::Amplifier => declared.map(NodeDeclaration::descriptor),
+        IrNodeKind::Filter { .. } => declared.map(NodeDeclaration::descriptor),
+        IrNodeKind::Gain { .. } => declared.map(NodeDeclaration::descriptor),
+    }
 }
 
 /// The ports `kind` declares. The output node's depend on the stream; nothing else's do.
@@ -648,10 +673,11 @@ pub fn prepared_payload_bytes(kind: IrNodeKind) -> u64 {
         IrNodeKind::Constant { .. } => return declared.map_or(0, |d| d.prepared_bytes),
         IrNodeKind::Impulse { .. } => return declared.map_or(0, |d| d.prepared_bytes),
         IrNodeKind::Sine { .. } => return declared.map_or(0, |d| d.prepared_bytes),
+        IrNodeKind::Amplifier => return declared.map_or(0, |d| d.prepared_bytes),
+        IrNodeKind::Gain { .. } => return declared.map_or(0, |d| d.prepared_bytes),
+        IrNodeKind::Filter { .. } => return declared.map_or(0, |d| d.prepared_bytes),
         // The output node has no kernel, so it carries no prepared data of its own.
-        IrNodeKind::Output | IrNodeKind::Amplifier => 0,
-        IrNodeKind::Gain { .. } => size_of::<crate::quantities::GainFactor>(),
-        IrNodeKind::Filter { .. } => size_of::<[f32; 3]>(),
+        IrNodeKind::Output => 0,
         IrNodeKind::Envelope { .. } => return declared.map_or(0, |d| d.prepared_bytes),
     }) as u64
 }
@@ -667,9 +693,11 @@ pub fn state_payload_bytes(kind: IrNodeKind) -> u64 {
         IrNodeKind::Silence => return declared.map_or(0, |d| d.state_bytes),
         IrNodeKind::Constant { .. } => return declared.map_or(0, |d| d.state_bytes),
         IrNodeKind::Impulse { .. } => return declared.map_or(0, |d| d.state_bytes),
-        IrNodeKind::Filter { .. } => size_of::<(f32, f32)>(),
+        IrNodeKind::Filter { .. } => return declared.map_or(0, |d| d.state_bytes),
+        IrNodeKind::Amplifier => return declared.map_or(0, |d| d.state_bytes),
+        IrNodeKind::Gain { .. } => return declared.map_or(0, |d| d.state_bytes),
         IrNodeKind::Envelope { .. } => return declared.map_or(0, |d| d.state_bytes),
-        IrNodeKind::Output | IrNodeKind::Amplifier | IrNodeKind::Gain { .. } => 0,
+        IrNodeKind::Output => 0,
     }) as u64
 }
 
@@ -816,7 +844,11 @@ mod tests {
             .into_iter()
             .filter(|kind| declaration(*kind).is_some())
             .collect();
-        assert_eq!(declared.len(), 6, "six kinds are declared so far");
+        assert_eq!(
+            declared.len(),
+            9,
+            "every kind but the output node is declared"
+        );
 
         for kind in declared {
             let declared = declaration(kind).expect("filtered on it");
@@ -843,13 +875,29 @@ mod tests {
                 IrNodeKind::Saw { .. } | IrNodeKind::Sine { .. } | IrNodeKind::Envelope { .. } => {
                     (true, true)
                 }
-                IrNodeKind::Constant { .. } | IrNodeKind::Impulse { .. } => (true, false),
-                IrNodeKind::Silence => (false, false),
+                IrNodeKind::Constant { .. }
+                | IrNodeKind::Impulse { .. }
+                | IrNodeKind::Gain { .. } => (true, false),
+                IrNodeKind::Filter { .. } => (true, true),
+                IrNodeKind::Silence | IrNodeKind::Amplifier => (false, false),
                 other => panic!("{other:?} is declared but this test does not know its shape"),
             };
             assert_eq!(
                 (declared.prepared_bytes > 0, declared.state_bytes > 0),
                 (prepares, keeps),
+                "{kind:?}"
+            );
+            // ADR-0005 clause 5's first condition, per kind: the three kinds that take an
+            // input each compute an output sample from that sample and their own state, so
+            // writing over the input changes nothing; a source has no input to overwrite.
+            // Flipping the flag is behaviour-preserving — the arena simply allocates — so
+            // nothing else notices, and this is what holds the declaration to the fact.
+            assert_eq!(
+                declared.in_place_safe,
+                matches!(
+                    kind,
+                    IrNodeKind::Amplifier | IrNodeKind::Gain { .. } | IrNodeKind::Filter { .. }
+                ),
                 "{kind:?}"
             );
         }

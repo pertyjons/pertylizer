@@ -327,13 +327,16 @@ fn a_widened_signal_is_copied_by_a_scheduled_kernel() {
 fn a_declared_kind_appears_in_the_registry_only_by_deferring_to_its_declaration() {
     // The variant as it is spelled in a pattern — fieldless kinds have no `{ .. }` — and
     // the declaration constant it forwards to.
-    const DECLARED: [(&str, &str); 6] = [
+    const DECLARED: [(&str, &str); 9] = [
         ("Saw { .. }", "SAW"),
         ("Envelope { .. }", "ENVELOPE"),
         ("Sine { .. }", "SINE"),
         ("Silence", "SILENCE"),
         ("Constant { .. }", "CONSTANT"),
         ("Impulse { .. }", "IMPULSE"),
+        ("Amplifier", "AMPLIFIER"),
+        ("Gain { .. }", "GAIN"),
+        ("Filter { .. }", "FILTER"),
     ];
 
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/node.rs");
@@ -373,7 +376,7 @@ fn a_declared_kind_appears_in_the_registry_only_by_deferring_to_its_declaration(
         let variant = format!("IrNodeKind::{name}");
         let arm = format!("IrNodeKind::{pattern} =>");
         let declares = format!("{arm} Some(&{constant}),");
-        let descriptor = format!("{arm} return declared.map(NodeDeclaration::descriptor),");
+        let descriptor = format!("{arm} declared.map(NodeDeclaration::descriptor),");
         let field_prefix = format!("{arm} return declared.map_or(0, |d| d.");
         let mut seen = 0;
         for (index, line) in production.lines().enumerate() {

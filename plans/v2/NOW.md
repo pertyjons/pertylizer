@@ -46,7 +46,8 @@ make a declaration the single source for tap capability without deciding ownersh
 |---|---|---|
 | P05-S001 — one declaration for one kind | **Merged** to `main` 2026-09-04 as `51d3cf45` | `NodeDeclaration` exists and `Saw` is declared through it; `SOUND-INV-012` has its conformance row in the [Sound Core contract](specs/spec-sound-core-render-contract.md#conformance-tests), which is the durable record of what the slice holds |
 | P05-S002 — the first playable declared kind | **Merged** to `main` 2026-09-04 as `120a8e98` | `Envelope` is declared through `NodeDeclaration` with its note control and velocity destination; the form scan takes a stated list of declared kinds |
-| P05-S003 — the remaining sources | **Built** 2026-09-04, awaiting its gate and review | `Sine`, `Silence`, `Constant` and `Impulse` are declared: one shared shape — an audio output, no input — with the sine carrying the sawtooth's control pair. Six of nine kinds are declared. The combined zero arms in the byte attributions are split so each declared kind forwards on its own line; the scan learns fieldless patterns and `prepare`'s one-line forms, and the derivation test states per kind what it prepares and keeps, so a zero where a layout belongs is caught. **Out of scope:** `Filter`, `Gain` and `Amplifier` — the kinds with inputs and in-place questions — are slice 4; `prepare`, modulation laws, slots, adapter and discovery as before |
+| P05-S003 — the remaining sources | **Merged** to `main` 2026-09-04 as `b7200890` | `Sine`, `Silence`, `Constant` and `Impulse` declared; the scan exempts `prepare`'s arms by position |
+| P05-S004 — the kinds with inputs | **Built** 2026-09-04, awaiting its gate and review | `Amplifier`, `Gain` and `Filter` are declared — the first with input ports, including the amplifier's control input on `AMPLIFIER_CONTROL`, and the first with `in_place_safe: true` — so **every kind but the output node is declared**, and `descriptor`'s own match has one arm left, the output node's `None`. The derivation test states each kind's shape (the amplifier prepares and keeps nothing; the gain prepares its factor; the filter keeps two history samples). **Out of scope:** `prepare`, modulation laws, slots, adapter, discovery, as before |
 | Executable guard for `SOUND-INV-012` | **Built** in P05-S001 | The invariant has its conformance row now. Kind-blindness of the region was already held by `the_render_loop_makes_no_topology_or_naming_decision`; what was missing and is added is `the_render_loop_dispatches_every_node_through_one_site` — exactly one `Kernel::run` site in the hot path and no kernel called by name — mutation-verified by a second dispatch line and by a direct kernel call |
 | `LegacyPolyModuleAdapter` conversion-cost measurement | Not started | Owed by the Phase 5 work list's adapter bullet: the adapter is transitional and measured separately, before the exit gate's "not required by the renderer itself" can be judged. Not before a second native kind exists to adapt against |
 
@@ -100,9 +101,9 @@ residuals block their own first consumers — a parity verdict over a placed not
 shared render surface — and neither is Phase 5 work. The Phase 3 residuals block only their
 named consumers.
 
-Two streams are active: Phase 5, with `P05-S003` selected, and Phase 0B, with `P00B-T003`
+Two streams are active: Phase 5, with `P05-S004` selected, and Phase 0B, with `P00B-T003`
 as its selected slice.
 
-Next action: **gate, review and commit `P05-S003`** on `feat/v2-phase5-s003`, then squash-merge
-it to `main` under the merge rule. After the merge, slice 4 declares `Filter`, `Gain` and
-`Amplifier`; the `prepare` arm moves when parameters become slots.
+Next action: **gate, review and commit `P05-S004`** on `feat/v2-phase5-s004`, then squash-merge
+it to `main` under the merge rule. After the merge, slice 5 makes parameters central slots so
+`prepare`'s arm can move into the declaration.
