@@ -29,7 +29,7 @@ accepted exit review. `NOW.md` owns task activity within an active phase.
 | [2](master-plan.md#phase-2-minimal-compiled-voice-graph) | One complete compiled voice graph | Complete | 1 |
 | [3](master-plan.md#phase-3-sample-accurate-scheduler-and-block-partition-invariance) | Sample-accurate scheduler and host-block invariance | Complete | 2 |
 | [4](master-plan.md#phase-4-current-project-lowering-and-offline-ab-path) | Current-project lowering and bounded V2 render | Complete | 3 |
-| [5](master-plan.md#phase-5-declarative-node-and-parameter-api) | Declarative node and parameter API | Not started | 4 |
+| [5](master-plan.md#phase-5-declarative-node-and-parameter-api) | Declarative node and parameter API | Complete | 4 |
 | [6](master-plan.md#phase-6-polyphony-and-instrument-runtime) | Polyphony and instrument runtime | Not started | 5 |
 | [7](master-plan.md#phase-7-yams-mod-grid-and-unified-modulation) | YAMS, Mod Grid, and unified modulation | Not started | 6 |
 | [8](master-plan.md#phase-8-mixer-channels-buses-effects-and-latency) | Mixer, channels, buses, effects, and latency | Not started | 7 |
@@ -160,6 +160,17 @@ costs this outcome named are withdrawn, because no adapter is built — a V1 mod
 the lowerer cannot map to a native kind is refused under `LOWER` rather than
 adapted. The shape of the correction is in
 [Gate correction](master-plan.md#gate-correction-2026-09-05).
+
+Exit: [`REV-P05`](reviews/phase-05-exit-review.md) is accepted on `1b1252f4`. The phase
+exits with two named residuals. `P05-R002` is the observation bullet's semantic-digest
+clause, owned by Phase 10D, which defines that digest and must hold it independent of every
+observation field before using it. `P05-R001`: no declared `Smoothing` policy is anything but
+`None`, which is V1 parity for the one quantum-rate control V2 has, and the parameter that
+first receives V1's per-block-ramped amplifier level — or the V2 amplitude's first dynamic
+write — decides its policy against an A/B. Owed onward, not residuals: `HOST-INV-023`'s live
+half — subscribing across a thread boundary while rendering, decimation, the facade, and the
+verification under a real host, which that invariant assigns to Phase 9 — and the
+declaration's latency, tail, reset and execution-scope fields, to their first reader.
 
 ### Phase 6 — polyphony and instruments
 

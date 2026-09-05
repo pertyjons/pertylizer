@@ -1263,18 +1263,22 @@ stored base
 
 Corrected on 2026-09-05 under `PROCESS.md`'s phase-exit rule; the correction, its
 authority and its cost are recorded in [Gate correction](#gate-correction-2026-09-05)
-below. One bullet changed: the legacy adapter is withdrawn rather than measured, so
-the bullet is rewritten not to presuppose a thing that does not exist.
+below. Two bullets changed: the legacy adapter is withdrawn rather than measured, so
+its bullet is rewritten not to presuppose a thing that does not exist; and the
+observation bullet's semantic-digest clause is carried as `P05-R002`, because the
+digest it names is defined in Phase 10D and cannot be tested before it.
 
-- [ ] A native simple module implements DSP without `set_param`, `get_param`,
+- [x] A native simple module implements DSP without `set_param`, `get_param`,
       `get_params`, output hash maps, manual generic modulation storage, or
       engine-specific YAMS hooks.
-- [ ] The same declaration drives compiler validation and user-facing discovery.
-- [ ] Automation and modulation combine identically for every native module.
-- [ ] Stable targets survive node reorder and insertion.
-- [ ] The same project compiles headless and with GUI/OSC observation enabled;
-      observation changes no audible samples or semantic project digest.
-- [ ] No legacy adapter exists and the renderer needs none: a V1 module the
+- [x] The same declaration drives compiler validation and user-facing discovery.
+- [x] Automation and modulation combine identically for every native module.
+- [x] Stable targets survive node reorder and insertion.
+- [x] The same project compiles headless and with GUI/OSC observation enabled;
+      observation changes no audible sample. That it changes no semantic project
+      digest is Phase 10D's to hold when it defines that digest, carried as
+      `P05-R002`.
+- [x] No legacy adapter exists and the renderer needs none: a V1 module the
       lowerer cannot map to a native kind is refused under `LOWER` rather than
       adapted.
 
@@ -1296,11 +1300,20 @@ protocol or product boundary changes, and the affected surface is this plan.
 | Item | Before | After | Why |
 |---|---|---|---|
 | Work list, adapter bullet | Add a temporary `LegacyPolyModuleAdapter`, transitional and measured separately | No adapter is built; the measurement is withdrawn | A V1 module the lowerer cannot map is refused under `LOWER`, so an adapter has no consumer |
+| Exit gate, bullet 5 | Observation changes no audible samples or semantic project digest | Observation changes no audible sample; the digest clause is carried as `P05-R002` | The semantic project digest is added in Phase 10D and has no falsifier before it; an independent read of the exit review found the clause unevidenced, and the user chose the residual over holding the phase open (2026-09-05) |
 | Exit gate, bullet 6 | The legacy adapter is not required by the renderer itself | No legacy adapter exists and the renderer needs none | The old wording presupposed an adapter to be dispensable with |
 | Outcome (`ROADMAP.md`) | Exit requires representative native **and legacy-adapted** nodes ... and measured adapter costs inside the phase budget | Exit requires representative native nodes, one parameter composition law, and generated discovery/schema agreement | The adapted-node and adapter-cost clauses named the withdrawn thing |
 
-**A second decision taken the same day, recorded beside this because it is the
-same review's input and is *not* a gate change.** Every declared `Smoothing`
+**`P05-R002`, the digest clause.** ADR-0027 clause 2 already forbids a persisted analyzer
+node from carrying any buffer, subscriber or connection state, so the project's serialized
+form has no observation field for a digest to see; what remains is to hold the digest to
+that once it exists. Phase 10D owns it: its digest test asserts that opening, closing or
+saturating an observation changes no semantic project digest, before that digest is used
+for anything. It fails closed today — there is no digest to misreport — and no dependent
+phase's guarantee is weakened, which are `PROCESS.md`'s conditions for a residual.
+
+**A third decision taken the same day, recorded beside this because it is the same
+review's input and is *not* a gate change.** Every declared `Smoothing`
 policy stays `None`. For the one quantum-rate control V2 has, the oscillator
 amplitude, that is V1 parity rather than a deferral: the lowerer maps V1's
 oscillator level onto it as a static base, and V1's oscillator applies that level

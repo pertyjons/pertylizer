@@ -44,9 +44,12 @@ archive/
 │   └── INDEX.md
 ├── phase-01/
 │   └── INDEX.md
-└── phase-03/
+├── phase-03/
+│   ├── INDEX.md
+│   └── process-history.md
+└── phase-05/
     ├── INDEX.md
-    └── process-history.md
+    └── slices.md
 ```
 
 Create a phase directory only when something is archived.
