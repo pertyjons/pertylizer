@@ -125,6 +125,23 @@ impl CompiledEventScheduler {
         ingress: Option<&mut crate::ingress::PerformanceIngress>,
         output: AudioBlockMut<'_>,
     ) -> Result<(), ScheduledRenderError> {
+        self.render_observed(renderer, arbiter, ingress, None, output)
+    }
+
+    /// Render one actual host block with a live ingress store and the host's observation
+    /// subscriptions, both optional (`HOST-INV-023`).
+    ///
+    /// Additive again, for the same reason: the subscriptions store is the host's, handed
+    /// over for one call, and a stream nobody observes passes `None` and renders exactly as
+    /// before — which is the property the store exists to leave alone.
+    pub fn render_observed(
+        &mut self,
+        renderer: &mut PreparedRenderer,
+        arbiter: &mut PublicationArbiter,
+        ingress: Option<&mut crate::ingress::PerformanceIngress>,
+        observers: Option<&mut crate::observe::ObservationSubscriptions>,
+        output: AudioBlockMut<'_>,
+    ) -> Result<(), ScheduledRenderError> {
         // **Every refusal that leaves the stream untouched happens before any adoption.**
         // Adoption moves the anchor, the live-note registry, the schedule and the exchange,
         // and each of these three says the call should not have happened at all: a crossed
@@ -252,17 +269,24 @@ impl CompiledEventScheduler {
         // sub-call is its own publication pass: the store must be drained by both, and a
         // moved `&mut` would serve only the first.
         let mut ingress = ingress;
+        let mut observers = observers;
         let whole = match split {
             Some((boundary, late, cut)) => match output.split_at_frame(cut) {
                 Ok((mut head, mut tail)) => {
-                    let mut outcome =
-                        self.render_one(renderer, arbiter, ingress.as_deref_mut(), head.reborrow());
+                    let mut outcome = self.render_one(
+                        renderer,
+                        arbiter,
+                        ingress.as_deref_mut(),
+                        observers.as_deref_mut(),
+                        head.reborrow(),
+                    );
                     if outcome.is_ok() {
                         self.adopt_pending(renderer, boundary, late);
                         outcome = self.render_one(
                             renderer,
                             arbiter,
                             ingress.as_deref_mut(),
+                            observers.as_deref_mut(),
                             tail.reborrow(),
                         );
                     }
@@ -285,7 +309,7 @@ impl CompiledEventScheduler {
             },
             None => output,
         };
-        self.render_one(renderer, arbiter, ingress, whole)
+        self.render_one(renderer, arbiter, ingress, observers, whole)
     }
 
     /// The effective point of the pending activation, if there is one.
@@ -355,6 +379,7 @@ impl CompiledEventScheduler {
         renderer: &mut PreparedRenderer,
         arbiter: &mut PublicationArbiter,
         ingress: Option<&mut crate::ingress::PerformanceIngress>,
+        observers: Option<&mut crate::observe::ObservationSubscriptions>,
         mut output: AudioBlockMut<'_>,
     ) -> Result<(), ScheduledRenderError> {
         // The epoch, the faulted-stream and the arbiter checks are `render`'s, taken before
@@ -506,7 +531,7 @@ impl CompiledEventScheduler {
         }
 
         let batch = publication.seal();
-        if let Err(error) = renderer.render(output, batch.events()) {
+        if let Err(error) = renderer.render_observed(output, batch.events(), observers) {
             return Err(ScheduledRenderError::Render(error));
         }
         self.next = end;

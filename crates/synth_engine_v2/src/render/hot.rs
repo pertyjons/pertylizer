@@ -803,8 +803,26 @@ impl PreparedRenderer {
 impl Renderer for PreparedRenderer {
     fn render(
         &mut self,
+        output: AudioBlockMut<'_>,
+        events: TimedEvents<'_>,
+    ) -> Result<(), RenderError> {
+        self.render_observed(output, events, None)
+    }
+}
+
+impl PreparedRenderer {
+    /// Render one caller block, pushing each rendered quantum of every subscribed tap into
+    /// the observers' rings (`HOST-INV-023`).
+    ///
+    /// The store is a parameter for the reason the ingress store is: the host owns it, and
+    /// the renderer neither allocates nor keeps it. With `None` this is [`Renderer::render`]
+    /// exactly, and with a store the audio is the same — the push is a copy out of the arena
+    /// after the schedule walk, which `tests/observation.rs` holds bit for bit.
+    pub fn render_observed(
+        &mut self,
         mut output: AudioBlockMut<'_>,
         events: TimedEvents<'_>,
+        mut observers: Option<&mut crate::observe::ObservationSubscriptions>,
     ) -> Result<(), RenderError> {
         if self.diagnostics.needs_reprepare() {
             output.samples.fill(0.0);
@@ -873,6 +891,16 @@ impl Renderer for PreparedRenderer {
                     self.fault(&mut output);
                 }
                 return Err(error);
+            }
+            // `SOUND-INV-022`'s taps, read by `HOST-INV-023`'s subscribers: after the walk,
+            // the tapped regions hold this quantum, and ADR-0005 clause 6 kept them so.
+            if let Some(observers) = observers.as_deref_mut() {
+                observers.push_quantum(
+                    self.plan.id(),
+                    self.plan.taps(),
+                    self.plan.regions(),
+                    &self.buffers,
+                );
             }
         }
 

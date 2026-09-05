@@ -105,6 +105,7 @@ pub mod identity;
 pub mod ingress;
 pub mod ir;
 pub mod node;
+pub mod observe;
 pub mod offline;
 pub mod plan;
 pub mod profile;

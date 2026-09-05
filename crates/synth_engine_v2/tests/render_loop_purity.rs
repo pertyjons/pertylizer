@@ -44,9 +44,10 @@ use std::path::{Path, PathBuf};
 /// more: it is the only file in the region that **writes back** into a producer's own
 /// storage while the call runs, so an allocation there would be one the producing half
 /// never sees.
-const REGION: [&str; 7] = [
+const REGION: [&str; 8] = [
     "src/render/hot.rs",
     "src/render/slot.rs",
+    "src/observe/hot.rs",
     "src/schedule/hot.rs",
     "src/publish/hot.rs",
     "src/identity/hot.rs",
@@ -500,6 +501,12 @@ fn every_call_the_render_loop_makes_is_inside_the_checked_region() {
         // add, and lands in the same file under the same scan.
         "exp2",
         "powf",
+        // `CompiledPlan::taps` and `BufferRegion::end`: a slice borrow of a table the plan
+        // owns and a `const fn` add of a region's offset and length. `HOST-INV-023`'s push
+        // reads the tapped regions through them after the schedule walk; neither allocates,
+        // locks nor can panic.
+        "taps",
+        "end",
         // `ParameterValue::from_frequency` and `from_amplitude`: `const fn` widenings of a
         // finite newtype into the control-write value, used by `authored_value` in the
         // kernel file — an admission-time read of a prepared record, in the region because
@@ -896,6 +903,7 @@ fn the_render_loop_imports_no_free_function() {
     for (required, floor) in [
         ("src/render/hot.rs", 6),
         ("src/render/slot.rs", 2),
+        ("src/observe/hot.rs", 3),
         ("src/schedule/hot.rs", 2),
         ("src/publish/hot.rs", 2),
         ("src/identity/hot.rs", 2),
