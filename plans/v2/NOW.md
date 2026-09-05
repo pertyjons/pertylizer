@@ -53,6 +53,45 @@ read for an unevidenced observation bullet, and the ninth slice is what evidence
 
 ## Active streams
 
+### Phase 6 — active since 2026-09-05
+
+Activated by selection, as the Phase 5 exit said it would be. Its entry prerequisite is met:
+[ADR-0025](decisions/ADR-0025-tuning-representation-and-ownership.md) is **Accepted**, so a
+voice's pitch resolves through the prepared tuning the plan already holds rather than a second
+model. Two decisions bind slices inside the phase rather than its entry, under `PROCESS.md`'s
+decision-timing rule: the voice **allocation and stealing** policy — which voice a note-on
+takes when none is free, and how the taken voice ends — is a delivered-behaviour decision no
+record holds yet and is required before the slice that steals; and
+[ADR-0026](decisions/ADR-0026-minimum-samplemap-and-samplezone-model.md), the sample map and
+zone model, is `Proposed` and required before the sampler slice. Until the stealing decision,
+a note-on that finds no free voice is refused and counted, which is the identity range's
+existing exhaustion path and fails closed.
+
+What V2 has at the phase's start: one instance of the voice scope per plan, so every note a
+producer plays lands on the same envelope and oscillator; note identity per occurrence with a
+disjoint index range per producer sized by `simultaneous_notes`, admitted, minted off-thread
+and released with an orphan count (`SOUND-INV-017`); the note payload's key and velocity
+expanded to every declared destination in the played node's scope, through the prepared
+tuning (`SOUND-INV-021`); one parameter slot per addressable parameter (`SOUND-INV-023`,
+`SOUND-INV-024`); and a report that admits `active_voices` as a declared count nothing yet
+derives. The phase turns the voice scope into a `VoicePlan` — one immutable prepared shape,
+`N` instances of mutable state — and routes each occurrence to its own instance.
+
+| Task | State | Current boundary |
+|---|---|---|
+| P06-S001 — `N` voice instances of one prepared voice plan | **Selected** 2026-09-05 | The compiler instantiates the voice scope once per identity index of the producer that plays it — `simultaneous_notes` instances — sharing every prepared record and cloning none: `N` node slots per voice-scope node over one prepared record, per-instance state, per-instance parameter slots and buffers for voice-scope parameters (voice-local state, with a `SetParameter` fanning its override write out to every instance and a note's magnitudes landing on its own), and a compiler-inserted **accumulate** into one voice-sum region wherever a voice-scope output feeds a non-voice node. The renderer routes a note's gate and magnitudes to the instance its identity index names, so two overlapping notes sound as two voices. A note-on with no free index is refused and counted, as today. **Completion check:** a plan declaring one simultaneous note renders bit-identically to today (EVD-0013 and the `quantum_cost` digests reproduce); two overlapping notes render as the sum of two single-note renders, sample for sample; a release ends its own voice and no other; the report's mutable and prepared rows scale with `N` for state and slots and not at all for prepared records, and preparation allocates exactly what the rows charge; `max_active_voices` is admitted against the derived instance count rather than a declared one; the purity scan covers the accumulate kernel and the per-voice routing; mutation-verified. Real-time boundary and admission: the core Rust gate and one independent review apply |
+| P06-S002 — voice stealing under a decided policy | Not started | Needs the allocation and stealing ADR first: which voice is taken (V1 offers oldest, quietest, lowest priority, same note, none), how the taken voice ends at a precise sample (a release-then-retrigger over the retirement crossfade, or a cut), and what a stolen voice's expression keeps or clears — one documented rule, tested at sample offsets |
+| P06-S003 — per-note expression and the bend clause | Not started | ADR-0047 clause 9's reserved per-note event, `SOUND-INV-021`'s bend clause (a cents offset after resolution), and the rule that allocation, stealing, sustain, retrigger and release preserve or clear expression; note identity must still route expression after stealing and after a plan recompilation |
+| P06-S004 — velocity composition | Not started | Inherits `P04-R001` before it builds: V1 applies one saved velocity under two independent sensitivities; V2 states the composition as a modulation under one of `SOUND-INV-023`'s laws on the velocity destination, and the lowering's `UnsupportedScope` mark comes off placed notes when a parity verdict can be offered |
+| P06-S005 — the one-zone sampler on the prepared map/zone contract | Not started | Needs ADR-0026 accepted first: an immutable sample map with zones, key/velocity selection, root and tuning, playback region and a prepared sample reference, of which the native sampler selects exactly one zone without a per-note allocation or a single-sample API |
+| P06-S006 — one tuning through every path | Not started | Built-in 12-TET and one non-12-TET mapping produce the same pitches through the live, sequenced, offline and analysis-facing paths; the prepared tuning contract already exists and this holds every consumer to it |
+| P06-S007 — determinism under pressure | Not started | The exit's evidence: polyphonic output deterministic for a fixed seed and event stream under stealing pressure, and equivalent offline and live instance behaviour |
+
+Inherited before it builds: `P04-R001` (velocity composition, `P06-S004`) and `P05-R001` (a
+lowered level's smoothing policy, binding the lowering that first maps V1's amplifier level or
+writes a V2 amplitude dynamically). `P05-R002` is Phase 10D's and does not bind this phase.
+
+
 ### Phase 0B — active in parallel
 
 Phase 0B remains `Active, parallel`; Phase 10 still waits for its exit.
@@ -103,9 +142,9 @@ level's smoothing policy — before a lowering maps V1's amplifier level onto a 
 writes a V2 amplitude dynamically; and Phase 3's residuals, which block only their named
 consumers. `P04-R004` binds the first shared render surface, which is Phase 10B's.
 
-One stream is active: Phase 0B, with `P00B-T003` as its selected slice. Phase 5 is closed.
+Two streams are active: Phase 6, with `P06-S001` selected, and Phase 0B, with `P00B-T003`
+as its selected slice.
 
-Next action: **activate Phase 6** — polyphony and instrument runtime — by selecting its
-first slice. Its entry prerequisite is met: ADR-0025 is `Accepted`. It inherits `P04-R001`
-(V1's two velocity sensitivities) before it builds a velocity composition, and `P05-R001`
-binds the lowering that first maps a V1 amplifier level.
+Next action: **build `P06-S001`** on a branch off `main`; its completion check is in the
+table above. The allocation and stealing ADR is drafted before `P06-S002`, not before this
+slice, because this slice refuses rather than steals.
