@@ -184,7 +184,10 @@ fn compiled_note(plan: &CompiledPlan, time: u64, on: bool) -> PlanEvent {
     let payload = if on {
         common::note_on(slot)
     } else {
-        CompiledPayload::NoteOff { slot }
+        CompiledPayload::NoteOff {
+            slot,
+            key: common::any_key(),
+        }
     };
     PlanEvent::new(PlanPosition::new(time), payload)
 }
@@ -1044,6 +1047,10 @@ fn the_ring_wraps_and_delivers_every_entry_exactly_once() {
     // quantum `k` appears in output cell `k + 1`; cell zero is the gate before any write.
     // A lost entry merges two cells and breaks this comparison. A duplicate does not reach
     // it at all: see the share peak below.
+    // The envelope is a voice-scope node with four instances, and a parameter write fans out
+    // over every instance of its control (`P06-S001`), so an open gate sounds on all four
+    // and the voice sum carries their total: the high cell is `instances`, not one.
+    let instances = plan.voice_instances().get() as f32;
     for (frame, sample) in rendered.iter().copied().enumerate() {
         let cell = frame as u64 / Q;
         // Past the last write the gate holds what that write left, so the source cell is
@@ -1052,7 +1059,7 @@ fn the_ring_wraps_and_delivers_every_entry_exactly_once() {
         let expected = if cell == 0 {
             0.0
         } else if written.is_multiple_of(2) {
-            1.0
+            instances
         } else {
             0.0
         };

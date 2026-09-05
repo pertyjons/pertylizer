@@ -529,13 +529,28 @@ fn a_report_says_when_its_arena_row_is_an_upper_bound() {
 
     // Refused on a field that has nothing to do with the arena: a plan declaring more
     // voices than any profile admits.
+    // `P06-S001`: voices are derived from the producers' identity ranges, and a plan requests
+    // them only where it has a voice-scope node to instantiate — so this one has both. The
+    // preflight refuses it before lowering, which is what keeps a four-billion-instance
+    // lowering from ever running.
     let greedy = GraphIr::builder()
+        .node(SOURCE, IrNodeKind::Silence, ExecutionScope::Voice)
+        .node(OUTPUT, IrNodeKind::Output, ExecutionScope::Global)
+        .connect(
+            (SOURCE, PortId::FIRST),
+            (OUTPUT, PortId::FIRST),
+            SignalDomain::Audio,
+        )
         .declaring(crate::ir::PlanDeclarations {
-            active_voices: crate::quantities::VoiceCount::measured(u32::MAX),
+            note_producers: vec![crate::ir::NoteProducerDeclaration {
+                compiled: true,
+                simultaneous_notes: crate::quantities::HeldNoteCount::measured(u32::MAX),
+                simultaneous_holds: crate::quantities::EventCount::NONE,
+            }],
             ..crate::ir::PlanDeclarations::default()
         })
         .build()
-        .expect("declarations alone are a readable plan");
+        .expect("a source into an output is a readable plan");
 
     let refused = compile_with(&greedy, &RenderConfig::new(host), ArenaPolicy::Reuse);
     assert!(

@@ -460,6 +460,9 @@ pub(crate) struct DueEvent {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct ResolvedTarget {
     pub(crate) slot: usize,
+    /// How many consecutive rows the write covers: a parameter's whole group for a
+    /// `SetParameter`, one row — the note's own voice — for a note edge (`P06-S001`).
+    pub(crate) rows: usize,
 }
 
 impl DueEvent {
@@ -632,11 +635,25 @@ impl PreparedRenderer {
 
         // One state per prepared node, built from the prepared record so the two tables
         // are parallel by construction rather than by two counters agreeing.
-        let node_states: Vec<NodeState> = plan
-            .prepared_nodes()
+        // One state per **scheduled step**, from the prepared record the step names: since
+        // `P06-S001` a voice-scope node has one prepared record and one state per instance,
+        // so the two tables are no longer parallel — the step is what pairs them.
+        let steps = plan
+            .ops()
             .iter()
-            .map(NodeState::initial)
-            .collect();
+            .filter(|op| matches!(op, PlanOp::Node(_)))
+            .count();
+        let mut node_states: Vec<NodeState> = vec![NodeState::Stateless; steps];
+        for op in plan.ops() {
+            if let PlanOp::Node(step) = op
+                && let (Some(prepared), Some(state)) = (
+                    plan.prepared_nodes().get(step.prepared().index()),
+                    node_states.get_mut(step.node().index()),
+                )
+            {
+                *state = NodeState::initial(prepared);
+            }
+        }
         // One slot per target row, from the row itself, for the same reason.
         let parameter_slots: Vec<slot::SlotState> = plan
             .parameter_targets()
@@ -649,7 +666,7 @@ impl PreparedRenderer {
         // order — which is declaration order, because the compiler pushes a node's controls
         // contiguously — so a node's ramps are one slice.
         let mut ramp_offsets = Vec::with_capacity(parameter_slots.len());
-        let mut ramp_starts = vec![0_usize; plan.prepared_nodes().len().saturating_add(1)];
+        let mut ramp_starts = vec![0_usize; node_states.len().saturating_add(1)];
         let mut running = 0_usize;
         for target in plan.parameter_targets() {
             match target.rate {
@@ -677,8 +694,13 @@ impl PreparedRenderer {
         // bounds both the per-quantum tally and the event scratch.
         let quanta_per_call = max_block.div_ceil(quantum).saturating_add(1);
         let events_per_quantum = plan.max_events_per_quantum().as_usize().unwrap_or(0);
-        // What the widest of this plan's note-ons resolves to, gate included.
-        let writes_per_note = plan.max_writes_per_note().get() as usize;
+        // What the widest of this plan's events writes: a note-on's expansion, gate included,
+        // or a sample-positioned parameter write fanned out over the instances of the widest
+        // group such a write can address (`P06-S001`).
+        let writes_per_note = plan
+            .max_writes_per_note()
+            .fanned_out(plan.sample_positioned_fan_out())
+            .get() as usize;
         // One index entry per scheduled record, from the table the renderer already keeps
         // one state per — so the two cannot be counted differently.
         let records = node_states.len();
@@ -818,6 +840,12 @@ impl PreparedRenderer {
             .and_then(|tap| self.plan.region(tap.region))
             .and_then(|region| self.buffers.get(region.offset()..region.end()))
             .unwrap_or(&[])
+    }
+
+    /// Every state record, by node slot — for a test reading what an instance's kernel kept.
+    #[cfg(test)]
+    pub(crate) fn node_states(&self) -> &[NodeState] {
+        &self.node_states
     }
 
     /// The bytes preparation holds for the per-node run table of those buffers.

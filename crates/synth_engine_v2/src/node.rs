@@ -1165,6 +1165,25 @@ pub(crate) fn copy_descriptor() -> NodeDescriptor {
     }
 }
 
+/// The descriptor of the compiler-inserted voice sum's accumulate step (`P06-S001`).
+///
+/// Two audio inputs — the instance's output and the sum itself, which is also the step's
+/// output — and no controls. Not in-place safe with respect to its first input: the sum must
+/// never take over an instance's buffer, and its second input is the sum by construction.
+pub(crate) fn accumulate_descriptor() -> NodeDescriptor {
+    NodeDescriptor {
+        kernel: kernels::ACCUMULATE,
+        ports: vec![
+            audio_in(crate::ir::PortId::FIRST),
+            audio_in(crate::ir::PortId::new(1)),
+            audio_out(),
+        ],
+        controls: Vec::new(),
+        in_place_safe: false,
+        note_control: None,
+    }
+}
+
 /// Build the prepared data for one node, against the stream it will render into.
 ///
 /// Everything derived from the stream is derived **here**, once — a sine's per-frame

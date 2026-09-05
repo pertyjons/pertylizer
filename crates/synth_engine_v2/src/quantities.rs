@@ -974,6 +974,18 @@ impl WritesPerNote {
     pub const GATE_ONLY: Self = Self(1);
 
     /// The gate plus this many magnitude destinations.
+    /// The wider of this and a write that fans out over `instances` voice rows: since
+    /// `P06-S001` a sample-positioned `SetParameter` to a voice-scope parameter writes one
+    /// control per instance, and the scratch a quantum's events need is sized by the widest
+    /// write any one event can make.
+    pub const fn fanned_out(self, instances: VoiceCount) -> Self {
+        if instances.get() > self.0 {
+            Self(instances.get())
+        } else {
+            self
+        }
+    }
+
     pub const fn with_magnitudes(magnitudes: u32) -> Self {
         Self(magnitudes.saturating_add(1))
     }

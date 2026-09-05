@@ -138,7 +138,10 @@ fn edge(plan: &CompiledPlan, node: NodeId, at: u64, on: bool) -> OfflineEvent {
     let payload = if on {
         common::note_on(slot)
     } else {
-        CompiledPayload::NoteOff { slot }
+        CompiledPayload::NoteOff {
+            slot,
+            key: common::any_key(),
+        }
     };
     OfflineEvent::new(SampleTime::new(at), payload)
 }
@@ -290,7 +293,13 @@ fn a_release_replayed_after_its_note_ended_moves_no_node() {
         &mut control,
         &[
             CompiledEvent::new(SampleTime::new(0), common::note_on(fast)),
-            CompiledEvent::new(SampleTime::new(1), CompiledPayload::NoteOff { slot: fast }),
+            CompiledEvent::new(
+                SampleTime::new(1),
+                CompiledPayload::NoteOff {
+                    slot: fast,
+                    key: common::any_key(),
+                },
+            ),
         ],
     )
     .expect("the plan declares a compiled note producer");
@@ -423,7 +432,10 @@ fn a_compiled_release_with_no_matching_note_on_is_refused_at_stamping() {
         &mut control,
         &[CompiledEvent::new(
             SampleTime::new(0),
-            CompiledPayload::NoteOff { slot },
+            CompiledPayload::NoteOff {
+                slot,
+                key: common::any_key(),
+            },
         )],
     )
     .expect_err("a release that opens nothing is not a pairing this can make");
@@ -642,7 +654,10 @@ fn a_producers_range_bounds_its_polyphony_rather_than_a_pieces_note_count() {
         ));
         events.push(CompiledEvent::new(
             SampleTime::new(play * Q + 1),
-            CompiledPayload::NoteOff { slot },
+            CompiledPayload::NoteOff {
+                slot,
+                key: common::any_key(),
+            },
         ));
     }
     let stamped = synth_engine_v2::schedule::stamp_compiled(&mut control, &events)
@@ -676,7 +691,13 @@ fn a_producers_range_bounds_its_polyphony_rather_than_a_pieces_note_count() {
         &mut control,
         &[
             CompiledEvent::new(SampleTime::ZERO, common::note_on(slot)),
-            CompiledEvent::new(SampleTime::new(1), CompiledPayload::NoteOff { slot }),
+            CompiledEvent::new(
+                SampleTime::new(1),
+                CompiledPayload::NoteOff {
+                    slot,
+                    key: common::any_key(),
+                },
+            ),
         ],
     )
     .expect("a valid list after a mint that failed part-way through");
@@ -765,8 +786,20 @@ fn a_refused_list_leaves_the_minter_as_it_found_it() {
         &mut control,
         &[
             CompiledEvent::new(SampleTime::ZERO, common::note_on(slot)),
-            CompiledEvent::new(SampleTime::new(1), CompiledPayload::NoteOff { slot }),
-            CompiledEvent::new(SampleTime::new(2), CompiledPayload::NoteOff { slot }),
+            CompiledEvent::new(
+                SampleTime::new(1),
+                CompiledPayload::NoteOff {
+                    slot,
+                    key: common::any_key(),
+                },
+            ),
+            CompiledEvent::new(
+                SampleTime::new(2),
+                CompiledPayload::NoteOff {
+                    slot,
+                    key: common::any_key(),
+                },
+            ),
         ],
     )
     .expect_err("the third event releases a node with nothing sounding");
@@ -783,7 +816,13 @@ fn a_refused_list_leaves_the_minter_as_it_found_it() {
         &mut control,
         &[
             CompiledEvent::new(SampleTime::ZERO, common::note_on(slot)),
-            CompiledEvent::new(SampleTime::new(1), CompiledPayload::NoteOff { slot }),
+            CompiledEvent::new(
+                SampleTime::new(1),
+                CompiledPayload::NoteOff {
+                    slot,
+                    key: common::any_key(),
+                },
+            ),
         ],
     )
     .expect("a valid list after a refused one, which a partial mint would have starved");
@@ -811,7 +850,13 @@ fn an_orphan_names_the_occurrence_it_refused() {
         &mut control,
         &[
             CompiledEvent::new(SampleTime::ZERO, common::note_on(slot)),
-            CompiledEvent::new(SampleTime::new(1), CompiledPayload::NoteOff { slot }),
+            CompiledEvent::new(
+                SampleTime::new(1),
+                CompiledPayload::NoteOff {
+                    slot,
+                    key: common::any_key(),
+                },
+            ),
         ],
     )
     .expect("the plan declares a compiled note producer");
@@ -876,7 +921,13 @@ fn an_orphan_release_is_counted_rather_than_silently_skipped() {
         &mut control,
         &[
             CompiledEvent::new(SampleTime::ZERO, common::note_on(slot)),
-            CompiledEvent::new(SampleTime::new(1), CompiledPayload::NoteOff { slot }),
+            CompiledEvent::new(
+                SampleTime::new(1),
+                CompiledPayload::NoteOff {
+                    slot,
+                    key: common::any_key(),
+                },
+            ),
         ],
     )
     .expect("the plan declares a compiled note producer");

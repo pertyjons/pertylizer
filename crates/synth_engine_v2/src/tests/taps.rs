@@ -38,7 +38,37 @@ fn a_tap_exists_only_through_a_declaration_and_names_the_node_and_port() {
     let monitored = admit(&voice(true));
     let plain = admit(&voice(false));
     assert!(plain.taps().is_empty() && plain.tap_addresses().is_empty());
-    assert_eq!(monitored.taps().len(), 1);
+    // One tap row per voice instance of the monitor — the voice declares four simultaneous
+    // notes — and one address, naming instance 0's row (`P06-S001`).
+    assert_eq!(
+        monitored.taps().len(),
+        usize::try_from(monitored.voice_instances().get()).expect("fits")
+    );
+    assert_eq!(monitored.tap_addresses().len(), 1);
+    // Each row names its **own** instance's step, in instance order, and the region that
+    // step writes — a consumer correlating a tap with a step must not be sent to instance 0
+    // for every row. An independent read found every row naming the first instance.
+    let first = monitored.taps()[0].node.index();
+    for (instance, tap) in monitored.taps().iter().enumerate() {
+        assert_eq!(
+            tap.node.index(),
+            first + instance,
+            "tap row {instance} names another instance's step"
+        );
+        let step = monitored
+            .ops()
+            .iter()
+            .find_map(|op| match op {
+                crate::plan::PlanOp::Node(step) if step.node() == tap.node => Some(*step),
+                _ => None,
+            })
+            .expect("every instance is scheduled");
+        assert_eq!(
+            step.out(),
+            tap.region,
+            "tap row {instance} names a region its own step does not write"
+        );
+    }
     let slot = monitored
         .resolve_tap(MONITOR, PortId::FIRST)
         .expect("the monitor declares a tap on its output");

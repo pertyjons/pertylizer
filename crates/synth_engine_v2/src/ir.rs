@@ -549,8 +549,6 @@ pub struct PlanDeclarations {
     /// An empty list is a plan that starts no notes, which is ordinary: a plan can be pure
     /// automation.
     pub note_producers: Vec<NoteProducerDeclaration>,
-    /// Voices sounding at once across the plan.
-    pub active_voices: VoiceCount,
     /// Notes held at once across the plan.
     pub held_notes: HeldNoteCount,
     /// Mix channels.
@@ -656,7 +654,6 @@ impl Default for PlanDeclarations {
             // notes, and inventing a producer here would give admission something to
             // partition that the plan never asked for.
             note_producers: Vec::new(),
-            active_voices: VoiceCount::NONE,
             held_notes: HeldNoteCount::NONE,
             mix_channels: MixChannelCount::NONE,
             buses: BusCount::NONE,
@@ -983,7 +980,9 @@ impl GraphIr {
     /// exactly this much. The attribution stays the node whose state payload is widest; a
     /// slot belongs to its node and is charged with it.
     pub fn mutable_bytes(&self, inserted: u64) -> (PreparedBytes, IrObject) {
-        let (records, dominant) = self.aggregate_bytes(
+        // The attribution walks the payloads; the total is over **state** records, which is
+        // what the renderer allocates one of per voice instance (`P06-S001`).
+        let (_, dominant) = self.aggregate_bytes(
             crate::node::state_bytes_per_node(),
             |kind| {
                 crate::node::state_payload_bytes(kind)
@@ -991,22 +990,117 @@ impl GraphIr {
             },
             inserted,
         );
+        let records = u64::from(self.state_records(inserted).get());
+        let voices = u64::from(self.voice_instances().get());
+        // The slots and buffers of a voice-scope node exist once per instance: voice-local
+        // parameter state, one row per instance of each control.
         let slots = self.nodes.iter().fold(0_u64, |total, node| {
-            total.saturating_add(crate::node::slot_payload_bytes(node.kind()))
+            let per_instance = crate::node::slot_payload_bytes(node.kind());
+            let instances = if node.scope() == ExecutionScope::Voice {
+                voices
+            } else {
+                1
+            };
+            total.saturating_add(per_instance.saturating_mul(instances))
         });
-        // The per-node run table of `SOUND-INV-024`'s buffers: one entry per scheduled
-        // record and a terminator, sized exactly as preparation sizes it.
-        let table = u64::from(self.scheduled_records(inserted).get())
+        // The per-node run table of `SOUND-INV-024`'s buffers: one entry per state record
+        // and a terminator, sized exactly as preparation sizes it.
+        let table = records
             .saturating_add(1)
             .saturating_mul(crate::node::ramp_table_bytes_per_record());
         (
-            PreparedBytes::measured(records.get().saturating_add(slots).saturating_add(table)),
+            PreparedBytes::measured(
+                records
+                    .saturating_mul(crate::node::state_bytes_per_node())
+                    .saturating_add(slots)
+                    .saturating_add(table),
+            ),
             dominant,
         )
     }
 
-    /// How many records the plan schedules: a node with a kernel, plus what the compiler
-    /// inserted.
+    /// How many voice instances the plan renders: one per identity index of its note
+    /// producers — the sum of their `simultaneous_notes` — and at least one, so a voice scope
+    /// nothing plays still renders once (`P06-S001`).
+    ///
+    /// Derived rather than declared: an `active_voices` declaration used to sit beside the
+    /// producers and could disagree with them; the renderer instantiates exactly this many,
+    /// and the report admits exactly this many against `max_active_voices`.
+    /// How many rows one sample-positioned write can fan out over: the instance count where
+    /// a voice-scope node declares a writable `ControlRate::Sample` control, and one where
+    /// none does.
+    ///
+    /// What the timed-control scratch is sized on beside a note-on's expansion
+    /// (`P06-S001`). A quantum-rate write reaches its rows through the slots and takes no
+    /// scratch, and a note's magnitudes land on one row — so a plan whose voice scope has
+    /// no sample-positioned control fans nothing out, whatever its polyphony, and charging
+    /// it `N` writes per event would refuse it for scratch no event can fill. An independent
+    /// review found the charge stated over every plan. [`crate::plan::CompiledPlan`] derives
+    /// the same figure from its target table, and a test holds the two equal.
+    pub fn sample_positioned_fan_out(&self) -> VoiceCount {
+        let fans_out = self.nodes.iter().any(|node| {
+            node.scope() == ExecutionScope::Voice
+                && crate::node::descriptor(node.kind()).is_some_and(|descriptor| {
+                    descriptor.controls.iter().any(|spec| {
+                        spec.rate == crate::plan::ControlRate::Sample && spec.law.admits_writes()
+                    })
+                })
+        });
+        if fans_out {
+            self.voice_instances()
+        } else {
+            VoiceCount::measured(1)
+        }
+    }
+
+    pub fn voice_instances(&self) -> VoiceCount {
+        VoiceCount::measured(self.identity_indices().max(1))
+    }
+
+    /// The identity partition's size: the sum of every producer's `simultaneous_notes`, and
+    /// zero for a plan nothing plays. What the cost model prices — a plan with no producer
+    /// prices no voice, though it still renders its voice scope once.
+    #[must_use]
+    pub fn identity_indices(&self) -> u32 {
+        self.declarations
+            .note_producers
+            .iter()
+            .fold(0_u32, |total, producer| {
+                total.saturating_add(producer.simultaneous_notes.get())
+            })
+    }
+
+    /// Whether any node renders in the voice scope, and so is instantiated per voice.
+    #[must_use]
+    pub fn has_voice_scope(&self) -> bool {
+        self.nodes
+            .iter()
+            .any(|node| node.scope() == ExecutionScope::Voice && node.kind().is_source())
+    }
+
+    /// How many **state** records the plan schedules: a node with a kernel once per instance
+    /// of its scope — `voice_instances` for the voice scope, one otherwise — plus what the
+    /// compiler inserted. This is what the renderer keeps one state, one control run and one
+    /// buffer run per.
+    pub fn state_records(&self, inserted: u64) -> RecordCount {
+        let voices = u64::from(self.voice_instances().get());
+        let scheduled = self
+            .nodes
+            .iter()
+            .filter(|node| node.kind().is_source())
+            .fold(0_u64, |total, node| {
+                total.saturating_add(if node.scope() == ExecutionScope::Voice {
+                    voices
+                } else {
+                    1
+                })
+            });
+        RecordCount::measured(u32::try_from(scheduled.saturating_add(inserted)).unwrap_or(u32::MAX))
+    }
+
+    /// How many **prepared** records the plan holds: a node with a kernel once, whatever
+    /// its scope — prepared data is shared by every instance and cloned by none — plus what
+    /// the compiler inserted.
     ///
     /// Every row and allocation that is *per scheduled record* is over this one figure,
     /// so a caller that counted nodes instead would over-report by exactly the outputs.
@@ -1118,7 +1212,7 @@ impl GraphIr {
         /// The rate EVD-0003's figures were measured at.
         const MEASURED_AT_HZ: f32 = 44_100.0;
 
-        let voices = self.declarations.active_voices.get();
+        let voices = self.identity_indices();
         if voices == 0 && self.nodes.is_empty() {
             return CostRatio::measured(0.0).ok();
         }
@@ -1402,7 +1496,12 @@ mod tests {
     fn the_cost_model_reproduces_the_two_figures_the_evidence_states() {
         let ir = GraphIr::builder()
             .declaring(PlanDeclarations {
-                active_voices: VoiceCount::measured(512),
+                // 512 voices, derived from a producer of 512 simultaneous notes.
+                note_producers: vec![NoteProducerDeclaration {
+                    compiled: true,
+                    simultaneous_notes: HeldNoteCount::measured(512),
+                    simultaneous_holds: EventCount::NONE,
+                }],
                 ..PlanDeclarations::default()
             })
             .build()

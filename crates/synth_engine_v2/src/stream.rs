@@ -54,6 +54,46 @@ use crate::transport::{ActivationSequence, LoopInterval, TransportActivation};
 /// together rather than returned separately because they must describe the **same** pass: a
 /// density refusal computed over one set of events and a polyphony refusal computed over
 /// another would disagree without anything being able to say so.
+/// Open note-ons per `(slot, key)`, for the off-thread walks that decide which side of a
+/// boundary a release's note-on lies on.
+///
+/// `SOUND-INV-025`: a release pairs with the newest unreleased note-on **of its key** on its
+/// node, so a depth kept per node alone misattributes a release across two keys. One counter
+/// per slot and keyboard position, indexed directly — the table is
+/// `note_targets × 128` counters, built once per activation, off the audio thread.
+struct NoteDepths(Vec<u32>);
+
+impl NoteDepths {
+    /// Keyboard positions a `KeyIdentity` can name.
+    const KEYS: usize = 128;
+
+    fn new(slots: usize) -> Self {
+        Self(vec![0; slots.saturating_mul(Self::KEYS)])
+    }
+
+    fn index(slot: crate::plan::NoteSlot, key: crate::quantities::KeyIdentity) -> usize {
+        slot.index()
+            .saturating_mul(Self::KEYS)
+            .saturating_add(usize::from(key.as_u8()))
+    }
+
+    fn depth(&self, slot: crate::plan::NoteSlot, key: crate::quantities::KeyIdentity) -> u32 {
+        self.0.get(Self::index(slot, key)).copied().unwrap_or(0)
+    }
+
+    fn open(&mut self, slot: crate::plan::NoteSlot, key: crate::quantities::KeyIdentity) {
+        if let Some(depth) = self.0.get_mut(Self::index(slot, key)) {
+            *depth = depth.saturating_add(1);
+        }
+    }
+
+    fn close(&mut self, slot: crate::plan::NoteSlot, key: crate::quantities::KeyIdentity) {
+        if let Some(depth) = self.0.get_mut(Self::index(slot, key)) {
+            *depth = depth.saturating_sub(1);
+        }
+    }
+}
+
 struct RepeatingPass {
     /// Every event position inside the interval, which the window scan slides over.
     positions: Vec<PlanPosition>,
@@ -635,11 +675,14 @@ impl StreamControl {
         // One pass over the whole stream, and the anchor itself is what separates history
         // from suffix: `locate` already answers "is this before the destination?", so a
         // second comparison here would be a second authority on the same question.
-        // Note-ons before the anchor, per node. A release pairs with the most recent
-        // unreleased note-on on its node, so which side that note-on is on is what decides
-        // whether the release belongs in the suffix at all.
-        let mut before_anchor = vec![0_u32; self.plan.note_targets().len()];
-        let mut in_suffix = vec![0_u32; self.plan.note_targets().len()];
+        // Note-ons before the anchor, per node **and key**. A release pairs with the most
+        // recent unreleased note-on of its key on its node (`SOUND-INV-025`), so which side
+        // that note-on is on is what decides whether the release belongs in the suffix at
+        // all — and a table keyed by node alone would let a key opened after the anchor
+        // absorb the release of one opened before it, which `stamp_into` then refuses as
+        // unmatched. An independent review found the mismatch.
+        let mut before_anchor = NoteDepths::new(self.plan.note_targets().len());
+        let mut in_suffix = NoteDepths::new(self.plan.note_targets().len());
         // How many notes the history has open at once, against what the producer admits.
         // The history never reaches `stamp_into`, so without this a timeline the producer was
         // never entitled to emit would still decide which crossing releases the suffix omits —
@@ -728,14 +771,11 @@ impl StreamControl {
                                     },
                                 ));
                             }
-                            if let Some(depth) = before_anchor.get_mut(slot.index()) {
-                                *depth = depth.saturating_add(1);
-                            }
+                            before_anchor.open(slot, key);
                         }
-                        CompiledPayload::NoteOff { slot } => {
+                        CompiledPayload::NoteOff { slot, key } => {
                             require_note_producer(&self.plan, event_index)?;
-                            let sounding =
-                                before_anchor.get(slot.index()).copied().unwrap_or(0) > 0;
+                            let sounding = before_anchor.depth(slot, key) > 0;
                             if sounding {
                                 open_now = open_now.saturating_sub(1);
                             }
@@ -758,9 +798,7 @@ impl StreamControl {
                             if let Some(depth) = open_at_anchor.get_mut(slot.index()) {
                                 *depth = depth.saturating_sub(1);
                             }
-                            if let Some(depth) = before_anchor.get_mut(slot.index()) {
-                                *depth = depth.saturating_sub(1);
-                            }
+                            before_anchor.close(slot, key);
                         }
                     }
                     continue;
@@ -774,26 +812,20 @@ impl StreamControl {
             };
 
             match event.payload() {
-                CompiledPayload::NoteOn { slot, .. } => {
-                    if let Some(depth) = in_suffix.get_mut(slot.index()) {
-                        *depth = depth.saturating_add(1);
-                    }
+                CompiledPayload::NoteOn { slot, key, .. } => {
+                    in_suffix.open(slot, key);
                 }
-                CompiledPayload::NoteOff { slot } => {
-                    let paired_here = in_suffix.get(slot.index()).copied().unwrap_or(0) > 0;
+                CompiledPayload::NoteOff { slot, key } => {
+                    let paired_here = in_suffix.depth(slot, key) > 0;
                     if paired_here {
-                        if let Some(depth) = in_suffix.get_mut(slot.index()) {
-                            *depth = depth.saturating_sub(1);
-                        }
-                    } else if before_anchor.get(slot.index()).copied().unwrap_or(0) > 0 {
+                        in_suffix.close(slot, key);
+                    } else if before_anchor.depth(slot, key) > 0 {
                         // Clause 5: its note-on lies before the anchor, so after the seek
                         // that note is not sounding — the boundary release ended it and the
                         // new stream never started it. Omitted and **counted**, off the
                         // audio thread, so it is a named transformation rather than a
                         // silent drop the renderer would have to make.
-                        if let Some(depth) = before_anchor.get_mut(slot.index()) {
-                            *depth = depth.saturating_sub(1);
-                        }
+                        before_anchor.close(slot, key);
                         omitted_releases = omitted_releases.saturating_add(1);
                         // ADR-0051 clause 5: what is omitted is the note **contract**, not
                         // the gate write the plan authored. Dropping both leaves a gate that
@@ -1069,25 +1101,34 @@ impl StreamControl {
             .collect()
     }
 
-    /// ADR-0051 clause 1's batch: one row per prepared target, at the requested time.
+    /// ADR-0051 clause 1's batch: one row per addressable parameter, at the requested time.
     ///
-    /// A target with a write before the destination carries it; one with none carries the
+    /// A parameter with a write before the destination carries it; one with none carries the
     /// value it was **prepared** with — the target row's stored base, which is also the
-    /// slot's — because a control survives an activation in node state and a skipped target
-    /// would keep whatever the pre-seek position left. Either way the renderer takes the
-    /// value as an **override-layer** write (`SOUND-INV-023`) and re-derives modulation from
-    /// the slot, never from a flattened figure. Covering every
-    /// target is also what makes the size exactly the prepared-target count, which is the
-    /// quantity the plan-dependent session-share admission checks — that count plus one for
-    /// ADR-0050 clause 5's boundary mass release, and `first_refusal` acts on it.
+    /// slot's — because a control survives an activation in node state and a skipped
+    /// parameter would keep whatever the pre-seek position left. Either way the renderer
+    /// takes the value as an **override-layer** write (`SOUND-INV-023`) and re-derives
+    /// modulation from the slot, never from a flattened figure. Covering every address is
+    /// also what makes the size exactly the address count — one row per writable control per
+    /// node — which is the quantity the plan-dependent session-share admission checks: that
+    /// count plus one for ADR-0050 clause 5's boundary mass release, and `first_refusal`
+    /// acts on it.
     fn catch_up(
         &self,
         at: SampleTime,
         values: &[Option<crate::quantities::ParameterValue>],
     ) -> Vec<crate::render::TimedEvent> {
+        // One row per **addressable** parameter: a group's rows are its voice instances, and
+        // the renderer fans the restored write out over them (`P06-S001`), so the batch is
+        // the address count — the figure the catch-up share admits.
         let targets = self.plan.parameter_targets();
-        let mut batch = Vec::with_capacity(targets.len());
-        for (index, target) in targets.iter().enumerate() {
+        let addresses = self.plan.parameter_addresses();
+        let mut batch = Vec::with_capacity(addresses.len());
+        for address in addresses {
+            let index = address.slot.index();
+            let Some(target) = targets.get(index) else {
+                continue;
+            };
             let value = values.get(index).copied().flatten().unwrap_or(target.base);
             batch.push(crate::render::TimedEvent::new(
                 crate::render::EventEnvelope::new(
@@ -1096,7 +1137,7 @@ impl StreamControl {
                     crate::time::TimeSource::Compiled,
                 ),
                 crate::render::EventPayload::SetParameter {
-                    slot: crate::plan::ParameterSlot::new(self.plan.id(), index),
+                    slot: address.slot,
                     value,
                 },
             ));
@@ -1133,8 +1174,8 @@ impl StreamControl {
     /// nothing sounding. Inheriting a depth would count notes twice — once where they open
     /// and once in every later pass — and refuse loops that hold nothing.
     ///
-    /// A release inside the interval closes the most recent unclosed on edge for its slot,
-    /// which is the pairing `stamp_into` performs. A release whose on edge lies **before**
+    /// A release inside the interval closes the most recent unclosed on edge for its slot
+    /// **and key**, which is the pairing `stamp_into` performs. A release whose on edge lies **before**
     /// the interval is ADR-0051 clause 5's crossing release: it carries a bare gate-down and
     /// no note contract, so it lowers nothing here. Its own depth is spent, so a second
     /// release for that slot cannot claim to cross too.
@@ -1150,26 +1191,22 @@ impl StreamControl {
         interval: LoopInterval,
     ) -> RepeatingPass {
         let mut positions = Vec::with_capacity(stream.events().len());
-        // Open on edges per slot, on each side of the loop's start. Two tables rather than
-        // one, because a release consults them in order and a shared counter could not say
-        // which side the note it pairs with is on.
-        let mut before = vec![0_u32; self.plan.note_targets().len()];
-        let mut inside = vec![0_u32; self.plan.note_targets().len()];
+        // Open on edges per slot and key, on each side of the loop's start. Two tables rather
+        // than one, because a release consults them in order and a shared counter could not
+        // say which side the note it pairs with is on.
+        let mut before = NoteDepths::new(self.plan.note_targets().len());
+        let mut inside = NoteDepths::new(self.plan.note_targets().len());
         let mut live = 0_u32;
         let mut peak = 0_u32;
         for event in stream.events().iter().copied() {
             let position = event.position();
             if position < interval.start() {
                 match event.payload() {
-                    CompiledPayload::NoteOn { slot, .. } => {
-                        if let Some(depth) = before.get_mut(slot.index()) {
-                            *depth = depth.saturating_add(1);
-                        }
+                    CompiledPayload::NoteOn { slot, key, .. } => {
+                        before.open(slot, key);
                     }
-                    CompiledPayload::NoteOff { slot } => {
-                        if let Some(depth) = before.get_mut(slot.index()) {
-                            *depth = depth.saturating_sub(1);
-                        }
+                    CompiledPayload::NoteOff { slot, key } => {
+                        before.close(slot, key);
                     }
                     CompiledPayload::SetParameter { .. } => {}
                 }
@@ -1180,23 +1217,17 @@ impl StreamControl {
             }
             positions.push(position);
             match event.payload() {
-                CompiledPayload::NoteOn { slot, .. } => {
-                    if let Some(depth) = inside.get_mut(slot.index()) {
-                        *depth = depth.saturating_add(1);
-                    }
+                CompiledPayload::NoteOn { slot, key, .. } => {
+                    inside.open(slot, key);
                     live = live.saturating_add(1);
                     peak = peak.max(live);
                 }
-                CompiledPayload::NoteOff { slot } => {
-                    if inside.get(slot.index()).copied().unwrap_or(0) > 0 {
-                        if let Some(depth) = inside.get_mut(slot.index()) {
-                            *depth = depth.saturating_sub(1);
-                        }
+                CompiledPayload::NoteOff { slot, key } => {
+                    if inside.depth(slot, key) > 0 {
+                        inside.close(slot, key);
                         live = live.saturating_sub(1);
-                    } else if before.get(slot.index()).copied().unwrap_or(0) > 0
-                        && let Some(depth) = before.get_mut(slot.index())
-                    {
-                        *depth = depth.saturating_sub(1);
+                    } else if before.depth(slot, key) > 0 {
+                        before.close(slot, key);
                     }
                 }
                 CompiledPayload::SetParameter { .. } => {}

@@ -510,7 +510,11 @@ fn v2_offline_events(plan: &CompiledPlan) -> Vec<OfflineEvent> {
         ),
         OfflineEvent::new(
             SampleTime::new(NOTE_OFF_FRAME),
-            CompiledPayload::NoteOff { slot },
+            CompiledPayload::NoteOff {
+                slot,
+                key: synth_engine_v2::quantities::KeyIdentity::new(69)
+                    .unwrap_or(synth_engine_v2::quantities::KeyIdentity::LOWEST),
+            },
         ),
     ]
 }

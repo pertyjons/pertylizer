@@ -158,7 +158,10 @@ fn note(plan: &CompiledPlan, at: u64, on: bool) -> OfflineEvent {
     let payload = if on {
         common::note_on(slot)
     } else {
-        CompiledPayload::NoteOff { slot }
+        CompiledPayload::NoteOff {
+            slot,
+            key: common::any_key(),
+        }
     };
     OfflineEvent::new(SampleTime::new(at), payload)
 }
@@ -405,15 +408,28 @@ fn a_gate_addressed_as_a_parameter_lands_on_the_same_sample_as_a_note() {
     )
     .expect("renders");
 
+    // `P06-S001`: a parameter write is patch-wide and fans out over every voice instance,
+    // while a note opens the one instance its identity names — so the automated render is
+    // the played one scaled by the instance count, and the **sample** each lands on is the
+    // same, which is what this test holds. A constant source under a full gate is exactly
+    // one per instance, so the scaling is exact.
+    let instances = plan_instances(&as_note);
+    let scaled: Vec<f32> = played.iter().map(|sample| sample * instances).collect();
     assert_eq!(
-        played, automated,
-        "the same gate reached by two payloads rendered two different signals"
+        scaled, automated,
+        "the same gate reached by two payloads landed on two different samples"
     );
     assert_eq!(
         first_sounding(&played),
         Some(AT as usize),
         "and both put the edge on the sample it named"
     );
+}
+
+/// The instance count of the plan the events were built against, as a sample scale.
+fn plan_instances(_events: &[OfflineEvent]) -> f32 {
+    let plan = common::admit(&gated_constant(), profile(256, ChannelLayout::Mono));
+    plan.voice_instances().get() as f32
 }
 
 #[test]

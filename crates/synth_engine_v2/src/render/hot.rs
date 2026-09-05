@@ -142,7 +142,7 @@ impl PreparedRenderer {
                     break;
                 };
                 reported = reported.saturating_add(1);
-                let Some(target) = self.plan.note_targets().get(note.index()).copied() else {
+                let Some(target) = self.plan.note_targets().get(note.note.index()).copied() else {
                     continue;
                 };
                 let Some(slot) = self.adoption_gates.get_mut(self.adoption_gate_len) else {
@@ -156,9 +156,12 @@ impl PreparedRenderer {
                     control: target.control,
                     value: crate::quantities::ParameterValue::ZERO,
                 };
+                let Some(row) = self.voice_row(target.parameter.index(), note.index) else {
+                    continue;
+                };
                 self.adoption_gate_len = self.adoption_gate_len.saturating_add(1);
                 if let Some(entry) = self.adoption_gate_slots.get_mut(self.adoption_gate_len - 1) {
-                    *entry = target.parameter.index();
+                    *entry = row;
                 }
             }
         }
@@ -380,9 +383,13 @@ impl PreparedRenderer {
                 // resolved value is the slot's new target, which its segment reaches over
                 // the declared policy and the kernel reads per frame from the slot's
                 // buffer. Nothing is written to node state here; the state no longer
-                // carries a quantum-rate control at all.
-                if let Some(composed) = self.parameter_slots.get_mut(slot.index()) {
-                    let _ = composed.write_override(value);
+                // carries a quantum-rate control at all. `P06-S001`: the write fans out
+                // over the parameter's group, one row per voice instance.
+                let rows = target.instances.get() as usize;
+                for row in slot.index()..slot.index().saturating_add(rows) {
+                    if let Some(composed) = self.parameter_slots.get_mut(row) {
+                        let _ = composed.write_override(value);
+                    }
                 }
             }
         }
@@ -437,11 +444,16 @@ impl PreparedRenderer {
                 break;
             }
             last += 1;
-            if let Some(node) = event.target.and_then(|target| self.slot_node(target.slot)) {
+            if let Some(target) = event.target {
                 // Counted at `node + 1`, so the prefix sum below turns the counts into
-                // starts in place: entry `n` becomes where node `n`'s run begins.
-                if let Some(count) = self.control_starts.get_mut(node + 1) {
-                    *count = count.saturating_add(1);
+                // starts in place: entry `n` becomes where node `n`'s run begins. A write
+                // that fans out over a group counts one per row (`P06-S001`).
+                for row in target.slot..target.slot.saturating_add(target.rows) {
+                    if let Some(node) = self.slot_node(row)
+                        && let Some(count) = self.control_starts.get_mut(node + 1)
+                    {
+                        *count = count.saturating_add(1);
+                    }
                 }
             }
             // `SOUND-INV-021`: a note-on is a gate **and** the magnitudes describing the
@@ -450,12 +462,15 @@ impl PreparedRenderer {
             // multiple of the gate's. Counted in the same window as pass two writes in, so
             // the two cannot disagree about how much room a node's run needs.
             if let EventPayload::Note {
+                identity,
                 edge: NoteEdge::On { slot, .. },
-                ..
             } = event.payload
             {
                 for magnitude in self.plan.note_magnitudes_of(slot) {
-                    if let Some(count) = self.control_starts.get_mut(magnitude.node.index() + 1) {
+                    if let Some(row) = self.voice_row(magnitude.parameter.index(), identity.index())
+                        && let Some(node) = self.slot_node(row)
+                        && let Some(count) = self.control_starts.get_mut(node + 1)
+                    {
                         *count = count.saturating_add(1);
                     }
                 }
@@ -508,13 +523,13 @@ impl PreparedRenderer {
             // because it costs nothing and it is the one that stays correct if a kernel ever
             // does read a magnitude while handling its own edge.
             if let EventPayload::Note {
+                identity,
                 edge:
                     NoteEdge::On {
                         slot,
                         key,
                         velocity,
                     },
-                ..
             } = event.payload
             {
                 for position in 0..self.plan.note_magnitudes_of(slot).len() {
@@ -525,19 +540,38 @@ impl PreparedRenderer {
                     let Some(value) = self.plan.magnitude_value(&magnitude, key, velocity) else {
                         continue;
                     };
-                    self.push_timed_control(
-                        magnitude.parameter.index(),
-                        event.position.quantum_offset(),
-                        value,
-                    );
+                    // The row of the note's own voice instance (`P06-S001`).
+                    let Some(row) = self.voice_row(magnitude.parameter.index(), identity.index())
+                    else {
+                        continue;
+                    };
+                    self.push_timed_control(row, event.position.quantum_offset(), value);
                 }
             }
             let (Some(target), Some(value)) = (event.target, self.timed_value(event.payload))
             else {
                 continue;
             };
-            self.push_timed_control(target.slot, event.position.quantum_offset(), value);
+            for row in target.slot..target.slot.saturating_add(target.rows) {
+                self.push_timed_control(row, event.position.quantum_offset(), value);
+            }
         }
+    }
+
+    /// The row of a parameter group that a note's voice instance owns: the group's first
+    /// row plus the identity's index, which is the instance the occurrence sounds on
+    /// (`P06-S001`). A group of one row — a played node outside the voice scope — is shared
+    /// by every occurrence, as it was before instancing. `None` where the index is outside
+    /// a group of several — an identity the plan's partition does not hold — so nothing is
+    /// written rather than another voice's row.
+    fn voice_row(&self, first: usize, index: u16) -> Option<usize> {
+        let target = self.plan.parameter_targets().get(first)?;
+        let instances = target.instances.get() as usize;
+        if instances <= 1 {
+            return Some(first);
+        }
+        let voice = usize::from(index);
+        (voice < instances).then_some(first.saturating_add(voice))
     }
 
     /// The node a parameter slot's control belongs to, from the target table.
@@ -621,13 +655,13 @@ impl PreparedRenderer {
                     // The on edge names what is played; the registry records it against the
                     // occurrence so the release does not have to carry it.
                     self.live_notes.admit(identity, slot);
-                    self.note_target(slot)
+                    self.note_target(slot, identity)
                 }
                 EventPayload::Note {
                     identity,
                     edge: NoteEdge::Off,
                 } => match self.live_notes.release(identity) {
-                    Some(slot) => self.note_target(slot),
+                    Some(slot) => self.note_target(slot, identity),
                     None => {
                         pending.orphan_note = pending.orphan_note.saturating_add(1);
                         pending.last_orphan_note = Some(identity);
@@ -639,7 +673,10 @@ impl PreparedRenderer {
                     .parameter_targets()
                     .get(slot.index())
                     .filter(|row| matches!(row.rate, ControlRate::Sample))
-                    .map(|_| ResolvedTarget { slot: slot.index() }),
+                    .map(|row| ResolvedTarget {
+                        slot: slot.index(),
+                        rows: row.instances.get() as usize,
+                    }),
             };
             if let Some(slot) = self.event_scratch.get_mut(index) {
                 slot.target = target;
@@ -647,14 +684,19 @@ impl PreparedRenderer {
         }
     }
 
-    /// Where a note slot's edge lands: the gate control's parameter slot.
-    fn note_target(&self, slot: crate::plan::NoteSlot) -> Option<ResolvedTarget> {
-        self.plan
-            .note_targets()
-            .get(slot.index())
-            .map(|row| ResolvedTarget {
-                slot: row.parameter.index(),
-            })
+    /// Where a note slot's edge lands: the gate control's row for the note's own voice
+    /// instance (`P06-S001`).
+    fn note_target(
+        &self,
+        slot: crate::plan::NoteSlot,
+        identity: crate::identity::NoteIdentity,
+    ) -> Option<ResolvedTarget> {
+        let row = self.plan.note_targets().get(slot.index())?;
+        let voice_row = self.voice_row(row.parameter.index(), identity.index())?;
+        Some(ResolvedTarget {
+            slot: voice_row,
+            rows: 1,
+        })
     }
 
     /// What it moves it to.
@@ -705,7 +747,8 @@ impl PreparedRenderer {
                 // know what kind of node it just ran, which is ADR-0004 clause 2 — adding
                 // a node adds a kernel and a registry entry, and adds nothing here.
                 PlanOp::Node(step) => {
-                    let Some(prepared) = self.plan.prepared_nodes().get(step.node().index()) else {
+                    let Some(prepared) = self.plan.prepared_nodes().get(step.prepared().index())
+                    else {
                         continue;
                     };
                     let Some(state) = self.node_states.get_mut(step.node().index()) else {

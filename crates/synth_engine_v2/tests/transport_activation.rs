@@ -11,7 +11,9 @@ use synth_engine_v2::identity::ProducerId;
 use synth_engine_v2::ir::{ExecutionScope, GraphIr, IrNodeKind, NodeId, PortId, SignalDomain};
 use synth_engine_v2::plan::CompiledPlan;
 use synth_engine_v2::publish::{ProducerClass, PublicationArbiter};
-use synth_engine_v2::quantities::{Amplitude, ChannelLayout, EventCount, NormalizedLevel, Seconds};
+use synth_engine_v2::quantities::{
+    Amplitude, ChannelLayout, EventCount, KeyIdentity, NormalizedLevel, NoteVelocity, Seconds,
+};
 use synth_engine_v2::render::{AudioBlockMut, PreparedRenderer};
 use synth_engine_v2::schedule::{
     AdmittedCompiledStream, CompiledEventScheduler, CompiledPayload, PlanEvent,
@@ -86,12 +88,15 @@ fn arbiter() -> PublicationArbiter {
         .expect("the publication store is preparable")
 }
 
-/// One catch-up row per prepared target, plus the boundary mass release's single operation.
+/// One catch-up row per addressable parameter, plus the boundary mass release's single
+/// operation.
 ///
-/// ADR-0051 clause 1 and clause 4: the batch covers every prepared target and the rule decides a
-/// row's value, never whether it exists, so this is what the session share carries at a locate.
+/// ADR-0051 clause 1 and clause 4: the batch covers every addressable parameter and the rule
+/// decides a row's value, never whether it exists, so this is what the session share carries at
+/// a locate. The per-instance rows behind one address are the renderer's fan-out (`P06-S001`),
+/// not the batch's.
 fn session_load(plan: &CompiledPlan) -> EventCount {
-    EventCount::measured(1 + plan.parameter_targets().len() as u32)
+    EventCount::measured(1 + plan.parameter_addresses().len() as u32)
 }
 
 fn note(plan: &CompiledPlan, position: u64, on: bool) -> PlanEvent {
@@ -101,7 +106,28 @@ fn note(plan: &CompiledPlan, position: u64, on: bool) -> PlanEvent {
     let payload = if on {
         common::note_on(slot)
     } else {
-        CompiledPayload::NoteOff { slot }
+        CompiledPayload::NoteOff {
+            slot,
+            key: common::any_key(),
+        }
+    };
+    PlanEvent::new(PlanPosition::new(position), payload)
+}
+
+/// A note edge on the envelope at a named key, so two notes can overlap on one node.
+fn keyed(plan: &CompiledPlan, position: u64, key: u8, on: bool) -> PlanEvent {
+    let slot = plan
+        .resolve_note(ENVELOPE)
+        .expect("the envelope is playable");
+    let key = KeyIdentity::new(key).expect("a keyboard position");
+    let payload = if on {
+        CompiledPayload::NoteOn {
+            slot,
+            key,
+            velocity: NoteVelocity::FULL,
+        }
+    } else {
+        CompiledPayload::NoteOff { slot, key }
     };
     PlanEvent::new(PlanPosition::new(position), payload)
 }
@@ -641,6 +667,103 @@ fn the_boundary_release_reaches_only_the_producers_the_activation_names() {
     control
         .withdraw(activation)
         .expect("the control withdraws its own candidate");
+}
+
+#[test]
+fn a_release_across_the_anchor_pairs_by_key_and_not_by_node() {
+    // `SOUND-INV-025`: a release names the newest open note **of its key** on its node, and
+    // the anchored walk must classify it by the same rule. Key A opens before the
+    // destination, key B opens after it on the same node, and A's release arrives after
+    // B's note-on. A walk keyed by node alone would pair A's release with B — it is the
+    // newest open note on the node — keep it in the suffix, and stamping would then refuse
+    // the whole activation as an unmatched release. An independent review found the
+    // mismatch. Keyed, A's release is the crossing one: omitted and counted, leaving its
+    // bare gate-down, and B's pair is stamped intact.
+    let plan = plan();
+    let (mut control, _renderer) =
+        StreamControl::open(plan.clone(), ORIGIN).expect("the stream opens");
+    let quiet = admitted(&plan, &[]);
+    let _scheduler =
+        CompiledEventScheduler::prepare(&mut control, &quiet).expect("an empty stream prepares");
+
+    let stream = admitted(
+        &plan,
+        &[
+            keyed(&plan, 0, 60, true),
+            keyed(&plan, 6 * Q, 67, true),
+            keyed(&plan, 10 * Q, 60, false),
+            keyed(&plan, 14 * Q, 67, false),
+        ],
+    );
+    let activation = control
+        .plan_activation(&stream, request(4 * Q, 4 * Q))
+        .expect("a seek between the two keys' note-ons builds");
+    assert_eq!(
+        activation.omitted_releases(),
+        1,
+        "A's release crosses the anchor and is the one omitted"
+    );
+    assert_eq!(
+        activation.events(),
+        3,
+        "B's note-on and release, plus the bare gate-down A's omitted release leaves"
+    );
+}
+
+#[test]
+fn a_loops_crossing_release_closes_its_own_key_and_not_a_note_open_inside() {
+    // The repeating pass pairs by key as `stamp_into` does. Key A opens before the loop and
+    // is released inside it; keys B, C and D open inside it before any of them closes. The
+    // pass holds three at once, one over what the producer admits, so the loop is refused —
+    // and it is refused on the loop's own rule, because the history holds two at most and
+    // the suffix from the anchor opens one. A pass keyed by node alone would let A's
+    // release close B, count a peak of two, and admit a loop whose first real wrap over-emits.
+    let plan = common::admit(
+        &gated_constant(2),
+        common::profile(TOTAL as u64, ChannelLayout::Mono),
+    );
+    let (mut control, _renderer) =
+        StreamControl::open(plan.clone(), ORIGIN).expect("the stream opens");
+    let quiet = admitted(&plan, &[]);
+    let _scheduler =
+        CompiledEventScheduler::prepare(&mut control, &quiet).expect("an empty stream prepares");
+
+    let stream = admitted(
+        &plan,
+        &[
+            keyed(&plan, 0, 60, true),
+            keyed(&plan, 9 * Q, 67, true),
+            keyed(&plan, 10 * Q, 60, false),
+            keyed(&plan, 11 * Q, 72, true),
+            keyed(&plan, 12 * Q, 74, true),
+            keyed(&plan, 13 * Q, 67, false),
+            keyed(&plan, 14 * Q, 72, false),
+            keyed(&plan, 15 * Q, 74, false),
+        ],
+    );
+    let interval = LoopInterval::new(PlanPosition::new(8 * Q), PlanPosition::new(16 * Q))
+        .expect("a positive interval");
+    let refusal = control
+        .plan_activation(
+            &stream,
+            ActivationRequest {
+                at: SampleTime::new(12 * Q),
+                position: PlanPosition::new(12 * Q),
+                loop_interval: Some(interval),
+            },
+        )
+        .expect_err("the repeating pass holds three notes against a producer admitted two");
+    match refusal {
+        ActivationBuildError::Loop {
+            source: AdmissionError::LoopPolyphonyOverProducer { requested, .. },
+            ..
+        } => assert_eq!(
+            requested.get(),
+            3,
+            "B, C and D are open together inside the loop"
+        ),
+        other => panic!("expected the loop's polyphony refusal, got {other:?}"),
+    }
 }
 
 #[test]
@@ -2274,7 +2397,13 @@ fn a_history_note_edge_needs_a_producer_to_have_come_from() {
         &plan,
         &[
             PlanEvent::new(PlanPosition::ZERO, common::note_on(slot)),
-            PlanEvent::new(PlanPosition::new(Q), CompiledPayload::NoteOff { slot }),
+            PlanEvent::new(
+                PlanPosition::new(Q),
+                CompiledPayload::NoteOff {
+                    slot,
+                    key: common::any_key(),
+                },
+            ),
         ],
     )
     .expect("admission does not check producers");
@@ -2829,7 +2958,10 @@ fn note_on_node(plan: &CompiledPlan, node: NodeId, position: u64, on: bool) -> P
     let payload = if on {
         common::note_on(slot)
     } else {
-        CompiledPayload::NoteOff { slot }
+        CompiledPayload::NoteOff {
+            slot,
+            key: common::any_key(),
+        }
     };
     PlanEvent::new(PlanPosition::new(position), payload)
 }
@@ -3057,7 +3189,13 @@ fn a_loop_does_not_reclassify_a_note_that_has_no_producer_at_all() {
         &plan,
         &[
             PlanEvent::new(PlanPosition::new(2 * Q), common::note_on(slot)),
-            PlanEvent::new(PlanPosition::new(3 * Q), CompiledPayload::NoteOff { slot }),
+            PlanEvent::new(
+                PlanPosition::new(3 * Q),
+                CompiledPayload::NoteOff {
+                    slot,
+                    key: common::any_key(),
+                },
+            ),
         ],
     )
     .expect("admission does not check producers");
@@ -3179,7 +3317,14 @@ fn a_locate_restores_the_pitch_the_last_note_before_it_carried() {
                     velocity: synth_engine_v2::quantities::NoteVelocity::FULL,
                 },
             ),
-            PlanEvent::new(PlanPosition::new(2 * Q), CompiledPayload::NoteOff { slot }),
+            PlanEvent::new(
+                PlanPosition::new(2 * Q),
+                CompiledPayload::NoteOff {
+                    slot,
+                    key: synth_engine_v2::quantities::KeyIdentity::new(key)
+                        .expect("a keyboard position"),
+                },
+            ),
             // And automation opening the gate at the destination, with no note contract behind
             // it — which is the one thing that can make the restored frequency audible.
             PlanEvent::new(

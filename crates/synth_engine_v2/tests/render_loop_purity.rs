@@ -661,6 +661,11 @@ fn every_call_the_render_loop_makes_is_inside_the_checked_region() {
         "release",
         "plan",
         "index",
+        // `bool::then_some` is a `const fn` on a `Copy` bool that wraps an already-computed
+        // value in `Option`; `voice_row` uses it to refuse a note whose identity index
+        // lies past the node's instance rows, so a bad index selects nothing rather than a
+        // neighbour's row. No allocation, no call beyond the branch.
+        "then_some",
         "position",
         "time",
         // Phase 3's compiled scheduler reads the renderer's current quantum boundary

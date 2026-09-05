@@ -78,6 +78,12 @@ pub enum CompiledPayload {
     NoteOff {
         /// Which node is released.
         slot: crate::plan::NoteSlot,
+        /// The key the note-on carried. A release names the **newest** open note on the slot
+        /// with this key — the rule the compiled stream always had, refined by the key: with
+        /// several notes sounding on one played node (`P06-S001`), a release by slot alone
+        /// ended whichever was opened last, which a test found ending the wrong voice. Two
+        /// open notes with one key on one node keep the newest-first pairing they had.
+        key: crate::quantities::KeyIdentity,
     },
 }
 
@@ -745,7 +751,7 @@ impl CompiledEventScheduler {
 const fn payload_plan(payload: CompiledPayload) -> PlanId {
     match payload {
         CompiledPayload::SetParameter { slot, .. } => slot.plan(),
-        CompiledPayload::NoteOn { slot, .. } | CompiledPayload::NoteOff { slot } => slot.plan(),
+        CompiledPayload::NoteOn { slot, .. } | CompiledPayload::NoteOff { slot, .. } => slot.plan(),
     }
 }
 
@@ -828,7 +834,7 @@ pub fn stamp_into(
     // "which note-on does this release end" is answerable from the list itself. One stack
     // per node, and a release takes the most recent unreleased note-on on that node, which
     // is what a keyboard does and what a compiled plan means by a matching pair.
-    let mut sounding: Vec<crate::plan::NoteSlot> = Vec::new();
+    let mut sounding: Vec<(crate::plan::NoteSlot, crate::quantities::KeyIdentity)> = Vec::new();
     for (event_index, event) in events.iter().copied().enumerate() {
         // **A note edge's provenance, checked here rather than only in the scheduler.** The
         // renderer's foreign filter compares a note edge's *table*, because `SOUND-INV-017`
@@ -843,7 +849,7 @@ pub fn stamp_into(
         // separate and unchanged.
         match event.payload() {
             CompiledPayload::SetParameter { .. } => {}
-            CompiledPayload::NoteOn { slot, .. } => {
+            CompiledPayload::NoteOn { slot, key, .. } => {
                 if slot.plan() != expected {
                     return Err(SchedulePrepareError::ForeignPlan {
                         event_index,
@@ -854,9 +860,9 @@ pub fn stamp_into(
                 if compiled_producer.is_none() {
                     return Err(SchedulePrepareError::NoCompiledNoteProducer { event_index });
                 }
-                sounding.push(slot);
+                sounding.push((slot, key));
             }
-            CompiledPayload::NoteOff { slot } => {
+            CompiledPayload::NoteOff { slot, key } => {
                 if slot.plan() != expected {
                     return Err(SchedulePrepareError::ForeignPlan {
                         event_index,
@@ -864,7 +870,11 @@ pub fn stamp_into(
                         actual: slot.plan(),
                     });
                 }
-                let Some(position) = sounding.iter().rposition(|node| *node == slot) else {
+                // The newest open note on this slot with this key, as the stamp pass pairs.
+                let Some(position) = sounding
+                    .iter()
+                    .rposition(|(node, open_key)| *node == slot && *open_key == key)
+                else {
                     return Err(SchedulePrepareError::UnmatchedRelease { event_index });
                 };
                 let _ = sounding.remove(position);
@@ -878,7 +888,7 @@ pub fn stamp_into(
     // order it applies them, so an index reissued below is still resolvable at both of the
     // occurrences that used it.
     let mut open: Vec<crate::identity::NoteIdentity> = Vec::new();
-    let mut open_nodes: Vec<crate::plan::NoteSlot> = Vec::new();
+    let mut open_nodes: Vec<(crate::plan::NoteSlot, crate::quantities::KeyIdentity)> = Vec::new();
     let mut stamped = Vec::with_capacity(events.len());
     for (event_index, event) in events.iter().copied().enumerate() {
         let payload = match event.payload() {
@@ -900,7 +910,7 @@ pub fn stamp_into(
                     }
                 })?;
                 open.push(identity);
-                open_nodes.push(slot);
+                open_nodes.push((slot, key));
                 EventPayload::Note {
                     identity,
                     edge: NoteEdge::On {
@@ -910,11 +920,18 @@ pub fn stamp_into(
                     },
                 }
             }
-            CompiledPayload::NoteOff { slot } => {
+            CompiledPayload::NoteOff { slot, key } => {
                 // Pass one proved this pairing exists, so the failure branch is unreachable
                 // rather than tolerated — and it is written as a refusal anyway, because a
                 // silent `continue` would drop an event ADR-0001 clause 16 forbids dropping.
-                let Some(position) = open_nodes.iter().rposition(|node| *node == slot) else {
+                // **Newest first**, by slot and key. A release carries no identity — the
+                // compiled producer never sees one — so the key is what tells two notes
+                // sounding on one played node apart; two open notes with one key keep the
+                // newest-first pairing the compiled stream always had.
+                let Some(position) = open_nodes
+                    .iter()
+                    .rposition(|(node, open_key)| *node == slot && *open_key == key)
+                else {
                     return Err(SchedulePrepareError::UnmatchedRelease { event_index });
                 };
                 let _ = open_nodes.remove(position);

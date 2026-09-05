@@ -163,6 +163,22 @@ fn assert_refused(field: ResourceField, ir: &GraphIr, host: HostProfile) {
     );
 }
 
+/// The shared declarations with one voice-scope node to instantiate, so the derived voice
+/// count is requested (`P06-S001`).
+fn voiced_declares() -> GraphIr {
+    GraphIr::builder()
+        .node(SOURCE, IrNodeKind::Silence, ExecutionScope::Voice)
+        .node(OUTPUT, IrNodeKind::Output, ExecutionScope::Global)
+        .connect(
+            (SOURCE, PortId::FIRST),
+            (OUTPUT, PortId::FIRST),
+            SignalDomain::Audio,
+        )
+        .declaring(declared())
+        .build()
+        .expect("a voiced source into an output is a readable plan")
+}
+
 /// A source through two monitors into the output: two declared taps (`SOUND-INV-022`).
 fn two_monitors() -> GraphIr {
     const FIRST_MONITOR: NodeId = NodeId::new(21);
@@ -202,7 +218,6 @@ fn declared() -> PlanDeclarations {
             simultaneous_notes: HeldNoteCount::measured(2),
             simultaneous_holds: EventCount::NONE,
         }],
-        active_voices: VoiceCount::measured(2),
         held_notes: HeldNoteCount::measured(2),
         mix_channels: MixChannelCount::measured(2),
         buses: BusCount::measured(2),
@@ -412,9 +427,11 @@ fn refusal_cases(host: &HostProfile) -> Vec<(ResourceField, GraphIr, HostProfile
             declares.clone(),
             voices(1, 1, 512, 512),
         ),
+        // `P06-S001`: the voice count is derived from the producers and requested only where a
+        // voice-scope node exists to instantiate, so the case carries one.
         (
             ResourceField::MaxActiveVoices,
-            declares.clone(),
+            voiced_declares(),
             voices(1, 128, 1, 512),
         ),
         (
@@ -780,8 +797,15 @@ fn the_advisory_cost_budget_warns_and_never_refuses() {
     // `HOST-INV-015`. The plan declares 512 voices, which EVD-0003's slope puts at about
     // 60% of one core at 44.1 kHz — four times the 0.15 budget — and it still compiles.
     let host = profile(256, ChannelLayout::Mono);
+    // `P06-S001`: the voices the cost model prices are derived from the producers' identity
+    // ranges, so the plan declares a producer of 512 simultaneous notes rather than a count.
     let plan = declaring(PlanDeclarations {
-        active_voices: VoiceCount::measured(512),
+        note_producers: vec![NoteProducerDeclaration {
+            compiled: true,
+            simultaneous_notes: HeldNoteCount::measured(512),
+            simultaneous_holds: EventCount::NONE,
+        }],
+        held_notes: HeldNoteCount::measured(512),
         voices_per_instrument: VoiceCount::measured(128),
         ..PlanDeclarations::default()
     });
@@ -820,8 +844,15 @@ fn no_advisory_field_can_produce_a_compile_error() {
     let mut groups = Groups::of(&host);
     groups.cost = CostBudget::new(CostRatio::limit(f32::MIN_POSITIVE).expect("positive"))
         .expect("the overridden capacities are above zero");
+    // One producer of one note, so the cost model prices one voice and the advisory budget —
+    // set below any positive cost — has something to warn about.
     let plan = declaring(PlanDeclarations {
-        active_voices: VoiceCount::measured(1),
+        note_producers: vec![NoteProducerDeclaration {
+            compiled: true,
+            simultaneous_notes: HeldNoteCount::measured(1),
+            simultaneous_holds: EventCount::NONE,
+        }],
+        held_notes: HeldNoteCount::measured(1),
         voices_per_instrument: VoiceCount::measured(1),
         ..PlanDeclarations::default()
     });
@@ -1218,6 +1249,46 @@ fn a_second_output_node_is_refused_rather_than_ignored() {
         Err(CompileError::MultipleOutputs { outputs }) => assert_eq!(outputs.get(), 2),
         other => panic!("expected a multiple-output refusal, got {other:?}"),
     }
+}
+
+#[test]
+fn an_output_declared_in_the_voice_scope_is_refused() {
+    // `SOUND-INV-025`: the output is scheduled once, whatever the polyphony. Declared inside
+    // the voice scope it would be lowered against one instance's buffer and drop the other
+    // voices without a word — four unity voices rendering as one — so the combination is
+    // refused by name rather than read. The same plan with the output global is admitted.
+    let host = profile(256, ChannelLayout::Mono);
+    let with_output_in = |scope: ExecutionScope| {
+        GraphIr::builder()
+            .node(SOURCE, IrNodeKind::Silence, ExecutionScope::Voice)
+            .node(OUTPUT, IrNodeKind::Output, scope)
+            .connect(
+                (SOURCE, PortId::FIRST),
+                (OUTPUT, PortId::FIRST),
+                SignalDomain::Audio,
+            )
+            .declaring(declared())
+            .build()
+            .expect("readable plan")
+    };
+    match compile(
+        &with_output_in(ExecutionScope::Voice),
+        &RenderConfig::new(host),
+    )
+    .plan()
+    {
+        Err(CompileError::OutputInVoiceScope { output }) => assert_eq!(*output, OUTPUT),
+        other => panic!("expected a voice-scope output refusal, got {other:?}"),
+    }
+    assert!(
+        compile(
+            &with_output_in(ExecutionScope::Global),
+            &RenderConfig::new(host)
+        )
+        .plan()
+        .is_ok(),
+        "the global output is the admitted shape"
+    );
 }
 
 #[test]

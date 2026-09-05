@@ -41,6 +41,35 @@ fn the_control_scratch_budget_covers_what_preparation_actually_allocates() {
     }
 }
 
+#[test]
+fn the_fan_out_width_is_the_voice_count_only_where_a_voice_control_is_sample_positioned() {
+    // A sample-positioned write fans out over its control's rows, and only such a write takes
+    // timed-control scratch per row. The silent plan's voice scope declares no control at
+    // all, so whatever its polyphony no event of its can fan out: charging it `N` writes per
+    // event would refuse it for scratch nothing can fill — an independent read found the
+    // charge stated over every plan. The real voice's gate is sample-positioned, so there the
+    // width is the voice count. Admission reads the IR and preparation reads the plan, and
+    // the two figures must be the same figure.
+    for simultaneous in [1_u32, 8, 64] {
+        let (silent_ir, silent) = plan_declaring(simultaneous, false);
+        assert_eq!(
+            silent_ir.sample_positioned_fan_out().get(),
+            1,
+            "a voice scope without a sample-positioned control fans nothing out"
+        );
+        assert_eq!(
+            silent.sample_positioned_fan_out(),
+            silent_ir.sample_positioned_fan_out()
+        );
+        let (voice_ir, voice) = plan_declaring(simultaneous, true);
+        assert_eq!(voice_ir.sample_positioned_fan_out().get(), simultaneous);
+        assert_eq!(
+            voice.sample_positioned_fan_out(),
+            voice_ir.sample_positioned_fan_out()
+        );
+    }
+}
+
 /// One polyphony and one plan shape: what admission charges against what preparation holds.
 fn check_one(simultaneous: u32, voice: bool) {
     {
@@ -70,7 +99,8 @@ fn check_one(simultaneous: u32, voice: bool) {
                 .fold(HeldNoteCount::NONE, |total, range| {
                     HeldNoteCount::measured(total.get().saturating_add(range.get()))
                 }),
-            ir.max_writes_per_note(),
+            ir.max_writes_per_note()
+                .fanned_out(ir.sample_positioned_fan_out()),
         );
         let held = renderer.control_scratch_bytes();
         assert!(

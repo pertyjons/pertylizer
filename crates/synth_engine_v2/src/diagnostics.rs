@@ -397,6 +397,19 @@ pub enum CompileError {
         outputs: crate::quantities::NodeCount,
     },
 
+    /// The output is declared in the voice scope.
+    ///
+    /// An output is the plan's boundary and is scheduled once whatever the polyphony; a
+    /// voice-scope node is scheduled once per instance (`SOUND-INV-025`), and the sum of
+    /// the instances is inserted only where the scope's outside reads them. An output
+    /// inside the scope would read one instance and silently drop every other voice, so it
+    /// is refused rather than read.
+    #[error("output {output} is declared in the voice scope; an output is scheduled once")]
+    OutputInVoiceScope {
+        /// The output node so declared.
+        output: crate::ir::NodeId,
+    },
+
     /// The IR could not be read.
     #[error("the plan could not be read: {0}")]
     Ir(#[from] IrError),

@@ -130,6 +130,8 @@ pub const FILTER: Kernel = Kernel(filter);
 pub const AMPLIFIER: Kernel = Kernel(amplifier);
 /// See [`SILENCE`].
 pub const COPY: Kernel = Kernel(copy);
+/// The voice sum's kernel: one instance's output added into the shared mix.
+pub const ACCUMULATE: Kernel = Kernel(accumulate);
 /// The monitor's kernel: its input, unchanged.
 pub const MONITOR: Kernel = Kernel(monitor);
 
@@ -1233,6 +1235,21 @@ pub fn monitor(_prepared: &PreparedNode, _state: &mut NodeState, io: &mut NodeIo
         }
         InputBuffer::InPlace => {}
         InputBuffer::Unpatched => io.out.fill(0.0),
+    }
+}
+
+/// One voice instance's output added into the voice sum (`P06-S001`).
+///
+/// The compiler inserts one of these per instance after the first, whose output is copied
+/// into the sum region instead; the region is this step's **in-place** second input, so the
+/// sum accumulates where the downstream node reads it. An unpatched first input adds nothing,
+/// which is what an instance that produced no buffer contributes.
+pub fn accumulate(_prepared: &PreparedNode, _state: &mut NodeState, io: &mut NodeIo<'_>) {
+    let InputBuffer::Patched(source) = io.inputs[0] else {
+        return;
+    };
+    for (index, sample) in io.out.iter_mut().enumerate() {
+        *sample += source.get(index).copied().unwrap_or(0.0);
     }
 }
 

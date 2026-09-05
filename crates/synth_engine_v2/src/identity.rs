@@ -113,6 +113,13 @@ pub struct NoteIdentity {
 }
 
 impl NoteIdentity {
+    /// The index within the table's partition: the voice instance the occurrence sounds on
+    /// (`P06-S001`), since every producer's range is a disjoint run of that partition and
+    /// the renderer instantiates the voice scope once per index.
+    pub(crate) const fn index(self) -> u16 {
+        self.index
+    }
+
     /// Which table minted it.
     pub const fn table(self) -> TableId {
         self.table
@@ -308,6 +315,15 @@ pub(super) const PRODUCER_SPACE: usize = 1 << 16;
 pub(crate) struct Range {
     pub(super) start: u32,
     pub(super) len: u32,
+}
+
+/// One note a mass release ended: the node it played and the partition index it held,
+/// which is the voice instance its gate-down belongs to (`P06-S001`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[must_use]
+pub struct EndedNote {
+    pub(crate) note: crate::plan::NoteSlot,
+    pub(crate) index: u16,
 }
 
 /// The identities one plan activation can mint.

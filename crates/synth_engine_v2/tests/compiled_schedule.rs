@@ -116,7 +116,10 @@ fn compiled_note(plan: &CompiledPlan, time: u64, on: bool) -> PlanEvent {
     let payload = if on {
         common::note_on(slot)
     } else {
-        CompiledPayload::NoteOff { slot }
+        CompiledPayload::NoteOff {
+            slot,
+            key: common::any_key(),
+        }
     };
     PlanEvent::new(PlanPosition::new(time), payload)
 }

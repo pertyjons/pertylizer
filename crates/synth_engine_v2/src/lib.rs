@@ -131,6 +131,10 @@ mod render_allocation;
 mod arena_reuse;
 
 #[cfg(test)]
+#[path = "tests/voices.rs"]
+mod voice_tests;
+
+#[cfg(test)]
 #[path = "tests/kernels.rs"]
 mod kernel_tests;
 

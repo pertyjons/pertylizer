@@ -636,7 +636,13 @@ pub fn lower_performance(
                     velocity: span.velocity,
                 },
             ),
-            (span.end, CompiledPayload::NoteOff { slot }),
+            (
+                span.end,
+                CompiledPayload::NoteOff {
+                    slot,
+                    key: span.key,
+                },
+            ),
         ] {
             match tempo.position_of(MusicalTick::new(tick)) {
                 Ok(position) => {

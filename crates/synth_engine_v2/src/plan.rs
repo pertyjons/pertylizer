@@ -14,7 +14,7 @@
 use crate::ir::{NodeId, ParameterId};
 use crate::node::NoteMagnitude;
 use crate::node::kernels::{ControlIndex, Kernel, MAX_INPUTS, PreparedNode};
-use crate::quantities::{ChannelLayout, EventCount, HeldNoteCount, SampleRate};
+use crate::quantities::{ChannelLayout, EventCount, HeldNoteCount, SampleRate, VoiceCount};
 use crate::time::FrameCount;
 
 /// One buffer in the plan's arena, by index.
@@ -298,6 +298,8 @@ pub enum InputBinding {
 pub struct NodeStep {
     kernel: Kernel,
     node: NodeSlot,
+    /// The prepared record the kernel reads, shared by every instance of the node.
+    prepared: PreparedSlot,
     out: BufferSlot,
     /// The layout of the signal it writes.
     ///
@@ -330,6 +332,7 @@ impl NodeStep {
     pub fn new(
         kernel: Kernel,
         node: NodeSlot,
+        prepared: PreparedSlot,
         out: BufferSlot,
         out_layout: ChannelLayout,
         inputs: [Option<BufferSlot>; MAX_INPUTS],
@@ -338,6 +341,7 @@ impl NodeStep {
         let mut step = Self {
             kernel,
             node,
+            prepared,
             out,
             out_layout,
             inputs,
@@ -450,6 +454,11 @@ impl NodeStep {
         self.node
     }
 
+    /// The prepared record the step reads.
+    pub const fn prepared(&self) -> PreparedSlot {
+        self.prepared
+    }
+
     /// The layout of the signal it writes.
     pub const fn out_layout(&self) -> ChannelLayout {
         self.out_layout
@@ -535,6 +544,27 @@ pub enum PlanOp {
     },
 }
 
+/// A prepared record of a compiled plan, by index.
+///
+/// Distinct from [`NodeSlot`] since `P06-S001`: a voice-scope node has one prepared record
+/// and `N` state records, one per voice instance, so the step that renders instance `k`
+/// names its **state** by `NodeSlot` and its **prepared data** by this — and the prepared
+/// data is shared, never cloned per voice.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[must_use]
+pub struct PreparedSlot(usize);
+
+impl PreparedSlot {
+    pub(crate) const fn new(index: usize) -> Self {
+        Self(index)
+    }
+
+    /// The index into the plan's prepared records.
+    pub const fn index(self) -> usize {
+        self.0
+    }
+}
+
 /// One observation tap of a compiled plan, by index.
 ///
 /// The twin of [`ParameterSlot`] for `SOUND-INV-022`: a subscription names one of these
@@ -614,6 +644,11 @@ pub struct ParameterTarget {
     pub unit: crate::node::ParameterUnit,
     /// How long a new resolved value takes to be reached, `SOUND-INV-024`'s policy.
     pub smoothing: crate::node::Smoothing,
+    /// How many rows this parameter's group holds — one per voice instance of its node, so
+    /// `1` for a node outside the voice scope. The addressable [`ParameterSlot`] names the
+    /// group's first row; a write fans out over the group, and a note's magnitude lands on
+    /// the row of its own instance (`P06-S001`).
+    pub instances: VoiceCount,
     /// The stored base: the value the node was prepared with, which is the authored one.
     ///
     /// What the slot's base layer starts as and what `SOUND-INV-018`'s catch-up restores
@@ -991,6 +1026,17 @@ impl CompiledPlan {
         &self.taps
     }
 
+    /// How many voice instances the plan renders: one per identity index of its producers,
+    /// the sum of their ranges, and at least one — the same derivation the IR makes, over the
+    /// ranges admission copied in (`P06-S001`).
+    pub fn voice_instances(&self) -> crate::quantities::VoiceCount {
+        let indices = self
+            .note_producer_ranges
+            .iter()
+            .fold(0_u32, |total, range| total.saturating_add(range.get()));
+        crate::quantities::VoiceCount::measured(indices.max(1))
+    }
+
     /// Every declared tap by node and port, for a subscriber resolving one.
     pub fn tap_addresses(&self) -> &[TapAddress] {
         &self.tap_addresses
@@ -1107,6 +1153,22 @@ impl CompiledPlan {
     /// What admission charges the timed-control scratch with: `SOUND-INV-021` makes a note-on
     /// more than one write, and a scratch sized on one write per event would be overrun by
     /// the very first note whose scope declares a pitch and a velocity destination.
+    /// How many rows one sample-positioned write fans out over, at most: the widest group
+    /// among the `ControlRate::Sample` targets, and one where there is none.
+    ///
+    /// The renderer's side of [`crate::ir::GraphIr::sample_positioned_fan_out`]: derived from
+    /// the target table the lowering built rather than copied in, so the scratch preparation
+    /// takes is sized on what the renderer can actually be asked to write.
+    pub fn sample_positioned_fan_out(&self) -> VoiceCount {
+        self.parameter_targets
+            .iter()
+            .filter(|target| matches!(target.rate, ControlRate::Sample))
+            .map(|target| target.instances)
+            .max()
+            .unwrap_or(VoiceCount::measured(1))
+            .max(VoiceCount::measured(1))
+    }
+
     pub fn max_writes_per_note(&self) -> crate::quantities::WritesPerNote {
         self.note_targets
             .iter()

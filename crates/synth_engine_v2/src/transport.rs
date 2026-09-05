@@ -34,7 +34,6 @@
 use thiserror::Error;
 
 use crate::identity::{IdentityTable, ProducerId};
-use crate::plan::NoteSlot;
 use crate::render::TimedEvent;
 use crate::time::{PlanPosition, SampleTime, StreamEpoch};
 
@@ -287,7 +286,7 @@ pub struct TransportActivation {
     /// [`LiveNotes::release_all`](crate::identity::LiveNotes::release_all) is all-or-nothing
     /// against exactly that bound. Carrying it with the candidate is what keeps adoption
     /// free of allocation.
-    pub(crate) ended: Vec<Option<NoteSlot>>,
+    pub(crate) ended: Vec<Option<crate::identity::EndedNote>>,
     /// Whether the clock had already passed [`Self::requested`] when the offer was accepted.
     ///
     /// ADR-0050 clause 1's lateness, and it is decided **at the offer** because that is the

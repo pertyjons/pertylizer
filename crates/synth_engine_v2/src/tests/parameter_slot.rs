@@ -538,7 +538,10 @@ fn an_activations_catch_up_is_an_override_write_and_keeps_the_modulation_in_forc
         ),
         PlanEvent::new(
             PlanPosition::new(2 * Q),
-            CompiledPayload::NoteOff { slot: note },
+            CompiledPayload::NoteOff {
+                slot: note,
+                key: KeyIdentity::new(69).expect("A4"),
+            },
         ),
     ];
     let stream = AdmittedCompiledStream::admit(&plan, &events).expect("the stream fits");
@@ -580,10 +583,19 @@ fn the_slots_the_renderer_holds_are_charged_to_the_mutable_state_row() {
     let plan = admit(&ir);
     let (renderer, _) = open_and_render(&plan, &[], &[], 1);
     let held = renderer.slot_bytes_held();
+    // One set of slots and buffers per voice instance of a voice-scope node (`P06-S001`).
+    let voices = u64::from(ir.voice_instances().get());
     let slot_term: u64 = ir
         .nodes()
         .iter()
-        .map(|node| crate::node::slot_payload_bytes(node.kind()))
+        .map(|node| {
+            let instances = if node.scope() == ExecutionScope::Voice {
+                voices
+            } else {
+                1
+            };
+            crate::node::slot_payload_bytes(node.kind()) * instances
+        })
         .sum();
     assert_eq!(
         slot_term, held as u64,
@@ -600,8 +612,22 @@ fn the_slots_the_renderer_holds_are_charged_to_the_mutable_state_row() {
         .iter()
         .map(|node| crate::node::state_payload_bytes(node.kind()))
         .sum();
-    let (reported, _) = ir.mutable_bytes(0);
-    let records = u64::from(ir.scheduled_records(0).get());
+    // The report's own row, over the records the lowering actually scheduled — the voice
+    // sum's inserted steps included — rather than a restatement with zero inserted.
+    let outcome = compile(&ir, &RenderConfig::new(profile()));
+    let reported = match outcome
+        .report()
+        .row(crate::report::ResourceField::MutableStateBytes)
+        .map(|row| row.requested())
+    {
+        Some(crate::report::ResourceAmount::Bytes(bytes)) => bytes.get(),
+        other => panic!("the mutable row carries bytes, not {other:?}"),
+    };
+    let records = plan
+        .ops()
+        .iter()
+        .filter(|op| matches!(op, crate::plan::PlanOp::Node(_)))
+        .count() as u64;
     let table = renderer.ramp_table_bytes_held() as u64;
     assert_eq!(
         table,
@@ -609,7 +635,7 @@ fn the_slots_the_renderer_holds_are_charged_to_the_mutable_state_row() {
         "the run table is one entry per record plus a terminator"
     );
     assert_eq!(
-        reported.get(),
+        reported,
         records * crate::node::state_bytes_per_node() + slot_term + table,
         "the mutable row is one state record per scheduled record, the slots and the table"
     );

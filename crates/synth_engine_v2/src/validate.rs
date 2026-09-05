@@ -587,6 +587,18 @@ fn outputs(ir: &GraphIr) -> Result<Vec<CompileWarning>, CompileError> {
         });
     };
 
+    // `SOUND-INV-025`: the output is scheduled once, so it cannot be a voice-scope node —
+    // lowered inside the scope it would read one instance's buffer and drop the others
+    // without a word. The builder accepts any scope for any node; this is where the
+    // combination is refused.
+    let in_voice_scope = ir
+        .nodes()
+        .iter()
+        .any(|node| node.id() == output && node.scope() == crate::ir::ExecutionScope::Voice);
+    if in_voice_scope {
+        return Err(CompileError::OutputInVoiceScope { output });
+    }
+
     if !ir.edges().iter().any(|edge| edge.to().0 == output) {
         // A **warning**, not a refusal, and the distinction is deliberate. A plan
         // whose output has nothing patched into it renders silence, which is a

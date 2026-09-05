@@ -328,7 +328,11 @@ fn v2_samples(
         ),
         OfflineEvent::new(
             SampleTime::new(NOTE_OFF_FRAME),
-            CompiledPayload::NoteOff { slot },
+            CompiledPayload::NoteOff {
+                slot,
+                key: synth_engine_v2::quantities::KeyIdentity::new(midi)
+                    .map_err(|e| format!("the sweep's MIDI notes are keyboard positions: {e:?}"))?,
+            },
         ),
     ];
     Ok(render_offline(

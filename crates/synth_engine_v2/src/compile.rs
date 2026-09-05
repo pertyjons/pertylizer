@@ -300,7 +300,11 @@ fn build_report(
 fn arena_upper_bound(ir: &GraphIr, profile: &HostProfile) -> u64 {
     let quantum = u64::from(QUANTUM_FRAMES);
     let channels = profile.capabilities().channel_layout().channels() as u64;
-    let producers = ir.nodes().iter().filter(|n| n.kind().is_source()).count() as u64;
+    // One region per **scheduled** authored record: a voice-scope node is scheduled once per
+    // instance (`P06-S001`) and every instance writes its own `Q`, so the bound counts the
+    // instances, not the nodes — an independent review found it counting each authored
+    // node once and understating a four-voice plan's exact arena.
+    let producers = u64::from(ir.state_records(0).get());
     // **Samples**, not buffers, since ADR-0041 clause 2: an authored node writes `Q` and
     // the widening writes `c * Q`, so a count of regions no longer describes an amount of
     // memory. Reporting one where the other is expected is what makes a refused plan's
@@ -328,7 +332,42 @@ fn inserted_records_upper_bound(ir: &GraphIr, profile: &HostProfile) -> u64 {
         .iter()
         .filter(|node| matches!(node.kind(), IrNodeKind::Output))
         .any(|output| ir.edges().iter().any(|edge| edge.to().0 == output.id()));
-    u64::from(reached_output && widened)
+    let widening = u64::from(reached_output && widened);
+    // `P06-S001`'s voice sum: every voice-scope node whose output feeds a node outside the
+    // scope is summed by one copy and `voices − 1` accumulates, when there is more than one
+    // voice. An upper bound, like the widening: a node feeding the scope's outside twice is
+    // summed once, and the exact figure is the lowering's.
+    let voices = u64::from(ir.voice_instances().get());
+    let summed = if voices > 1 {
+        (voice_sum_sources(ir).len() as u64).saturating_mul(voices)
+    } else {
+        0
+    };
+    widening.saturating_add(summed)
+}
+
+/// The voice-scope nodes whose output is read by a node outside the voice scope, each once,
+/// in ascending identity.
+fn voice_sum_sources(ir: &GraphIr) -> Vec<NodeId> {
+    let scopes: HashMap<NodeId, crate::ir::ExecutionScope> = ir
+        .nodes()
+        .iter()
+        .map(|node| (node.id(), node.scope()))
+        .collect();
+    let mut sources: Vec<NodeId> = ir
+        .edges()
+        .iter()
+        .filter(|edge| {
+            scopes.get(&edge.from().0) == Some(&crate::ir::ExecutionScope::Voice)
+                && scopes
+                    .get(&edge.to().0)
+                    .is_some_and(|scope| *scope != crate::ir::ExecutionScope::Voice)
+        })
+        .map(|edge| edge.from().0)
+        .collect();
+    sources.sort_unstable();
+    sources.dedup();
+    sources
 }
 
 /// One row per field that carries an amount, in field order.
@@ -393,20 +432,28 @@ fn build_rows(
     let scratch_bytes = scratch_bytes(
         profile,
         arena_samples,
-        ir.scheduled_records(inserted_records),
+        ir.state_records(inserted_records),
         &declared_note_ranges,
-        ir.max_writes_per_note(),
+        ir.max_writes_per_note()
+            .fanned_out(ir.sample_positioned_fan_out()),
     );
 
     let node_count = NodeCount::measured(u32::try_from(ir.nodes().len()).unwrap_or(u32::MAX));
     let edge_count = EdgeCount::measured(u32::try_from(ir.edges().len()).unwrap_or(u32::MAX));
     // `SOUND-INV-022`: the taps a plan carries are its nodes' declarations', and nothing
     // else's — the same walk the lowering makes, so the admitted count is the table's.
+    // One row per instance of a voice-scope node (`P06-S001`): a monitor in the voice scope
+    // is one signal point per voice, and each is admitted.
     let tap_count = TapCount::measured(
         u32::try_from(ir.nodes().iter().fold(0_usize, |total, node| {
-            total.saturating_add(
-                crate::node::declaration(node.kind()).map_or(0, |declared| declared.taps.len()),
-            )
+            let per_instance =
+                crate::node::declaration(node.kind()).map_or(0, |declared| declared.taps.len());
+            let instances = if node.scope() == crate::ir::ExecutionScope::Voice {
+                usize::try_from(ir.voice_instances().get()).unwrap_or(usize::MAX)
+            } else {
+                1
+            };
+            total.saturating_add(per_instance.saturating_mul(instances))
         }))
         .unwrap_or(u32::MAX),
     );
@@ -488,9 +535,18 @@ fn build_rows(
         ),
         IrObject::Plan,
     ));
+    // `P06-S001`: the voices a plan renders are derived from its producers' identity ranges
+    // — one instance per index — and admitted here as that count, not as a declaration that
+    // could disagree with what the renderer instantiates. A plan with no voice-scope node
+    // instantiates nothing per voice and requests none.
+    let voices = if ir.has_voice_scope() {
+        ir.voice_instances()
+    } else {
+        crate::quantities::VoiceCount::NONE
+    };
     rows.push(ResourceRow::new(
         ResourceField::MaxActiveVoices,
-        ResourceAmount::Voices(declarations.active_voices),
+        ResourceAmount::Voices(voices),
         ResourceAmount::Voices(limits.voices().max_active_voices()),
         IrObject::Plan,
     ));
@@ -526,7 +582,7 @@ fn build_rows(
     // row cannot exceed: a voice cannot be refused retirement.
     rows.push(ResourceRow::new(
         ResourceField::MaxConcurrentRetiringVoices,
-        ResourceAmount::Voices(declarations.active_voices),
+        ResourceAmount::Voices(voices),
         ResourceAmount::Voices(limits.voices().max_concurrent_retiring_voices()),
         IrObject::Plan,
     ));
@@ -729,9 +785,11 @@ fn build_rows(
 
     // ADR-0051 clause 1's catch-up batch, which `HOST-INV-022` makes the session share's
     // bounded contributor. A locate restores **every** prepared target at once, so the
-    // batch's size *is* the plan's prepared-target count at every legal locate position —
-    // one row per control per node, which is exactly how `parameter_targets` is lowered
-    // below. That is why the row has one number to report rather than a worst case to search
+    // batch's size *is* the plan's addressable-parameter count at every legal locate position
+    // — one row per control per node, which is exactly how `parameter_addresses` is lowered
+    // below; the per-instance rows behind one address are the renderer's fan-out
+    // (`P06-S001`), not rows of the batch. That is why the row has one number to report
+    // rather than a worst case to search
     // for, which is what the plan-dependent admission of this share compares. See the note
     // on that row below for the boundary release it is charged alongside.
     // Over the controls that **admit a write**: `SOUND-INV-023`'s not-modulatable control
@@ -758,8 +816,8 @@ fn build_rows(
     // admission to check "the maximum destination contribution of one complete eligible
     // session/transport snapshot, including the largest catch-up batch over every legal
     // locate position in that plan", and the paragraph above is why that maximum is one
-    // number rather than a search: a locate restores every prepared target at once, so the
-    // batch's size *is* the prepared-target count at every legal position.
+    // number rather than a search: a locate restores every addressable parameter at once, so
+    // the batch's size *is* the address count at every legal position.
     //
     // It did not refuse until this slice. `SessionEventShare` was excluded from
     // `ResourceField::is_admission_checked`, so a plan whose catch-up exceeded the share
@@ -1133,9 +1191,20 @@ struct Lowering {
     /// deriving them, because deriving them would make it a second authority on layout.
     widths: Vec<usize>,
     inserted: usize,
+    /// How many state records have been scheduled: the next [`NodeSlot`]. Distinct from the
+    /// prepared count since `P06-S001`, because a voice-scope node has one prepared record and
+    /// one state per instance.
+    states: usize,
 }
 
 impl Lowering {
+    /// Hold one prepared record, shared by every instance scheduled over it.
+    fn prepare(&mut self, prepared: PreparedNode) -> crate::plan::PreparedSlot {
+        let slot = crate::plan::PreparedSlot::new(self.prepared_nodes.len());
+        self.prepared_nodes.push(prepared);
+        slot
+    }
+
     /// Schedule one node: its prepared record, its output buffer, its step.
     ///
     /// The one place a step is built, so an authored node and a compiler-inserted
@@ -1143,27 +1212,43 @@ impl Lowering {
     fn schedule(
         &mut self,
         descriptor: &NodeDescriptor,
-        prepared: PreparedNode,
+        prepared: crate::plan::PreparedSlot,
         inputs: [Option<BufferSlot>; MAX_INPUTS],
         layout: ChannelLayout,
     ) -> (NodeSlot, BufferSlot) {
-        let node = NodeSlot::new(self.prepared_nodes.len());
-        self.prepared_nodes.push(prepared);
         let out = BufferSlot::new(self.widths.len());
-        // The layout rather than a count: a raw number here would admit zero, or a count
-        // no layout has, and the width of a region is the one place that would turn into
-        // storage nobody can address.
+        // ADR-0041 clause 2: the width is the layout's channel count times the quantum, and
+        // it is decided here, where the port's layout is known.
         self.widths
             .push(layout.channels().saturating_mul(QUANTUM_FRAMES as usize));
+        (
+            self.schedule_into(descriptor, prepared, inputs, layout, out),
+            out,
+        )
+    }
+
+    /// Schedule one step writing an **existing** buffer: the voice sum's accumulate, whose
+    /// output is the sum region its second input also names (`P06-S001`).
+    fn schedule_into(
+        &mut self,
+        descriptor: &NodeDescriptor,
+        prepared: crate::plan::PreparedSlot,
+        inputs: [Option<BufferSlot>; MAX_INPUTS],
+        layout: ChannelLayout,
+        out: BufferSlot,
+    ) -> NodeSlot {
+        let node = NodeSlot::new(self.states);
+        self.states += 1;
         self.ops.push(PlanOp::Node(NodeStep::new(
             descriptor.kernel,
             node,
+            prepared,
             out,
             layout,
             inputs,
             descriptor.in_place_safe,
         )));
-        (node, out)
+        node
     }
 }
 
@@ -1181,6 +1266,7 @@ fn lower(
         prepared_nodes: Vec::new(),
         widths: Vec::new(),
         inserted: 0,
+        states: 0,
     };
     let mut fault = None;
     let mut parameter_targets = Vec::new();
@@ -1211,34 +1297,31 @@ fn lower(
         .map(|node| (node.id(), node.kind()))
         .collect();
 
+    // `P06-S001`: the voice scope is instantiated once per identity index of the plan's
+    // note producers, over one prepared record per node. Every other scope renders once.
+    let voices = usize::try_from(ir.voice_instances().get()).unwrap_or(usize::MAX);
+    let scopes: HashMap<NodeId, crate::ir::ExecutionScope> = ir
+        .nodes()
+        .iter()
+        .map(|node| (node.id(), node.scope()))
+        .collect();
+    // A voice-scope node's outputs, one per instance, in instance order.
+    let mut voice_slots: HashMap<NodeId, Vec<BufferSlot>> = HashMap::new();
+    // The voice-scope nodes whose output the scope's outside reads, summed below.
+    let summed = voice_sum_sources(ir);
+
     for id in validated.order() {
         let Some(kind) = kinds.get(id).copied() else {
             continue;
         };
         let Some(descriptor) = node::descriptor(kind) else {
-            // The output node: emitted last by construction, because the order puts a
-            // node after everything that feeds it and the output is fed by everything.
             lower_output(
                 ir, profile, validated, warnings, &mut state, &slots, &source_of, *id,
             );
             continue;
         };
-
-        // Inputs in the order the node declares them, so port identity — not edge
-        // order, and not declaration order — decides which slot a kernel reads first.
-        let mut inputs = [None; MAX_INPUTS];
-        let declared = descriptor
-            .ports
-            .iter()
-            .filter(|port| port.direction() == crate::validate::PortDirection::Input);
-        for (index, port) in declared.enumerate() {
-            let source = source_of
-                .get(&(*id, port.id()))
-                .and_then(|from| slots.get(from).copied());
-            if let Some(entry) = inputs.get_mut(index) {
-                *entry = source;
-            }
-        }
+        let in_voice = scopes.get(id) == Some(&crate::ir::ExecutionScope::Voice);
+        let instances = if in_voice { voices } else { 1 };
 
         let prepared = match node::prepare(*id, kind, rate) {
             Ok(prepared) => prepared,
@@ -1250,6 +1333,8 @@ fn lower(
                 PreparedNode::Silence
             }
         };
+        // One prepared record, whatever the instance count: shared, never cloned.
+        let prepared_slot = state.prepare(prepared);
         // ADR-0041 clause 5: the channel count is a property of the port, so the width of
         // the region the node writes comes from the port table rather than from the
         // stream. Every authored kind declares a mono output today; asking the port is
@@ -1259,33 +1344,116 @@ fn lower(
             .iter()
             .find(|port| port.direction() == crate::validate::PortDirection::Output)
             .map_or(ChannelLayout::Mono, |port| port.layout());
-        let (node_slot, out) = state.schedule(&descriptor, prepared, inputs, out_layout);
-        slots.insert(*id, out);
-        node_slots.insert(*id, node_slot);
 
-        // Where this node's own slots begin, so its note control is found among them
-        // rather than by a search over every node before it.
-        let first_slot = parameter_targets.len();
+        let mut first_node = None;
+        let mut outs = Vec::with_capacity(instances);
+        for instance in 0..instances {
+            // Inputs in the order the node declares them, so port identity — not edge
+            // order, and not declaration order — decides which slot a kernel reads first.
+            // A source in the voice scope is read from the **same instance**; a source
+            // outside it is the one shared buffer every instance reads.
+            let mut inputs = [None; MAX_INPUTS];
+            let declared = descriptor
+                .ports
+                .iter()
+                .filter(|port| port.direction() == crate::validate::PortDirection::Input);
+            for (index, port) in declared.enumerate() {
+                let source =
+                    source_of
+                        .get(&(*id, port.id()))
+                        .and_then(|from| match voice_slots.get(from) {
+                            // Only a consumer inside the scope reads a voice-scope source
+                            // per instance; one outside it reads what the scope's outside
+                            // reads — the voice sum, which is what `slots` holds for it.
+                            Some(per_instance) if in_voice => per_instance.get(instance).copied(),
+                            _ => slots.get(from).copied(),
+                        });
+                if let Some(entry) = inputs.get_mut(index) {
+                    *entry = source;
+                }
+            }
+            let (node_slot, out) = state.schedule(&descriptor, prepared_slot, inputs, out_layout);
+            if first_node.is_none() {
+                first_node = Some(node_slot);
+            }
+            outs.push(out);
+        }
+        let Some(node_slot) = first_node else {
+            continue;
+        };
+        node_slots.insert(*id, node_slot);
+        if in_voice {
+            voice_slots.insert(*id, outs.clone());
+        }
+        // What the scope's outside reads: the one output where there is one instance, and
+        // the **voice sum** where there are several — instance 0 copied into a sum region,
+        // every later instance accumulated into it. The sum is inserted work, and is only
+        // inserted where something outside the scope reads the node.
+        let outside_reads = if in_voice {
+            if instances > 1 && summed.binary_search(id).is_ok() {
+                let mut sum = None;
+                for (instance, out) in outs.iter().copied().enumerate() {
+                    match sum {
+                        None => {
+                            let copy = node::copy_descriptor();
+                            let copy_prepared = state.prepare(node::prepare_copy());
+                            let (_, region) =
+                                state.schedule(&copy, copy_prepared, [Some(out), None], out_layout);
+                            state.inserted += 1;
+                            sum = Some(region);
+                        }
+                        Some(region) => {
+                            let accumulate = node::accumulate_descriptor();
+                            let accumulate_prepared = state.prepare(node::prepare_copy());
+                            let _ = state.schedule_into(
+                                &accumulate,
+                                accumulate_prepared,
+                                [Some(out), Some(region)],
+                                out_layout,
+                                region,
+                            );
+                            state.inserted += 1;
+                            let _ = instance;
+                        }
+                    }
+                }
+                sum
+            } else {
+                outs.first().copied()
+            }
+        } else {
+            outs.first().copied()
+        };
+        if let Some(out) = outside_reads {
+            slots.insert(*id, out);
+        }
+
+        // One addressable slot per control, and one **row per instance** of the node behind
+        // it, grouped: a write to the slot fans out over the group, and a note's magnitude
+        // lands on the row of its own instance (`P06-S001`). A not-modulatable control
+        // compiles to no slot at all (`SOUND-INV-023`).
         for spec in &descriptor.controls {
-            // `SOUND-INV-023`: a not-modulatable parameter takes no write from any layer but
-            // the base, and the base is the IR. Refused at admission means it never
-            // resolves — no slot, no address — rather than an event the renderer ignores.
             if !spec.law.admits_writes() {
                 continue;
             }
             let slot = ParameterSlot::new(plan_id, parameter_targets.len());
-            parameter_targets.push(ParameterTarget {
-                node: node_slot,
-                control: spec.control,
-                law: spec.law,
-                unit: spec.default.unit(),
-                smoothing: spec.smoothing,
-                // The value the node was prepared with; the declaration's resting value
-                // where the prepared record carries none — a gate released, a velocity full.
-                base: crate::node::kernels::authored_value(&prepared, spec.control)
-                    .unwrap_or(spec.default.as_parameter_value()),
-                rate: spec.rate,
-            });
+            for instance in 0..instances {
+                parameter_targets.push(ParameterTarget {
+                    node: NodeSlot::new(node_slot.index().saturating_add(instance)),
+                    control: spec.control,
+                    law: spec.law,
+                    unit: spec.default.unit(),
+                    smoothing: spec.smoothing,
+                    instances: crate::quantities::VoiceCount::measured(
+                        u32::try_from(instances).unwrap_or(u32::MAX),
+                    ),
+                    // The value the node was prepared with; the declaration's resting value
+                    // where the prepared record carries none — a gate released, a velocity full.
+                    base: crate::node::kernels::authored_value(&prepared, spec.control)
+                        .unwrap_or(spec.default.as_parameter_value()),
+                    rate: spec.rate,
+                });
+            }
             parameter_addresses.push(ParameterAddress {
                 node: *id,
                 parameter: spec.parameter,
@@ -1293,21 +1461,25 @@ fn lower(
             });
         }
 
-        // `SOUND-INV-022`: the kind's declared taps, each naming this node's output region
-        // — present in the plan whether or not anything will subscribe. The region is the
-        // lowering's virtual slot here; the arena's mapping resolves it below.
+        // `SOUND-INV-022`: the kind's declared taps, one row per instance, each naming that
+        // instance's step and its output region — present in the plan whether or not anything
+        // will subscribe. The address names instance 0's row; a per-instance tap is later
+        // work. The region is the lowering's virtual slot here; the arena's mapping resolves
+        // it below.
         for tap in crate::node::declaration(kind).map_or(&[][..], |declared| declared.taps) {
             let slot = crate::plan::TapSlot::new(plan_id, taps.len());
-            taps.push(crate::plan::TapTarget {
-                node: node_slot,
-                region: out,
-                data: tap.data,
-                bytes_per_quantum: crate::quantities::QuantumBytes::measured(
-                    (out_layout.channels() as u64)
-                        .saturating_mul(u64::from(crate::time::QUANTUM_FRAMES))
-                        .saturating_mul(size_of::<f32>() as u64),
-                ),
-            });
+            for (instance, out) in outs.iter().enumerate() {
+                taps.push(crate::plan::TapTarget {
+                    node: NodeSlot::new(node_slot.index().saturating_add(instance)),
+                    region: *out,
+                    data: tap.data,
+                    bytes_per_quantum: crate::quantities::QuantumBytes::measured(
+                        (out_layout.channels() as u64)
+                            .saturating_mul(u64::from(crate::time::QUANTUM_FRAMES))
+                            .saturating_mul(size_of::<f32>() as u64),
+                    ),
+                });
+            }
             tap_addresses.push(crate::plan::TapAddress {
                 node: *id,
                 port: tap.port,
@@ -1319,13 +1491,20 @@ fn lower(
         // caller plays the node and never learns which control being played moves — which
         // is what lets Phase 6's voice pool address a voice without knowing its graph.
         if let Some(control) = descriptor.note_control {
-            // The gate's own parameter slot, which its edges are composed through. Absent
-            // only if the gate declared itself not-modulatable, which the declaration tests
-            // forbid for a note control; refused rather than played around.
-            let Some(parameter) = parameter_targets
-                .get(first_slot..)
-                .and_then(|own| own.iter().position(|target| target.control == control))
-                .map(|offset| ParameterSlot::new(plan_id, first_slot + offset))
+            // The gate's own parameter slot, which its edges are composed through: the first
+            // row of the control's group, the renderer adding the instance. Absent only if
+            // the gate declared itself not-modulatable, which the declaration tests forbid
+            // for a note control; refused rather than played around.
+            let Some(parameter) = parameter_addresses
+                .iter()
+                .rev()
+                .find(|address| address.node == *id)
+                .and_then(|_| {
+                    parameter_targets
+                        .iter()
+                        .position(|target| target.node == node_slot && target.control == control)
+                })
+                .map(|index| ParameterSlot::new(plan_id, index))
             else {
                 fault = fault.or(Some(CompileError::DestinationWithoutSlot { node: *id }));
                 continue;
@@ -1593,8 +1772,8 @@ fn lower_output(
     let out = match widening {
         Some(widening) => {
             let copy = node::copy_descriptor();
-            let (_, out) =
-                state.schedule(&copy, node::prepare_copy(), [Some(source), None], layout);
+            let prepared = state.prepare(node::prepare_copy());
+            let (_, out) = state.schedule(&copy, prepared, [Some(source), None], layout);
             state.inserted += 1;
             // Clause 9's third requirement. The schedule and the buffer count carry the
             // conversion; without this a reader of the outcome would have to infer from

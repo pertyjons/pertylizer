@@ -462,9 +462,17 @@ fn the_registry_scopes_a_mass_release_to_one_producer_and_names_what_it_ended() 
         HeldNoteCount::measured(3),
         "only A's sounding notes end"
     );
+    // Each ended note names its node **and** the partition index it held, which is the
+    // voice instance its gate-down belongs to (`P06-S001`); A's range starts at zero.
+    let ended_note = |index: u16| {
+        Some(crate::identity::EndedNote {
+            note: slot(usize::from(index)),
+            index,
+        })
+    };
     assert_eq!(
         &ended[..3],
-        &[Some(slot(0)), Some(slot(1)), Some(slot(2))],
+        &[ended_note(0), ended_note(1), ended_note(2)],
         "and it names each one's node, so the caller can lower those gates without a second walk"
     );
     assert_eq!(

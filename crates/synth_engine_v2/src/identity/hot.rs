@@ -238,7 +238,7 @@ impl LiveNotes {
     pub fn release_all(
         &mut self,
         scope: ReleaseScope,
-        ended: &mut [Option<crate::plan::NoteSlot>],
+        ended: &mut [Option<super::EndedNote>],
     ) -> HeldNoteCount {
         let (first, last) = match scope {
             ReleaseScope::Everything => (0_usize, self.slots.len()),
@@ -262,7 +262,10 @@ impl LiveNotes {
                 continue;
             };
             if let Some(out) = ended.get_mut(count as usize) {
-                *out = Some(live.note);
+                *out = Some(super::EndedNote {
+                    note: live.note,
+                    index: u16::try_from(index).unwrap_or(u16::MAX),
+                });
             }
             count = count.saturating_add(1);
         }
