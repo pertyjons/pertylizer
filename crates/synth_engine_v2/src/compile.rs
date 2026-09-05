@@ -400,7 +400,16 @@ fn build_rows(
 
     let node_count = NodeCount::measured(u32::try_from(ir.nodes().len()).unwrap_or(u32::MAX));
     let edge_count = EdgeCount::measured(u32::try_from(ir.edges().len()).unwrap_or(u32::MAX));
-    let tap_count = TapCount::measured(u32::try_from(declarations.taps.len()).unwrap_or(u32::MAX));
+    // `SOUND-INV-022`: the taps a plan carries are its nodes' declarations', and nothing
+    // else's — the same walk the lowering makes, so the admitted count is the table's.
+    let tap_count = TapCount::measured(
+        u32::try_from(ir.nodes().iter().fold(0_usize, |total, node| {
+            total.saturating_add(
+                crate::node::declaration(node.kind()).map_or(0, |declared| declared.taps.len()),
+            )
+        }))
+        .unwrap_or(u32::MAX),
+    );
 
     let mut rows = Vec::with_capacity(ResourceField::COUNT);
 
@@ -1030,6 +1039,8 @@ struct Lowered {
     prepared_nodes: Vec<PreparedNode>,
     parameter_targets: Vec<ParameterTarget>,
     parameter_addresses: Vec<ParameterAddress>,
+    taps: Vec<crate::plan::TapTarget>,
+    tap_addresses: Vec<crate::plan::TapAddress>,
     note_targets: Vec<NoteTarget>,
     note_addresses: Vec<NoteAddress>,
     note_magnitudes: Vec<NoteMagnitudeTarget>,
@@ -1090,6 +1101,8 @@ impl Lowered {
             self.prepared_nodes,
             self.parameter_targets,
             self.parameter_addresses,
+            self.taps,
+            self.tap_addresses,
             self.note_targets,
             self.note_addresses,
             self.note_magnitudes,
@@ -1172,6 +1185,8 @@ fn lower(
     let mut fault = None;
     let mut parameter_targets = Vec::new();
     let mut parameter_addresses = Vec::new();
+    let mut taps: Vec<crate::plan::TapTarget> = Vec::new();
+    let mut tap_addresses = Vec::new();
     let mut note_targets = Vec::new();
     let mut note_addresses = Vec::new();
 
@@ -1278,6 +1293,28 @@ fn lower(
             });
         }
 
+        // `SOUND-INV-022`: the kind's declared taps, each naming this node's output region
+        // — present in the plan whether or not anything will subscribe. The region is the
+        // lowering's virtual slot here; the arena's mapping resolves it below.
+        for tap in crate::node::declaration(kind).map_or(&[][..], |declared| declared.taps) {
+            let slot = crate::plan::TapSlot::new(plan_id, taps.len());
+            taps.push(crate::plan::TapTarget {
+                node: node_slot,
+                region: out,
+                data: tap.data,
+                bytes_per_quantum: crate::quantities::QuantumBytes::measured(
+                    (out_layout.channels() as u64)
+                        .saturating_mul(u64::from(crate::time::QUANTUM_FRAMES))
+                        .saturating_mul(size_of::<f32>() as u64),
+                ),
+            });
+            tap_addresses.push(crate::plan::TapAddress {
+                node: *id,
+                port: tap.port,
+                slot,
+            });
+        }
+
         // A playable node gets one note slot. The control it names is the kind's, so a
         // caller plays the node and never learns which control being played moves — which
         // is what lets Phase 6's voice pool address a voice without knowing its graph.
@@ -1327,8 +1364,18 @@ fn lower(
     // ADR-0005: lowering emits one buffer per value; the arena decides which of them
     // share storage, once, here. The render loop reads slot indices and learns nothing
     // about it.
-    let assignment = arena::assign(&state.ops, &state.widths, policy);
+    // ADR-0005 clause 6: a tapped value is read after the schedule, so its region stays
+    // live to the end of the quantum. The taps' virtual slots are what the arena pins.
+    let tapped: Vec<usize> = taps.iter().map(|tap| tap.region.index()).collect();
+    let assignment = arena::assign(&state.ops, &state.widths, policy, &tapped);
     arena::rewrite(&mut state.ops, &assignment.mapping, &assignment.regions);
+    // The same mapping the operations were rewritten through, so a tap names the physical
+    // region the node's output actually occupies.
+    for tap in &mut taps {
+        if let Some(physical) = assignment.mapping.get(tap.region.index()).copied() {
+            tap.region = physical;
+        }
+    }
 
     Lowered {
         id: plan_id,
@@ -1339,6 +1386,8 @@ fn lower(
         prepared_nodes: state.prepared_nodes,
         parameter_targets,
         parameter_addresses,
+        taps,
+        tap_addresses,
         note_targets,
         note_addresses,
         note_magnitudes,

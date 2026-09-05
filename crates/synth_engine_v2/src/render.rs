@@ -802,6 +802,24 @@ impl PreparedRenderer {
             .saturating_add(self.ramp_offsets.len().saturating_mul(size_of::<usize>()))
     }
 
+    /// One tap's samples as the last rendered quantum left them: the region the tapped
+    /// node wrote, which ADR-0005 clause 6 kept live to the end of the quantum.
+    ///
+    /// Test-only until `HOST-INV-023`'s subscription reads it; that consumer is Phase 9's
+    /// live host or Phase 10E's facade, and this is the read it will make.
+    #[cfg(test)]
+    pub(crate) fn tap_block(&self, slot: crate::plan::TapSlot) -> &[f32] {
+        if slot.plan() != self.plan.id() {
+            return &[];
+        }
+        self.plan
+            .taps()
+            .get(slot.index())
+            .and_then(|tap| self.plan.region(tap.region))
+            .and_then(|region| self.buffers.get(region.offset()..region.end()))
+            .unwrap_or(&[])
+    }
+
     /// The bytes preparation holds for the per-node run table of those buffers.
     #[cfg(test)]
     pub(crate) fn ramp_table_bytes_held(&self) -> usize {
@@ -909,3 +927,7 @@ mod scratch_tests;
 #[cfg(test)]
 #[path = "tests/parameter_slot.rs"]
 mod parameter_slot_tests;
+
+#[cfg(test)]
+#[path = "tests/taps.rs"]
+mod tap_tests;

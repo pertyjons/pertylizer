@@ -130,6 +130,8 @@ pub const FILTER: Kernel = Kernel(filter);
 pub const AMPLIFIER: Kernel = Kernel(amplifier);
 /// See [`SILENCE`].
 pub const COPY: Kernel = Kernel(copy);
+/// The monitor's kernel: its input, unchanged.
+pub const MONITOR: Kernel = Kernel(monitor);
 
 /// A node's immutable prepared data.
 ///
@@ -1212,6 +1214,24 @@ pub fn amplifier(_prepared: &PreparedNode, _state: &mut NodeState, io: &mut Node
                 *sample *= *level;
             }
         }
+        InputBuffer::Unpatched => io.out.fill(0.0),
+    }
+}
+
+/// A monitor: the input passed through unchanged, so the tap on its output names the
+/// signal that entered it (`SOUND-INV-022`, passive).
+///
+/// In-place safe, and nothing to do in place: the output already holds the input. The
+/// layouts are equal by the declaration, so this is a plain per-sample copy where the
+/// arena gave the two distinct regions.
+pub fn monitor(_prepared: &PreparedNode, _state: &mut NodeState, io: &mut NodeIo<'_>) {
+    match io.inputs[0] {
+        InputBuffer::Patched(source) => {
+            for (index, sample) in io.out.iter_mut().enumerate() {
+                *sample = source.get(index).copied().unwrap_or(0.0);
+            }
+        }
+        InputBuffer::InPlace => {}
         InputBuffer::Unpatched => io.out.fill(0.0),
     }
 }

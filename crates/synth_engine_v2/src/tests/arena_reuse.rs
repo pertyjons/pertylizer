@@ -100,7 +100,7 @@ fn no_two_overlapping_lives_share_a_slot() {
                 .iter()
                 .map(|region| region.length())
                 .collect();
-            let assignment = assign(virtual_ops.ops(), &widths, ArenaPolicy::Reuse);
+            let assignment = assign(virtual_ops.ops(), &widths, ArenaPolicy::Reuse, &[]);
             assert_eq!(
                 assignment.regions.len(),
                 plan.buffer_count(),
@@ -548,84 +548,124 @@ fn a_report_says_when_its_arena_row_is_an_upper_bound() {
     );
 }
 
-/// ADR-0005 clause 6 has nothing to extend in this phase, and this is what says so.
+/// ADR-0005 clause 6, now with a reader to extend a live range through.
 ///
 /// The clause makes an observation tap a **reader**: a signal whose only remaining reader
-/// is a tap is still live, and its region may not be handed to a later chain. A test of
-/// that needs a tap attached to a signal — and the IR has no way to express one. A
-/// [`crate::ir::TapId`] is an identity in [`crate::ir::PlanDeclarations`], nothing pairs
-/// it with a node or a port, and liveness is computed from the operations, of which a
-/// declaration produces none.
-///
-/// So what is asserted is the premise, in the two halves that would have to change before
-/// a real case could exist: the declaration **is** carried into the resource report, so it
-/// is not inert, and it changes neither the schedule nor the assignment, so there is no
-/// reader for clause 6 to extend a live range through. The day a tap becomes a scheduled
-/// reader, the second half fails and the case it stands in for has to be written.
+/// is a tap is still live, and its region may not be handed to a later chain. Until
+/// `P05-S008` the IR had no way to express one, and this test asserted the premise — a
+/// declared tap changed neither schedule nor assignment. A monitor's declared tap
+/// (`SOUND-INV-022`) is the reader now, and the case the premise stood in for is written:
+/// the tapped region is not written by any later operation, and the control shows the
+/// arena *would* have reused it without the pin.
 #[test]
-fn an_observation_tap_is_a_declaration_and_extends_no_live_range() {
-    use crate::ir::{PlanDeclarations, TapId};
+fn a_tapped_signal_stays_live_to_the_end_of_the_quantum() {
     use crate::report::ResourceField;
 
-    let with_tap = |taps: &[TapId]| {
-        let mut declarations = PlanDeclarations::default();
-        declarations.taps.extend_from_slice(taps);
-        GraphIr::builder()
-            .declaring(declarations)
-            .node(
-                SOURCE,
-                IrNodeKind::Sine {
-                    frequency: Frequency::new(440.0).expect("finite"),
-                    amplitude: Amplitude::new(0.5).expect("finite"),
-                },
-                ExecutionScope::Voice,
-            )
-            .node(OUTPUT, IrNodeKind::Output, ExecutionScope::Global)
-            .connect(
-                (SOURCE, PortId::FIRST),
-                (OUTPUT, PortId::FIRST),
-                SignalDomain::Audio,
-            )
-            .build()
-            .expect("a source into an output is a readable plan")
-    };
-
-    let tapped = compile(
-        &with_tap(&[TapId::new(1)]),
-        &RenderConfig::new(profile(ChannelLayout::Mono)),
-    );
-    let plain = compile(
-        &with_tap(&[]),
-        &RenderConfig::new(profile(ChannelLayout::Mono)),
-    );
-
-    // The declaration is not inert: it is what the report counts against the profile's
-    // observation budget. Without this the equalities below would also hold for a
-    // declaration the compiler ignored entirely, and the test would be of nothing.
-    let counted = |outcome: &crate::compile::CompileOutcome| {
+    const MONITOR: NodeId = NodeId::new(3);
+    const FIRST_GAIN: NodeId = NodeId::new(4);
+    const SECOND_GAIN: NodeId = NodeId::new(5);
+    // Source, monitor, then two in-place gains: each gain would take over its input's
+    // region, so without the pin the monitor's output — the tapped signal — is the region
+    // the gains write.
+    let ir = GraphIr::builder()
+        .node(
+            SOURCE,
+            IrNodeKind::Sine {
+                frequency: Frequency::new(440.0).expect("finite"),
+                amplitude: Amplitude::new(0.5).expect("finite"),
+            },
+            ExecutionScope::Voice,
+        )
+        .node(MONITOR, IrNodeKind::Monitor, ExecutionScope::Voice)
+        .node(FIRST_GAIN, gain(0.5), ExecutionScope::Voice)
+        .node(SECOND_GAIN, gain(0.5), ExecutionScope::Voice)
+        .node(OUTPUT, IrNodeKind::Output, ExecutionScope::Global)
+        .connect(
+            (SOURCE, PortId::FIRST),
+            (MONITOR, PortId::FIRST),
+            SignalDomain::Audio,
+        )
+        .connect(
+            (MONITOR, PortId::FIRST),
+            (FIRST_GAIN, PortId::FIRST),
+            SignalDomain::Audio,
+        )
+        .connect(
+            (FIRST_GAIN, PortId::FIRST),
+            (SECOND_GAIN, PortId::FIRST),
+            SignalDomain::Audio,
+        )
+        .connect(
+            (SECOND_GAIN, PortId::FIRST),
+            (OUTPUT, PortId::FIRST),
+            SignalDomain::Audio,
+        )
+        .build()
+        .expect("a monitored chain is a readable plan");
+    let outcome = compile(&ir, &RenderConfig::new(profile(ChannelLayout::Mono)));
+    assert_eq!(
         outcome
             .report()
             .row(ResourceField::MaxObservationTaps)
-            .map(|row| row.requested())
-    };
-    assert_ne!(
-        counted(&tapped),
-        counted(&plain),
-        "a declared tap must reach the resource report; if it does not, this test is \
-         comparing two plans that differ in nothing"
+            .map(|row| row.requested()),
+        Some(crate::report::ResourceAmount::Taps(
+            crate::quantities::TapCount::measured(1)
+        )),
+        "the declared tap reaches the resource report"
     );
+    let plan = outcome.into_plan().expect("admissible");
+    let tap = plan.taps()[0];
 
-    let tapped = tapped.into_plan().expect("admissible");
-    let plain = plain.into_plan().expect("admissible");
-    assert_eq!(
-        tapped.ops(),
-        plain.ops(),
-        "a declared tap schedules no operation, so there is no reader for clause 6 to \
-         extend a live range through"
-    );
-    assert_eq!(
-        tapped.regions(),
-        plain.regions(),
-        "and the assignment is the same one, tap or no tap"
+    // No operation after the monitor's writes the tapped region.
+    let monitor_at = plan
+        .ops()
+        .iter()
+        .position(|op| matches!(op, PlanOp::Node(step) if step.node() == tap.node))
+        .expect("the monitor is scheduled");
+    for op in &plan.ops()[monitor_at + 1..] {
+        if let PlanOp::Node(step) = op {
+            assert_ne!(
+                step.out(),
+                tap.region,
+                "a later operation writes the tapped region, so a subscriber would read \
+                 the gain's output rather than the monitor's"
+            );
+        }
+    }
+
+    // The control: over the same virtual operations, an assignment that pins nothing
+    // hands the monitor's region to a later gain — so the pin is what keeps it live.
+    let virtual_ops = compile_with(
+        &ir,
+        &RenderConfig::new(profile(ChannelLayout::Mono)),
+        ArenaPolicy::NoReuse,
+    )
+    .into_plan()
+    .expect("admissible");
+    let widths: Vec<usize> = virtual_ops
+        .regions()
+        .iter()
+        .map(|region| region.length())
+        .collect();
+    let monitor_virtual = virtual_ops
+        .ops()
+        .iter()
+        .find_map(|op| match op {
+            PlanOp::Node(step) if step.node() == tap.node => Some(step.out()),
+            _ => None,
+        })
+        .expect("the monitor is scheduled");
+    let unpinned = assign(virtual_ops.ops(), &widths, ArenaPolicy::Reuse, &[]);
+    let monitor_physical = unpinned.mapping[monitor_virtual.index()];
+    let reused_later = virtual_ops.ops()[monitor_at + 1..]
+        .iter()
+        .any(|op| match op {
+            PlanOp::Node(step) => unpinned.mapping[step.out().index()] == monitor_physical,
+            PlanOp::Output { .. } => false,
+        });
+    assert!(
+        reused_later,
+        "without the pin nothing would have reused the monitor's region, so this test \
+         cannot tell a pin from an accident of the schedule"
     );
 }

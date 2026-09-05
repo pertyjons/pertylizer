@@ -252,6 +252,30 @@ impl ParameterDefault {
     }
 }
 
+/// What an observation tap carries.
+///
+/// `SOUND-INV-022`: a tap declares its data type; one quantum of that type per quantum is
+/// its rate, and its cost follows from the tapped port's layout at compilation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum TapData {
+    /// The audio samples of the tapped output port, one quantum at a time.
+    Audio,
+}
+
+/// One observation tap a node kind declares — `SOUND-INV-022`'s single source.
+///
+/// A tap names one of the kind's **output** ports; a tap not declared here does not exist,
+/// and a declared one exists in every compiled plan that carries the kind, whether or not
+/// anything subscribes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[must_use]
+pub(crate) struct TapSpec {
+    /// The output port whose signal the tap names.
+    pub(crate) port: crate::ir::PortId,
+    /// What it carries.
+    pub(crate) data: TapData,
+}
+
 /// One control a node kind exposes, and the parameter identity that addresses it.
 #[derive(Debug, Clone, Copy, PartialEq)]
 #[must_use]
@@ -445,6 +469,38 @@ fn prepare_amplifier(
     Ok(PreparedNode::Amplifier)
 }
 
+/// The monitor, declared once — `P05-S008`. A pass-through with one declared tap on its
+/// output: `SOUND-INV-022`'s single source of tap capability. Nothing prepared, nothing
+/// kept, and in-place safe because its output is its input.
+pub(crate) static MONITOR: NodeDeclaration = NodeDeclaration {
+    id: NodeKindId::Monitor,
+    name: "monitor",
+    kernel: kernels::MONITOR,
+    ports: &[AUDIO_IN, AUDIO_OUT],
+    controls: &[],
+    in_place_safe: true,
+    note_control: None,
+    taps: &[TapSpec {
+        port: crate::ir::PortId::FIRST,
+        data: TapData::Audio,
+    }],
+    prepare: prepare_monitor,
+    prepared_bytes: 0,
+    state_bytes: 0,
+};
+
+fn prepare_monitor(
+    node: NodeId,
+    kind: IrNodeKind,
+    _: SampleRate,
+) -> Result<PreparedNode, CompileError> {
+    let IrNodeKind::Monitor = kind else {
+        return Err(declared_for_another_kind(node));
+    };
+    // The copy record: a monitor carries nothing of its own, and its kernel reads none.
+    Ok(PreparedNode::Copy)
+}
+
 fn prepare_filter(
     node: NodeId,
     kind: IrNodeKind,
@@ -503,6 +559,8 @@ fn prepare_envelope(
 /// only the label, so that renaming `"low-pass filter"` would have changed its identity.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum NodeKindId {
+    /// A pass-through with a declared observation tap on its output.
+    Monitor,
     /// Zeros.
     Silence,
     /// A constant level.
@@ -564,6 +622,9 @@ pub(crate) struct NodeDeclaration {
     pub(crate) in_place_safe: bool,
     /// The control a note edge moves, where the kind can be played at all.
     pub(crate) note_control: Option<ControlIndex>,
+    /// The observation taps it declares, `SOUND-INV-022`'s only source; empty for every
+    /// kind but the monitor.
+    pub(crate) taps: &'static [TapSpec],
     /// How this kind's prepared data is built from its IR fields, against the stream's
     /// rate — the master plan's *off-thread preparation*, as the kind's own entry.
     ///
@@ -652,6 +713,7 @@ pub(crate) static SAW: NodeDeclaration = NodeDeclaration {
     ],
     in_place_safe: false,
     note_control: None,
+    taps: &[],
     prepare: prepare_saw,
     prepared_bytes: size_of::<(
         f64,
@@ -709,6 +771,7 @@ pub(crate) static ENVELOPE: NodeDeclaration = NodeDeclaration {
     ],
     in_place_safe: false,
     note_control: Some(kernels::ENVELOPE_GATE),
+    taps: &[],
     prepare: prepare_envelope,
     prepared_bytes: size_of::<(SegmentFrames, SegmentFrames, SegmentFrames, NormalizedLevel)>()
         as u64,
@@ -756,6 +819,7 @@ pub(crate) static SINE: NodeDeclaration = NodeDeclaration {
     ],
     in_place_safe: false,
     note_control: None,
+    taps: &[],
     prepare: prepare_sine,
     prepared_bytes: size_of::<(
         f64,
@@ -774,6 +838,7 @@ pub(crate) static SILENCE: NodeDeclaration = NodeDeclaration {
     controls: &[],
     in_place_safe: false,
     note_control: None,
+    taps: &[],
     prepare: prepare_silence,
     prepared_bytes: 0,
     state_bytes: 0,
@@ -788,6 +853,7 @@ pub(crate) static CONSTANT: NodeDeclaration = NodeDeclaration {
     controls: &[],
     in_place_safe: false,
     note_control: None,
+    taps: &[],
     prepare: prepare_constant,
     prepared_bytes: size_of::<crate::quantities::Amplitude>() as u64,
     state_bytes: 0,
@@ -802,6 +868,7 @@ pub(crate) static IMPULSE: NodeDeclaration = NodeDeclaration {
     controls: &[],
     in_place_safe: false,
     note_control: None,
+    taps: &[],
     prepare: prepare_impulse,
     prepared_bytes: size_of::<crate::time::PlanPosition>() as u64,
     state_bytes: 0,
@@ -834,6 +901,7 @@ pub(crate) static AMPLIFIER: NodeDeclaration = NodeDeclaration {
     controls: &[],
     in_place_safe: true,
     note_control: None,
+    taps: &[],
     prepare: prepare_amplifier,
     prepared_bytes: 0,
     state_bytes: 0,
@@ -849,6 +917,7 @@ pub(crate) static GAIN: NodeDeclaration = NodeDeclaration {
     controls: &[],
     in_place_safe: true,
     note_control: None,
+    taps: &[],
     prepare: prepare_gain,
     prepared_bytes: size_of::<crate::quantities::GainFactor>() as u64,
     state_bytes: 0,
@@ -866,6 +935,7 @@ pub(crate) static FILTER: NodeDeclaration = NodeDeclaration {
     controls: &[],
     in_place_safe: true,
     note_control: None,
+    taps: &[],
     prepare: prepare_filter,
     prepared_bytes: size_of::<[f32; 3]>() as u64,
     state_bytes: size_of::<(f32, f32)>() as u64,
@@ -878,8 +948,8 @@ pub(crate) static FILTER: NodeDeclaration = NodeDeclaration {
 /// the declarations are `static` rather than `const`: a `const` is materialised at each
 /// use and has no single address to compare — so a kind declared but left out here cannot
 /// be discovered, and one listed here but not resolvable cannot compile.
-static DECLARED: [&NodeDeclaration; 9] = [
-    &SILENCE, &CONSTANT, &IMPULSE, &SINE, &SAW, &GAIN, &AMPLIFIER, &FILTER, &ENVELOPE,
+static DECLARED: [&NodeDeclaration; 10] = [
+    &SILENCE, &CONSTANT, &IMPULSE, &SINE, &SAW, &GAIN, &AMPLIFIER, &FILTER, &ENVELOPE, &MONITOR,
 ];
 
 /// One port, as discovery presents it.
@@ -916,6 +986,15 @@ pub struct ParameterDescription {
     pub magnitude: Option<NoteMagnitude>,
 }
 
+/// One observation tap, as discovery presents it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TapDescription {
+    /// The output port whose signal it names.
+    pub port: crate::ir::PortId,
+    /// What it carries.
+    pub data: TapData,
+}
+
 /// One node kind, as discovery presents it.
 ///
 /// `P05-S006`, and the Phase 5 exit gate's second bullet in its V2 form: this and the
@@ -938,6 +1017,8 @@ pub struct KindDescription {
     pub playable: bool,
     /// Whether it may write its output over its first input.
     pub in_place_safe: bool,
+    /// The observation taps it declares — `SOUND-INV-022`'s only source.
+    pub taps: Vec<TapDescription>,
 }
 
 /// Every declared kind, as discovery presents it — derived from the declarations and
@@ -975,6 +1056,14 @@ pub fn catalog() -> Vec<KindDescription> {
                 .collect(),
             playable: declared.note_control.is_some(),
             in_place_safe: declared.in_place_safe,
+            taps: declared
+                .taps
+                .iter()
+                .map(|tap| TapDescription {
+                    port: tap.port,
+                    data: tap.data,
+                })
+                .collect(),
         })
         .collect()
 }
@@ -996,6 +1085,7 @@ pub(crate) fn declaration(kind: IrNodeKind) -> Option<&'static NodeDeclaration> 
         IrNodeKind::Constant { .. } => Some(&CONSTANT),
         IrNodeKind::Impulse { .. } => Some(&IMPULSE),
         IrNodeKind::Amplifier => Some(&AMPLIFIER),
+        IrNodeKind::Monitor => Some(&MONITOR),
         IrNodeKind::Gain { .. } => Some(&GAIN),
         IrNodeKind::Filter { .. } => Some(&FILTER),
         // The output node has no kernel and no declaration: writing the stream's channels
@@ -1035,6 +1125,7 @@ pub(crate) fn descriptor(kind: IrNodeKind) -> Option<NodeDescriptor> {
         IrNodeKind::Saw { .. } => declared.map(NodeDeclaration::descriptor),
         IrNodeKind::Envelope { .. } => declared.map(NodeDeclaration::descriptor),
         IrNodeKind::Amplifier => declared.map(NodeDeclaration::descriptor),
+        IrNodeKind::Monitor => declared.map(NodeDeclaration::descriptor),
         IrNodeKind::Filter { .. } => declared.map(NodeDeclaration::descriptor),
         IrNodeKind::Gain { .. } => declared.map(NodeDeclaration::descriptor),
     }
@@ -1231,6 +1322,7 @@ pub fn prepared_payload_bytes(kind: IrNodeKind) -> u64 {
         IrNodeKind::Impulse { .. } => return declared.map_or(0, |d| d.prepared_bytes),
         IrNodeKind::Sine { .. } => return declared.map_or(0, |d| d.prepared_bytes),
         IrNodeKind::Amplifier => return declared.map_or(0, |d| d.prepared_bytes),
+        IrNodeKind::Monitor => return declared.map_or(0, |d| d.prepared_bytes),
         IrNodeKind::Gain { .. } => return declared.map_or(0, |d| d.prepared_bytes),
         IrNodeKind::Filter { .. } => return declared.map_or(0, |d| d.prepared_bytes),
         // The output node has no kernel, so it carries no prepared data of its own.
@@ -1275,6 +1367,7 @@ pub fn state_payload_bytes(kind: IrNodeKind) -> u64 {
         IrNodeKind::Impulse { .. } => return declared.map_or(0, |d| d.state_bytes),
         IrNodeKind::Filter { .. } => return declared.map_or(0, |d| d.state_bytes),
         IrNodeKind::Amplifier => return declared.map_or(0, |d| d.state_bytes),
+        IrNodeKind::Monitor => return declared.map_or(0, |d| d.state_bytes),
         IrNodeKind::Gain { .. } => return declared.map_or(0, |d| d.state_bytes),
         IrNodeKind::Envelope { .. } => return declared.map_or(0, |d| d.state_bytes),
         IrNodeKind::Output => 0,
@@ -1309,6 +1402,7 @@ mod tests {
                 factor: GainFactor::UNITY,
             },
             IrNodeKind::Amplifier,
+            IrNodeKind::Monitor,
             IrNodeKind::Envelope {
                 attack: crate::quantities::Seconds::ZERO,
                 decay: crate::quantities::Seconds::ZERO,
@@ -1492,7 +1586,7 @@ mod tests {
             .collect();
         assert_eq!(
             declared.len(),
-            9,
+            10,
             "every kind but the output node is declared"
         );
 
@@ -1528,6 +1622,7 @@ mod tests {
                     | (IrNodeKind::Saw { .. }, PreparedNode::Saw { .. })
                     | (IrNodeKind::Gain { .. }, PreparedNode::Gain { .. })
                     | (IrNodeKind::Amplifier, PreparedNode::Amplifier)
+                    | (IrNodeKind::Monitor, PreparedNode::Copy)
                     | (IrNodeKind::Filter { .. }, PreparedNode::Filter { .. })
                     | (IrNodeKind::Envelope { .. }, PreparedNode::Envelope { .. })
             );
@@ -1552,7 +1647,7 @@ mod tests {
                 | IrNodeKind::Impulse { .. }
                 | IrNodeKind::Gain { .. } => (true, false),
                 IrNodeKind::Filter { .. } => (true, true),
-                IrNodeKind::Silence | IrNodeKind::Amplifier => (false, false),
+                IrNodeKind::Silence | IrNodeKind::Amplifier | IrNodeKind::Monitor => (false, false),
                 other => panic!("{other:?} is declared but this test does not know its shape"),
             };
             assert_eq!(
@@ -1569,7 +1664,10 @@ mod tests {
                 declared.in_place_safe,
                 matches!(
                     kind,
-                    IrNodeKind::Amplifier | IrNodeKind::Gain { .. } | IrNodeKind::Filter { .. }
+                    IrNodeKind::Amplifier
+                        | IrNodeKind::Monitor
+                        | IrNodeKind::Gain { .. }
+                        | IrNodeKind::Filter { .. }
                 ),
                 "{kind:?}"
             );
@@ -1598,6 +1696,51 @@ mod tests {
                 .any(|c| c.magnitude == Some(NoteMagnitude::Velocity)
                     && c.rate == ControlRate::Sample)
         );
+    }
+
+    #[test]
+    fn only_the_monitor_declares_a_tap_and_a_tap_names_an_output_port() {
+        // `SOUND-INV-022`: a declaration is the only source of tap capability, and a tap
+        // names a signal point — one of the kind's **output** ports. Every kind but the
+        // monitor declares none; the monitor declares exactly one, on its output, carrying
+        // audio; and discovery presents the same taps the declaration holds.
+        for declared in DECLARED {
+            for tap in declared.taps {
+                // Port identities are per direction, so the tap's port is looked up among
+                // the outputs: a kind with no output of that identity has no such tap.
+                assert!(
+                    declared.ports.iter().any(|port| {
+                        port.direction() == PortDirection::Output && port.id() == tap.port
+                    }),
+                    "{}'s tap names no output port of its own",
+                    declared.name
+                );
+            }
+            let expected = if declared.id == NodeKindId::Monitor {
+                1
+            } else {
+                0
+            };
+            assert_eq!(
+                declared.taps.len(),
+                expected,
+                "{} declares {} taps",
+                declared.name,
+                declared.taps.len()
+            );
+        }
+        assert_eq!(MONITOR.taps[0].data, TapData::Audio);
+        for entry in catalog() {
+            let declared = DECLARED
+                .iter()
+                .find(|declared| declared.id == entry.id)
+                .expect("every catalog entry is declared");
+            assert_eq!(entry.taps.len(), declared.taps.len(), "{}", entry.name);
+            for (presented, spec) in entry.taps.iter().zip(declared.taps) {
+                assert_eq!(presented.port, spec.port, "{}", entry.name);
+                assert_eq!(presented.data, spec.data, "{}", entry.name);
+            }
+        }
     }
 
     #[test]

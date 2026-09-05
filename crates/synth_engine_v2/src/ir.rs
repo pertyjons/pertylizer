@@ -66,7 +66,6 @@ typed_id!(
     "A parameter's identity within its node."
 );
 typed_id!(BufferId, u32, "buffer", "A buffer's identity in the plan.");
-typed_id!(TapId, u32, "tap", "An observation tap's stable identity.");
 typed_id!(ProgramId, u32, "program", "A script program's identity.");
 
 /// What kind of signal crosses an edge.
@@ -128,8 +127,6 @@ pub enum IrObject {
     Port(NodeId, PortId),
     /// One edge.
     Edge(EdgeId),
-    /// One observation tap.
-    Tap(TapId),
     /// One script program.
     Program(ProgramId),
 }
@@ -141,7 +138,6 @@ impl std::fmt::Display for IrObject {
             Self::Node(id) => write!(f, "{id}"),
             Self::Port(node, port) => write!(f, "{node} {port}"),
             Self::Edge(id) => write!(f, "{id}"),
-            Self::Tap(id) => write!(f, "{id}"),
             Self::Program(id) => write!(f, "{id}"),
         }
     }
@@ -262,6 +258,12 @@ pub enum IrNodeKind {
     /// in this crate — an unpatched input is silence — and the alternative would be to
     /// invent a level nobody asked for.
     Amplifier,
+    /// A pass-through that declares an observation tap on its output (`SOUND-INV-022`).
+    ///
+    /// The one authored way a plan carries a tap: a monitor placed where a project wants
+    /// to observe a signal. It changes no sample — its output is its input — and its
+    /// declaration is the single source of the tap's data type, rate and cost.
+    Monitor,
     /// The plan's output. Takes one mono signal and writes every output channel.
     ///
     /// Writing a mono source to both channels is a **declared duplication** rather
@@ -557,8 +559,6 @@ pub struct PlanDeclarations {
     pub buses: BusCount,
     /// The most sends any one channel has.
     pub max_sends_on_any_channel: SendCount,
-    /// Observation taps this plan registers.
-    pub taps: Vec<TapId>,
     /// Events the plan is known to place in one quantum.
     ///
     /// **Compiled work, and admitted against `compiled_event_share`.** Statically knowable
@@ -661,7 +661,6 @@ impl Default for PlanDeclarations {
             mix_channels: MixChannelCount::NONE,
             buses: BusCount::NONE,
             max_sends_on_any_channel: SendCount::NONE,
-            taps: Vec::new(),
             events_per_quantum: EventCount::NONE,
             note_expansion_per_tick: EventCount::NONE,
             scheduled_events_in_flight: EventCount::NONE,

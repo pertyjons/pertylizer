@@ -535,6 +535,65 @@ pub enum PlanOp {
     },
 }
 
+/// One observation tap of a compiled plan, by index.
+///
+/// The twin of [`ParameterSlot`] for `SOUND-INV-022`: a subscription names one of these
+/// rather than a node's internals, and it carries the plan identity for the same reason an
+/// index resolved against another plan would read whatever occupies it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[must_use]
+pub struct TapSlot {
+    plan: PlanId,
+    index: usize,
+}
+
+impl TapSlot {
+    pub(crate) const fn new(plan: PlanId, index: usize) -> Self {
+        Self { plan, index }
+    }
+
+    /// The plan the slot belongs to.
+    pub const fn plan(self) -> PlanId {
+        self.plan
+    }
+
+    /// The index into that plan's tap table.
+    pub const fn index(self) -> usize {
+        self.index
+    }
+}
+
+/// What a declared tap names in the compiled plan: a stable signal point.
+///
+/// `SOUND-INV-022`: present whether or not anything subscribes, and passive — it is the
+/// region the tapped node writes, read after the quantum renders. ADR-0005 clause 6 makes
+/// it a **reader** of that region, so the arena keeps the region live to the end of the
+/// quantum rather than handing it to a later chain.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[must_use]
+pub struct TapTarget {
+    /// Which node instance.
+    pub node: NodeSlot,
+    /// The physical region its tapped output occupies.
+    pub region: BufferSlot,
+    /// What the tap carries.
+    pub data: crate::node::TapData,
+    /// The tap's declared cost: the bytes one quantum of it holds, from the port's layout.
+    pub bytes_per_quantum: crate::quantities::QuantumBytes,
+}
+
+/// A declared tap by the identity a caller addresses it with.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[must_use]
+pub struct TapAddress {
+    /// The node whose declaration names the tap.
+    pub node: NodeId,
+    /// The output port the tap names.
+    pub port: crate::ir::PortId,
+    /// The slot it compiled to.
+    pub slot: TapSlot,
+}
+
 /// What a parameter event addresses, resolved to numeric slots at admission.
 ///
 /// A node instance and one of its controls. Neither is an identity: the renderer indexes
@@ -738,6 +797,9 @@ pub struct CompiledPlan {
     prepared_nodes: Vec<PreparedNode>,
     parameter_targets: Vec<ParameterTarget>,
     parameter_addresses: Vec<ParameterAddress>,
+    /// `SOUND-INV-022`'s taps, derived from the nodes' declarations; indexed by [`TapSlot`].
+    taps: Vec<TapTarget>,
+    tap_addresses: Vec<TapAddress>,
     note_targets: Vec<NoteTarget>,
     note_addresses: Vec<NoteAddress>,
     /// Every note target's magnitude writes, flattened.
@@ -802,6 +864,8 @@ impl CompiledPlan {
         prepared_nodes: Vec<PreparedNode>,
         parameter_targets: Vec<ParameterTarget>,
         parameter_addresses: Vec<ParameterAddress>,
+        taps: Vec<TapTarget>,
+        tap_addresses: Vec<TapAddress>,
         note_targets: Vec<NoteTarget>,
         note_addresses: Vec<NoteAddress>,
         note_magnitudes: Vec<NoteMagnitudeTarget>,
@@ -825,6 +889,8 @@ impl CompiledPlan {
             prepared_nodes,
             parameter_targets,
             parameter_addresses,
+            taps,
+            tap_addresses,
             note_targets,
             note_addresses,
             note_magnitudes,
@@ -916,6 +982,27 @@ impl CompiledPlan {
         self.parameter_addresses
             .iter()
             .find(|address| address.node == node && address.parameter == parameter)
+            .map(|address| address.slot)
+    }
+
+    /// The plan's observation taps, `SOUND-INV-022`: one per declared tap per node,
+    /// present whether or not anything subscribes. Indexed by [`TapSlot`].
+    pub fn taps(&self) -> &[TapTarget] {
+        &self.taps
+    }
+
+    /// Every declared tap by node and port, for a subscriber resolving one.
+    pub fn tap_addresses(&self) -> &[TapAddress] {
+        &self.tap_addresses
+    }
+
+    /// The tap a node's output port compiled to, or `None` where the node's kind declares
+    /// none there: a consumer can name only a declared tap, never a node's internals.
+    #[must_use]
+    pub fn resolve_tap(&self, node: NodeId, port: crate::ir::PortId) -> Option<TapSlot> {
+        self.tap_addresses
+            .iter()
+            .find(|address| address.node == node && address.port == port)
             .map(|address| address.slot)
     }
 

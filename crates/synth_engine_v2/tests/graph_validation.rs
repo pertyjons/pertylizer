@@ -438,6 +438,7 @@ catalog! {
         resonance: Resonance::BUTTERWORTH,
     } => IrNodeKind::Filter { .. },
     IrNodeKind::Amplifier => IrNodeKind::Amplifier,
+    IrNodeKind::Monitor => IrNodeKind::Monitor,
     IrNodeKind::Output => IrNodeKind::Output,
 }
 

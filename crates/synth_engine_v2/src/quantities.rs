@@ -270,6 +270,12 @@ counted_quantity!(
     "bytes",
     "A number of bytes of prepared memory.\n\nThree separate profile fields use it: the type carries the unit and the field carries the kind."
 );
+counted_quantity!(
+    QuantumBytes,
+    u64,
+    "bytes per quantum",
+    "The bytes one quantum of a signal occupies — an observation tap's declared cost (`SOUND-INV-022`).\n\nA rate rather than a total, and its own type so that a subscription's admission cannot take it for one of the prepared or mutable byte totals."
+);
 
 /// A dimensionless ratio: predicted quantum cost over the quantum's real-time
 /// budget.

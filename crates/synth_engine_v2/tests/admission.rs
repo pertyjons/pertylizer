@@ -20,7 +20,7 @@ use synth_engine_v2::identity::ProducerId;
 use synth_engine_v2::ir::{
     AuthoredSourceDeclaration, ExecutionScope, GraphIr, InternalProducerDeclaration, IrNodeKind,
     IrObject, IrProgram, NodeId, NoteProducerDeclaration, PlanDeclarations, PortId, ProgramId,
-    SignalDomain, TapId,
+    SignalDomain,
 };
 use synth_engine_v2::profile::{
     CostBudget, EventLimits, GraphLimits, HostProfile, MemoryLimits, MixingLimits,
@@ -163,6 +163,35 @@ fn assert_refused(field: ResourceField, ir: &GraphIr, host: HostProfile) {
     );
 }
 
+/// A source through two monitors into the output: two declared taps (`SOUND-INV-022`).
+fn two_monitors() -> GraphIr {
+    const FIRST_MONITOR: NodeId = NodeId::new(21);
+    const SECOND_MONITOR: NodeId = NodeId::new(22);
+    GraphIr::builder()
+        .node(SOURCE, IrNodeKind::Silence, ExecutionScope::Voice)
+        .node(FIRST_MONITOR, IrNodeKind::Monitor, ExecutionScope::Voice)
+        .node(SECOND_MONITOR, IrNodeKind::Monitor, ExecutionScope::Voice)
+        .node(OUTPUT, IrNodeKind::Output, ExecutionScope::Global)
+        .connect(
+            (SOURCE, PortId::FIRST),
+            (FIRST_MONITOR, PortId::FIRST),
+            SignalDomain::Audio,
+        )
+        .connect(
+            (FIRST_MONITOR, PortId::FIRST),
+            (SECOND_MONITOR, PortId::FIRST),
+            SignalDomain::Audio,
+        )
+        .connect(
+            (SECOND_MONITOR, PortId::FIRST),
+            (OUTPUT, PortId::FIRST),
+            SignalDomain::Audio,
+        )
+        .declaring(declared())
+        .build()
+        .expect("a monitored source is a readable plan")
+}
+
 /// A plan declaring one of everything the profile bounds, so a lowered limit bites.
 fn declared() -> PlanDeclarations {
     PlanDeclarations {
@@ -178,7 +207,6 @@ fn declared() -> PlanDeclarations {
         mix_channels: MixChannelCount::measured(2),
         buses: BusCount::measured(2),
         max_sends_on_any_channel: SendCount::measured(2),
-        taps: vec![TapId::new(1), TapId::new(2)],
         events_per_quantum: EventCount::measured(2),
         note_expansion_per_tick: EventCount::measured(2),
         scheduled_events_in_flight: EventCount::measured(2),
@@ -592,7 +620,9 @@ fn refusal_cases(host: &HostProfile) -> Vec<(ResourceField, GraphIr, HostProfile
         // `LIMIT-0020`'s successor: V1 publishes meters through a 128-slot array whose
         // `publish()` is an `if let Some(slot)`, so a project with more metered channels
         // lost meters with no signal to anyone. Here it is a refusal.
-        (ResourceField::MaxObservationTaps, declares.clone(), taps(1)),
+        // `SOUND-INV-022`: a plan's taps are its nodes' declarations' — two monitors
+        // declare two taps, and a profile allowing one refuses the plan by count.
+        (ResourceField::MaxObservationTaps, two_monitors(), taps(1)),
         (
             ResourceField::MaxMixChannels,
             declares.clone(),

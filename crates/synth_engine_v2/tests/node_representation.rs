@@ -327,7 +327,7 @@ fn a_widened_signal_is_copied_by_a_scheduled_kernel() {
 fn a_declared_kind_appears_in_the_registry_only_by_deferring_to_its_declaration() {
     // The variant as it is spelled in a pattern — fieldless kinds have no `{ .. }` — and
     // the declaration constant it forwards to.
-    const DECLARED: [(&str, &str); 9] = [
+    const DECLARED: [(&str, &str); 10] = [
         ("Saw { .. }", "SAW"),
         ("Envelope { .. }", "ENVELOPE"),
         ("Sine { .. }", "SINE"),
@@ -335,6 +335,7 @@ fn a_declared_kind_appears_in_the_registry_only_by_deferring_to_its_declaration(
         ("Constant { .. }", "CONSTANT"),
         ("Impulse { .. }", "IMPULSE"),
         ("Amplifier", "AMPLIFIER"),
+        ("Monitor", "MONITOR"),
         ("Gain { .. }", "GAIN"),
         ("Filter { .. }", "FILTER"),
     ];
@@ -447,6 +448,7 @@ fn discovery_and_validation_describe_the_same_ports() {
                 factor: GainFactor::new(0.5).expect("finite"),
             },
             NodeKindId::Amplifier => IrNodeKind::Amplifier,
+            NodeKindId::Monitor => IrNodeKind::Monitor,
             NodeKindId::Filter => IrNodeKind::Filter {
                 cutoff: CutoffFrequency::new(1_000.0).expect("positive"),
                 resonance: Resonance::BUTTERWORTH,
@@ -463,7 +465,7 @@ fn discovery_and_validation_describe_the_same_ports() {
     let entries = catalog();
     assert_eq!(
         entries.len(),
-        9,
+        10,
         "every kind but the output node is discoverable"
     );
     for entry in entries {

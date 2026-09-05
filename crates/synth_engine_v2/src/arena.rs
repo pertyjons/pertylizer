@@ -199,7 +199,12 @@ const fn in_place_safe(op: PlanOp) -> bool {
 /// channels, per ADR-0041 clause 2. A missing or zero width is treated as one quantum's
 /// worth of nothing to assign, which cannot arise from lowering — every virtual buffer it
 /// emits has a layout — and is a compiler defect rather than a render-time condition.
-pub(crate) fn assign(ops: &[PlanOp], widths: &[usize], policy: ArenaPolicy) -> Assignment {
+pub(crate) fn assign(
+    ops: &[PlanOp],
+    widths: &[usize],
+    policy: ArenaPolicy,
+    tapped: &[usize],
+) -> Assignment {
     let virtual_count = widths.len();
     if policy == ArenaPolicy::NoReuse {
         // Clause 9's mode: every value keeps its own region, laid out consecutively, and
@@ -233,7 +238,16 @@ pub(crate) fn assign(ops: &[PlanOp], widths: &[usize], policy: ArenaPolicy) -> A
         };
     }
 
-    let ranges = live_ranges(ops, virtual_count);
+    let mut ranges = live_ranges(ops, virtual_count);
+    // ADR-0005 clause 6: an observation tap is a reader, and it reads after the schedule
+    // has run. A tapped value is therefore live to the end of the quantum — its region is
+    // never handed to a later chain, and no in-place operation may write over it, which
+    // the merge below sees because the range no longer ends at any operation.
+    for slot in tapped {
+        if let Some(range) = ranges.get_mut(*slot) {
+            range.1 = ops.len();
+        }
+    }
 
     // Clause 2's merge: an in-place operation produces one value chain rather than two
     // values that happen to overlap. `chain_of[v]` is the chain a virtual buffer belongs
