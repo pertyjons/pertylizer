@@ -62,8 +62,7 @@ model. Two decisions bind slices inside the phase rather than its entry, under `
 decision-timing rule: the voice **allocation and stealing** policy — which voice a note-on
 takes when none is free, and how the taken voice ends — is a delivered-behaviour decision no
 record holds yet and is required before the slice that steals; and
-[ADR-0026](decisions/ADR-0026-minimum-samplemap-and-samplezone-model.md), the sample map and
-zone model, is `Proposed` and required before the sampler slice. Until the stealing decision,
+ADR-0026, the sample map and zone model — a register entry with no record yet — is `Proposed` and required before the sampler slice. Until the stealing decision,
 a note-on that finds no free voice is refused and counted, which is the identity range's
 existing exhaustion path and fails closed.
 
