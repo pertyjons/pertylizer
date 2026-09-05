@@ -153,9 +153,13 @@ Outcome: one declaration supplies node ports, parameters, preparation,
 diagnostics, DSP entry points, automation/modulation metadata, and discovery
 surfaces.
 
-Exit requires representative native and legacy-adapted nodes, one parameter
-composition law, generated discovery/schema agreement, and measured adapter
-costs inside the phase budget.
+Exit requires representative native nodes, one parameter composition law, and
+generated discovery/schema agreement. Corrected on 2026-09-05 by the user under
+`PROCESS.md`'s phase-exit rule: the legacy-adapted nodes and the measured adapter
+costs this outcome named are withdrawn, because no adapter is built — a V1 module
+the lowerer cannot map to a native kind is refused under `LOWER` rather than
+adapted. The shape of the correction is in
+[Gate correction](master-plan.md#gate-correction-2026-09-05).
 
 ### Phase 6 — polyphony and instruments
 

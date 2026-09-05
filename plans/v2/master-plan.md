@@ -1241,6 +1241,11 @@ stored base
   `module_type + instance index`.
 - Add a temporary `LegacyPolyModuleAdapter` for modules not yet migrated. The
   adapter must be clearly marked as transitional and measured separately.
+  **Corrected 2026-09-05 by the user: no adapter is built.** Phase 4's `LOWER`
+  contract refuses a V1 module the lowerer cannot map to a native kind rather
+  than adapting it, so an adapter would be code with no consumer; the separate
+  cost measurement is withdrawn with it. The shape of the correction is in
+  [Gate correction](#gate-correction-2026-09-05) below.
 - Migrate the minimal Phase 2 modules to the native API.
 - Define passive observation independently of GUI ownership:
   - a persisted analyzer/monitor node may own authored settings;
@@ -1256,6 +1261,11 @@ stored base
 
 ### Exit gate
 
+Corrected on 2026-09-05 under `PROCESS.md`'s phase-exit rule; the correction, its
+authority and its cost are recorded in [Gate correction](#gate-correction-2026-09-05)
+below. One bullet changed: the legacy adapter is withdrawn rather than measured, so
+the bullet is rewritten not to presuppose a thing that does not exist.
+
 - [ ] A native simple module implements DSP without `set_param`, `get_param`,
       `get_params`, output hash maps, manual generic modulation storage, or
       engine-specific YAMS hooks.
@@ -1264,7 +1274,45 @@ stored base
 - [ ] Stable targets survive node reorder and insertion.
 - [ ] The same project compiles headless and with GUI/OSC observation enabled;
       observation changes no audible samples or semantic project digest.
-- [ ] The legacy adapter is not required by the renderer itself.
+- [ ] No legacy adapter exists and the renderer needs none: a V1 module the
+      lowerer cannot map to a native kind is refused under `LOWER` rather than
+      adapted.
+
+### Gate correction, 2026-09-05
+
+Recorded here rather than applied silently, for the reason the Phase 4 amendment
+gives: a rewrite nobody can see is indistinguishable from a gate that never asked.
+This is a **correction of the plan**, not a residual: nothing is deferred to a later
+owner, because the thing withdrawn has no consumer in any phase.
+
+**Authority.** The user, on 2026-09-05, with the recommendation and its reasoning
+put first: the adapter would be code with no consumer, since `LOWER` refuses
+rather than adapts; building it to measure it would measure nothing a phase
+reads; and the exit bullet it served holds on the strongest possible ground when
+no adapter exists at all. The user chose a correction in the phase plan over a
+decision record, which is within the durable-decision test — no persisted,
+protocol or product boundary changes, and the affected surface is this plan.
+
+| Item | Before | After | Why |
+|---|---|---|---|
+| Work list, adapter bullet | Add a temporary `LegacyPolyModuleAdapter`, transitional and measured separately | No adapter is built; the measurement is withdrawn | A V1 module the lowerer cannot map is refused under `LOWER`, so an adapter has no consumer |
+| Exit gate, bullet 6 | The legacy adapter is not required by the renderer itself | No legacy adapter exists and the renderer needs none | The old wording presupposed an adapter to be dispensable with |
+| Outcome (`ROADMAP.md`) | Exit requires representative native **and legacy-adapted** nodes ... and measured adapter costs inside the phase budget | Exit requires representative native nodes, one parameter composition law, and generated discovery/schema agreement | The adapted-node and adapter-cost clauses named the withdrawn thing |
+
+**A second decision taken the same day, recorded beside this because it is the
+same review's input and is *not* a gate change.** Every declared `Smoothing`
+policy stays `None`. For the one quantum-rate control V2 has, the oscillator
+amplitude, that is V1 parity rather than a deferral: the lowerer maps V1's
+oscillator level onto it as a static base, and V1's oscillator applies that level
+unsmoothed. The control V1 does de-zipper per block is its *amplifier* level,
+which the lowerer refuses unless unity because V2's amplifier has no level of its
+own. The open question is therefore what smoothing the parameter that first
+receives V1's amplifier level declares — or the V2 amplitude, the first time a
+lowering writes it dynamically — against V1's per-block ramp and with an A/B to
+measure. That is carried as `P05-R001` in `NOW.md`, owned by that lowering; until
+then a write is a step, nothing is misinterpreted and nothing is silently ramped.
+An independent read corrected the first form of this paragraph, which had named
+the oscillator's own lowering as the trigger, a point already passed.
 
 ## Phase 6: Polyphony and instrument runtime
 
