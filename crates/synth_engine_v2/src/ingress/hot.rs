@@ -61,8 +61,10 @@ impl PerformanceIngress {
             counters.dropped_hold(),
             counters.dropped_identity(),
             counters.orphan_releases(),
+            counters.released_after_steal(),
             counters.beyond_horizon(),
         );
+        self.publish_pending(publication)?;
 
         let capacity = self.entries.len();
         if capacity == 0 {
@@ -100,6 +102,95 @@ impl PerformanceIngress {
         // release, and `offer_note_off` spends it the moment the release takes that slot.
         // Discharging again at publication would decrement it twice, which lets the queue
         // admit one entry too many for every note that has been in flight.
+        Ok(())
+    }
+}
+
+impl PerformanceIngress {
+    /// Publish every deferred start the window reaches, and every displaced release.
+    ///
+    /// ADR-0058 at the live boundary: the start a steal deferred is a reset and a note-on
+    /// `fade` frames after the offer, and its release is displaced likewise. They wait
+    /// outside the ring because the ring's stamps are non-decreasing, and the drain publishes
+    /// them as the same events the compiled path stamps. One slot per identity index, walked
+    /// in full: bounded by the partition, allocating nothing.
+    fn publish_pending(
+        &mut self,
+        publication: &mut Publication<'_>,
+    ) -> Result<(), PublicationFault> {
+        if self.pending_len == 0 {
+            return Ok(());
+        }
+        for index in 0..self.pending.len() {
+            let Some(Some(mut pending)) = self.pending.get(index).copied() else {
+                continue;
+            };
+            let epoch = self.epoch;
+            let stamp = |time: SampleTime, payload: crate::render::EventPayload| {
+                crate::render::TimedEvent::new(Self::envelope_for(epoch, time), payload)
+            };
+            if !pending.started {
+                let reset = stamp(
+                    pending.starts,
+                    crate::render::EventPayload::Reset {
+                        identity: pending.identity,
+                    },
+                );
+                if !publication.reaches(reset) {
+                    continue;
+                }
+                publication.charge(ProducerClass::Live, reset)?;
+                publication.charge(
+                    ProducerClass::Live,
+                    stamp(
+                        pending.starts,
+                        crate::render::EventPayload::Note {
+                            identity: pending.identity,
+                            edge: crate::render::NoteEdge::On {
+                                slot: pending.note,
+                                key: pending.key,
+                                velocity: pending.velocity,
+                            },
+                        },
+                    ),
+                )?;
+                pending.started = true;
+                // The record stays: the note's release, whenever it is offered, is displaced
+                // by the fade and published from here, and until then the record says the
+                // voice has started and may be taken.
+                if let Some(slot) = self.pending.get_mut(index) {
+                    *slot = Some(pending);
+                }
+            }
+            let Some(ends) = pending.ends else {
+                continue;
+            };
+            if pending.off_published {
+                continue;
+            }
+            let release = stamp(
+                ends,
+                crate::render::EventPayload::Note {
+                    identity: pending.identity,
+                    edge: crate::render::NoteEdge::Off,
+                },
+            );
+            if !publication.reaches(release) {
+                continue;
+            }
+            publication.charge(ProducerClass::Release, release)?;
+            pending.off_published = true;
+            if let Some(slot) = self.pending.get_mut(index) {
+                // Kept until the producing half has freed the index in the minter, which
+                // only it can do; `sweep` clears the slot then.
+                if pending.table_released {
+                    *slot = None;
+                    self.pending_len = self.pending_len.saturating_sub(1);
+                } else {
+                    *slot = Some(pending);
+                }
+            }
+        }
         Ok(())
     }
 }

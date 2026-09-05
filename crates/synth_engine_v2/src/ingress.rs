@@ -299,6 +299,33 @@ struct IngressEntry {
     redeems_hold: bool,
 }
 
+/// A note that took a voice by ADR-0058's fade-then-start and has not yet started, or has
+/// started and awaits its release.
+///
+/// The ring drains head-first and requires non-decreasing stamps, so the start `fade` frames
+/// after the note-on cannot be queued ahead of offers that follow it. It waits here instead,
+/// one slot per identity index, and the drain publishes it when the window reaches it — the
+/// same events the compiled path stamps, so the renderer sees one shape. A release offered
+/// while the start is pending is displaced with it, so the note keeps its authored length.
+#[derive(Debug, Clone, Copy)]
+struct PendingStart {
+    identity: NoteIdentity,
+    note: NoteSlot,
+    key: crate::quantities::KeyIdentity,
+    velocity: crate::quantities::NoteVelocity,
+    starts: SampleTime,
+    started: bool,
+    /// The displaced release, once offered before the start.
+    ends: Option<SampleTime>,
+    /// Whether the drain has published that release.
+    off_published: bool,
+    /// Whether the minter has freed the index: only once the displaced release has passed,
+    /// so a note-on in between finds the voice committed rather than free. An independent
+    /// read found the index freed at the offer, ahead of the deferred start that then
+    /// clobbered whatever had minted onto it.
+    table_released: bool,
+}
+
 /// Counted outcomes at the live boundary.
 ///
 /// Kept on the store rather than on the renderer's report because the producing half is
@@ -313,6 +340,7 @@ pub struct IngressCounters {
     dropped_hold: u64,
     dropped_identity: u64,
     orphan_releases: u64,
+    released_after_steal: u64,
     non_monotone: u64,
     beyond_horizon: u64,
 }
@@ -357,6 +385,11 @@ impl IngressCounters {
     /// Releases refused because this producer holds no such note open.
     pub const fn orphan_releases(&self) -> u64 {
         self.orphan_releases
+    }
+
+    /// Releases dropped because a steal had already ended their note (ADR-0058 clause 5).
+    pub const fn released_after_steal(&self) -> u64 {
+        self.released_after_steal
     }
 
     /// Offers refused for carrying a stamp behind one already accepted.
@@ -426,6 +459,21 @@ pub struct PerformanceIngress {
     /// plan's identity table.
     adopted_by: Option<StreamEpoch>,
     counters: IngressCounters,
+    /// ADR-0058's policy, copied from the plan.
+    stealing: crate::ir::StealingPolicy,
+    /// One slot per identity index of the plan's partition: the start a steal deferred.
+    pending: Vec<Option<PendingStart>>,
+    pending_len: usize,
+    /// Notes a steal ended whose own release is still to come and still holds a reservation:
+    /// at most one per hold the producer is entitled to, so the list is exactly that long.
+    stolen_with_hold: Vec<Option<NoteIdentity>>,
+    /// Notes a steal ended whose hold went with the voice: their releases are owed but
+    /// reserve nothing, and a producer holding many keys can leave many of them outstanding.
+    /// Bounded at four per identity index; past that the oldest record is evicted and its
+    /// release, when it comes, is counted as an orphan — a diagnostic, never a hold leak.
+    stolen_transferred: Vec<Option<NoteIdentity>>,
+    /// Where the next transferred record goes when the list is full.
+    stolen_next: usize,
 }
 
 /// Why a store could not be prepared.
@@ -593,12 +641,24 @@ impl PerformanceIngress {
             });
         }
 
+        let partition = plan
+            .note_producer_ranges()
+            .iter()
+            .fold(0_usize, |total, range| {
+                total.saturating_add(range.get() as usize)
+            });
         Ok(Self {
             id,
             entries: vec![None; depth],
             head: 0,
             tail: 0,
             len: 0,
+            stealing: plan.stealing(),
+            pending: vec![None; partition],
+            pending_len: 0,
+            stolen_with_hold: vec![None; hold_entitlement.get() as usize],
+            stolen_transferred: vec![None; partition.saturating_mul(4)],
+            stolen_next: 0,
             producer,
             hold_entitlement,
             forward_event_horizon: profile.limits().events().forward_event_horizon(),
@@ -689,10 +749,26 @@ impl PerformanceIngress {
     /// A release asks nothing: it converts a reservation into an entry, so the sum does not
     /// move and the invariant carries it.
     fn room_for(&self, holds: usize) -> bool {
+        self.room_for_entries(1, holds)
+    }
+
+    /// Room for `entries` more ring entries, with `holds` more reservations.
+    ///
+    /// A deferred start counts as the two live-class entries it will publish — a reset and a
+    /// note-on; its release redeems the hold as any release does — so what waits outside the
+    /// ring is charged as if it were inside it, and the density the ring's capacity bounds
+    /// is unchanged by stealing.
+    fn room_for_entries(&self, entries: usize, holds: usize) -> bool {
+        let unstarted = self
+            .pending
+            .iter()
+            .filter(|slot| slot.is_some_and(|record| !record.started))
+            .count();
         let needed = self
             .len
+            .saturating_add(unstarted.saturating_mul(2))
             .saturating_add(self.holds_outstanding.get() as usize)
-            .saturating_add(1)
+            .saturating_add(entries)
             .saturating_add(holds);
         needed <= self.entries.len()
     }
@@ -745,6 +821,7 @@ impl PerformanceIngress {
         velocity: crate::quantities::NoteVelocity,
     ) -> Result<NoteIdentity, IngressRefused> {
         self.admit(time)?;
+        self.sweep(table, time);
 
         // The two cheap resources first, and both **before** the mint. A mint that
         // succeeded into a full queue would have to be undone, and undoing it is what
@@ -756,6 +833,14 @@ impl PerformanceIngress {
             });
         }
         if self.holds_outstanding >= self.hold_entitlement {
+            // ADR-0058 at the boundary, where the holds run out with the voices: a producer
+            // declaring as many holds as notes holds every reservation when every voice is
+            // held. The taken note's release will not be queued — it is counted at this
+            // boundary — so its hold goes with its voice to the note that takes it, and no
+            // reservation is spent.
+            if self.stealing.steals() && table.is_full(self.producer) {
+                return self.steal(table, time, note, key, velocity, true);
+            }
             self.counters.dropped_hold = self.counters.dropped_hold.saturating_add(1);
             return Err(IngressRefused::Dropped {
                 resource: ExhaustedResource::Hold,
@@ -765,8 +850,18 @@ impl PerformanceIngress {
         // Last, because it is the only one whose failure leaves state behind if it is not.
         // `IdentityTable::mint` commits nothing on failure, so a refusal here has taken
         // neither the slot nor the hold either.
-        let identity = match table.mint(self.producer, note) {
+        let identity = match table.mint_keyed(self.producer, note, key) {
             Ok(identity) => identity,
+            Err(IdentityError::ProducerOverEmitted { .. }) if self.stealing.steals() => {
+                // ADR-0058 clause 6 at the live boundary: every index is held, so the policy
+                // names the note to take. The victim is released in the minter and the mint
+                // retried onto the index it freed — the only free one — and the note-on
+                // expands as the compiled path's does: a retrigger of a held note on the same
+                // node and key, or a fade from here and a start `fade` frames on, deferred.
+                // A hold was still free, so the new note takes its own and the taken note's
+                // stays outstanding until its release arrives.
+                return self.steal(table, time, note, key, velocity, false);
+            }
             Err(
                 IdentityError::ProducerOverEmitted { .. }
                 | IdentityError::ProducerRangeEroded { .. },
@@ -807,6 +902,227 @@ impl PerformanceIngress {
         Ok(identity)
     }
 
+    /// Take a voice for a note-on that found every admitted index held (ADR-0058).
+    ///
+    /// `transfer_hold`: the taken note's hold goes to the new note, because no hold was free.
+    fn steal(
+        &mut self,
+        table: &mut IdentityTable,
+        time: SampleTime,
+        note: NoteSlot,
+        key: crate::quantities::KeyIdentity,
+        velocity: crate::quantities::NoteVelocity,
+        transfer_hold: bool,
+    ) -> Result<NoteIdentity, IngressRefused> {
+        // A voice waiting to start, or in the tail before its displaced release, is not
+        // taken: its slot here is occupied. With none eligible the note-on is a shortage.
+        // Eligible: no deferred record, or one that has started and is not in the tail
+        // before a displaced release. A note that took a voice keeps its record until its
+        // release is published, so its release is displaced by the fade whenever it arrives —
+        // the compiled path's rule — and the record says whether the voice is committed.
+        let pending = &self.pending;
+        let eligible = |index: u16| match pending.get(usize::from(index)) {
+            Some(None) => true,
+            Some(Some(record)) => record.started && record.ends.is_none(),
+            None => false,
+        };
+        let Some(victim) = table.victim(self.producer, self.stealing, note, key, &eligible) else {
+            self.counters.dropped_identity = self.counters.dropped_identity.saturating_add(1);
+            return Err(IngressRefused::Dropped {
+                resource: ExhaustedResource::Identity,
+            });
+        };
+        let victim_note = table.note_of(victim);
+        let retrigger = matches!(self.stealing, crate::ir::StealingPolicy::SameNote { .. })
+            && victim_note == Some(note)
+            && self.stolen_key_matches(table, victim, key);
+        // A retrigger is two ring entries; a fade is one and a deferred start. Checked before
+        // anything is released, so a refusal leaves the minter as it was.
+        let entries = if retrigger { 2 } else { 1 };
+        if !self.room_for_entries(entries, usize::from(!transfer_hold)) {
+            self.counters.dropped_slot = self.counters.dropped_slot.saturating_add(1);
+            return Err(IngressRefused::Dropped {
+                resource: ExhaustedResource::Slot,
+            });
+        }
+        if table.release(victim) != Resolution::Live {
+            self.counters.dropped_identity = self.counters.dropped_identity.saturating_add(1);
+            return Err(IngressRefused::Dropped {
+                resource: ExhaustedResource::Identity,
+            });
+        }
+        let identity = match table.mint_keyed(self.producer, note, key) {
+            Ok(identity) => identity,
+            Err(_) => {
+                self.counters.dropped_identity = self.counters.dropped_identity.saturating_add(1);
+                return Err(IngressRefused::Dropped {
+                    resource: ExhaustedResource::Identity,
+                });
+            }
+        };
+        // The taken note's own release is still to come; when it does it is counted, not
+        // treated as an orphan, and it discharges the hold its note-on reserved.
+        self.record_stolen(victim, transfer_hold);
+        // The taken note's own deferred record, if it took this voice itself: its release is
+        // now counted rather than displaced, so the record goes with the note.
+        if let Some(slot) = self.pending.get_mut(usize::from(victim.index()))
+            && slot.is_some()
+        {
+            *slot = None;
+            self.pending_len = self.pending_len.saturating_sub(1);
+        }
+        if !transfer_hold {
+            self.holds_outstanding = self
+                .holds_outstanding
+                .checked_add(EventCount::measured(1))
+                .unwrap_or(self.holds_outstanding);
+        }
+        if retrigger {
+            self.push(
+                time,
+                EventPayload::Note {
+                    identity: victim,
+                    edge: NoteEdge::Off,
+                },
+                false,
+            );
+            self.push(
+                time,
+                EventPayload::Note {
+                    identity,
+                    edge: NoteEdge::On {
+                        slot: note,
+                        key,
+                        velocity,
+                    },
+                },
+                false,
+            );
+            return Ok(identity);
+        }
+        let fade = self
+            .stealing
+            .fade()
+            .unwrap_or(crate::time::FrameCount::ZERO);
+        let Ok(starts) = time.checked_add(fade) else {
+            self.counters.dropped_identity = self.counters.dropped_identity.saturating_add(1);
+            return Err(IngressRefused::Dropped {
+                resource: ExhaustedResource::Identity,
+            });
+        };
+        self.push(
+            time,
+            EventPayload::Fade {
+                identity: victim,
+                frames: fade,
+            },
+            false,
+        );
+        if let Some(slot) = self.pending.get_mut(usize::from(identity.index())) {
+            *slot = Some(PendingStart {
+                identity,
+                note,
+                key,
+                velocity,
+                starts,
+                started: false,
+                ends: None,
+                off_published: false,
+                table_released: false,
+            });
+            self.pending_len = self.pending_len.saturating_add(1);
+        }
+        Ok(identity)
+    }
+
+    /// Remember a taken note until its release arrives.
+    fn record_stolen(&mut self, victim: NoteIdentity, transfer_hold: bool) {
+        if !transfer_hold {
+            // One per reservation: the list is as long as the entitlement, and the taken
+            // note holds one of them, so a free slot exists.
+            if let Some(slot) = self.stolen_with_hold.iter_mut().find(|slot| slot.is_none()) {
+                *slot = Some(victim);
+            }
+            return;
+        }
+        if let Some(slot) = self
+            .stolen_transferred
+            .iter_mut()
+            .find(|slot| slot.is_none())
+        {
+            *slot = Some(victim);
+            return;
+        }
+        let capacity = self.stolen_transferred.len();
+        if capacity == 0 {
+            return;
+        }
+        if let Some(slot) = self.stolen_transferred.get_mut(self.stolen_next) {
+            *slot = Some(victim);
+        }
+        self.stolen_next = (self.stolen_next + 1) % capacity;
+    }
+
+    /// Take a taken note's record, saying whether it still held a reservation.
+    fn take_stolen(&mut self, identity: NoteIdentity) -> Option<bool> {
+        if let Some(slot) = self
+            .stolen_with_hold
+            .iter_mut()
+            .find(|slot| **slot == Some(identity))
+        {
+            *slot = None;
+            return Some(true);
+        }
+        if let Some(slot) = self
+            .stolen_transferred
+            .iter_mut()
+            .find(|slot| **slot == Some(identity))
+        {
+            *slot = None;
+            return Some(false);
+        }
+        None
+    }
+
+    /// Free, in the minter, every deferred note whose displaced release has passed `now`, and
+    /// forget those the drain has finished with. Run at each offer, where the minter is at
+    /// hand: the drain cannot touch it.
+    fn sweep(&mut self, table: &mut IdentityTable, now: SampleTime) {
+        for index in 0..self.pending.len() {
+            let Some(Some(mut pending)) = self.pending.get(index).copied() else {
+                continue;
+            };
+            let Some(ends) = pending.ends else {
+                continue;
+            };
+            if ends > now {
+                continue;
+            }
+            if !pending.table_released {
+                let _ = table.release(pending.identity);
+                pending.table_released = true;
+            }
+            if let Some(slot) = self.pending.get_mut(index) {
+                if pending.off_published {
+                    *slot = None;
+                    self.pending_len = self.pending_len.saturating_sub(1);
+                } else {
+                    *slot = Some(pending);
+                }
+            }
+        }
+    }
+
+    /// Whether the live note `victim` was minted at `key`.
+    fn stolen_key_matches(
+        &self,
+        table: &IdentityTable,
+        victim: NoteIdentity,
+        key: crate::quantities::KeyIdentity,
+    ) -> bool {
+        table.key_of(victim) == Some(key)
+    }
+
     /// Offer the release of a note this producer opened.
     ///
     /// **It cannot be dropped for a full queue**, and that is ADR-0046 clause 6 rather
@@ -822,6 +1138,7 @@ impl PerformanceIngress {
         identity: NoteIdentity,
     ) -> Result<(), IngressRefused> {
         self.admit(time)?;
+        self.sweep(table, time);
 
         // A release naming nothing open is refused here rather than queued. Queuing it
         // would spend a slot to reach a renderer that refuses it one pass later, and the
@@ -846,9 +1163,47 @@ impl PerformanceIngress {
         // hold nothing can ever discharge. ADR-0046 clause 6 partitions entitlements so that
         // "no producer borrows another's unused holds", and an unowned release is exactly
         // that borrowing. An independent review found it.
+        // ADR-0058 clause 5: the release of a note a steal ended. Nothing to release — the
+        // voice belongs to the note that took it — but the hold its note-on reserved is
+        // discharged, and it is counted under its own name rather than as an orphan.
+        let index = usize::from(identity.index());
+        if let Some(held_reservation) = self.take_stolen(identity) {
+            self.counters.released_after_steal =
+                self.counters.released_after_steal.saturating_add(1);
+            if held_reservation {
+                self.holds_outstanding =
+                    EventCount::measured(self.holds_outstanding.get().saturating_sub(1));
+            }
+            return Ok(());
+        }
         if self.holds_outstanding == EventCount::NONE {
             self.counters.orphan_releases = self.counters.orphan_releases.saturating_add(1);
             return Err(IngressRefused::OrphanRelease { identity });
+        }
+        // A release for a note whose start the steal deferred is displaced with it, so the
+        // note keeps its authored length and its release never precedes its start.
+        if let Some(Some(pending)) = self.pending.get_mut(index)
+            && pending.identity == identity
+            && pending.ends.is_none()
+        {
+            if table.resolve(identity) != Resolution::Live {
+                self.counters.orphan_releases = self.counters.orphan_releases.saturating_add(1);
+                return Err(IngressRefused::OrphanRelease { identity });
+            }
+            // The index is **not** freed here: the voice is committed until the displaced
+            // release lands, and `sweep` frees it then.
+            let fade = self
+                .stealing
+                .fade()
+                .unwrap_or(crate::time::FrameCount::ZERO);
+            let Ok(ends) = time.checked_add(fade) else {
+                self.counters.orphan_releases = self.counters.orphan_releases.saturating_add(1);
+                return Err(IngressRefused::OrphanRelease { identity });
+            };
+            pending.ends = Some(ends);
+            self.holds_outstanding =
+                EventCount::measured(self.holds_outstanding.get().saturating_sub(1));
+            return Ok(());
         }
         if table.release_for(self.producer, identity) != Resolution::Live {
             self.counters.orphan_releases = self.counters.orphan_releases.saturating_add(1);
@@ -905,12 +1260,20 @@ impl PerformanceIngress {
     }
 
     /// Write one entry. Every caller has already decided it fits.
+    /// The stamp every event this store publishes carries: its stream's epoch, the time the
+    /// producer named, and the simulated source — the one place the source is written.
+    pub(crate) const fn envelope(&self, time: SampleTime) -> EventEnvelope {
+        Self::envelope_for(self.epoch, time)
+    }
+
+    /// [`Self::envelope`] for a stream epoch, where the store itself is borrowed.
+    pub(crate) const fn envelope_for(epoch: StreamEpoch, time: SampleTime) -> EventEnvelope {
+        EventEnvelope::new(epoch, time, TimeSource::Simulated)
+    }
+
     fn push(&mut self, time: SampleTime, payload: EventPayload, redeems_hold: bool) {
         let entry = IngressEntry {
-            event: TimedEvent::new(
-                EventEnvelope::new(self.epoch, time, TimeSource::Simulated),
-                payload,
-            ),
+            event: TimedEvent::new(self.envelope(time), payload),
             redeems_hold,
         };
         if let Some(slot) = self.entries.get_mut(self.head) {

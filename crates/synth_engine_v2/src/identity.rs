@@ -303,10 +303,15 @@ pub enum ReleaseScope {
 pub(crate) enum Slot {
     /// Holds no note; the generation is the next one it will mint.
     Free { next_generation: u32 },
-    /// Holds a note minted at this generation, playing this node.
+    /// Holds a note minted at this generation, playing this node at this key.
     Live {
         generation: u32,
         note: crate::plan::NoteSlot,
+        /// The key the note-on named, so a `SameNote` steal can find a held note of its key
+        /// (ADR-0058).
+        key: crate::quantities::KeyIdentity,
+        /// The table's mint counter when this note was minted: its age, for `Oldest`.
+        sequence: u64,
     },
     /// Withdrawn after its generation space ran out.
     Retired,
@@ -356,6 +361,8 @@ pub struct IdentityTable {
     /// Indices retired over this table's life, counted as `SOUND-INV-017` requires.
     pub(super) retired: u64,
     pub(super) live: u32,
+    /// How many notes this table has minted: the next note's age rank (ADR-0058).
+    minted: u64,
 }
 
 /// What the renderer knows about a live note.

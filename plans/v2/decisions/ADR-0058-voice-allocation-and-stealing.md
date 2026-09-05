@@ -213,7 +213,14 @@ fade-then-start has its release displaced by the same `fade`, so it keeps its au
 and on the compiled path a release names a key, so under `SameNote` the taken note's later
 release pairs with the taking note of that key (`SOUND-INV-025`'s rule) and the taking note's
 own release is the one dropped — clause 5's "its own later release names a superseded
-generation" reads on a release that carries an identity, which the compiled stream's does not. Clause 6's second site, the live boundary, is `P06-S002b` in `NOW.md`: the
+generation" reads on a release that carries an identity, which the compiled stream's does not.
+`P06-S002b` built clause 6's second site. The live queue drains head-first over non-decreasing
+stamps, so the deferred start waits outside it and the drain publishes it; and a hold goes with
+the taken voice where every hold is outstanding, since the taken note's release is counted at
+the boundary rather than queued — the hold partition of ADR-0046 clause 6 is kept, one release
+still owed per reservation. Its read added one rule the clauses had left open, on both
+paths: a voice committed to a deferred start or to the tail before a displaced release is not
+taken, and a note-on that finds every voice so committed is an over-emission. Clause 6's second site, the live boundary, is `P06-S002b` in `NOW.md`: the
 boundary holds no record of a producer's open keys, which the minter must carry before it can
 choose a victim.
 

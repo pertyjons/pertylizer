@@ -25,9 +25,22 @@ impl IdentityTable {
             return None;
         }
         match self.slots.get(usize::from(identity.index)) {
-            Some(Slot::Live { generation, note }) if *generation == identity.generation => {
-                Some(*note)
-            }
+            Some(Slot::Live {
+                generation, note, ..
+            }) if *generation == identity.generation => Some(*note),
+            _ => None,
+        }
+    }
+
+    /// The key an identity's note was minted at, if it names a live one (ADR-0058).
+    pub fn key_of(&self, identity: NoteIdentity) -> Option<crate::quantities::KeyIdentity> {
+        if identity.table != self.id {
+            return None;
+        }
+        match self.slots.get(usize::from(identity.index)) {
+            Some(Slot::Live {
+                generation, key, ..
+            }) if *generation == identity.generation => Some(*key),
             _ => None,
         }
     }

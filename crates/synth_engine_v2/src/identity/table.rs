@@ -105,6 +105,7 @@ impl IdentityTable {
             generation_ceiling,
             retired: 0,
             live: 0,
+            minted: 0,
         })
     }
 
@@ -132,6 +133,7 @@ impl IdentityTable {
             generation_ceiling: self.generation_ceiling,
             retired: self.retired,
             live: self.live,
+            minted: self.minted,
         }
     }
 
@@ -160,6 +162,83 @@ impl IdentityTable {
         producer: ProducerId,
         note: crate::plan::NoteSlot,
     ) -> Result<NoteIdentity, IdentityError> {
+        self.mint_keyed(producer, note, crate::quantities::KeyIdentity::LOWEST)
+    }
+
+    /// The note a producer's full range would give up under a stealing policy (ADR-0058):
+    /// its oldest live note, or under `SameNote` the newest live note on `note` at `key` if
+    /// there is one. `None` where the range holds no live note or the policy refuses.
+    ///
+    /// Off the audio thread, like minting; the boundary asks before it releases and mints.
+    pub fn victim(
+        &self,
+        producer: ProducerId,
+        policy: crate::ir::StealingPolicy,
+        note: crate::plan::NoteSlot,
+        key: crate::quantities::KeyIdentity,
+        eligible: &dyn Fn(u16) -> bool,
+    ) -> Option<NoteIdentity> {
+        if !policy.steals() {
+            return None;
+        }
+        let range = self.ranges.get(usize::from(producer.as_u16()))?;
+        let mut oldest: Option<(u64, NoteIdentity)> = None;
+        let mut same: Option<(u64, NoteIdentity)> = None;
+        for offset in 0..range.len {
+            let index = range.start.saturating_add(offset);
+            let Some(Slot::Live {
+                generation,
+                note: held,
+                key: held_key,
+                sequence,
+            }) = self.slots.get(index as usize)
+            else {
+                continue;
+            };
+            let index = u16::try_from(index).unwrap_or(u16::MAX);
+            if !eligible(index) {
+                continue;
+            }
+            let identity = NoteIdentity {
+                table: self.id,
+                index,
+                generation: *generation,
+            };
+            if oldest.is_none_or(|(age, _)| *sequence < age) {
+                oldest = Some((*sequence, identity));
+            }
+            if *held == note && *held_key == key && same.is_none_or(|(age, _)| *sequence > age) {
+                same = Some((*sequence, identity));
+            }
+        }
+        match policy {
+            crate::ir::StealingPolicy::SameNote { .. } => same.or(oldest),
+            crate::ir::StealingPolicy::Oldest { .. } | crate::ir::StealingPolicy::None => oldest,
+        }
+        .map(|(_, identity)| identity)
+    }
+
+    /// Whether every index in the producer's range is live: the condition under which a
+    /// note-on steals rather than mints (ADR-0058), asked before a hold is spent on it.
+    pub fn is_full(&self, producer: ProducerId) -> bool {
+        let Some(range) = self.ranges.get(usize::from(producer.as_u16())) else {
+            return false;
+        };
+        (0..range.len).all(|offset| {
+            matches!(
+                self.slots.get(range.start.saturating_add(offset) as usize),
+                Some(Slot::Live { .. })
+            )
+        })
+    }
+
+    /// [`Self::mint`], recording the key the note-on named.
+    pub fn mint_keyed(
+        &mut self,
+        producer: ProducerId,
+        note: crate::plan::NoteSlot,
+        key: crate::quantities::KeyIdentity,
+    ) -> Result<NoteIdentity, IdentityError> {
         let range = *self
             .ranges
             .get(usize::from(producer.as_u16()))
@@ -171,9 +250,13 @@ impl IdentityTable {
                 break;
             };
             if let Slot::Free { next_generation } = *slot {
+                let sequence = self.minted;
+                self.minted = self.minted.saturating_add(1);
                 *slot = Slot::Live {
                     generation: next_generation,
                     note,
+                    key,
+                    sequence,
                 };
                 self.live = self.live.saturating_add(1);
                 return Ok(NoteIdentity {

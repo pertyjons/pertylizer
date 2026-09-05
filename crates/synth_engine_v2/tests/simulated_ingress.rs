@@ -30,7 +30,9 @@
 mod common;
 
 use synth_engine_v2::identity::ProducerId;
-use synth_engine_v2::ingress::{ExhaustedResource, IngressRefused, PerformanceIngress};
+use synth_engine_v2::ingress::{
+    ExhaustedResource, IngressCounters, IngressRefused, PerformanceIngress,
+};
 use synth_engine_v2::ir::{
     ExecutionScope, GraphIr, IrNodeKind, NodeId, NoteProducerDeclaration, PlanDeclarations, PortId,
     SignalDomain, parameters,
@@ -272,6 +274,442 @@ fn render_ingress(partition: &[usize]) -> (Vec<f32>, PreparedRenderer, Publicati
         "nothing was dropped at the live boundary"
     );
     (rendered, renderer, publication)
+}
+
+/// One note's edges, as a live producer offers them and as a compiled stream states them.
+#[derive(Clone, Copy)]
+struct Edge {
+    at: u64,
+    key: u8,
+    velocity: f32,
+    /// `Some(n)`: the release of the `n`th note-on offered, by order; `None`: a note-on.
+    releases: Option<usize>,
+}
+
+const fn on(at: u64, key: u8, velocity: f32) -> Edge {
+    Edge {
+        at,
+        key,
+        velocity,
+        releases: None,
+    }
+}
+
+const fn off(at: u64, of: usize) -> Edge {
+    Edge {
+        at,
+        key: 0,
+        velocity: 0.0,
+        releases: Some(of),
+    }
+}
+
+/// The compiled path's render of `edges` under `declarations`, `quanta` quanta long.
+fn render_compiled_edges(declarations: PlanDeclarations, edges: &[Edge], quanta: u64) -> Vec<f32> {
+    let plan = plan_with(declarations);
+    let slot = plan.resolve_note(ENVELOPE).expect("playable");
+    let mut keys: Vec<u8> = Vec::new();
+    let mut events: Vec<PlanEvent> = Vec::new();
+    for edge in edges {
+        let payload = match edge.releases {
+            None => {
+                keys.push(edge.key);
+                CompiledPayload::NoteOn {
+                    slot,
+                    key: synth_engine_v2::quantities::KeyIdentity::new(edge.key).expect("key"),
+                    velocity: synth_engine_v2::quantities::NoteVelocity::saturating(edge.velocity),
+                }
+            }
+            Some(of) => CompiledPayload::NoteOff {
+                slot,
+                key: synth_engine_v2::quantities::KeyIdentity::new(keys[of]).expect("key"),
+            },
+        };
+        events.push(PlanEvent::new(PlanPosition::new(edge.at), payload));
+    }
+    let (mut control, mut renderer) =
+        StreamControl::open(plan.clone(), ORIGIN).expect("preparation succeeds");
+    let admitted = AdmittedCompiledStream::admit(&plan, &events).expect("the stream fits");
+    let mut scheduler =
+        CompiledEventScheduler::prepare(&mut control, &admitted).expect("the schedule is valid");
+    let mut publication = arbiter();
+    let mut rendered = Vec::new();
+    let mut done = 0_u64;
+    while done < quanta * Q {
+        let frames = 256.min((quanta * Q - done) as usize);
+        let mut block = vec![0.0_f32; frames];
+        let output = AudioBlockMut::new(&mut block, frames, ChannelLayout::Mono).expect("shaped");
+        scheduler
+            .render(&mut renderer, &mut publication, output)
+            .expect("renders");
+        rendered.extend_from_slice(&block);
+        done += frames as u64;
+    }
+    rendered
+}
+
+/// The live path's render of the same edges, each offered once the render clock has reached
+/// its quantum — as a live producer's offers arrive — plus the store's counters and the
+/// renderer's report.
+///
+/// Offered live rather than all in advance because the boundary's steal is asynchronous in
+/// one respect the compiled path is not: a voice a steal took becomes takeable again once the
+/// drain has published its deferred start, and the drain runs with the render. Offering
+/// everything before any render would find every taken voice still waiting.
+fn render_live_edges(
+    declarations: PlanDeclarations,
+    edges: &[Edge],
+    quanta: u64,
+) -> (Vec<f32>, IngressCounters, PreparedRenderer) {
+    let plan = plan_with(declarations);
+    let (mut control, mut renderer) =
+        StreamControl::open(plan.clone(), ORIGIN).expect("preparation succeeds");
+    let empty = AdmittedCompiledStream::admit(&plan, &[]).expect("an empty stream fits");
+    let mut scheduler =
+        CompiledEventScheduler::prepare(&mut control, &empty).expect("the schedule is valid");
+    let mut publication = arbiter();
+    let host = common::profile(TOTAL_FRAMES as u64, ChannelLayout::Mono);
+    let mut store = PerformanceIngress::prepare(&host, &plan, ONLY_PRODUCER, &renderer)
+        .expect("the live producer has a store");
+    let slot = plan.resolve_note(ENVELOPE).expect("playable");
+    let mut identities = Vec::new();
+    let mut rendered = Vec::new();
+    let mut done = 0_u64;
+    let total = quanta * Q;
+    let mut render_block = |scheduler: &mut CompiledEventScheduler,
+                            renderer: &mut PreparedRenderer,
+                            store: &mut PerformanceIngress,
+                            rendered: &mut Vec<f32>,
+                            done: &mut u64| {
+        let frames = (Q as usize).min((total - *done) as usize);
+        let mut block = vec![0.0_f32; frames];
+        let output = AudioBlockMut::new(&mut block, frames, ChannelLayout::Mono).expect("shaped");
+        scheduler
+            .render_with_ingress(renderer, &mut publication, Some(store), output)
+            .expect("the pass publishes");
+        rendered.extend_from_slice(&block);
+        *done += frames as u64;
+    };
+    for edge in edges {
+        // The render clock reaches the edge's quantum before the edge is offered.
+        while done < total && done + Q <= edge.at {
+            render_block(
+                &mut scheduler,
+                &mut renderer,
+                &mut store,
+                &mut rendered,
+                &mut done,
+            );
+        }
+        match edge.releases {
+            None => {
+                let identity = control
+                    .offer_note_on(
+                        &mut store,
+                        SampleTime::new(edge.at),
+                        slot,
+                        synth_engine_v2::quantities::KeyIdentity::new(edge.key).expect("key"),
+                        synth_engine_v2::quantities::NoteVelocity::saturating(edge.velocity),
+                    )
+                    .expect("the note-on is admitted, stealing if it must");
+                identities.push(identity);
+            }
+            Some(of) => control
+                .offer_note_off(&mut store, SampleTime::new(edge.at), identities[of])
+                .expect("the release is admitted"),
+        }
+    }
+    while done < total {
+        render_block(
+            &mut scheduler,
+            &mut renderer,
+            &mut store,
+            &mut rendered,
+            &mut done,
+        );
+    }
+    (rendered, store.counters(), renderer)
+}
+
+fn stealing(
+    declarations: PlanDeclarations,
+    policy: synth_engine_v2::ir::StealingPolicy,
+) -> PlanDeclarations {
+    PlanDeclarations {
+        stealing: policy,
+        ..declarations
+    }
+}
+
+const FADE: synth_engine_v2::time::FrameCount = synth_engine_v2::time::FrameCount::new(128);
+
+#[test]
+fn a_live_note_on_into_a_full_producer_steals_as_the_compiled_one_does() {
+    // ADR-0058 clause 6's second site, held to the first: the same three notes on a two-voice
+    // plan — the third arriving with both voices held — render the same samples whether a
+    // live producer offers them or a compiled stream states them. The compiled path stamps
+    // the fade, the reset and the delayed start; the live path queues the fade and defers the
+    // start outside the ring until the window reaches it. The taken note's release, offered
+    // later, is counted at the boundary and is not an orphan.
+    // Two holds for two voices, and every hold is outstanding when the third note arrives: the
+    // taken note's hold goes with its voice, because its release is counted here and never
+    // queued, so the steal spends no reservation.
+    let oldest = synth_engine_v2::ir::StealingPolicy::Oldest { fade: FADE };
+    let edges = [
+        on(0, 60, 1.0),
+        on(2 * Q, 67, 1.0),
+        on(4 * Q + 5, 72, 1.0),
+        off(20 * Q, 0),
+        off(22 * Q, 1),
+        off(24 * Q, 2),
+    ];
+    let compiled = render_compiled_edges(stealing(compiled_only_notes(2), oldest), &edges, 28);
+    let (live, counters, renderer) =
+        render_live_edges(stealing(live_only(2, 2), oldest), &edges, 28);
+    assert_eq!(
+        live, compiled,
+        "the live steal did not render as the compiled one"
+    );
+    assert!(live.iter().any(|s| *s != 0.0));
+    assert_eq!(
+        counters.released_after_steal(),
+        1,
+        "the taken note's release"
+    );
+    assert_eq!(counters.orphan_releases(), 0);
+    assert_eq!(counters.dropped(), 0);
+    assert_eq!(renderer.diagnostics().ingress_released_after_steal(), 1);
+    assert_eq!(renderer.diagnostics().orphan_note_events(), 0);
+}
+
+#[test]
+fn a_live_release_offered_while_the_start_is_pending_is_displaced_with_it() {
+    // The note that takes a voice starts `fade` frames late; a release offered before that —
+    // a note shorter than the fade — is displaced with it, as the compiled path displaces
+    // its release, so the note keeps its length on both paths and never hangs.
+    let oldest = synth_engine_v2::ir::StealingPolicy::Oldest { fade: FADE };
+    let edges = [
+        on(0, 60, 1.0),
+        on(2 * Q, 67, 1.0),
+        on(4 * Q + 5, 72, 1.0),
+        off(4 * Q + 5 + 50, 2),
+        off(20 * Q, 0),
+        off(22 * Q, 1),
+    ];
+    let compiled = render_compiled_edges(stealing(compiled_only_notes(2), oldest), &edges, 28);
+    let (live, counters, renderer) =
+        render_live_edges(stealing(live_only(2, 2), oldest), &edges, 28);
+    assert_same(
+        &live,
+        &compiled,
+        "the live render differs from the compiled one",
+    );
+    assert_eq!(counters.released_after_steal(), 1);
+    assert_eq!(renderer.diagnostics().orphan_note_events(), 0);
+    // The short note ended: nothing of it sounds after its displaced release.
+    let alone_b = render_compiled_edges(
+        stealing(compiled_only_notes(2), oldest),
+        &[on(2 * Q, 67, 1.0), off(22 * Q, 0)],
+        28,
+    );
+    let quiet_from = (4 * Q + 5 + 128 + 50 + Q) as usize;
+    let quiet_to = (20 * Q) as usize;
+    assert_eq!(&live[quiet_from..quiet_to], &alone_b[quiet_from..quiet_to]);
+}
+
+#[test]
+fn a_live_same_note_retrigger_matches_the_compiled_one() {
+    // `SameNote` at the boundary: a held key struck again takes its own voice at once, with
+    // the new velocity and no fade, exactly as the compiled path stamps it.
+    let same = synth_engine_v2::ir::StealingPolicy::SameNote { fade: FADE };
+    let edges = [
+        on(0, 60, 1.0),
+        on(2 * Q, 67, 1.0),
+        on(4 * Q + 5, 60, 0.5),
+        off(20 * Q, 2),
+        off(22 * Q, 1),
+        off(24 * Q, 0),
+    ];
+    let compiled = render_compiled_edges(stealing(compiled_only_notes(2), same), &edges, 28);
+    let (live, counters, _) = render_live_edges(stealing(live_only(2, 2), same), &edges, 28);
+    assert_eq!(
+        live, compiled,
+        "the live retrigger did not render as the compiled one"
+    );
+    assert_eq!(counters.released_after_steal(), 1);
+}
+
+#[test]
+fn a_voice_taken_twice_before_its_first_victims_release_counts_every_release_and_leaks_no_hold() {
+    // An independent read's scenario: on two voices, a fourth and a fifth note each take a
+    // voice whose earlier occupant's release has not yet been offered. Every taken note's
+    // release, when it comes, is counted and not an orphan; no hold leaks, which the next
+    // note-on after every release proves by being admitted; and the live render still equals
+    // the compiled one.
+    let oldest = synth_engine_v2::ir::StealingPolicy::Oldest { fade: FADE };
+    let edges = [
+        on(0, 60, 1.0),
+        on(2 * Q, 67, 1.0),
+        on(4 * Q + 5, 72, 1.0),
+        on(6 * Q + 5, 75, 1.0),
+        on(8 * Q + 5, 79, 1.0),
+        off(20 * Q, 0),
+        off(21 * Q, 1),
+        off(22 * Q, 2),
+        off(23 * Q, 3),
+        off(24 * Q, 4),
+        on(26 * Q, 84, 1.0),
+        off(27 * Q, 5),
+    ];
+    let compiled = render_compiled_edges(stealing(compiled_only_notes(2), oldest), &edges, 30);
+    let (live, counters, renderer) =
+        render_live_edges(stealing(live_only(2, 2), oldest), &edges, 30);
+    assert_eq!(
+        live, compiled,
+        "repeated live steals did not render as the compiled ones"
+    );
+    assert_eq!(counters.released_after_steal(), 3, "A, B and C were taken");
+    assert_eq!(counters.orphan_releases(), 0);
+    assert_eq!(
+        counters.dropped(),
+        0,
+        "the sixth note found a hold: none leaked"
+    );
+    assert_eq!(renderer.diagnostics().orphan_note_events(), 0);
+}
+
+#[test]
+fn a_live_note_arriving_while_a_taken_voice_waits_to_start_takes_the_other_voice() {
+    // C takes A's voice at `p` and waits to start; D arrives before it has. C's voice is
+    // committed, so D takes B's — the compiled path's rule, and the render matches it. C's
+    // release, offered while it waits, keeps C's index until its displaced position.
+    let oldest = synth_engine_v2::ir::StealingPolicy::Oldest { fade: FADE };
+    let p = 4 * Q + 5;
+    let edges = [
+        on(0, 60, 1.0),
+        on(2 * Q, 67, 1.0),
+        on(p, 72, 1.0),
+        off(p + 50, 2),
+        on(p + 60, 76, 1.0),
+        off(20 * Q, 0),
+        off(21 * Q, 1),
+        off(22 * Q, 3),
+    ];
+    let compiled = render_compiled_edges(stealing(compiled_only_notes(2), oldest), &edges, 28);
+    let (live, counters, renderer) =
+        render_live_edges(stealing(live_only(2, 2), oldest), &edges, 28);
+    assert_same(
+        &live,
+        &compiled,
+        "the live render differs from the compiled one",
+    );
+    assert_eq!(counters.released_after_steal(), 2);
+    assert_eq!(counters.orphan_releases(), 0);
+    assert_eq!(counters.dropped(), 0);
+    assert_eq!(renderer.diagnostics().orphan_note_events(), 0);
+}
+
+#[test]
+fn a_live_note_on_finding_every_voice_waiting_to_start_is_dropped_by_name() {
+    // The boundary's twin of the compiled over-emission: on one voice, C takes A and waits to
+    // start, and D arrives before it has. The only voice is committed, so D is dropped with
+    // the identity named — the compiled path refuses the same list at preparation.
+    let oldest = synth_engine_v2::ir::StealingPolicy::Oldest { fade: FADE };
+    let plan = plan_with(stealing(live_only(1, 1), oldest));
+    let (mut control, renderer) =
+        StreamControl::open(plan.clone(), ORIGIN).expect("preparation succeeds");
+    let host = common::profile(TOTAL_FRAMES as u64, ChannelLayout::Mono);
+    let mut store = PerformanceIngress::prepare(&host, &plan, ONLY_PRODUCER, &renderer)
+        .expect("the live producer has a store");
+    let slot = plan.resolve_note(ENVELOPE).expect("playable");
+    let offer = |control: &mut StreamControl, store: &mut PerformanceIngress, at: u64, key: u8| {
+        control.offer_note_on(
+            store,
+            SampleTime::new(at),
+            slot,
+            synth_engine_v2::quantities::KeyIdentity::new(key).expect("key"),
+            synth_engine_v2::quantities::NoteVelocity::FULL,
+        )
+    };
+    let p = 4 * Q + 5;
+    let _a = offer(&mut control, &mut store, 0, 60).expect("admitted");
+    let _c = offer(&mut control, &mut store, p, 72).expect("takes A's voice");
+    let refused =
+        offer(&mut control, &mut store, p + 60, 76).expect_err("C's voice waits to start");
+    assert!(matches!(
+        refused,
+        IngressRefused::Dropped {
+            resource: ExhaustedResource::Identity
+        }
+    ));
+    assert_eq!(store.counters().dropped_identity(), 1);
+}
+
+#[test]
+fn a_live_producer_declaring_no_stealing_still_drops_the_note_on_by_name() {
+    // `None` is today's boundary: the third note-on into a full two-voice producer is dropped
+    // with the resource named — the hold, which runs out with the voices since a producer
+    // declares no more holds than notes — and nothing else changes.
+    let plan = plan_with(live_only(2, 2));
+    let (mut control, renderer) =
+        StreamControl::open(plan.clone(), ORIGIN).expect("preparation succeeds");
+    let host = common::profile(TOTAL_FRAMES as u64, ChannelLayout::Mono);
+    let mut store = PerformanceIngress::prepare(&host, &plan, ONLY_PRODUCER, &renderer)
+        .expect("the live producer has a store");
+    let slot = plan.resolve_note(ENVELOPE).expect("playable");
+    for (at, key) in [(0_u64, 60_u8), (Q, 67)] {
+        let _held = control
+            .offer_note_on(
+                &mut store,
+                SampleTime::new(at),
+                slot,
+                synth_engine_v2::quantities::KeyIdentity::new(key).expect("key"),
+                synth_engine_v2::quantities::NoteVelocity::FULL,
+            )
+            .expect("admitted");
+    }
+    let refused = control
+        .offer_note_on(
+            &mut store,
+            SampleTime::new(2 * Q),
+            slot,
+            synth_engine_v2::quantities::KeyIdentity::new(72).expect("key"),
+            synth_engine_v2::quantities::NoteVelocity::FULL,
+        )
+        .expect_err("the producer is full and does not steal");
+    assert!(matches!(
+        refused,
+        IngressRefused::Dropped {
+            resource: ExhaustedResource::Hold
+        }
+    ));
+    assert_eq!(store.counters().dropped_hold(), 1);
+}
+
+/// Sample-for-sample equality, reported at the first frame that differs.
+fn assert_same(live: &[f32], compiled: &[f32], what: &str) {
+    assert_eq!(live.len(), compiled.len(), "{what}: lengths differ");
+    if let Some(frame) = live.iter().zip(compiled).position(|(l, c)| l != c) {
+        panic!(
+            "{what}: frame {frame} (quantum {}, offset {}): live {} against compiled {}",
+            frame / Q as usize,
+            frame % Q as usize,
+            live[frame],
+            compiled[frame]
+        );
+    }
+}
+
+/// `compiled_only` with the producer's polyphony chosen.
+fn compiled_only_notes(simultaneous: u32) -> PlanDeclarations {
+    PlanDeclarations {
+        note_producers: vec![NoteProducerDeclaration {
+            compiled: true,
+            simultaneous_notes: HeldNoteCount::measured(simultaneous),
+            simultaneous_holds: EventCount::NONE,
+        }],
+        ..PlanDeclarations::default()
+    }
 }
 
 #[test]

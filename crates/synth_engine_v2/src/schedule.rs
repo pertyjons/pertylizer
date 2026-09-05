@@ -874,6 +874,13 @@ pub(crate) struct OpenNote<T> {
     /// its start — an independent read found the release left at its authored position,
     /// which ended a note shorter than the fade before it began and left it sounding.
     pub(crate) delay: crate::time::FrameCount,
+    /// When the note-on was placed, in frames.
+    pub(crate) opened: u64,
+    /// When the note starts sounding: `opened` plus `delay`.
+    pub(crate) starts: u64,
+    /// When its displaced release lands, once released; the voice is committed until then,
+    /// and the book keeps the entry, ineligible for a steal, until then.
+    pub(crate) ends: Option<u64>,
 }
 
 /// How a steal is performed, from the policy and the taken note (ADR-0058 clause 4).
@@ -919,56 +926,88 @@ impl<T: Copy> OpenNotes<T> {
         }
     }
 
-    /// Open a note, stealing under the policy if every index is held.
+    /// Forget every note whose displaced release has passed: its voice is free again.
+    fn purge(&mut self, now: u64) {
+        self.entries
+            .retain(|open| open.ends.is_none_or(|ends| ends > now));
+    }
+
+    /// Whether a held note's voice may be taken at `now`: it has started, and it is not in
+    /// the tail before a displaced release. A voice committed to a note that has not yet
+    /// started, or to one ending shortly, is not taken — taking it would put two notes on
+    /// one instance, the deferred start of one clobbering the other. An independent read
+    /// found both cases open.
+    fn eligible(open: &OpenNote<T>, now: u64) -> bool {
+        open.starts <= now && open.ends.is_none()
+    }
+
+    /// Open a note at `now`, stealing under the policy if every index is held.
     pub(crate) fn open(
         &mut self,
+        now: u64,
         slot: crate::plan::NoteSlot,
         key: crate::quantities::KeyIdentity,
         tag: T,
     ) -> Opened<T> {
+        self.purge(now);
         let entry = OpenNote {
             slot,
             key,
             tag,
             delay: crate::time::FrameCount::ZERO,
+            opened: now,
+            starts: now,
+            ends: None,
         };
         if (self.entries.len() as u64) < u64::from(self.capacity) {
             self.entries.push(entry);
             return Opened::Admitted;
         }
+        let oldest = self
+            .entries
+            .iter()
+            .position(|open| Self::eligible(open, now));
         let victim = match self.policy {
             crate::ir::StealingPolicy::None => return Opened::Refused,
-            // ADR-0058 clause 3: the earliest note-on, which is the first entry.
-            crate::ir::StealingPolicy::Oldest { .. } => 0,
+            // ADR-0058 clause 3: the earliest note-on among the voices that may be taken.
+            crate::ir::StealingPolicy::Oldest { .. } => oldest,
             // The newest held note on the same node and key, else the oldest.
             crate::ir::StealingPolicy::SameNote { .. } => self
                 .entries
                 .iter()
-                .rposition(|open| open.slot == slot && open.key == key)
-                .unwrap_or(0),
+                .rposition(|open| open.slot == slot && open.key == key && Self::eligible(open, now))
+                .or(oldest),
         };
-        if victim >= self.entries.len() {
-            // A capacity of zero: nothing to take. Refused, as an over-emission is.
+        let Some(victim) = victim else {
+            // Nothing may be taken: every voice is waiting to start or to end. Refused, as
+            // an over-emission is.
             return Opened::Refused;
-        }
+        };
         let taken = self.entries.remove(victim);
         self.stolen.push(taken);
         self.entries.push(entry);
         Opened::Stole(taken)
     }
 
-    /// Release the newest open note on the slot with the key.
+    /// Release the newest open note on the slot with the key, at `now`.
+    ///
+    /// The entry stays until its displaced release has passed, still holding its voice, so a
+    /// note-on in between finds the voice committed rather than free.
     pub(crate) fn close(
         &mut self,
+        now: u64,
         slot: crate::plan::NoteSlot,
         key: crate::quantities::KeyIdentity,
     ) -> Closed<T> {
+        self.purge(now);
         if let Some(position) = self
             .entries
             .iter()
-            .rposition(|open| open.slot == slot && open.key == key)
+            .rposition(|open| open.slot == slot && open.key == key && open.ends.is_none())
+            && let Some(open) = self.entries.get_mut(position)
         {
-            return Closed::Paired(self.entries.remove(position));
+            open.ends = Some(now.saturating_add(open.delay.as_u64()));
+            return Closed::Paired(*open);
         }
         if let Some(position) = self
             .stolen
@@ -980,15 +1019,20 @@ impl<T: Copy> OpenNotes<T> {
         Closed::Unmatched
     }
 
-    /// The open notes, oldest first.
-    pub(crate) fn entries(&self) -> &[OpenNote<T>] {
-        &self.entries
+    /// The notes open and unreleased, oldest first.
+    pub(crate) fn entries(&self) -> Vec<OpenNote<T>> {
+        self.entries
+            .iter()
+            .copied()
+            .filter(|open| open.ends.is_none())
+            .collect()
     }
 
     /// Record a note the policy refused, so a later release of it still pairs. Pass one's,
     /// which leaves refusing to the minter.
     pub(crate) fn record(
         &mut self,
+        now: u64,
         slot: crate::plan::NoteSlot,
         key: crate::quantities::KeyIdentity,
         tag: T,
@@ -998,6 +1042,9 @@ impl<T: Copy> OpenNotes<T> {
             key,
             tag,
             delay: crate::time::FrameCount::ZERO,
+            opened: now,
+            starts: now,
+            ends: None,
         });
     }
 
@@ -1027,10 +1074,11 @@ impl<T: Copy> OpenNotes<T> {
         }
     }
 
-    /// Record how far the newest entry's edges are displaced.
+    /// Record how far the newest entry's edges are displaced: it starts that much later.
     pub(crate) fn delay_newest(&mut self, delay: crate::time::FrameCount) {
         if let Some(newest) = self.entries.last_mut() {
             newest.delay = delay;
+            newest.starts = newest.opened.saturating_add(delay.as_u64());
         }
     }
 
@@ -1110,8 +1158,9 @@ pub(crate) fn stamp_all(
                 // A refusal here is the minter's to report, in pass two, with its own cause —
                 // over-emission or an eroded range, which only the minter can tell apart — so
                 // the note is recorded anyway and pairing goes on as it did.
-                if sounding.open(slot, key, ()) == Opened::Refused {
-                    sounding.record(slot, key, ());
+                let now = event.time().as_u64();
+                if sounding.open(now, slot, key, ()) == Opened::Refused {
+                    sounding.record(now, slot, key, ());
                 }
             }
             CompiledPayload::NoteOff { slot, key } => {
@@ -1122,7 +1171,7 @@ pub(crate) fn stamp_all(
                         actual: slot.plan(),
                     });
                 }
-                if sounding.close(slot, key) == Closed::Unmatched {
+                if sounding.close(event.time().as_u64(), slot, key) == Closed::Unmatched {
                     return Err(SchedulePrepareError::UnmatchedRelease { event_index });
                 }
             }
@@ -1138,6 +1187,11 @@ pub(crate) fn stamp_all(
     let mut stamped = Vec::with_capacity(events.len());
     let mut released_after_steal = 0_usize;
     let mut stole = false;
+    // A released note's index is freed in the minter when its **displaced** release lands,
+    // not when the release is placed: a stolen-in note ends `fade` frames after its authored
+    // release, and freeing the index early let a later note-on mint onto a voice whose
+    // deferred start then clobbered it. An independent read found it.
+    let mut deferred: Vec<(u64, crate::identity::NoteIdentity)> = Vec::new();
     let stamp = |time: SampleTime, payload: EventPayload| {
         TimedEvent::new(
             EventEnvelope::new(epoch, time, TimeSource::Compiled),
@@ -1145,6 +1199,15 @@ pub(crate) fn stamp_all(
         )
     };
     for (event_index, event) in events.iter().copied().enumerate() {
+        let now = event.time().as_u64();
+        deferred.retain(|(ends, identity)| {
+            if *ends <= now {
+                minter.release(*identity);
+                false
+            } else {
+                true
+            }
+        });
         match event.payload() {
             CompiledPayload::SetParameter { slot, value } => {
                 stamped.push(stamp(
@@ -1161,18 +1224,18 @@ pub(crate) fn stamp_all(
                     return Err(SchedulePrepareError::NoCompiledNoteProducer { event_index });
                 };
                 let mint = |minter: &mut crate::identity::IdentityTable| {
-                    minter
-                        .mint(producer, slot)
-                        .map_err(|source| SchedulePrepareError::Identity {
+                    minter.mint_keyed(producer, slot, key).map_err(|source| {
+                        SchedulePrepareError::Identity {
                             event_index,
                             source,
-                        })
+                        }
+                    })
                 };
                 // The book decides; the minter is told. Placed **before** the mint so the
                 // taken index is the free one the mint takes: with every index held it is
                 // the only one, which is what puts the new note on the taken voice.
                 let placeholder = crate::identity::NoteIdentity::placeholder(minter.id());
-                match open.open(slot, key, placeholder) {
+                match open.open(now, slot, key, placeholder) {
                     Opened::Refused | Opened::Admitted => {
                         // `Refused` is the minter's over-emission, reported with its cause.
                         let identity = mint(minter)?;
@@ -1263,13 +1326,13 @@ pub(crate) fn stamp_all(
                     }
                 }
             }
-            CompiledPayload::NoteOff { slot, key } => match open.close(slot, key) {
+            CompiledPayload::NoteOff { slot, key } => match open.close(now, slot, key) {
                 Closed::Paired(note) => {
-                    minter.release(note.tag);
                     let ends = event
                         .time()
                         .checked_add(note.delay)
                         .map_err(|_| SchedulePrepareError::StealUnrepresentable { event_index })?;
+                    deferred.push((ends.as_u64(), note.tag));
                     stamped.push(stamp(
                         ends,
                         EventPayload::Note {
@@ -1309,8 +1372,12 @@ pub(crate) fn stamp_all(
             .map_err(|source| SchedulePrepareError::StealsOverrunShare { source })?;
     }
 
+    for (_, identity) in deferred {
+        minter.release(identity);
+    }
+
     // What the list never paired is exactly what this schedule still reserves in the
-    // allocator: every paired release already freed its index during the pass above.
+    // allocator: every paired release has freed its index by now, at its displaced time.
     // ADR-0050 clause 3 has the control release this set into the working copy it stamps a
     // replacement against, so the outgoing schedule and the candidate never compete.
     let outstanding = open.entries().iter().map(|note| note.tag).collect();

@@ -838,6 +838,118 @@ fn an_oldest_policy_fades_a_taken_voice_even_when_the_keys_match() {
 }
 
 #[test]
+fn a_voice_waiting_to_start_is_not_taken_and_a_released_one_stays_committed_to_its_tail() {
+    // Two holes an independent read found, on the stamped events. C takes A's voice at `p` and
+    // starts at `p + 128`; D arrives at `p + 60`, while C waits. The only voice that may be
+    // taken is B's — C's is committed to a start that has not happened — so D's fade names
+    // B's occurrence, not C's. And C's own release at `p + 50`, displaced to `p + 178`, keeps
+    // C's index in the minter until then: a release freed at its authored position let a
+    // later note mint onto a voice whose deferred start then clobbered it.
+    let plan = admit(&voice_with(
+        2,
+        StealingPolicy::Oldest {
+            fade: FrameCount::new(FADE),
+        },
+    ));
+    let p = 4 * Q + 5;
+    let mut events: Vec<PlanEvent> = [
+        note(&plan, 60, 0, 30 * Q),
+        note(&plan, 67, 2 * Q, 30 * Q),
+        note(&plan, 72, p, 50),
+        note(&plan, 76, p + 60, 30 * Q),
+    ]
+    .iter()
+    .flatten()
+    .copied()
+    .collect();
+    events.sort_by_key(|event| event.position());
+    let (mut control, _renderer) =
+        StreamControl::open(plan.clone(), ORIGIN).expect("the stream opens");
+    let stream = AdmittedCompiledStream::admit(&plan, &events).expect("the stream fits");
+    let placed: Vec<crate::schedule::CompiledEvent> = stream
+        .events()
+        .iter()
+        .map(|event| {
+            crate::schedule::CompiledEvent::new(
+                SampleTime::new(event.position().as_u64()),
+                event.payload(),
+            )
+        })
+        .collect();
+    let mut minter = control.minter_mut().working_copy();
+    let (stamped, _) = crate::schedule::stamp_into(&mut minter, &plan, control.epoch(), &placed)
+        .expect("the list stamps");
+    let fades: Vec<(u64, u16)> = stamped
+        .iter()
+        .filter_map(|event| match event.payload() {
+            crate::render::EventPayload::Fade { identity, .. } => {
+                Some((event.envelope().time().as_u64(), identity.index()))
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        fades,
+        vec![(p, 0), (p + 60, 1)],
+        "C took A's voice (index 0); D, arriving while C waits, took B's (index 1)"
+    );
+    // C's displaced release is the last edge of its voice, and D never lands on index 0.
+    let starts: Vec<(u64, u16)> = stamped
+        .iter()
+        .filter_map(|event| match event.payload() {
+            crate::render::EventPayload::Note {
+                identity,
+                edge: crate::render::NoteEdge::On { .. },
+            } => Some((event.envelope().time().as_u64(), identity.index())),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        starts,
+        vec![(0, 0), (2 * Q, 1), (p + FADE, 0), (p + 60 + FADE, 1)]
+    );
+}
+
+#[test]
+fn a_note_on_finding_every_voice_waiting_to_start_is_an_over_emission() {
+    // On one voice, C takes A at `p` and waits to start; D arrives at `p + 60` while it waits.
+    // The only voice is committed, so nothing may be taken and the note-on is what it would
+    // be without stealing: an over-emission, refused at preparation with the minter's cause.
+    // Once the fade has passed, the voice has started and D takes it.
+    let plan = admit(&voice_with(
+        1,
+        StealingPolicy::Oldest {
+            fade: FrameCount::new(FADE),
+        },
+    ));
+    let p = 4 * Q + 5;
+    let prepare = |third_at: u64| {
+        let mut events: Vec<PlanEvent> = [
+            note(&plan, 60, 0, 30 * Q),
+            note(&plan, 72, p, 30 * Q),
+            note(&plan, 76, third_at, 30 * Q),
+        ]
+        .iter()
+        .flatten()
+        .copied()
+        .collect();
+        events.sort_by_key(|event| event.position());
+        let (mut control, _renderer) =
+            StreamControl::open(plan.clone(), ORIGIN).expect("the stream opens");
+        let stream = AdmittedCompiledStream::admit(&plan, &events).expect("the stream fits");
+        CompiledEventScheduler::prepare(&mut control, &stream).map(|_| ())
+    };
+    assert!(matches!(
+        prepare(p + 60),
+        Err(crate::schedule::SchedulePrepareError::Identity {
+            event_index: 2,
+            source: crate::identity::IdentityError::ProducerOverEmitted { .. },
+        })
+    ));
+    assert!(prepare(p + FADE).is_ok());
+}
+
+#[test]
 fn a_one_voice_stealing_plan_sums_its_single_voice_so_the_fade_has_a_step() {
     // With one voice there is no voice sum to fade on unless the compiler inserts one, and
     // ADR-0058 makes it insert one for a stealing plan. The second note steals the first,

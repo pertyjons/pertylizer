@@ -729,7 +729,7 @@ impl StreamControl {
                             if let Some(depth) = open_at_anchor.get_mut(slot.index()) {
                                 *depth = depth.saturating_add(1);
                             }
-                            match before_anchor.open(slot, key, ()) {
+                            match before_anchor.open(event.position().as_u64(), slot, key, ()) {
                                 crate::schedule::Opened::Admitted => {}
                                 // The book's `Refused` is the minter's over-emission, which
                                 // the history never reaches `stamp_into` to have reported —
@@ -773,7 +773,7 @@ impl StreamControl {
                         }
                         CompiledPayload::NoteOff { slot, key } => {
                             require_note_producer(&self.plan, event_index)?;
-                            match before_anchor.close(slot, key) {
+                            match before_anchor.close(event.position().as_u64(), slot, key) {
                                 crate::schedule::Closed::Paired(_) => {}
                                 // ADR-0058 clause 5: the note was taken before this release
                                 // arrived; nothing to lower, and the release is counted.
@@ -818,14 +818,14 @@ impl StreamControl {
                     // The suffix's own steals are `stamp_into`'s to perform; the book here
                     // only has to agree with it about which notes are open, which it does by
                     // holding the same rule.
-                    let _ = in_suffix.open(slot, key, ());
+                    let _ = in_suffix.open(event.position().as_u64(), slot, key, ());
                 }
                 CompiledPayload::NoteOff { slot, key } => {
                     // Paired in the suffix, or the release of a note the suffix's own steal
                     // took: either way `stamp_into` handles it, the latter by dropping and
                     // counting it.
                     let paired_here = !matches!(
-                        in_suffix.close(slot, key),
+                        in_suffix.close(event.position().as_u64(), slot, key),
                         crate::schedule::Closed::Unmatched
                     );
                     // Asked once: a close that pairs removes the entry, so asking twice would
@@ -833,7 +833,7 @@ impl StreamControl {
                     let crossing = if paired_here {
                         crate::schedule::Closed::Unmatched
                     } else {
-                        before_anchor.close(slot, key)
+                        before_anchor.close(event.position().as_u64(), slot, key)
                     };
                     if let crate::schedule::Closed::DroppedAfterSteal(()) = crossing {
                         // ADR-0058 clause 5: its note was taken before the anchor. No note
@@ -1238,10 +1238,10 @@ impl StreamControl {
             if position < interval.start() {
                 match event.payload() {
                     CompiledPayload::NoteOn { slot, key, .. } => {
-                        let _ = before.open(slot, key, ());
+                        let _ = before.open(position.as_u64(), slot, key, ());
                     }
                     CompiledPayload::NoteOff { slot, key } => {
-                        let _ = before.close(slot, key);
+                        let _ = before.close(position.as_u64(), slot, key);
                     }
                     CompiledPayload::SetParameter { .. } => {}
                 }
@@ -1253,7 +1253,7 @@ impl StreamControl {
             match event.payload() {
                 CompiledPayload::NoteOn { slot, key, .. } => {
                     positions.push(position);
-                    match inside.open(slot, key, ()) {
+                    match inside.open(position.as_u64(), slot, key, ()) {
                         // A steal ends one note as it starts another: the count is unmoved.
                         // Its **expansion** is charged where it lands (ADR-0058 clause 7): a
                         // retrigger is a release beside the note-on, and a fade-then-start
@@ -1281,20 +1281,22 @@ impl StreamControl {
                         }
                     }
                 }
-                CompiledPayload::NoteOff { slot, key } => match inside.close(slot, key) {
-                    crate::schedule::Closed::Paired(note) => {
-                        live = live.saturating_sub(1);
-                        // Where the release lands, displaced with a delayed note.
-                        if let Ok(ends) = position.checked_add(note.delay) {
-                            positions.push(ends);
+                CompiledPayload::NoteOff { slot, key } => {
+                    match inside.close(position.as_u64(), slot, key) {
+                        crate::schedule::Closed::Paired(note) => {
+                            live = live.saturating_sub(1);
+                            // Where the release lands, displaced with a delayed note.
+                            if let Ok(ends) = position.checked_add(note.delay) {
+                                positions.push(ends);
+                            }
+                        }
+                        crate::schedule::Closed::DroppedAfterSteal(()) => {}
+                        crate::schedule::Closed::Unmatched => {
+                            positions.push(position);
+                            let _ = before.close(position.as_u64(), slot, key);
                         }
                     }
-                    crate::schedule::Closed::DroppedAfterSteal(()) => {}
-                    crate::schedule::Closed::Unmatched => {
-                        positions.push(position);
-                        let _ = before.close(slot, key);
-                    }
-                },
+                }
                 CompiledPayload::SetParameter { .. } => positions.push(position),
             }
         }

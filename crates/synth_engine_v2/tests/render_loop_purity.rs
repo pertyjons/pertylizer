@@ -682,6 +682,16 @@ fn every_call_the_render_loop_makes_is_inside_the_checked_region() {
         // orphan and never to branch into work.
         "voice_instances",
         "is_none",
+        // The live drain's deferred starts (ADR-0058 at the boundary). `released_after_steal`
+        // is one more `const fn` counter read mirrored into the report beside the others;
+        // `stamp` is a local closure in `publish_pending` that builds a `TimedEvent` from two
+        // `const fn` constructors — no allocation, no branch, called per deferred start.
+        "released_after_steal",
+        "stamp",
+        // `PerformanceIngress::envelope_for` is a `const fn` building an `EventEnvelope` from
+        // the store's epoch and a time — the one site that writes the simulated source —
+        // called by the drain's `stamp` closure for each deferred start.
+        "envelope_for",
         "position",
         "time",
         // Phase 3's compiled scheduler reads the renderer's current quantum boundary

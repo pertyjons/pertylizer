@@ -707,6 +707,7 @@ pub struct DiagnosticsReport {
     ingress_dropped_hold: u64,
     ingress_dropped_identity: u64,
     ingress_orphan_releases: u64,
+    ingress_released_after_steal: u64,
     oversized_callback_faults: u64,
     clock_exhaustion_faults: u64,
     publication_faults: u64,
@@ -810,6 +811,12 @@ impl DiagnosticsReport {
     /// that does not exist, not a shortage.
     pub const fn ingress_orphan_releases(&self) -> u64 {
         self.ingress_orphan_releases
+    }
+
+    /// Releases the live boundary dropped because a steal had already ended their note
+    /// (ADR-0058 clause 5). Not orphans: the producer released a note it had opened.
+    pub const fn ingress_released_after_steal(&self) -> u64 {
+        self.ingress_released_after_steal
     }
 
     /// Every drop at the live boundary, whatever the resource.
@@ -1004,9 +1011,11 @@ impl DiagnosticsReport {
         hold: u64,
         identity: u64,
         orphans: u64,
+        released_after_steal: u64,
         beyond_horizon: u64,
     ) {
         self.ingress_dropped_slot = slot;
+        self.ingress_released_after_steal = released_after_steal;
         self.ingress_dropped_hold = hold;
         self.ingress_dropped_identity = identity;
         // **The horizon count moved halves rather than disappearing.** It used to be the
