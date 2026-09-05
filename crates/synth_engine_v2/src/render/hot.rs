@@ -231,7 +231,9 @@ impl PreparedRenderer {
                 // `SOUND-INV-017` removes the node from the release, so there is no slot to
                 // compare. An identity from another table is the same class of stale as a
                 // foreign slot and is filtered here for the same reason.
-                EventPayload::Note { identity, .. } => identity.table() != self.live_notes.id(),
+                EventPayload::Note { identity, .. }
+                | EventPayload::Fade { identity, .. }
+                | EventPayload::Reset { identity } => identity.table() != self.live_notes.id(),
             };
             if foreign {
                 pending.foreign_slot = pending.foreign_slot.saturating_add(1);
@@ -365,8 +367,9 @@ impl PreparedRenderer {
     fn apply(&mut self, payload: EventPayload) {
         match payload {
             // A note has no quantum-rate effect at all. Every edge it carries is
-            // sample-positioned, so the whole payload is the other pass's.
-            EventPayload::Note { .. } => {}
+            // sample-positioned, so the whole payload is the other pass's — and so are a
+            // steal's fade and reset (ADR-0058).
+            EventPayload::Note { .. } | EventPayload::Fade { .. } | EventPayload::Reset { .. } => {}
             EventPayload::SetParameter { slot, value } => {
                 // A slot indexes **one** plan's target table, and one from another plan
                 // was already refused and counted during resolution — before it could
@@ -461,19 +464,46 @@ impl PreparedRenderer {
             // other than the gate's, which is why the count is per magnitude rather than a
             // multiple of the gate's. Counted in the same window as pass two writes in, so
             // the two cannot disagree about how much room a node's run needs.
-            if let EventPayload::Note {
-                identity,
-                edge: NoteEdge::On { slot, .. },
-            } = event.payload
-            {
-                for magnitude in self.plan.note_magnitudes_of(slot) {
-                    if let Some(row) = self.voice_row(magnitude.parameter.index(), identity.index())
-                        && let Some(node) = self.slot_node(row)
-                        && let Some(count) = self.control_starts.get_mut(node + 1)
-                    {
-                        *count = count.saturating_add(1);
+            match event.payload {
+                EventPayload::Note {
+                    identity,
+                    edge: NoteEdge::On { slot, .. },
+                } => {
+                    for magnitude in self.plan.note_magnitudes_of(slot) {
+                        if let Some(row) =
+                            self.voice_row(magnitude.parameter.index(), identity.index())
+                            && let Some(node) = self.slot_node(row)
+                            && let Some(count) = self.control_starts.get_mut(node + 1)
+                        {
+                            *count = count.saturating_add(1);
+                        }
                     }
                 }
+                // ADR-0058: a fade is one control per voice-sum step of the instance, a
+                // reset one per instance step. Counted here so pass two has the room.
+                EventPayload::Fade { identity, .. } => {
+                    let Some(instance) = self.steal_instance(identity) else {
+                        continue;
+                    };
+                    for first in self.plan.sum_groups() {
+                        let node = first.index().saturating_add(instance);
+                        if let Some(count) = self.control_starts.get_mut(node + 1) {
+                            *count = count.saturating_add(1);
+                        }
+                    }
+                }
+                EventPayload::Reset { identity } => {
+                    let Some(instance) = self.steal_instance(identity) else {
+                        continue;
+                    };
+                    for first in self.plan.instance_groups() {
+                        let node = first.index().saturating_add(instance);
+                        if let Some(count) = self.control_starts.get_mut(node + 1) {
+                            *count = count.saturating_add(1);
+                        }
+                    }
+                }
+                _ => {}
             }
         }
         *cursor = last;
@@ -548,6 +578,47 @@ impl PreparedRenderer {
                     self.push_timed_control(row, event.position.quantum_offset(), value);
                 }
             }
+            // ADR-0058's two loop-reserved controls, on the instance the identity's index
+            // names. Neither is a parameter write, so neither passes through a slot: a fade
+            // and a reset are the loop's own operations on a voice, not values a caller set.
+            match event.payload {
+                EventPayload::Fade { identity, frames } => {
+                    let Some(instance) = self.steal_instance(identity) else {
+                        continue;
+                    };
+                    let value = crate::quantities::ParameterValue::from_frames(frames);
+                    for position in 0..self.plan.sum_groups().len() {
+                        let Some(first) = self.plan.sum_groups().get(position).copied() else {
+                            break;
+                        };
+                        let node = first.index().saturating_add(instance);
+                        self.push_node_control(
+                            node,
+                            event.position.quantum_offset(),
+                            kernels::ControlIndex::FADE_OUT,
+                            value,
+                        );
+                    }
+                }
+                EventPayload::Reset { identity } => {
+                    let Some(instance) = self.steal_instance(identity) else {
+                        continue;
+                    };
+                    for position in 0..self.plan.instance_groups().len() {
+                        let Some(first) = self.plan.instance_groups().get(position).copied() else {
+                            break;
+                        };
+                        let node = first.index().saturating_add(instance);
+                        self.push_node_control(
+                            node,
+                            event.position.quantum_offset(),
+                            kernels::ControlIndex::RESET,
+                            crate::quantities::ParameterValue::ZERO,
+                        );
+                    }
+                }
+                _ => {}
+            }
             let (Some(target), Some(value)) = (event.target, self.timed_value(event.payload))
             else {
                 continue;
@@ -572,6 +643,15 @@ impl PreparedRenderer {
         }
         let voice = usize::from(index);
         (voice < instances).then_some(first.saturating_add(voice))
+    }
+
+    /// The voice instance a steal's identity names, or `None` where the index lies outside
+    /// the plan's partition — the same refusal `voice_row` makes, so a bad index selects no
+    /// step rather than one scheduled after the last instance. An independent read found the
+    /// index taken unchecked.
+    fn steal_instance(&self, identity: crate::identity::NoteIdentity) -> Option<usize> {
+        let instance = usize::from(identity.index());
+        (instance < self.plan.voice_instances().get() as usize).then_some(instance)
     }
 
     /// The node a parameter slot's control belongs to, from the target table.
@@ -607,6 +687,22 @@ impl PreparedRenderer {
         };
         let (node, control) = (target.node.index(), target.control);
         let value = composed.write_override(value);
+        self.push_node_control(node, offset, control, value);
+    }
+
+    /// Append one control change to a node's run, by node.
+    ///
+    /// The tail of [`Self::push_timed_control`], and the whole of a loop-reserved control's
+    /// path (ADR-0058's fade and reset): those address a step rather than a parameter, so
+    /// there is no slot to compose through and nothing a caller could have set. Every step is
+    /// bounds-checked; a node the run table has no entry for or a full run writes nothing.
+    fn push_node_control(
+        &mut self,
+        node: usize,
+        offset: crate::time::QuantumOffset,
+        control: kernels::ControlIndex,
+        value: crate::quantities::ParameterValue,
+    ) {
         let (Some(base), Some(filled)) = (
             self.control_starts.get(node).copied(),
             self.control_fill.get(node).copied(),
@@ -677,6 +773,21 @@ impl PreparedRenderer {
                         slot: slot.index(),
                         rows: row.instances.get() as usize,
                     }),
+                // ADR-0058 clause 5: the taken note is ended as its fade begins. Its own
+                // release, should one reach the loop, is then an orphan; the compiled path
+                // drops it at preparation and counts it there. The fade and the reset land
+                // through the instance groups rather than a target, so neither has one.
+                EventPayload::Fade { identity, .. } => {
+                    // A fade whose identity names no live note is as much an orphan as a
+                    // release that does, and is counted as one: preparation stamps a fade
+                    // against a note it holds live, so only a stale or foreign one gets here.
+                    if self.live_notes.release(identity).is_none() {
+                        pending.orphan_note = pending.orphan_note.saturating_add(1);
+                        pending.last_orphan_note = Some(identity);
+                    }
+                    None
+                }
+                EventPayload::Reset { .. } => None,
             };
             if let Some(slot) = self.event_scratch.get_mut(index) {
                 slot.target = target;
@@ -704,6 +815,7 @@ impl PreparedRenderer {
         match payload {
             EventPayload::Note { edge, .. } => Some(edge.value()),
             EventPayload::SetParameter { value, .. } => Some(value),
+            EventPayload::Fade { .. } | EventPayload::Reset { .. } => None,
         }
     }
 

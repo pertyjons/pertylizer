@@ -120,6 +120,19 @@ impl NoteIdentity {
         self.index
     }
 
+    /// A stand-in for an entry whose identity the minter has not issued yet, off-thread.
+    ///
+    /// Names this table with index and generation zero; it is replaced by the minted identity
+    /// before the entry is read, and a caller that read it would resolve an orphan or the
+    /// wrong live note — which is why it is crate-private and used at one site.
+    pub(crate) const fn placeholder(table: TableId) -> Self {
+        Self {
+            table,
+            index: 0,
+            generation: 0,
+        }
+    }
+
     /// Which table minted it.
     pub const fn table(self) -> TableId {
         self.table

@@ -19,7 +19,7 @@ use synth_engine_v2::schedule::{
     AdmittedCompiledStream, CompiledEventScheduler, CompiledPayload, PlanEvent,
 };
 use synth_engine_v2::stream::{ActivationBuildError, ActivationRequest, StreamControl};
-use synth_engine_v2::time::{PlanPosition, QUANTUM_FRAMES, SampleTime, StreamAnchor};
+use synth_engine_v2::time::{FrameCount, PlanPosition, QUANTUM_FRAMES, SampleTime, StreamAnchor};
 use synth_engine_v2::transport::{ActivationRefused, ActivationSequence, LoopInterval};
 
 const SOURCE: NodeId = NodeId::new(1);
@@ -36,6 +36,20 @@ const TOTAL: usize = 2_048;
 /// A gated constant: one note edge changes the output between silence and full scale, so a
 /// sample's value says exactly which side of an edge it is on.
 fn gated_constant(simultaneous: u32) -> GraphIr {
+    gated_constant_declaring(common::compiled_notes(simultaneous))
+}
+
+/// The same, stealing the oldest voice over V1's fade (ADR-0058).
+fn gated_constant_stealing(simultaneous: u32) -> GraphIr {
+    gated_constant_declaring(synth_engine_v2::ir::PlanDeclarations {
+        stealing: synth_engine_v2::ir::StealingPolicy::Oldest {
+            fade: FrameCount::new(128),
+        },
+        ..common::compiled_notes(simultaneous)
+    })
+}
+
+fn gated_constant_declaring(declarations: synth_engine_v2::ir::PlanDeclarations) -> GraphIr {
     GraphIr::builder()
         .node(
             SOURCE,
@@ -71,7 +85,7 @@ fn gated_constant(simultaneous: u32) -> GraphIr {
             (OUTPUT, PortId::FIRST),
             SignalDomain::Audio,
         )
-        .declaring(common::compiled_notes(simultaneous))
+        .declaring(declarations)
         .build()
         .expect("a readable plan")
 }
@@ -667,6 +681,118 @@ fn the_boundary_release_reaches_only_the_producers_the_activation_names() {
     control
         .withdraw(activation)
         .expect("the control withdraws its own candidate");
+}
+
+#[test]
+fn a_history_that_steals_builds_and_counts_the_taken_notes_release() {
+    // ADR-0058 in the anchored walk. Three notes on a two-voice plan before the destination:
+    // the third takes the first, as it would have when played through, so the history is not
+    // an over-emission and the seek builds. After the anchor come the three releases: the
+    // taken note's names a note the steal ended and is dropped and counted; the other two
+    // cross the anchor and are omitted with their bare gate-downs, as any crossing release.
+    let plan = common::admit(
+        &gated_constant_stealing(2),
+        common::profile(TOTAL as u64, ChannelLayout::Mono),
+    );
+    let (mut control, _renderer) =
+        StreamControl::open(plan.clone(), ORIGIN).expect("the stream opens");
+    let quiet = admitted(&plan, &[]);
+    let _scheduler =
+        CompiledEventScheduler::prepare(&mut control, &quiet).expect("an empty stream prepares");
+    let stream = admitted(
+        &plan,
+        &[
+            keyed(&plan, 0, 60, true),
+            keyed(&plan, Q, 67, true),
+            keyed(&plan, 2 * Q, 72, true),
+            keyed(&plan, 6 * Q, 60, false),
+            keyed(&plan, 8 * Q, 67, false),
+            keyed(&plan, 10 * Q, 72, false),
+        ],
+    );
+    let activation = control
+        .plan_activation(&stream, request(4 * Q, 4 * Q))
+        .expect("a history that steals is not an over-emission");
+    assert_eq!(
+        activation.released_after_steal(),
+        1,
+        "the taken note's release"
+    );
+    assert_eq!(
+        activation.omitted_releases(),
+        2,
+        "the two crossing releases"
+    );
+    assert_eq!(
+        activation.events(),
+        2,
+        "their two bare gate-downs, and nothing else"
+    );
+}
+
+#[test]
+fn a_loops_repeating_pass_charges_a_steals_expansion_where_it_lands() {
+    // ADR-0058 clause 7 in the loop's own admission. Inside the loop a third note takes the
+    // first, so its reset and its start land `fade` frames after its note-on — in a quantum
+    // that already holds the compiled share's worth of writes. The authored stream admits:
+    // no window of it holds more than the share. The pass that repeats holds two more where
+    // the expansion lands, and the loop is refused on its density rule. The anchor is past
+    // the loop's events so the suffix carries none of them: only the repeating pass can see
+    // the collision, which is what makes this its subject. An independent read found the
+    // pass charging the authored position alone.
+    let plan = common::admit(
+        &gated_constant_stealing(2),
+        common::profile(TOTAL as u64, ChannelLayout::Mono),
+    );
+    let (mut control, _renderer) =
+        StreamControl::open(plan.clone(), ORIGIN).expect("the stream opens");
+    let quiet = admitted(&plan, &[]);
+    let _scheduler =
+        CompiledEventScheduler::prepare(&mut control, &quiet).expect("an empty stream prepares");
+    let gate = plan
+        .resolve_parameter(ENVELOPE, synth_engine_v2::ir::parameters::ENVELOPE_GATE)
+        .expect("the envelope declares a gate parameter");
+    let share = plan.compiled_event_share().get() as u64;
+    let lands = 10 * Q + 128;
+    let mut events = vec![
+        keyed(&plan, 8 * Q, 60, true),
+        keyed(&plan, 9 * Q, 67, true),
+        keyed(&plan, 10 * Q, 72, true),
+    ];
+    events.extend((0..share).map(|_| {
+        PlanEvent::new(
+            PlanPosition::new(lands),
+            CompiledPayload::SetParameter {
+                slot: gate,
+                value: synth_engine_v2::quantities::ParameterValue::ONE,
+            },
+        )
+    }));
+    events.push(keyed(&plan, 14 * Q, 67, false));
+    events.push(keyed(&plan, 15 * Q, 72, false));
+    let stream = admitted(&plan, &events);
+    let interval = LoopInterval::new(PlanPosition::new(8 * Q), PlanPosition::new(16 * Q))
+        .expect("a positive interval");
+    let refusal = control
+        .plan_activation(
+            &stream,
+            ActivationRequest {
+                at: SampleTime::new(16 * Q),
+                position: PlanPosition::new(16 * Q),
+                loop_interval: Some(interval),
+            },
+        )
+        .expect_err("the expansion puts two more writes into a full quantum");
+    assert!(
+        matches!(
+            refusal,
+            ActivationBuildError::Loop {
+                source: AdmissionError::LoopWindowOverShare { .. },
+                ..
+            }
+        ),
+        "expected the loop's density refusal, got {refusal:?}"
+    );
 }
 
 #[test]

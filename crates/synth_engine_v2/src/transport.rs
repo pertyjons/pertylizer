@@ -271,6 +271,9 @@ pub struct TransportActivation {
     /// the second, and a named transformation is what tells a reader that a seek through a
     /// held note did something rather than nothing.
     pub(crate) omitted_releases: usize,
+    /// ADR-0058 clause 5: releases the history or the suffix dropped because a steal had
+    /// already ended their note.
+    pub(crate) released_after_steal: usize,
     /// ADR-0051 clause 1's catch-up batch: one row per prepared target, restoring the
     /// destination's control state before the new stream's own events at that sample.
     pub(crate) catch_up: Vec<crate::render::TimedEvent>,
@@ -398,6 +401,11 @@ impl TransportActivation {
     /// How many releases the suffix omitted because their note-on precedes the anchor.
     pub const fn omitted_releases(&self) -> usize {
         self.omitted_releases
+    }
+
+    /// How many releases named a note a steal had already ended (ADR-0058 clause 5).
+    pub const fn released_after_steal(&self) -> usize {
+        self.released_after_steal
     }
 
     /// How many producers its boundary release names.

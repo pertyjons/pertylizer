@@ -338,7 +338,9 @@ fn inserted_records_upper_bound(ir: &GraphIr, profile: &HostProfile) -> u64 {
     // voice. An upper bound, like the widening: a node feeding the scope's outside twice is
     // summed once, and the exact figure is the lowering's.
     let voices = u64::from(ir.voice_instances().get());
-    let summed = if voices > 1 {
+    // A stealing plan sums even one voice, because the sum step is where the taken voice's
+    // fade is applied (ADR-0058).
+    let summed = if voices > 1 || ir.declarations().stealing.steals() {
         (voice_sum_sources(ir).len() as u64).saturating_mul(voices)
     } else {
         0
@@ -348,7 +350,7 @@ fn inserted_records_upper_bound(ir: &GraphIr, profile: &HostProfile) -> u64 {
 
 /// The voice-scope nodes whose output is read by a node outside the voice scope, each once,
 /// in ascending identity.
-fn voice_sum_sources(ir: &GraphIr) -> Vec<NodeId> {
+pub(crate) fn voice_sum_sources(ir: &GraphIr) -> Vec<NodeId> {
     let scopes: HashMap<NodeId, crate::ir::ExecutionScope> = ir
         .nodes()
         .iter()
@@ -435,7 +437,8 @@ fn build_rows(
         ir.state_records(inserted_records),
         &declared_note_ranges,
         ir.max_writes_per_note()
-            .fanned_out(ir.sample_positioned_fan_out()),
+            .fanned_out(ir.sample_positioned_fan_out())
+            .widest(ir.steal_expansion()),
     );
 
     let node_count = NodeCount::measured(u32::try_from(ir.nodes().len()).unwrap_or(u32::MAX));
@@ -1103,6 +1106,10 @@ struct Lowered {
     note_addresses: Vec<NoteAddress>,
     note_magnitudes: Vec<NoteMagnitudeTarget>,
     prepared_tunings: Vec<crate::tuning::PreparedTuning>,
+    /// The first step of each `N`-instance group, and the voice-sum groups among them
+    /// (ADR-0058).
+    instance_groups: Vec<NodeSlot>,
+    sum_groups: Vec<NodeSlot>,
 }
 
 impl Lowered {
@@ -1176,6 +1183,9 @@ impl Lowered {
             compiled_note_producer,
             profile.limits().events().forward_event_horizon(),
             FrameCount::QUANTUM,
+            declarations.stealing,
+            self.instance_groups,
+            self.sum_groups,
         )
     }
 }
@@ -1309,6 +1319,11 @@ fn lower(
     let mut voice_slots: HashMap<NodeId, Vec<BufferSlot>> = HashMap::new();
     // The voice-scope nodes whose output the scope's outside reads, summed below.
     let summed = voice_sum_sources(ir);
+    // ADR-0058: a stealing plan sums even a single voice, so the taken voice has a sum step
+    // to be faded on; and it records where each instance's steps begin.
+    let steals = ir.declarations().stealing.steals();
+    let mut instance_groups: Vec<NodeSlot> = Vec::new();
+    let mut sum_groups: Vec<NodeSlot> = Vec::new();
 
     for id in validated.order() {
         let Some(kind) = kinds.get(id).copied() else {
@@ -1384,22 +1399,25 @@ fn lower(
         node_slots.insert(*id, node_slot);
         if in_voice {
             voice_slots.insert(*id, outs.clone());
+            instance_groups.push(node_slot);
         }
         // What the scope's outside reads: the one output where there is one instance, and
         // the **voice sum** where there are several — instance 0 copied into a sum region,
         // every later instance accumulated into it. The sum is inserted work, and is only
         // inserted where something outside the scope reads the node.
         let outside_reads = if in_voice {
-            if instances > 1 && summed.binary_search(id).is_ok() {
+            if (instances > 1 || steals) && summed.binary_search(id).is_ok() {
                 let mut sum = None;
                 for (instance, out) in outs.iter().copied().enumerate() {
                     match sum {
                         None => {
                             let copy = node::copy_descriptor();
                             let copy_prepared = state.prepare(node::prepare_copy());
-                            let (_, region) =
+                            let (first_sum, region) =
                                 state.schedule(&copy, copy_prepared, [Some(out), None], out_layout);
                             state.inserted += 1;
+                            instance_groups.push(first_sum);
+                            sum_groups.push(first_sum);
                             sum = Some(region);
                         }
                         Some(region) => {
@@ -1563,6 +1581,8 @@ fn lower(
         inserted: state.inserted,
         fault,
         prepared_nodes: state.prepared_nodes,
+        instance_groups,
+        sum_groups,
         parameter_targets,
         parameter_addresses,
         taps,

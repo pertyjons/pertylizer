@@ -54,46 +54,6 @@ use crate::transport::{ActivationSequence, LoopInterval, TransportActivation};
 /// together rather than returned separately because they must describe the **same** pass: a
 /// density refusal computed over one set of events and a polyphony refusal computed over
 /// another would disagree without anything being able to say so.
-/// Open note-ons per `(slot, key)`, for the off-thread walks that decide which side of a
-/// boundary a release's note-on lies on.
-///
-/// `SOUND-INV-025`: a release pairs with the newest unreleased note-on **of its key** on its
-/// node, so a depth kept per node alone misattributes a release across two keys. One counter
-/// per slot and keyboard position, indexed directly — the table is
-/// `note_targets × 128` counters, built once per activation, off the audio thread.
-struct NoteDepths(Vec<u32>);
-
-impl NoteDepths {
-    /// Keyboard positions a `KeyIdentity` can name.
-    const KEYS: usize = 128;
-
-    fn new(slots: usize) -> Self {
-        Self(vec![0; slots.saturating_mul(Self::KEYS)])
-    }
-
-    fn index(slot: crate::plan::NoteSlot, key: crate::quantities::KeyIdentity) -> usize {
-        slot.index()
-            .saturating_mul(Self::KEYS)
-            .saturating_add(usize::from(key.as_u8()))
-    }
-
-    fn depth(&self, slot: crate::plan::NoteSlot, key: crate::quantities::KeyIdentity) -> u32 {
-        self.0.get(Self::index(slot, key)).copied().unwrap_or(0)
-    }
-
-    fn open(&mut self, slot: crate::plan::NoteSlot, key: crate::quantities::KeyIdentity) {
-        if let Some(depth) = self.0.get_mut(Self::index(slot, key)) {
-            *depth = depth.saturating_add(1);
-        }
-    }
-
-    fn close(&mut self, slot: crate::plan::NoteSlot, key: crate::quantities::KeyIdentity) {
-        if let Some(depth) = self.0.get_mut(Self::index(slot, key)) {
-            *depth = depth.saturating_sub(1);
-        }
-    }
-}
-
 struct RepeatingPass {
     /// Every event position inside the interval, which the window scan slides over.
     positions: Vec<PlanPosition>,
@@ -398,6 +358,14 @@ fn rebase(error: SchedulePrepareError, sources: &[usize]) -> SchedulePrepareErro
             position,
             anchor,
         },
+        SchedulePrepareError::StealUnrepresentable { event_index } => {
+            SchedulePrepareError::StealUnrepresentable {
+                event_index: at(event_index),
+            }
+        }
+        SchedulePrepareError::StealsOverrunShare { source } => {
+            SchedulePrepareError::StealsOverrunShare { source }
+        }
         SchedulePrepareError::TimeUnrepresentable {
             event_index,
             position,
@@ -681,14 +649,11 @@ impl StreamControl {
         // all — and a table keyed by node alone would let a key opened after the anchor
         // absorb the release of one opened before it, which `stamp_into` then refuses as
         // unmatched. An independent review found the mismatch.
-        let mut before_anchor = NoteDepths::new(self.plan.note_targets().len());
-        let mut in_suffix = NoteDepths::new(self.plan.note_targets().len());
         // How many notes the history has open at once, against what the producer admits.
         // The history never reaches `stamp_into`, so without this a timeline the producer was
         // never entitled to emit would still decide which crossing releases the suffix omits —
         // and `plan_activation` would accept a stream that preparing refuses. An independent
         // review found the asymmetry.
-        let mut open_now = 0_u32;
         let admitted_notes = self
             .plan
             .compiled_note_producer()
@@ -699,6 +664,18 @@ impl StreamControl {
                     .copied()
             })
             .map_or(0, crate::quantities::HeldNoteCount::get);
+        // ADR-0058 and `SOUND-INV-025` in one place: `OpenNotes` pairs a release with the
+        // newest open note of its key on its node and steals under the plan's policy when a
+        // producer is full. Two books, because the boundary release ends every history note
+        // at the anchor: the suffix begins with nothing sounding, so it must not see the
+        // history's notes as held, while a release in the suffix must still learn that its
+        // note-on lies before the anchor.
+        let policy = self.plan.stealing();
+        let mut before_anchor: crate::schedule::OpenNotes<()> =
+            crate::schedule::OpenNotes::new(admitted_notes, policy);
+        let mut in_suffix: crate::schedule::OpenNotes<()> =
+            crate::schedule::OpenNotes::new(admitted_notes, policy);
+        let mut released_after_steal = 0_usize;
         let mut placed = Vec::with_capacity(stream.events().len());
         // Where each placed event came from in the caller's admitted stream. The suffix drops
         // history and crossing-note releases, so a stamping error's index would otherwise name
@@ -752,42 +729,68 @@ impl StreamControl {
                             if let Some(depth) = open_at_anchor.get_mut(slot.index()) {
                                 *depth = depth.saturating_add(1);
                             }
-                            open_now = open_now.saturating_add(1);
-                            if open_now > admitted_notes {
-                                return Err(ActivationBuildError::Stamp(
-                                    SchedulePrepareError::Identity {
-                                        event_index,
-                                        source:
-                                            crate::identity::IdentityError::ProducerOverEmitted {
-                                                producer: self
-                                                    .plan
-                                                    .compiled_note_producer()
-                                                    .unwrap_or(ProducerId::new(0)),
-                                                admitted:
-                                                    crate::quantities::HeldNoteCount::measured(
-                                                        admitted_notes,
-                                                    ),
-                                            },
-                                    },
-                                ));
+                            match before_anchor.open(slot, key, ()) {
+                                crate::schedule::Opened::Admitted => {}
+                                // The book's `Refused` is the minter's over-emission, which
+                                // the history never reaches `stamp_into` to have reported —
+                                // so it is reported here, with the minter's own cause.
+                                crate::schedule::Opened::Refused => {
+                                    return Err(ActivationBuildError::Stamp(
+                                        SchedulePrepareError::Identity {
+                                            event_index,
+                                            source:
+                                                crate::identity::IdentityError::ProducerOverEmitted {
+                                                    producer: self
+                                                        .plan
+                                                        .compiled_note_producer()
+                                                        .unwrap_or(ProducerId::new(0)),
+                                                    admitted:
+                                                        crate::quantities::HeldNoteCount::measured(
+                                                            admitted_notes,
+                                                        ),
+                                                },
+                                        },
+                                    ));
+                                }
+                                // ADR-0058: the taken note ended before the anchor. Its gate
+                                // row is lowered as its own release would have lowered it —
+                                // unless the new note shares the node, whose gate stays up.
+                                crate::schedule::Opened::Stole(victim) => {
+                                    if victim.slot != slot {
+                                        write_gate(
+                                            &mut values,
+                                            &gate_rows,
+                                            victim.slot,
+                                            crate::quantities::ParameterValue::ZERO,
+                                        );
+                                    }
+                                    if let Some(depth) = open_at_anchor.get_mut(victim.slot.index())
+                                    {
+                                        *depth = depth.saturating_sub(1);
+                                    }
+                                }
                             }
-                            before_anchor.open(slot, key);
                         }
                         CompiledPayload::NoteOff { slot, key } => {
                             require_note_producer(&self.plan, event_index)?;
-                            let sounding = before_anchor.depth(slot, key) > 0;
-                            if sounding {
-                                open_now = open_now.saturating_sub(1);
-                            }
-                            if !sounding {
+                            match before_anchor.close(slot, key) {
+                                crate::schedule::Closed::Paired(_) => {}
+                                // ADR-0058 clause 5: the note was taken before this release
+                                // arrived; nothing to lower, and the release is counted.
+                                crate::schedule::Closed::DroppedAfterSteal(()) => {
+                                    released_after_steal = released_after_steal.saturating_add(1);
+                                    continue;
+                                }
                                 // Nothing to pair it with, on either side. `AdmittedCompiledStream`
                                 // does not check pairing, and the suffix stamper never sees this
-                                // event — so a saturating subtract here would turn a malformed
-                                // timeline into a successful activation. Clause 5 omits a release
-                                // whose note-on **precedes the anchor**, which this is not.
-                                return Err(ActivationBuildError::Stamp(
-                                    SchedulePrepareError::UnmatchedRelease { event_index },
-                                ));
+                                // event — so tolerating it here would turn a malformed timeline
+                                // into a successful activation. Clause 5 omits a release whose
+                                // note-on **precedes the anchor**, which this is not.
+                                crate::schedule::Closed::Unmatched => {
+                                    return Err(ActivationBuildError::Stamp(
+                                        SchedulePrepareError::UnmatchedRelease { event_index },
+                                    ));
+                                }
                             }
                             write_gate(
                                 &mut values,
@@ -798,7 +801,6 @@ impl StreamControl {
                             if let Some(depth) = open_at_anchor.get_mut(slot.index()) {
                                 *depth = depth.saturating_sub(1);
                             }
-                            before_anchor.close(slot, key);
                         }
                     }
                     continue;
@@ -813,19 +815,34 @@ impl StreamControl {
 
             match event.payload() {
                 CompiledPayload::NoteOn { slot, key, .. } => {
-                    in_suffix.open(slot, key);
+                    // The suffix's own steals are `stamp_into`'s to perform; the book here
+                    // only has to agree with it about which notes are open, which it does by
+                    // holding the same rule.
+                    let _ = in_suffix.open(slot, key, ());
                 }
                 CompiledPayload::NoteOff { slot, key } => {
-                    let paired_here = in_suffix.depth(slot, key) > 0;
-                    if paired_here {
-                        in_suffix.close(slot, key);
-                    } else if before_anchor.depth(slot, key) > 0 {
-                        // Clause 5: its note-on lies before the anchor, so after the seek
-                        // that note is not sounding — the boundary release ended it and the
-                        // new stream never started it. Omitted and **counted**, off the
-                        // audio thread, so it is a named transformation rather than a
-                        // silent drop the renderer would have to make.
-                        before_anchor.close(slot, key);
+                    // Paired in the suffix, or the release of a note the suffix's own steal
+                    // took: either way `stamp_into` handles it, the latter by dropping and
+                    // counting it.
+                    let paired_here = !matches!(
+                        in_suffix.close(slot, key),
+                        crate::schedule::Closed::Unmatched
+                    );
+                    // Asked once: a close that pairs removes the entry, so asking twice would
+                    // read the second answer off an emptied book.
+                    let crossing = if paired_here {
+                        crate::schedule::Closed::Unmatched
+                    } else {
+                        before_anchor.close(slot, key)
+                    };
+                    if let crate::schedule::Closed::DroppedAfterSteal(()) = crossing {
+                        // ADR-0058 clause 5: its note was taken before the anchor. No note
+                        // is sounding to end and no gate is owed — the taken voice's gate
+                        // belongs to the note that took it — so the release is dropped and
+                        // counted, not turned into a gate-down.
+                        released_after_steal = released_after_steal.saturating_add(1);
+                        continue;
+                    } else if matches!(crossing, crate::schedule::Closed::Paired(_)) {
                         omitted_releases = omitted_releases.saturating_add(1);
                         // ADR-0051 clause 5: what is omitted is the note **contract**, not
                         // the gate write the plan authored. Dropping both leaves a gate that
@@ -947,9 +964,9 @@ impl StreamControl {
         }
         let catch_up = self.catch_up(request.at, &values);
 
-        let (events, outstanding) =
-            crate::schedule::stamp_into(&mut minter, &self.plan, self.epoch, &placed)
-                .map_err(|error| ActivationBuildError::Stamp(rebase(error, &sources)))?;
+        let stamped = crate::schedule::stamp_all(&mut minter, &self.plan, self.epoch, &placed)
+            .map_err(|error| ActivationBuildError::Stamp(rebase(error, &sources)))?;
+        let (events, outstanding) = (stamped.events, stamped.outstanding);
         let ended = vec![None; self.index_space()];
 
         self.last_issued = sequence;
@@ -964,6 +981,7 @@ impl StreamControl {
             outstanding,
             minter,
             omitted_releases,
+            released_after_steal: released_after_steal.saturating_add(stamped.released_after_steal),
             catch_up,
             loop_interval: request.loop_interval,
             producers: self.note_producers(),
@@ -1194,8 +1212,25 @@ impl StreamControl {
         // Open on edges per slot and key, on each side of the loop's start. Two tables rather
         // than one, because a release consults them in order and a shared counter could not
         // say which side the note it pairs with is on.
-        let mut before = NoteDepths::new(self.plan.note_targets().len());
-        let mut inside = NoteDepths::new(self.plan.note_targets().len());
+        // Two books, as the anchored walk keeps: the wrap's mass release ends every note the
+        // previous pass opened, so the pass a wrap replays begins with nothing held — a note
+        // opened before the loop is there only so a release inside it can be told apart from
+        // an unmatched one, and never counts toward the producer's capacity. The outside
+        // book therefore has no capacity to fill and never steals.
+        let admitted = self
+            .plan
+            .compiled_note_producer()
+            .and_then(|producer| {
+                self.plan
+                    .note_producer_ranges()
+                    .get(producer.as_u16() as usize)
+                    .copied()
+            })
+            .map_or(0, crate::quantities::HeldNoteCount::get);
+        let mut before: crate::schedule::OpenNotes<()> =
+            crate::schedule::OpenNotes::new(u32::MAX, crate::ir::StealingPolicy::None);
+        let mut inside: crate::schedule::OpenNotes<()> =
+            crate::schedule::OpenNotes::new(admitted, self.plan.stealing());
         let mut live = 0_u32;
         let mut peak = 0_u32;
         for event in stream.events().iter().copied() {
@@ -1203,10 +1238,10 @@ impl StreamControl {
             if position < interval.start() {
                 match event.payload() {
                     CompiledPayload::NoteOn { slot, key, .. } => {
-                        before.open(slot, key);
+                        let _ = before.open(slot, key, ());
                     }
                     CompiledPayload::NoteOff { slot, key } => {
-                        before.close(slot, key);
+                        let _ = before.close(slot, key);
                     }
                     CompiledPayload::SetParameter { .. } => {}
                 }
@@ -1215,22 +1250,52 @@ impl StreamControl {
             if position >= interval.end() {
                 break;
             }
-            positions.push(position);
             match event.payload() {
                 CompiledPayload::NoteOn { slot, key, .. } => {
-                    inside.open(slot, key);
-                    live = live.saturating_add(1);
-                    peak = peak.max(live);
-                }
-                CompiledPayload::NoteOff { slot, key } => {
-                    if inside.depth(slot, key) > 0 {
-                        inside.close(slot, key);
-                        live = live.saturating_sub(1);
-                    } else if before.depth(slot, key) > 0 {
-                        before.close(slot, key);
+                    positions.push(position);
+                    match inside.open(slot, key, ()) {
+                        // A steal ends one note as it starts another: the count is unmoved.
+                        // Its **expansion** is charged where it lands (ADR-0058 clause 7): a
+                        // retrigger is a release beside the note-on, and a fade-then-start
+                        // is a reset and the note-on `fade` frames later, with the note's
+                        // release displaced likewise. An independent read found only the
+                        // authored position charged.
+                        crate::schedule::Opened::Stole(victim) => {
+                            match inside.steal_shape(&victim, slot, key) {
+                                crate::schedule::StealShape::Retrigger => positions.push(position),
+                                crate::schedule::StealShape::FadeThenStart(fade) => {
+                                    inside.delay_newest(fade);
+                                    if let Ok(starts) = position.checked_add(fade) {
+                                        positions.push(starts);
+                                        positions.push(starts);
+                                    }
+                                }
+                            }
+                        }
+                        // Admitted, or refused — and a refused note-on still raises the peak
+                        // rather than being dropped here: pairing and admission have owners,
+                        // and a second authority is how the two come to disagree.
+                        crate::schedule::Opened::Admitted | crate::schedule::Opened::Refused => {
+                            live = live.saturating_add(1);
+                            peak = peak.max(live);
+                        }
                     }
                 }
-                CompiledPayload::SetParameter { .. } => {}
+                CompiledPayload::NoteOff { slot, key } => match inside.close(slot, key) {
+                    crate::schedule::Closed::Paired(note) => {
+                        live = live.saturating_sub(1);
+                        // Where the release lands, displaced with a delayed note.
+                        if let Ok(ends) = position.checked_add(note.delay) {
+                            positions.push(ends);
+                        }
+                    }
+                    crate::schedule::Closed::DroppedAfterSteal(()) => {}
+                    crate::schedule::Closed::Unmatched => {
+                        positions.push(position);
+                        let _ = before.close(slot, key);
+                    }
+                },
+                CompiledPayload::SetParameter { .. } => positions.push(position),
             }
         }
         RepeatingPass {

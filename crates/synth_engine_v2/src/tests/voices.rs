@@ -8,7 +8,7 @@
 use crate::compile::{RenderConfig, compile};
 use crate::ir::{
     ExecutionScope, GraphIr, IrNodeKind, NodeId, NoteProducerDeclaration, PlanDeclarations, PortId,
-    SignalDomain,
+    SignalDomain, StealingPolicy,
 };
 use crate::plan::{CompiledPlan, PlanOp};
 use crate::profile::HostProfile;
@@ -445,6 +445,19 @@ fn admit(ir: &GraphIr) -> CompiledPlan {
 
 /// The smallest real voice, with a compiled producer of `notes` simultaneous notes.
 fn voice(notes: u32) -> GraphIr {
+    voice_with(notes, StealingPolicy::None)
+}
+
+/// V1's fade, in frames.
+const FADE: u64 = 128;
+
+/// The same voice under a stealing policy (ADR-0058).
+fn voice_with(notes: u32, stealing: StealingPolicy) -> GraphIr {
+    voice_shaped(notes, stealing, Seconds::ZERO)
+}
+
+/// The same, with an envelope attack, so a fresh voice is audibly fresh.
+fn voice_shaped(notes: u32, stealing: StealingPolicy, attack: Seconds) -> GraphIr {
     GraphIr::builder()
         .node(
             OSCILLATOR,
@@ -457,7 +470,7 @@ fn voice(notes: u32) -> GraphIr {
         .node(
             ENVELOPE,
             IrNodeKind::Envelope {
-                attack: Seconds::ZERO,
+                attack,
                 decay: Seconds::ZERO,
                 sustain: NormalizedLevel::FULL,
                 release: Seconds::ZERO,
@@ -492,6 +505,7 @@ fn voice(notes: u32) -> GraphIr {
                 simultaneous_holds: EventCount::NONE,
             }],
             held_notes: HeldNoteCount::measured(notes),
+            stealing,
             ..PlanDeclarations::default()
         })
         .build()
@@ -535,6 +549,11 @@ fn struck(
 
 /// Render `quanta` quanta of the plan with the given notes, in host blocks.
 fn render(plan: &CompiledPlan, notes: &[Vec<PlanEvent>], quanta: u64) -> Vec<f32> {
+    render_counted(plan, notes, quanta).0
+}
+
+/// [`render`], and how many releases preparation dropped after a steal (ADR-0058).
+fn render_counted(plan: &CompiledPlan, notes: &[Vec<PlanEvent>], quanta: u64) -> (Vec<f32>, usize) {
     let mut events: Vec<PlanEvent> = notes.iter().flatten().copied().collect();
     events.sort_by_key(|event| event.position());
     let (mut control, mut renderer) =
@@ -543,12 +562,417 @@ fn render(plan: &CompiledPlan, notes: &[Vec<PlanEvent>], quanta: u64) -> Vec<f32
     let mut scheduler =
         CompiledEventScheduler::prepare(&mut control, &stream).expect("the stream prepares");
     let mut arbiter = PublicationArbiter::prepare(&profile()).expect("the store is preparable");
-    drive(
+    let out = drive(
         &mut scheduler,
         &mut renderer,
         &mut arbiter,
         (quanta * Q) as usize,
-    )
+    );
+    (out, scheduler.released_after_steal())
+}
+
+/// The gain the fade applies `i` frames in, as the sum kernel computes it.
+fn fade_gain(i: u64) -> f32 {
+    (FADE - i) as f32 / FADE as f32
+}
+
+#[test]
+fn a_full_producer_takes_the_oldest_voice_fades_it_and_starts_the_new_note_when_the_fade_ends() {
+    // ADR-0058 clauses 3 and 4 on a two-voice plan: A and B hold both voices when C arrives
+    // at `p`. A is the oldest, so A's voice fades linearly over 128 frames from `p` while B
+    // plays on, and at `p + 128` the voice is reset and C starts on it as a fresh note. The
+    // oracle is three single-note renders combined sample for sample — A alone scaled by
+    // the fade, then C alone started at `p + 128`, B alone added throughout — in the order
+    // the sum adds them, so the comparison is exact. A's own release, later, names a note
+    // the steal ended: dropped at preparation and counted once.
+    let plan = admit(&voice_with(
+        2,
+        StealingPolicy::Oldest {
+            fade: FrameCount::new(FADE),
+        },
+    ));
+    let p = 4 * Q + 5;
+    let a = note(&plan, 60, 0, 30 * Q);
+    let b = note(&plan, 67, 2 * Q, 30 * Q);
+    let c = note(&plan, 72, p, 30 * Q);
+    let alone_a = render(&plan, std::slice::from_ref(&a), 24);
+    let alone_b = render(&plan, std::slice::from_ref(&b), 24);
+    let alone_c = render(&plan, &[note(&plan, 72, 0, 30 * Q)], 24);
+    let (together, dropped) = render_counted(&plan, &[a, b, c], 24);
+    assert_eq!(dropped, 1, "A's release names a note the steal ended");
+    // Output lags engine time by the primed quantum. The reset voice is a **fresh** one —
+    // its oscillator restarts at phase zero — so C's oracle is C rendered from time zero on a
+    // fresh stream, shifted to where the fade completes; C rendered alone at `p + 128` would
+    // carry the phase its oscillator had accumulated by then.
+    let fade_from = (p + Q) as usize;
+    let fade_to = fade_from + FADE as usize;
+    let shift = (p + FADE) as usize;
+    for (k, actual) in together.iter().copied().enumerate() {
+        let expected = if k < fade_from {
+            alone_a[k] + alone_b[k]
+        } else if k < fade_to {
+            alone_a[k] * fade_gain((k - fade_from) as u64) + alone_b[k]
+        } else {
+            alone_c[k - shift] + alone_b[k]
+        };
+        assert_eq!(
+            actual, expected,
+            "frame {k}: the steal did not fade A over 128 frames and start C on its voice"
+        );
+    }
+    // The new note is audible: C's voice is not silent after the fade.
+    assert!(
+        together[fade_to..]
+            .iter()
+            .zip(&alone_b[fade_to..])
+            .any(|(t, b)| t != b)
+    );
+}
+
+#[test]
+fn a_same_note_policy_retriggers_the_held_key_at_once_and_without_a_fade() {
+    // ADR-0058 clause 4's retrigger: A holds key 60, B holds 67, and a second note on key 60
+    // arrives with the producer full. Under `SameNote` it takes A's voice at its own
+    // position with no fade and no reset — the gate falls and rises before one frame is
+    // written, so the envelope re-attacks from the level it stood at, here full — so the only
+    // audible change is the new note's velocity: instance 0 emits A's signal at half level
+    // from `p`, exactly, and B is untouched. **A compiled release names a key**, so A's
+    // release at `20 Q` pairs with the newest open note of its key, which is the new one,
+    // and ends it: from there instance 0 is silent. The new note's own release then names a
+    // note the steal took, and is dropped and counted. An independent read asked whether
+    // the taken note's release "ends another note" here against the record's falsifier; it
+    // does, by the key-pairing rule the compiled stream has always had, which the record's
+    // identity clause cannot reach where a release carries no identity.
+    let plan = admit(&voice_with(
+        2,
+        StealingPolicy::SameNote {
+            fade: FrameCount::new(FADE),
+        },
+    ));
+    let p = 4 * Q + 5;
+    let a = note(&plan, 60, 0, 20 * Q);
+    let b = note(&plan, 67, 2 * Q, 30 * Q);
+    let again = struck(&plan, 60, NoteVelocity::saturating(0.5), p, 18 * Q);
+    let alone_a = render(&plan, std::slice::from_ref(&a), 24);
+    let alone_b = render(&plan, std::slice::from_ref(&b), 24);
+    let (together, dropped) = render_counted(&plan, &[a, b, again], 24);
+    assert_eq!(dropped, 1, "the new note's own release, after A's ended it");
+    let from = (p + Q) as usize;
+    let ended = (20 * Q + Q) as usize;
+    for (k, actual) in together.iter().copied().enumerate() {
+        let expected = if k < from {
+            alone_a[k] + alone_b[k]
+        } else if k < ended {
+            alone_a[k] * 0.5 + alone_b[k]
+        } else {
+            alone_b[k]
+        };
+        assert_eq!(
+            actual, expected,
+            "frame {k}: the retrigger did not take the held key's voice at once"
+        );
+    }
+}
+
+#[test]
+fn the_taken_voice_is_reset_so_the_new_note_attacks_from_silence() {
+    // ADR-0058 clause 4's reset, made audible by an attack: on the taken voice the new note
+    // must climb from zero as a fresh voice does. Without the reset the envelope would still
+    // be held at full level and a gate re-asserted on it is not an edge, so the new note
+    // would start at full level instead. The oracle is the same fresh-voice shift as above.
+    let plan = admit(&voice_shaped(
+        2,
+        StealingPolicy::Oldest {
+            fade: FrameCount::new(FADE),
+        },
+        Seconds::new(0.01).expect("not negative"),
+    ));
+    let p = 4 * Q + 5;
+    let a = note(&plan, 60, 0, 30 * Q);
+    let b = note(&plan, 67, 2 * Q, 30 * Q);
+    let c = note(&plan, 72, p, 30 * Q);
+    let alone_a = render(&plan, std::slice::from_ref(&a), 24);
+    let alone_b = render(&plan, std::slice::from_ref(&b), 24);
+    let alone_c = render(&plan, &[note(&plan, 72, 0, 30 * Q)], 24);
+    let together = render(&plan, &[a, b, c], 24);
+    let fade_from = (p + Q) as usize;
+    let fade_to = fade_from + FADE as usize;
+    let shift = (p + FADE) as usize;
+    for (k, actual) in together.iter().copied().enumerate() {
+        let expected = if k < fade_from {
+            alone_a[k] + alone_b[k]
+        } else if k < fade_to {
+            alone_a[k] * fade_gain((k - fade_from) as u64) + alone_b[k]
+        } else {
+            alone_c[k - shift] + alone_b[k]
+        };
+        assert_eq!(
+            actual, expected,
+            "frame {k}: the new note did not attack from silence"
+        );
+    }
+}
+
+#[test]
+fn a_same_note_policy_takes_the_newest_held_note_of_the_key() {
+    // Two held notes share the key on a three-voice plan, with a third key held beside them;
+    // a fourth note on the shared key takes the **newest** of the two — the rule a release
+    // uses — so the older one plays on at full level and the newer one's voice carries the
+    // new velocity. Taking the oldest would leave the two voices the other way round, and
+    // the sum tells them apart because their oscillators changed pitch at different times.
+    let plan = admit(&voice_with(
+        3,
+        StealingPolicy::SameNote {
+            fade: FrameCount::new(FADE),
+        },
+    ));
+    let p = 6 * Q + 9;
+    let first = note(&plan, 60, 0, 30 * Q);
+    let second = note(&plan, 60, 2 * Q, 30 * Q);
+    let other = note(&plan, 67, 3 * Q, 30 * Q);
+    let fourth = struck(&plan, 60, NoteVelocity::saturating(0.5), p, 30 * Q);
+    let alone_first = render(&plan, std::slice::from_ref(&first), 16);
+    let alone_second = render(&plan, std::slice::from_ref(&second), 16);
+    let alone_other = render(&plan, std::slice::from_ref(&other), 16);
+    let together = render(&plan, &[first, second, other, fourth], 16);
+    let from = (p + Q) as usize;
+    for (k, actual) in together.iter().copied().enumerate() {
+        let expected = if k < from {
+            alone_first[k] + alone_second[k] + alone_other[k]
+        } else {
+            alone_first[k] + alone_second[k] * 0.5 + alone_other[k]
+        };
+        assert_eq!(
+            actual, expected,
+            "frame {k}: the retrigger took the wrong voice"
+        );
+    }
+}
+
+#[test]
+fn a_note_shorter_than_the_fade_still_starts_and_ends_on_the_voice_it_took() {
+    // The note that takes a voice starts `fade` frames late, and its release is displaced
+    // with it, so a note shorter than the fade is not released before it starts — which
+    // would leave it sounding with no release to come — and every taken-in note keeps its
+    // authored length. An independent read found the release left at its authored position.
+    let plan = admit(&voice_with(
+        2,
+        StealingPolicy::Oldest {
+            fade: FrameCount::new(FADE),
+        },
+    ));
+    let p = 4 * Q + 5;
+    let a = note(&plan, 60, 0, 30 * Q);
+    let b = note(&plan, 67, 2 * Q, 30 * Q);
+    let short = note(&plan, 72, p, 50);
+    let alone_a = render(&plan, std::slice::from_ref(&a), 16);
+    let alone_b = render(&plan, std::slice::from_ref(&b), 16);
+    let alone_short = render(&plan, &[note(&plan, 72, 0, 50)], 16);
+    let (together, dropped) = render_counted(&plan, &[a, b, short], 16);
+    assert_eq!(dropped, 1, "A's release");
+    let fade_from = (p + Q) as usize;
+    let fade_to = fade_from + FADE as usize;
+    let shift = (p + FADE) as usize;
+    for (k, actual) in together.iter().copied().enumerate() {
+        let expected = if k < fade_from {
+            alone_a[k] + alone_b[k]
+        } else if k < fade_to {
+            alone_a[k] * fade_gain((k - fade_from) as u64) + alone_b[k]
+        } else {
+            alone_short[k - shift] + alone_b[k]
+        };
+        assert_eq!(
+            actual, expected,
+            "frame {k}: the short note did not keep its length"
+        );
+    }
+    // And it did end: past its displaced release the voice is silent, so B alone remains.
+    let silent_from = shift + 50 + Q as usize;
+    assert_eq!(&together[silent_from..], &alone_b[silent_from..]);
+    assert!(
+        together[fade_to..silent_from]
+            .iter()
+            .zip(&alone_b[fade_to..])
+            .any(|(t, b)| t != b)
+    );
+}
+
+#[test]
+fn an_oldest_policy_fades_a_taken_voice_even_when_the_keys_match() {
+    // `Oldest` names the oldest voice and says nothing about keys: a third note on the first
+    // note's key still takes that voice by fade-then-start, not by `SameNote`'s retrigger.
+    let plan = admit(&voice_with(
+        2,
+        StealingPolicy::Oldest {
+            fade: FrameCount::new(FADE),
+        },
+    ));
+    let p = 4 * Q + 5;
+    let a = note(&plan, 60, 0, 30 * Q);
+    let b = note(&plan, 67, 2 * Q, 30 * Q);
+    let c = struck(&plan, 60, NoteVelocity::saturating(0.5), p, 30 * Q);
+    let alone_a = render(&plan, std::slice::from_ref(&a), 16);
+    let alone_b = render(&plan, std::slice::from_ref(&b), 16);
+    let alone_c = render(
+        &plan,
+        &[struck(&plan, 60, NoteVelocity::saturating(0.5), 0, 30 * Q)],
+        16,
+    );
+    let together = render(&plan, &[a, b, c], 16);
+    let fade_from = (p + Q) as usize;
+    let fade_to = fade_from + FADE as usize;
+    let shift = (p + FADE) as usize;
+    for (k, actual) in together.iter().copied().enumerate() {
+        let expected = if k < fade_from {
+            alone_a[k] + alone_b[k]
+        } else if k < fade_to {
+            alone_a[k] * fade_gain((k - fade_from) as u64) + alone_b[k]
+        } else {
+            alone_c[k - shift] + alone_b[k]
+        };
+        assert_eq!(
+            actual, expected,
+            "frame {k}: the same key was retriggered under Oldest"
+        );
+    }
+}
+
+#[test]
+fn a_one_voice_stealing_plan_sums_its_single_voice_so_the_fade_has_a_step() {
+    // With one voice there is no voice sum to fade on unless the compiler inserts one, and
+    // ADR-0058 makes it insert one for a stealing plan. The second note steals the first,
+    // through the same fade-then-start as on a wider plan.
+    let plan = admit(&voice_with(
+        1,
+        StealingPolicy::Oldest {
+            fade: FrameCount::new(FADE),
+        },
+    ));
+    assert_eq!(
+        plan.sum_groups().len(),
+        1,
+        "one sum group, of one copy step"
+    );
+    assert_eq!(
+        plan.instance_groups().len(),
+        4,
+        "three voice nodes and the sum"
+    );
+    let p = 3 * Q + 17;
+    let a = note(&plan, 60, 0, 30 * Q);
+    let c = note(&plan, 72, p, 30 * Q);
+    let alone_a = render(&plan, std::slice::from_ref(&a), 16);
+    let alone_c = render(&plan, &[note(&plan, 72, 0, 30 * Q)], 16);
+    let together = render(&plan, &[a, c], 16);
+    let fade_from = (p + Q) as usize;
+    let fade_to = fade_from + FADE as usize;
+    let shift = (p + FADE) as usize;
+    for (k, actual) in together.iter().copied().enumerate() {
+        let expected = if k < fade_from {
+            alone_a[k]
+        } else if k < fade_to {
+            alone_a[k] * fade_gain((k - fade_from) as u64)
+        } else {
+            alone_c[k - shift]
+        };
+        assert_eq!(actual, expected, "frame {k}");
+    }
+}
+
+#[test]
+fn a_plan_declaring_no_stealing_refuses_a_full_producer_as_before() {
+    // `None` is today's behaviour: the third note on a two-voice plan is an over-emission,
+    // refused at preparation with the minter's own cause, and nothing renders.
+    let plan = admit(&voice(2));
+    let events: Vec<PlanEvent> = [
+        note(&plan, 60, 0, 30 * Q),
+        note(&plan, 67, Q, 30 * Q),
+        note(&plan, 72, 2 * Q, 30 * Q),
+    ]
+    .iter()
+    .flatten()
+    .copied()
+    .collect();
+    let mut sorted = events;
+    sorted.sort_by_key(|event| event.position());
+    let (mut control, _renderer) =
+        StreamControl::open(plan.clone(), ORIGIN).expect("the stream opens");
+    let stream = AdmittedCompiledStream::admit(&plan, &sorted).expect("the stream fits");
+    match CompiledEventScheduler::prepare(&mut control, &stream) {
+        Err(crate::schedule::SchedulePrepareError::Identity {
+            event_index: 2,
+            source: crate::identity::IdentityError::ProducerOverEmitted { .. },
+        }) => {}
+        other => panic!("expected the over-emission refusal, got {other:?}"),
+    }
+}
+
+#[test]
+fn a_steal_whose_expansion_overruns_the_compiled_share_is_refused_at_preparation() {
+    // ADR-0058 clause 7: the reset and the new note land `fade` frames after the note-on,
+    // and they are charged against the compiled share there. Fill that quantum with the
+    // share's worth of writes and the source stream still admits — each quantum holds no
+    // more than the share — but the expansion puts two more into it, and preparation
+    // refuses by name.
+    let plan = admit(&voice_with(
+        2,
+        StealingPolicy::Oldest {
+            fade: FrameCount::new(FADE),
+        },
+    ));
+    let share = plan.compiled_event_share().get() as u64;
+    let p = 4 * Q;
+    let gate = plan
+        .resolve_parameter(ENVELOPE, crate::ir::parameters::ENVELOPE_GATE)
+        .expect("the gate is addressable");
+    let mut events: Vec<PlanEvent> = [
+        note(&plan, 60, 0, 30 * Q),
+        note(&plan, 67, Q, 30 * Q),
+        note(&plan, 72, p, 30 * Q),
+    ]
+    .iter()
+    .flatten()
+    .copied()
+    .collect();
+    events.extend((0..share).map(|_| {
+        PlanEvent::new(
+            PlanPosition::new(p + FADE),
+            CompiledPayload::SetParameter {
+                slot: gate,
+                value: crate::quantities::ParameterValue::ONE,
+            },
+        )
+    }));
+    events.sort_by_key(|event| event.position());
+    let (mut control, _renderer) =
+        StreamControl::open(plan.clone(), ORIGIN).expect("the stream opens");
+    let stream = AdmittedCompiledStream::admit(&plan, &events).expect("the source stream fits");
+    assert!(matches!(
+        CompiledEventScheduler::prepare(&mut control, &stream),
+        Err(crate::schedule::SchedulePrepareError::StealsOverrunShare { .. })
+    ));
+}
+
+#[test]
+fn the_steal_expansion_is_derived_alike_from_the_ir_and_the_plan() {
+    // Admission charges from the IR and preparation from the plan, so the two must be one
+    // figure: three voice-scope nodes and one voice sum reset per steal on this voice, and
+    // one write — nothing to charge — where the plan does not steal.
+    let stealing = voice_with(
+        4,
+        StealingPolicy::Oldest {
+            fade: FrameCount::new(FADE),
+        },
+    );
+    let plan = admit(&stealing);
+    assert_eq!(stealing.steal_expansion().get(), 4);
+    assert_eq!(plan.steal_expansion(), stealing.steal_expansion());
+    let plain = voice(4);
+    assert_eq!(
+        plain.steal_expansion(),
+        crate::quantities::WritesPerNote::GATE_ONLY
+    );
+    assert_eq!(admit(&plain).steal_expansion(), plain.steal_expansion());
 }
 
 fn drive(

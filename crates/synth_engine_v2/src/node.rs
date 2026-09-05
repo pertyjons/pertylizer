@@ -1400,6 +1400,24 @@ mod tests {
     use crate::time::PlanPosition;
 
     /// Every kind this phase has, so a scan over them is a scan over all of them.
+    #[test]
+    fn every_declared_control_is_below_the_reserved_floor() {
+        // ADR-0058 reserves two control indices to the render loop — a reset and a fade —
+        // and a declaration using either would have its control moved by a steal.
+        for kind in every_kind() {
+            let Some(descriptor) = descriptor(kind) else {
+                continue;
+            };
+            for spec in &descriptor.controls {
+                assert!(
+                    spec.control < kernels::ControlIndex::RESERVED_FLOOR,
+                    "{kind:?} declares control {:?}, a loop-reserved index",
+                    spec.control
+                );
+            }
+        }
+    }
+
     fn every_kind() -> Vec<IrNodeKind> {
         vec![
             IrNodeKind::Silence,

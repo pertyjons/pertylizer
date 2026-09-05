@@ -294,6 +294,14 @@ pub enum NodeState {
         /// with the clamp written at the assignment instead.
         velocity: NoteVelocity,
     },
+    /// A voice sum step's fade (ADR-0058): frames of the fade remaining and its whole
+    /// length, both zero when no fade is in force.
+    Sum {
+        /// Frames left before the step's contribution reaches zero.
+        fade_remaining: u32,
+        /// The fade's length; zero is no fade, and unity gain.
+        fade_total: u32,
+    },
     /// The two integrator states of a state-variable filter.
     Filter {
         /// The band-pass integrator.
@@ -365,12 +373,15 @@ impl NodeState {
                 held: false,
                 velocity: NoteVelocity::FULL,
             },
+            PreparedNode::Copy => Self::Sum {
+                fade_remaining: 0,
+                fade_total: 0,
+            },
             PreparedNode::Silence
             | PreparedNode::Amplifier
             | PreparedNode::Constant { .. }
             | PreparedNode::Impulse { .. }
-            | PreparedNode::Gain { .. }
-            | PreparedNode::Copy => Self::Stateless,
+            | PreparedNode::Gain { .. } => Self::Stateless,
         }
     }
 
@@ -401,7 +412,7 @@ impl NodeState {
                 ENVELOPE_VELOCITY => ParameterValue::new(velocity.as_f32()).ok(),
                 _ => None,
             },
-            Self::Filter { .. } | Self::Stateless => None,
+            Self::Filter { .. } | Self::Sum { .. } | Self::Stateless => None,
         }
     }
 }
@@ -456,6 +467,18 @@ pub(crate) fn authored_value(
 pub struct ControlIndex(u8);
 
 impl ControlIndex {
+    /// Restore the node's state to its prepared record at the frame named (ADR-0058).
+    ///
+    /// **Reserved to the render loop**: no declaration may use it, and a test holds every
+    /// declared control below [`Self::RESERVED_FLOOR`]. It reaches a kernel as a timed
+    /// control like any other, so the reset lands at a sample rather than a boundary.
+    pub const RESET: Self = Self(u8::MAX);
+    /// Fade the step's output linearly from one to zero over the frames the value carries,
+    /// then hold silence until [`Self::RESET`] (ADR-0058). Handled by the voice-sum kernels.
+    pub const FADE_OUT: Self = Self(u8::MAX - 1);
+    /// Every declared control index is below this.
+    pub const RESERVED_FLOOR: Self = Self(u8::MAX - 1);
+
     /// A control index.
     pub const fn new(index: u8) -> Self {
         Self(index)
@@ -757,6 +780,16 @@ pub fn sine(prepared: &PreparedNode, state: &mut NodeState, io: &mut NodeIo<'_>)
             if matches!(control.control, SINE_FREQUENCY) {
                 *frequency = control.value.into_frequency();
                 increment = f64::from(frequency.as_f32()) * seconds_per_frame;
+            } else if matches!(control.control, ControlIndex::RESET)
+                && let NodeState::Sine {
+                    phase: prepared_phase,
+                    frequency: prepared_frequency,
+                } = NodeState::initial(prepared)
+            {
+                // ADR-0058: the instance restarts as prepared before the frame is written.
+                running = prepared_phase;
+                *frequency = prepared_frequency;
+                increment = f64::from(frequency.as_f32()) * seconds_per_frame;
             }
         }
         let amplitude = f64::from(peak.get(frame).or(peak.last()).copied().unwrap_or(0.0));
@@ -876,6 +909,18 @@ pub fn saw(prepared: &PreparedNode, state: &mut NodeState, io: &mut NodeIo<'_>) 
             due += 1;
             if matches!(control.control, SAW_FREQUENCY) {
                 *frequency = control.value.into_frequency();
+                increment = f64::from(frequency.as_f32()) * seconds_per_frame;
+                step = increment.abs();
+                representable = step.is_finite() && step < 0.5;
+            } else if matches!(control.control, ControlIndex::RESET)
+                && let NodeState::Saw {
+                    phase: prepared_phase,
+                    frequency: prepared_frequency,
+                } = NodeState::initial(prepared)
+            {
+                // ADR-0058: the instance restarts as prepared before the frame is written.
+                running = prepared_phase;
+                *frequency = prepared_frequency;
                 increment = f64::from(frequency.as_f32()) * seconds_per_frame;
                 step = increment.abs();
                 representable = step.is_finite() && step < 0.5;
@@ -1007,6 +1052,19 @@ pub fn envelope(prepared: &PreparedNode, state: &mut NodeState, io: &mut NodeIo<
                 // the two differ.
                 ENVELOPE_VELOCITY => {
                     run.velocity = NoteVelocity::saturating(control.value.as_f32());
+                }
+                // ADR-0058: the taken voice's envelope is idle again, at zero, with nothing
+                // held, so the note that follows attacks from silence as a fresh voice does.
+                ControlIndex::RESET => {
+                    run = Run {
+                        stage: Segment::Idle,
+                        level: 0.0,
+                        target: 0.0,
+                        step: 0.0,
+                        remaining: SegmentFrames::NONE,
+                        held: false,
+                        velocity: NoteVelocity::FULL,
+                    };
                 }
                 _ => {}
             }
@@ -1156,7 +1214,19 @@ pub fn filter(prepared: &PreparedNode, state: &mut NodeState, io: &mut NodeIo<'_
     };
     let source = io.inputs[0];
     let (mut first, mut second) = (*band, *low);
+    let mut due = 0_usize;
     for (index, sample) in io.out.iter_mut().enumerate() {
+        // The filter declares no sample-positioned control of its own; the one control it
+        // takes is the loop's reset (ADR-0058), which clears both integrators at the frame.
+        while let Some(control) = io.controls.get(due) {
+            if control.offset.as_usize() != index {
+                break;
+            }
+            due += 1;
+            if matches!(control.control, ControlIndex::RESET) {
+                (first, second) = (0.0, 0.0);
+            }
+        }
         // The three input states again, and the filter is where collapsing them would be
         // least visible: an unpatched filter must ring down from its own state rather
         // than through whatever the arena slot contained.
@@ -1244,17 +1314,78 @@ pub fn monitor(_prepared: &PreparedNode, _state: &mut NodeState, io: &mut NodeIo
 /// into the sum region instead; the region is this step's **in-place** second input, so the
 /// sum accumulates where the downstream node reads it. An unpatched first input adds nothing,
 /// which is what an instance that produced no buffer contributes.
-pub fn accumulate(_prepared: &PreparedNode, _state: &mut NodeState, io: &mut NodeIo<'_>) {
+pub fn accumulate(_prepared: &PreparedNode, state: &mut NodeState, io: &mut NodeIo<'_>) {
     let InputBuffer::Patched(source) = io.inputs[0] else {
         return;
     };
+    let NodeState::Sum {
+        fade_remaining,
+        fade_total,
+    } = state
+    else {
+        return;
+    };
+    if *fade_total == 0 && io.controls.is_empty() {
+        // No fade in force and none due: the sum as it always was, bit for bit.
+        for (index, sample) in io.out.iter_mut().enumerate() {
+            *sample += source.get(index).copied().unwrap_or(0.0);
+        }
+        return;
+    }
+    let mut fade = Fade {
+        remaining: *fade_remaining,
+        total: *fade_total,
+    };
+    let mut due = 0_usize;
     for (index, sample) in io.out.iter_mut().enumerate() {
-        *sample += source.get(index).copied().unwrap_or(0.0);
+        fade.take(io.controls, &mut due, index);
+        *sample += fade.gain() * source.get(index).copied().unwrap_or(0.0);
+    }
+    (*fade_remaining, *fade_total) = (fade.remaining, fade.total);
+}
+
+/// A voice sum step's fade (ADR-0058), while a quantum is being written.
+///
+/// `gain` is `remaining / total` and falls by one frame per frame; at zero it holds until
+/// a reset, so a taken voice whose fade completed contributes nothing until the new note
+/// starts on it. With no fade in force the gain is exactly one.
+struct Fade {
+    remaining: u32,
+    total: u32,
+}
+
+impl Fade {
+    /// Apply the controls due at `frame`: a fade-out starts one, a reset ends it.
+    fn take(&mut self, controls: &[TimedControl], due: &mut usize, frame: usize) {
+        while let Some(control) = controls.get(*due) {
+            if control.offset.as_usize() != frame {
+                break;
+            }
+            *due += 1;
+            match control.control {
+                ControlIndex::FADE_OUT => {
+                    let frames = control.value.as_frames();
+                    (self.remaining, self.total) = (frames, frames);
+                }
+                ControlIndex::RESET => (self.remaining, self.total) = (0, 0),
+                _ => {}
+            }
+        }
+    }
+
+    /// This frame's gain, and one frame of the fade spent.
+    fn gain(&mut self) -> f32 {
+        if self.total == 0 {
+            return 1.0;
+        }
+        let gain = self.remaining as f32 / self.total as f32;
+        self.remaining = self.remaining.saturating_sub(1);
+        gain
     }
 }
 
 /// One buffer copied into another.
-pub fn copy(_prepared: &PreparedNode, _state: &mut NodeState, io: &mut NodeIo<'_>) {
+pub fn copy(_prepared: &PreparedNode, state: &mut NodeState, io: &mut NodeIo<'_>) {
     let source = io.inputs[0];
     let InputBuffer::Patched(source) = source else {
         // Neither other state can be produced for a copy: the compiler inserts it with a
@@ -1266,11 +1397,40 @@ pub fn copy(_prepared: &PreparedNode, _state: &mut NodeState, io: &mut NodeIo<'_
     // sample into **both channels of one wider region**, frame-major. At one channel it
     // is the plain copy it was, which is what a mono path renders through.
     let channels = io.channels.channels();
+    let fading = matches!(state, NodeState::Sum { fade_total, .. } if *fade_total != 0)
+        || !io.controls.is_empty();
+    if !fading {
+        for (frame, input) in source.iter().enumerate() {
+            for channel in 0..channels {
+                if let Some(sample) = io.out.get_mut(frame * channels + channel) {
+                    *sample = *input;
+                }
+            }
+        }
+        return;
+    }
+    // ADR-0058: the copy is instance 0's voice-sum step, so it carries that instance's
+    // fade exactly as the accumulates carry the others'.
+    let NodeState::Sum {
+        fade_remaining,
+        fade_total,
+    } = state
+    else {
+        return;
+    };
+    let mut fade = Fade {
+        remaining: *fade_remaining,
+        total: *fade_total,
+    };
+    let mut due = 0_usize;
     for (frame, input) in source.iter().enumerate() {
+        fade.take(io.controls, &mut due, frame);
+        let scaled = fade.gain() * *input;
         for channel in 0..channels {
             if let Some(sample) = io.out.get_mut(frame * channels + channel) {
-                *sample = *input;
+                *sample = scaled;
             }
         }
     }
+    (*fade_remaining, *fade_total) = (fade.remaining, fade.total);
 }

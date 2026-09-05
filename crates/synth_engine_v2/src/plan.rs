@@ -883,6 +883,14 @@ pub struct CompiledPlan {
     compiled_note_producer: Option<crate::identity::ProducerId>,
     forward_event_horizon: FrameCount,
     added_latency: FrameCount,
+    /// ADR-0058: what a note-on does when its producer holds every admitted index.
+    stealing: crate::ir::StealingPolicy,
+    /// The first step of every group of `N` instance steps — each voice-scope node's and
+    /// each voice sum's — so a steal can address one instance's steps by `first + instance`.
+    instance_groups: Vec<NodeSlot>,
+    /// The subset of [`Self::instance_groups`] that are voice sums, whose steps carry the
+    /// taken voice's fade.
+    sum_groups: Vec<NodeSlot>,
 }
 
 impl CompiledPlan {
@@ -916,6 +924,9 @@ impl CompiledPlan {
         compiled_note_producer: Option<crate::identity::ProducerId>,
         forward_event_horizon: FrameCount,
         added_latency: FrameCount,
+        stealing: crate::ir::StealingPolicy,
+        instance_groups: Vec<NodeSlot>,
+        sum_groups: Vec<NodeSlot>,
     ) -> Self {
         Self {
             id,
@@ -941,7 +952,36 @@ impl CompiledPlan {
             compiled_note_producer,
             forward_event_horizon,
             added_latency,
+            stealing,
+            instance_groups,
+            sum_groups,
         }
+    }
+
+    /// ADR-0058's policy for a full producer.
+    pub const fn stealing(&self) -> crate::ir::StealingPolicy {
+        self.stealing
+    }
+
+    /// The first step of every `N`-instance group: a voice's steps are these plus its index.
+    pub fn instance_groups(&self) -> &[NodeSlot] {
+        &self.instance_groups
+    }
+
+    /// The voice-sum groups among [`Self::instance_groups`].
+    pub fn sum_groups(&self) -> &[NodeSlot] {
+        &self.sum_groups
+    }
+
+    /// The renderer's side of [`crate::ir::GraphIr::steal_expansion`]: a reset writes one
+    /// control per instance group.
+    pub fn steal_expansion(&self) -> crate::quantities::WritesPerNote {
+        if !self.stealing.steals() {
+            return crate::quantities::WritesPerNote::GATE_ONLY;
+        }
+        crate::quantities::WritesPerNote::at_least(
+            u32::try_from(self.instance_groups.len()).unwrap_or(u32::MAX),
+        )
     }
 
     /// This plan's identity, which every slot it hands out carries.

@@ -76,6 +76,7 @@ fn activation() -> TransportActivation {
         minter: crate::identity::IdentityTable::from_admitted_ranges(&[])
             .expect("an empty partition"),
         omitted_releases: 0,
+        released_after_steal: 0,
         catch_up: Vec::new(),
         loop_interval: None,
         producers: Vec::new(),

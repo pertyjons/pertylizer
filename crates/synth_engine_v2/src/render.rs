@@ -364,6 +364,23 @@ pub enum EventPayload {
         /// Which way the edge goes.
         edge: NoteEdge,
     },
+    /// ADR-0058: fade the voice this occurrence sounds on to silence over `frames`, from
+    /// this event's position. The occurrence is ended as it is applied; the note that takes
+    /// the voice follows as a [`Self::Reset`] and a [`Self::Note`] at the position the fade
+    /// completes. Stamped by preparation, off the audio thread, never by a producer.
+    Fade {
+        /// The occurrence whose voice is taken.
+        identity: crate::identity::NoteIdentity,
+        /// How long the fade runs.
+        frames: FrameCount,
+    },
+    /// ADR-0058: restore every step of the voice instance this occurrence's index names to
+    /// its prepared state at this event's position, so the note that follows attacks from
+    /// silence on a fresh instance. Stamped by preparation, as [`Self::Fade`] is.
+    Reset {
+        /// The occurrence about to start on the instance, whose index names it.
+        identity: crate::identity::NoteIdentity,
+    },
 }
 
 /// One stamped event.
@@ -700,6 +717,7 @@ impl PreparedRenderer {
         let writes_per_note = plan
             .max_writes_per_note()
             .fanned_out(plan.sample_positioned_fan_out())
+            .widest(plan.steal_expansion())
             .get() as usize;
         // One index entry per scheduled record, from the table the renderer already keeps
         // one state per — so the two cannot be counted differently.

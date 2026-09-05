@@ -229,6 +229,8 @@ fn declared() -> PlanDeclarations {
         note_graph_nodes: NodeCount::measured(2),
         held_notes_per_take: HeldNoteCount::measured(2),
         recorded_events_per_take: EventCount::measured(2),
+        // Today's behaviour: a full producer refuses. The stealing tests declare their own.
+        stealing: synth_engine_v2::ir::StealingPolicy::None,
         programs: vec![IrProgram::new(
             ProgramId::FIRST,
             InstructionCount::measured(2),

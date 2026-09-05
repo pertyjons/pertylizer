@@ -317,6 +317,20 @@ pub enum SchedulePrepareError {
     #[error("this stream already has a schedule; a replacement is an activation")]
     SchedulerExists,
 
+    /// A steal's fade would end past the last representable sample (ADR-0058).
+    #[error("compiled event {event_index} steals a voice whose fade ends past the clock")]
+    StealUnrepresentable {
+        /// Which event, in the caller's list.
+        event_index: usize,
+    },
+
+    /// The steals' expansion put more into one quantum than the compiled share admits.
+    #[error("the stealing expansion overruns the compiled share: {source}")]
+    StealsOverrunShare {
+        /// The window that overran.
+        source: crate::admit::AdmissionError,
+    },
+
     /// A candidate holds a snapshot of the minter that this stamping would strand.
     ///
     /// ADR-0050 clause 3 stamps a candidate against a copy of the authoritative table and
@@ -507,6 +521,8 @@ pub struct CompiledEventScheduler {
     /// allocating on the audio thread; `catch_up_len` is what says how much of it is live.
     catch_up: Vec<crate::render::TimedEvent>,
     catch_up_len: usize,
+    /// ADR-0058 clause 5: releases preparation dropped because a steal had ended their note.
+    released_after_steal: usize,
     /// How far the placed schedule is displaced from where it was stamped.
     ///
     /// ADR-0050 clause 1. A candidate is stamped against the time it **requested**, and
@@ -526,6 +542,11 @@ pub struct CompiledEventScheduler {
 }
 
 impl CompiledEventScheduler {
+    /// How many compiled releases named a note a steal had already ended (ADR-0058).
+    pub const fn released_after_steal(&self) -> usize {
+        self.released_after_steal
+    }
+
     /// Place an admitted stream at the transport's anchor and stamp it.
     ///
     /// **Capacity is not decided here.** [`AdmittedCompiledStream`] already proved the
@@ -606,12 +627,13 @@ impl CompiledEventScheduler {
             return Err(SchedulePrepareError::SchedulerExists);
         }
 
-        let stamped = stamp_compiled(control, &placed)?;
+        let (stamped, released_after_steal) = stamp_compiled_counted(control, &placed)?;
         control.scheduler_prepared();
         Ok(Self {
             epoch,
             arbiter: None,
             max_events_per_quantum,
+            released_after_steal,
             events: stamped,
             next: 0,
             // The stream's first and only schedule, so the transport state it starts from is
@@ -789,6 +811,14 @@ pub fn stamp_compiled(
     control: &mut StreamControl,
     events: &[CompiledEvent],
 ) -> Result<Vec<TimedEvent>, SchedulePrepareError> {
+    stamp_compiled_counted(control, events).map(|(stamped, _)| stamped)
+}
+
+/// [`stamp_compiled`], with the count of releases dropped after a steal (ADR-0058).
+pub(crate) fn stamp_compiled_counted(
+    control: &mut StreamControl,
+    events: &[CompiledEvent],
+) -> Result<(Vec<TimedEvent>, usize), SchedulePrepareError> {
     // Refused before anything is read: a candidate outstanding means a snapshot of this
     // minter exists that promotion will install, and any generation this stamping advanced
     // would be rewound by it.
@@ -803,50 +833,267 @@ pub fn stamp_compiled(
     // hands it the authoritative one.
     let plan = std::sync::Arc::clone(control.plan_arc());
     let mut minter = control.minter_mut().working_copy();
-    let (stamped, outstanding) = stamp_into(&mut minter, &plan, epoch, events)?;
+    let stamped = stamp_all(&mut minter, &plan, epoch, events)?;
     *control.minter_mut() = minter;
+    let outstanding = stamped.outstanding;
     // What this list left live, recorded where a replacement can reach it without borrowing
     // the audio thread's schedule.
     control.add_outstanding(&outstanding);
-    Ok(stamped)
+    Ok((stamped.events, stamped.released_after_steal))
 }
 
-/// The same stamping, against a minter the caller owns.
+/// One producer's open notes, in the order they were opened, with ADR-0058's rule for a
+/// full producer and `SOUND-INV-025`'s rule for a release.
 ///
-/// ADR-0050 clause 3's candidate build is the other caller: it stamps against a **working
-/// copy** with the outgoing schedule's reservations already released, so that abandoning the
-/// candidate costs nothing and the two schedules never compete for a producer's range.
+/// **The one pairing authority.** Four walks decide which note-on a release ends and what a
+/// note-on does when every admitted index is held — stamping's two passes, an activation's
+/// history and suffix, and a loop's repeating pass — and four hand-rolled copies of that rule
+/// are how they came to disagree (a depth kept per node where the rule was per node and
+/// key). Each walk now holds one or two of these, tagged with what it needs to know about an
+/// entry, and asks.
 ///
-/// **This does not commit.** Whatever it mints stays in the minter it was given, and what
-/// happens to that minter is the caller's decision — which is exactly the difference between
-/// the two entry points.
+/// Off the audio thread: it allocates as it grows, bounded by the producer's admitted range.
+#[derive(Debug)]
+pub(crate) struct OpenNotes<T> {
+    entries: Vec<OpenNote<T>>,
+    /// Notes taken by a steal whose own release is still to come, with the tag they had.
+    stolen: Vec<OpenNote<T>>,
+    capacity: u32,
+    policy: crate::ir::StealingPolicy,
+}
+
+/// One open note.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct OpenNote<T> {
+    pub(crate) slot: crate::plan::NoteSlot,
+    pub(crate) key: crate::quantities::KeyIdentity,
+    pub(crate) tag: T,
+    /// How far the note's edges are displaced: the fade it waited for, where it took a voice
+    /// by ADR-0058's fade-then-start, and zero otherwise. Its release is displaced by the
+    /// same amount, so a note keeps its authored length and its release never precedes
+    /// its start — an independent read found the release left at its authored position,
+    /// which ended a note shorter than the fade before it began and left it sounding.
+    pub(crate) delay: crate::time::FrameCount,
+}
+
+/// How a steal is performed, from the policy and the taken note (ADR-0058 clause 4).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum StealShape {
+    /// `SameNote` on a held note of the same node and key: the held note ends and the new
+    /// one starts at the new note's position, with no fade and no reset.
+    Retrigger,
+    /// The taken voice fades over these frames, is reset, and the new note starts there.
+    FadeThenStart(crate::time::FrameCount),
+}
+
+/// What a note-on did.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Opened<T> {
+    /// A free index was taken.
+    Admitted,
+    /// Every index was held and the policy steals: this note was ended for the new one.
+    Stole(OpenNote<T>),
+    /// Every index was held and the policy refuses.
+    Refused,
+}
+
+/// What a release resolved to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Closed<T> {
+    /// The newest open note on the slot with the key, ended.
+    Paired(OpenNote<T>),
+    /// The note was taken by a steal before its release arrived: nothing to end, and the
+    /// release is counted as `released_after_steal` rather than as an orphan.
+    DroppedAfterSteal(T),
+    /// No open or stolen note on the slot has the key.
+    Unmatched,
+}
+
+impl<T: Copy> OpenNotes<T> {
+    pub(crate) fn new(capacity: u32, policy: crate::ir::StealingPolicy) -> Self {
+        Self {
+            entries: Vec::new(),
+            stolen: Vec::new(),
+            capacity,
+            policy,
+        }
+    }
+
+    /// Open a note, stealing under the policy if every index is held.
+    pub(crate) fn open(
+        &mut self,
+        slot: crate::plan::NoteSlot,
+        key: crate::quantities::KeyIdentity,
+        tag: T,
+    ) -> Opened<T> {
+        let entry = OpenNote {
+            slot,
+            key,
+            tag,
+            delay: crate::time::FrameCount::ZERO,
+        };
+        if (self.entries.len() as u64) < u64::from(self.capacity) {
+            self.entries.push(entry);
+            return Opened::Admitted;
+        }
+        let victim = match self.policy {
+            crate::ir::StealingPolicy::None => return Opened::Refused,
+            // ADR-0058 clause 3: the earliest note-on, which is the first entry.
+            crate::ir::StealingPolicy::Oldest { .. } => 0,
+            // The newest held note on the same node and key, else the oldest.
+            crate::ir::StealingPolicy::SameNote { .. } => self
+                .entries
+                .iter()
+                .rposition(|open| open.slot == slot && open.key == key)
+                .unwrap_or(0),
+        };
+        if victim >= self.entries.len() {
+            // A capacity of zero: nothing to take. Refused, as an over-emission is.
+            return Opened::Refused;
+        }
+        let taken = self.entries.remove(victim);
+        self.stolen.push(taken);
+        self.entries.push(entry);
+        Opened::Stole(taken)
+    }
+
+    /// Release the newest open note on the slot with the key.
+    pub(crate) fn close(
+        &mut self,
+        slot: crate::plan::NoteSlot,
+        key: crate::quantities::KeyIdentity,
+    ) -> Closed<T> {
+        if let Some(position) = self
+            .entries
+            .iter()
+            .rposition(|open| open.slot == slot && open.key == key)
+        {
+            return Closed::Paired(self.entries.remove(position));
+        }
+        if let Some(position) = self
+            .stolen
+            .iter()
+            .position(|open| open.slot == slot && open.key == key)
+        {
+            return Closed::DroppedAfterSteal(self.stolen.remove(position).tag);
+        }
+        Closed::Unmatched
+    }
+
+    /// The open notes, oldest first.
+    pub(crate) fn entries(&self) -> &[OpenNote<T>] {
+        &self.entries
+    }
+
+    /// Record a note the policy refused, so a later release of it still pairs. Pass one's,
+    /// which leaves refusing to the minter.
+    pub(crate) fn record(
+        &mut self,
+        slot: crate::plan::NoteSlot,
+        key: crate::quantities::KeyIdentity,
+        tag: T,
+    ) {
+        self.entries.push(OpenNote {
+            slot,
+            key,
+            tag,
+            delay: crate::time::FrameCount::ZERO,
+        });
+    }
+
+    /// How the steal that took `victim` for a note on `slot` and `key` is performed.
+    ///
+    /// Only `SameNote` retriggers, and only a taken note on the same node and key: under
+    /// `Oldest` a taken note that happens to share the key still fades, because the policy
+    /// names the oldest voice and says nothing about keys.
+    pub(crate) fn steal_shape(
+        &self,
+        victim: &OpenNote<T>,
+        slot: crate::plan::NoteSlot,
+        key: crate::quantities::KeyIdentity,
+    ) -> StealShape {
+        match self.policy {
+            crate::ir::StealingPolicy::SameNote { fade } => {
+                if victim.slot == slot && victim.key == key {
+                    StealShape::Retrigger
+                } else {
+                    StealShape::FadeThenStart(fade)
+                }
+            }
+            crate::ir::StealingPolicy::Oldest { fade } => StealShape::FadeThenStart(fade),
+            crate::ir::StealingPolicy::None => {
+                StealShape::FadeThenStart(crate::time::FrameCount::ZERO)
+            }
+        }
+    }
+
+    /// Record how far the newest entry's edges are displaced.
+    pub(crate) fn delay_newest(&mut self, delay: crate::time::FrameCount) {
+        if let Some(newest) = self.entries.last_mut() {
+            newest.delay = delay;
+        }
+    }
+
+    /// Give the newest entry its tag, once the minter has issued it.
+    pub(crate) fn retag_newest(&mut self, tag: T) {
+        if let Some(newest) = self.entries.last_mut() {
+            newest.tag = tag;
+        }
+    }
+}
+
+/// What stamping produced.
+pub(crate) struct Stamped {
+    /// The stamped events, ascending by time.
+    pub(crate) events: Vec<TimedEvent>,
+    /// The identities the list opened and never released.
+    pub(crate) outstanding: Vec<crate::identity::NoteIdentity>,
+    /// Releases dropped because a steal had already ended their note (ADR-0058 clause 5).
+    pub(crate) released_after_steal: usize,
+}
+
+/// Give every compiled note an occurrence, pairing releases and stealing under ADR-0058.
+///
+/// Pass one refuses everything that can be refused — a foreign node, a note with no producer,
+/// a release with nothing to pair — before anything is minted. Pass two mints, and where a
+/// note-on finds every admitted index held it takes one under the plan's policy: the taken
+/// note is ended in the minter, its voice fades from the new note's position, and the new
+/// note starts on that voice when the fade completes. A `SameNote` retrigger on a held key
+/// ends the held note and starts the new one at the same position with no fade. The taken
+/// note's own later release is dropped and counted. Both passes hold the same `OpenNotes`
+/// rule, so what pass one accepts is exactly what pass two stamps.
 pub fn stamp_into(
     minter: &mut crate::identity::IdentityTable,
     plan: &CompiledPlan,
     epoch: StreamEpoch,
     events: &[CompiledEvent],
 ) -> Result<(Vec<TimedEvent>, Vec<crate::identity::NoteIdentity>), SchedulePrepareError> {
+    let stamped = stamp_all(minter, plan, epoch, events)?;
+    Ok((stamped.events, stamped.outstanding))
+}
+
+/// [`stamp_into`] with the steal count kept.
+pub(crate) fn stamp_all(
+    minter: &mut crate::identity::IdentityTable,
+    plan: &CompiledPlan,
+    epoch: StreamEpoch,
+    events: &[CompiledEvent],
+) -> Result<Stamped, SchedulePrepareError> {
     let expected = plan.id();
     let compiled_producer = plan.compiled_note_producer();
+    let capacity = compiled_producer
+        .and_then(|producer| {
+            plan.note_producer_ranges()
+                .get(usize::from(producer.as_u16()))
+        })
+        .map_or(0, |range| range.get());
+    let policy = plan.stealing();
 
-    // Pass one: everything that can refuse. **Pairing happens here or nowhere** — after
-    // stamping a release carries only an occurrence, so this is the last point at which
-    // "which note-on does this release end" is answerable from the list itself. One stack
-    // per node, and a release takes the most recent unreleased note-on on that node, which
-    // is what a keyboard does and what a compiled plan means by a matching pair.
-    let mut sounding: Vec<(crate::plan::NoteSlot, crate::quantities::KeyIdentity)> = Vec::new();
+    // Pass one: everything that can refuse, before a mint. A foreign **parameter** slot is
+    // deliberately not refused here: the renderer filters and counts it, which is the
+    // documented post-swap behaviour ADR-0043 wants and which `lowering` asserts.
+    let mut sounding: OpenNotes<()> = OpenNotes::new(capacity, policy);
     for (event_index, event) in events.iter().copied().enumerate() {
-        // **A note edge's provenance, checked here rather than only in the scheduler.** The
-        // renderer's foreign filter compares a note edge's *table*, because `SOUND-INV-017`
-        // leaves a release no node to compare — so a foreign node address on a note-on would
-        // be stamped with this table's occurrence and pass that filter. This is the last
-        // point at which the node is present to check, and `render_offline` reaches it
-        // without going through `CompiledEventScheduler::prepare`.
-        //
-        // A foreign **parameter** slot is deliberately not refused here. The renderer still
-        // filters and counts it, which is the documented post-swap behaviour ADR-0043 wants
-        // and which `lowering` asserts; the scheduler's own stricter check on that payload is
-        // separate and unchanged.
         match event.payload() {
             CompiledPayload::SetParameter { .. } => {}
             CompiledPayload::NoteOn { slot, key, .. } => {
@@ -860,7 +1107,12 @@ pub fn stamp_into(
                 if compiled_producer.is_none() {
                     return Err(SchedulePrepareError::NoCompiledNoteProducer { event_index });
                 }
-                sounding.push((slot, key));
+                // A refusal here is the minter's to report, in pass two, with its own cause —
+                // over-emission or an eroded range, which only the minter can tell apart — so
+                // the note is recorded anyway and pairing goes on as it did.
+                if sounding.open(slot, key, ()) == Opened::Refused {
+                    sounding.record(slot, key, ());
+                }
             }
             CompiledPayload::NoteOff { slot, key } => {
                 if slot.plan() != expected {
@@ -870,14 +1122,9 @@ pub fn stamp_into(
                         actual: slot.plan(),
                     });
                 }
-                // The newest open note on this slot with this key, as the stamp pass pairs.
-                let Some(position) = sounding
-                    .iter()
-                    .rposition(|(node, open_key)| *node == slot && *open_key == key)
-                else {
+                if sounding.close(slot, key) == Closed::Unmatched {
                     return Err(SchedulePrepareError::UnmatchedRelease { event_index });
-                };
-                let _ = sounding.remove(position);
+                }
             }
         }
     }
@@ -887,13 +1134,23 @@ pub fn stamp_into(
     // renderer does not see this: it keeps its own registry, written by the events in the
     // order it applies them, so an index reissued below is still resolvable at both of the
     // occurrences that used it.
-    let mut open: Vec<crate::identity::NoteIdentity> = Vec::new();
-    let mut open_nodes: Vec<(crate::plan::NoteSlot, crate::quantities::KeyIdentity)> = Vec::new();
+    let mut open: OpenNotes<crate::identity::NoteIdentity> = OpenNotes::new(capacity, policy);
     let mut stamped = Vec::with_capacity(events.len());
+    let mut released_after_steal = 0_usize;
+    let mut stole = false;
+    let stamp = |time: SampleTime, payload: EventPayload| {
+        TimedEvent::new(
+            EventEnvelope::new(epoch, time, TimeSource::Compiled),
+            payload,
+        )
+    };
     for (event_index, event) in events.iter().copied().enumerate() {
-        let payload = match event.payload() {
+        match event.payload() {
             CompiledPayload::SetParameter { slot, value } => {
-                EventPayload::SetParameter { slot, value }
+                stamped.push(stamp(
+                    event.time(),
+                    EventPayload::SetParameter { slot, value },
+                ));
             }
             CompiledPayload::NoteOn {
                 slot,
@@ -903,56 +1160,163 @@ pub fn stamp_into(
                 let Some(producer) = compiled_producer else {
                     return Err(SchedulePrepareError::NoCompiledNoteProducer { event_index });
                 };
-                let identity = minter.mint(producer, slot).map_err(|source| {
-                    SchedulePrepareError::Identity {
-                        event_index,
-                        source,
-                    }
-                })?;
-                open.push(identity);
-                open_nodes.push((slot, key));
-                EventPayload::Note {
-                    identity,
-                    edge: NoteEdge::On {
-                        slot,
-                        key,
-                        velocity,
-                    },
-                }
-            }
-            CompiledPayload::NoteOff { slot, key } => {
-                // Pass one proved this pairing exists, so the failure branch is unreachable
-                // rather than tolerated — and it is written as a refusal anyway, because a
-                // silent `continue` would drop an event ADR-0001 clause 16 forbids dropping.
-                // **Newest first**, by slot and key. A release carries no identity — the
-                // compiled producer never sees one — so the key is what tells two notes
-                // sounding on one played node apart; two open notes with one key keep the
-                // newest-first pairing the compiled stream always had.
-                let Some(position) = open_nodes
-                    .iter()
-                    .rposition(|(node, open_key)| *node == slot && *open_key == key)
-                else {
-                    return Err(SchedulePrepareError::UnmatchedRelease { event_index });
+                let mint = |minter: &mut crate::identity::IdentityTable| {
+                    minter
+                        .mint(producer, slot)
+                        .map_err(|source| SchedulePrepareError::Identity {
+                            event_index,
+                            source,
+                        })
                 };
-                let _ = open_nodes.remove(position);
-                let identity = open.remove(position);
-                minter.release(identity);
-                EventPayload::Note {
-                    identity,
-                    edge: NoteEdge::Off,
+                // The book decides; the minter is told. Placed **before** the mint so the
+                // taken index is the free one the mint takes: with every index held it is
+                // the only one, which is what puts the new note on the taken voice.
+                let placeholder = crate::identity::NoteIdentity::placeholder(minter.id());
+                match open.open(slot, key, placeholder) {
+                    Opened::Refused | Opened::Admitted => {
+                        // `Refused` is the minter's over-emission, reported with its cause.
+                        let identity = mint(minter)?;
+                        open.retag_newest(identity);
+                        stamped.push(stamp(
+                            event.time(),
+                            EventPayload::Note {
+                                identity,
+                                edge: NoteEdge::On {
+                                    slot,
+                                    key,
+                                    velocity,
+                                },
+                            },
+                        ));
+                    }
+                    Opened::Stole(victim) => {
+                        stole = true;
+                        minter.release(victim.tag);
+                        let identity = mint(minter)?;
+                        open.retag_newest(identity);
+                        let shape = open.steal_shape(&victim, slot, key);
+                        let retrigger = shape == StealShape::Retrigger;
+                        let fade = match shape {
+                            StealShape::Retrigger => crate::time::FrameCount::ZERO,
+                            StealShape::FadeThenStart(fade) => fade,
+                        };
+                        if retrigger || fade == crate::time::FrameCount::ZERO {
+                            // ADR-0058 clause 4's `SameNote` retrigger — and a zero fade,
+                            // which is the same shape: the held note ends and the new one
+                            // starts at one position, an edge down and an edge up at one
+                            // frame, so the envelope attacks from where it stood.
+                            if retrigger {
+                                stamped.push(stamp(
+                                    event.time(),
+                                    EventPayload::Note {
+                                        identity: victim.tag,
+                                        edge: NoteEdge::Off,
+                                    },
+                                ));
+                            } else {
+                                stamped.push(stamp(
+                                    event.time(),
+                                    EventPayload::Fade {
+                                        identity: victim.tag,
+                                        frames: fade,
+                                    },
+                                ));
+                                stamped.push(stamp(event.time(), EventPayload::Reset { identity }));
+                            }
+                            stamped.push(stamp(
+                                event.time(),
+                                EventPayload::Note {
+                                    identity,
+                                    edge: NoteEdge::On {
+                                        slot,
+                                        key,
+                                        velocity,
+                                    },
+                                },
+                            ));
+                        } else {
+                            let starts = event.time().checked_add(fade).map_err(|_| {
+                                SchedulePrepareError::StealUnrepresentable { event_index }
+                            })?;
+                            // The note's release is displaced with it (see `OpenNote::delay`).
+                            open.delay_newest(fade);
+                            stamped.push(stamp(
+                                event.time(),
+                                EventPayload::Fade {
+                                    identity: victim.tag,
+                                    frames: fade,
+                                },
+                            ));
+                            stamped.push(stamp(starts, EventPayload::Reset { identity }));
+                            stamped.push(stamp(
+                                starts,
+                                EventPayload::Note {
+                                    identity,
+                                    edge: NoteEdge::On {
+                                        slot,
+                                        key,
+                                        velocity,
+                                    },
+                                },
+                            ));
+                        }
+                    }
                 }
             }
-        };
-        stamped.push(TimedEvent::new(
-            EventEnvelope::new(epoch, event.time(), TimeSource::Compiled),
-            payload,
-        ));
+            CompiledPayload::NoteOff { slot, key } => match open.close(slot, key) {
+                Closed::Paired(note) => {
+                    minter.release(note.tag);
+                    let ends = event
+                        .time()
+                        .checked_add(note.delay)
+                        .map_err(|_| SchedulePrepareError::StealUnrepresentable { event_index })?;
+                    stamped.push(stamp(
+                        ends,
+                        EventPayload::Note {
+                            identity: note.tag,
+                            edge: NoteEdge::Off,
+                        },
+                    ));
+                }
+                // ADR-0058 clause 5: the note this release names was ended by a steal, so
+                // the release is dropped here — a named transformation, counted — rather
+                // than reaching the loop as an orphan.
+                Closed::DroppedAfterSteal(_) => {
+                    released_after_steal = released_after_steal.saturating_add(1);
+                }
+                // Pass one proved this pairing exists, so the branch is unreachable rather
+                // than tolerated — and it is written as a refusal anyway, because a silent
+                // `continue` would drop an event ADR-0001 clause 16 forbids dropping.
+                Closed::Unmatched => {
+                    return Err(SchedulePrepareError::UnmatchedRelease { event_index });
+                }
+            },
+        }
     }
 
-    // `open` is what the list never paired, and it is exactly what this schedule still
-    // reserves in the allocator: every paired release already freed its index during the
-    // pass above. ADR-0050 clause 3 has the control release this set into the working copy
-    // it stamps a replacement against, so the outgoing schedule and the candidate never
-    // compete for a producer's range.
-    Ok((stamped, open))
+    if stole {
+        // A steal's expansion lands `fade` frames after its note-on, past later source
+        // events; the list is put back in time order, stably, so equal-time events keep the
+        // order they were stamped in — a reset before the note it makes room for.
+        stamped.sort_by_key(|event| event.envelope().time());
+        // ADR-0058 clause 7: the expansion is charged where the source events were, against
+        // the compiled share, so a steal cannot put more into a quantum than the share admits.
+        let positions: Vec<PlanPosition> = stamped
+            .iter()
+            .map(|event| PlanPosition::new(event.envelope().time().as_u64()))
+            .collect();
+        crate::admit::admit_linear(&positions, plan.compiled_event_share())
+            .map_err(|source| SchedulePrepareError::StealsOverrunShare { source })?;
+    }
+
+    // What the list never paired is exactly what this schedule still reserves in the
+    // allocator: every paired release already freed its index during the pass above.
+    // ADR-0050 clause 3 has the control release this set into the working copy it stamps a
+    // replacement against, so the outgoing schedule and the candidate never compete.
+    let outstanding = open.entries().iter().map(|note| note.tag).collect();
+    Ok(Stamped {
+        events: stamped,
+        outstanding,
+        released_after_steal,
+    })
 }

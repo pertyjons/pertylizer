@@ -898,6 +898,28 @@ impl ParameterValue {
         Amplitude(self.0)
     }
 
+    /// A frame count carried as a control value, the inverse of [`Self::as_frames`].
+    #[allow(
+        clippy::cast_precision_loss,
+        reason = "a fade length is far below 2^24 frames, where every count is exact in f32"
+    )]
+    pub fn from_frames(frames: crate::time::FrameCount) -> Self {
+        Self(frames.as_u64().min(u64::from(u32::MAX)) as f32)
+    }
+
+    /// The value read as a count of frames, for a control that carries one (ADR-0058's
+    /// fade length). Negative and fractional parts are dropped; a count above `2^24` is
+    /// not exact in `f32` and no fade is that long.
+    #[allow(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        reason = "a frame count carried through a control value; clamped to the type's range \
+                  first, so the conversion is saturating rather than truncating"
+    )]
+    pub fn as_frames(self) -> u32 {
+        self.0.max(0.0).min(u32::MAX as f32) as u32
+    }
+
     /// An amplitude as the value a control write carries. Infallible: an [`Amplitude`] is
     /// finite by construction.
     pub const fn from_amplitude(amplitude: Amplitude) -> Self {
@@ -984,6 +1006,16 @@ impl WritesPerNote {
         } else {
             self
         }
+    }
+
+    /// The wider of two figures.
+    pub const fn widest(self, other: Self) -> Self {
+        if other.0 > self.0 { other } else { self }
+    }
+
+    /// A count of writes, floored at one.
+    pub const fn at_least(writes: u32) -> Self {
+        Self(if writes == 0 { 1 } else { writes })
     }
 
     pub const fn with_magnitudes(magnitudes: u32) -> Self {

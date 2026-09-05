@@ -17,7 +17,7 @@ use crate::quantities::{
     RecordCount, Resonance, ScriptWorkPerQuantum, Seconds, SendCount, SlotCount, VoiceCount,
     WritesPerNote,
 };
-use crate::time::PlanPosition;
+use crate::time::{FrameCount, PlanPosition};
 use crate::tuning::PreparedTuning;
 use thiserror::Error;
 
@@ -585,6 +585,9 @@ pub struct PlanDeclarations {
     pub programs: Vec<IrProgram>,
     /// Voices any one instrument declares.
     pub voices_per_instrument: VoiceCount,
+    /// Which voice a note-on takes when its producer holds every admitted index, and how
+    /// that voice ends — ADR-0058. `None` is today's behaviour: the note-on is refused.
+    pub stealing: StealingPolicy,
     /// Every authored runtime source this plan admits, with its ADR-0046 clause 5 envelopes.
     ///
     /// Empty is ordinary and is what every plan in this phase declares: no authored producer
@@ -667,6 +670,7 @@ impl Default for PlanDeclarations {
             recorded_events_per_take: EventCount::NONE,
             programs: Vec::new(),
             voices_per_instrument: VoiceCount::NONE,
+            stealing: StealingPolicy::None,
             // Empty for the same reason `note_producers` is: a plan that declares no
             // authored or internal producer has none, and inventing one here would give
             // admission an envelope to partition that the plan never asked for.
@@ -726,6 +730,47 @@ struct ScopeSummary {
     magnitudes: u32,
     /// How many of those are pitch destinations, which are what reference a tuning.
     pitch_destinations: u32,
+}
+
+/// ADR-0058: what a note-on does when its producer holds every admitted index.
+///
+/// Consulted only then — a free index is taken as `SOUND-INV-017` states, and a releasing
+/// voice's index is free. The taken voice's output fades linearly to zero over `fade`
+/// frames from the new note's render position, its instance is reset to its prepared
+/// state, and the new note starts on it at that position plus `fade` exactly. `None` is the
+/// default and today's behaviour: the note-on is refused and counted.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[must_use]
+pub enum StealingPolicy {
+    /// Refuse the note-on, as before this record.
+    #[default]
+    None,
+    /// Take the held voice whose note-on is earliest.
+    Oldest {
+        /// How long the taken voice fades before the new note starts on it.
+        fade: FrameCount,
+    },
+    /// Retrigger a held voice on the same node and key at once, with no fade; failing one,
+    /// take the oldest as [`Self::Oldest`] does.
+    SameNote {
+        /// The fade for the oldest-voice case.
+        fade: FrameCount,
+    },
+}
+
+impl StealingPolicy {
+    /// Whether a full producer steals rather than refuses.
+    pub const fn steals(self) -> bool {
+        !matches!(self, Self::None)
+    }
+
+    /// The fade a stolen voice takes, where the policy steals.
+    pub const fn fade(self) -> Option<FrameCount> {
+        match self {
+            Self::None => None,
+            Self::Oldest { fade } | Self::SameNote { fade } => Some(fade),
+        }
+    }
 }
 
 /// A plan, as the compiler receives it.
@@ -1051,6 +1096,28 @@ impl GraphIr {
         } else {
             VoiceCount::measured(1)
         }
+    }
+
+    /// How many controls a steal's widest expansion writes at one render position: a reset
+    /// of every instance step of the taken voice — one per voice-scope node and one per
+    /// voice sum — where the plan steals, and one where it does not (ADR-0058).
+    ///
+    /// Charged beside a note-on's expansion and a write's fan-out; the plan derives the same
+    /// figure from its instance groups, and a test holds the two equal.
+    pub fn steal_expansion(&self) -> WritesPerNote {
+        if !self.declarations.stealing.steals() {
+            return WritesPerNote::GATE_ONLY;
+        }
+        let voice_nodes = self
+            .nodes
+            .iter()
+            .filter(|node| {
+                node.scope() == ExecutionScope::Voice
+                    && crate::node::descriptor(node.kind()).is_some()
+            })
+            .count();
+        let sums = crate::compile::voice_sum_sources(self).len();
+        WritesPerNote::at_least(u32::try_from(voice_nodes.saturating_add(sums)).unwrap_or(u32::MAX))
     }
 
     pub fn voice_instances(&self) -> VoiceCount {

@@ -3,7 +3,7 @@
 | Field | Value |
 |---|---|
 | ID | ADR-0058 |
-| Status | Proposed |
+| Status | Accepted |
 | Phase | 6 |
 | Created | 2026-09-05 |
 | Last reviewed | 2026-09-05 |
@@ -147,10 +147,14 @@ How the taken voice ends:
    the steal — the victim's fade and end, and the new note's delayed start — as ordinary
    timed controls, so the loop's work is the same bounded expansion it does today plus one
    ramp. Nothing searches on the audio thread.
-7. **Admission.** A plan under `Oldest` or `SameNote` charges the fade's ramp and the
-   victim's end to the same scratch a note-on's expansion is charged to, and the compiled
-   share admits a stealing note-on as one event: the victim's end and the new note's start
-   are its expansion, not further events.
+7. **Admission.** A plan under `Oldest` or `SameNote` charges the reset's controls to the
+   same scratch a note-on's expansion is charged to. The victim's fade and the new note's
+   delayed start are the note-on's expansion, and they land `fade` frames apart, so they are
+   charged where they land: preparation checks the stamped positions against the compiled
+   share and refuses a schedule whose steals overrun it, by name. *Corrected at build time
+   from "admits a stealing note-on as one event": two events at two positions cannot be one
+   charge, and admitting them as one would let a steal put more into a quantum than the
+   share admits.*
 8. **Lowering V1.** `None` → `None`; `Oldest`, `Quietest` and `LowestPriority` → `Oldest`;
    `SameNote` → `SameNote`; `fade` 128 in every case. The `Quietest` and `LowestPriority`
    mappings are marked `Simplified` in the lowering's fidelity, because V1 prefers the
@@ -192,11 +196,26 @@ changes at acceptance: the default policy is `None`.
 
 ## Review
 
-Design consultation: the options and the recommendation — `Oldest` and `SameNote` as the two
-stealing policies over a declared `None`, V1's fade-then-start — were put to the user on
-2026-09-05; to be recorded.
+Design consultation: the options were put to the user on 2026-09-05 as two questions — which
+policies, and how the taken voice ends — with the recommendation stated first in each. The
+user selected `None`, `Oldest` and `SameNote` over a declared `None` default, and V1's
+fade-then-start with the fade declared and 128 for a lowered V1 instrument. Accepted
+2026-09-05 with that selection.
 
-Independent semantic reviewer: to be recorded at acceptance.
+Independent semantic reviewer: the one independent read of `P06-S002`, the slice that builds
+this record, reviews it with the slice; `PROCESS.md` does not require a second broad review of
+the same material.
+
+Build record: `P06-S002` built the compiled path — stamping, the activation's history and
+suffix, the loop's repeating pass, the renderer's fade and reset — and corrected clause 7 as
+noted there. Two facts the build fixed that the clauses leave open: a note taking a voice by
+fade-then-start has its release displaced by the same `fade`, so it keeps its authored length;
+and on the compiled path a release names a key, so under `SameNote` the taken note's later
+release pairs with the taking note of that key (`SOUND-INV-025`'s rule) and the taking note's
+own release is the one dropped — clause 5's "its own later release names a superseded
+generation" reads on a release that carries an identity, which the compiled stream's does not. Clause 6's second site, the live boundary, is `P06-S002b` in `NOW.md`: the
+boundary holds no record of a producer's open keys, which the minter must carry before it can
+choose a victim.
 
 Stopping rule: a steal with a free index available, a victim search on the audio thread, a
 stolen release ending another note, or a `None` plan rendering differently blocks acceptance.

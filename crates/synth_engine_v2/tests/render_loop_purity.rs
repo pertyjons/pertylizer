@@ -666,6 +666,22 @@ fn every_call_the_render_loop_makes_is_inside_the_checked_region() {
         // lies past the node's instance rows, so a bad index selects nothing rather than a
         // neighbour's row. No allocation, no call beyond the branch.
         "then_some",
+        // ADR-0058's steal expansion. `sum_groups` and `instance_groups` are `CompiledPlan`
+        // slice reads of tables lowering built — the first step of each `N`-instance group —
+        // indexed by position in a bounded loop, the same shape as `parameter_targets`.
+        // `from_frames` and `as_frames` carry a fade length through a `ParameterValue`: a
+        // clamp and a cast each way, no allocation and no branch beyond the clamp.
+        "sum_groups",
+        "instance_groups",
+        "from_frames",
+        "as_frames",
+        // `voice_instances` is a `const fn` field read on the plan — the partition's size —
+        // that `steal_instance` bounds a fade's or reset's index by, the same shape as
+        // `voice_row`'s `instances` read. `Option::is_none` is a `const fn` on a `Copy`
+        // `Option<NoteSlot>`: the registry's answer to a fade's release, read to count an
+        // orphan and never to branch into work.
+        "voice_instances",
+        "is_none",
         "position",
         "time",
         // Phase 3's compiled scheduler reads the renderer's current quantum boundary
