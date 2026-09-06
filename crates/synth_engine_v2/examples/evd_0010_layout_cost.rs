@@ -1063,7 +1063,7 @@ impl Interleaved {
     /// second control that has to be live at the same time as the first.
     fn new(records: &Records, per_channel: bool) -> Self {
         let integrator = |prepared: &PreparedNode| match prepared {
-            PreparedNode::Filter { integrator } => *integrator,
+            PreparedNode::Filter { integrator, .. } => *integrator,
             _ => [0.0; 3],
         };
         // Peak liveness, not a slot per signal. The stereo buffer is `2Q`; the mono buffer

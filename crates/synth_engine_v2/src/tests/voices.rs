@@ -319,10 +319,11 @@ fn prepared_data_is_shared_and_state_is_per_instance() {
         3,
         "each node's record is read by four steps"
     );
-    // Parameter rows: frequency and amplitude on the sine, gate, velocity and velocity
-    // sensitivity on the envelope — five controls, four rows each, five addresses.
-    assert_eq!(plan.parameter_targets().len(), 5 * 4);
-    assert_eq!(plan.parameter_addresses().len(), 5);
+    // Parameter rows: frequency and amplitude on the sine; gate, velocity, velocity
+    // sensitivity, attack, decay, sustain and release on the envelope (`P07-S002`) — nine
+    // controls, four rows each, nine addresses.
+    assert_eq!(plan.parameter_targets().len(), 9 * 4);
+    assert_eq!(plan.parameter_addresses().len(), 9);
     assert!(
         plan.parameter_targets()
             .iter()

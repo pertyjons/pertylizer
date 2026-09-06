@@ -547,6 +547,18 @@ pub mod parameters {
     pub const ENVELOPE_VELOCITY: ParameterId = ParameterId::new(3);
     /// The envelope's velocity sensitivity (ADR-0059).
     pub const ENVELOPE_VELOCITY_SENSITIVITY: ParameterId = ParameterId::new(4);
+    /// The envelope's attack in seconds; quantum-rate (`P07-S002`).
+    pub const ENVELOPE_ATTACK: ParameterId = ParameterId::new(5);
+    /// The envelope's decay in seconds.
+    pub const ENVELOPE_DECAY: ParameterId = ParameterId::new(6);
+    /// The envelope's sustain level.
+    pub const ENVELOPE_SUSTAIN: ParameterId = ParameterId::new(7);
+    /// The envelope's release in seconds.
+    pub const ENVELOPE_RELEASE: ParameterId = ParameterId::new(8);
+    /// The low-pass filter's corner frequency in hertz; quantum-rate (`P07-S002`).
+    pub const FILTER_CUTOFF: ParameterId = ParameterId::new(0);
+    /// The low-pass filter's quality factor.
+    pub const FILTER_RESONANCE: ParameterId = ParameterId::new(1);
     /// The velocity scaler's velocity destination (ADR-0059).
     pub const VELOCITY_SCALER_VELOCITY: ParameterId = ParameterId::new(0);
     /// The velocity scaler's sensitivity (ADR-0059).

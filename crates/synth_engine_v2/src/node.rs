@@ -77,6 +77,12 @@ pub enum ParameterUnit {
     /// reads is exactly zero or exactly one, and its own test — above zero — agrees with
     /// the law's threshold on every value the slot can hand it.
     Gate,
+    /// A filter's quality factor; any finite value, and the kernel holds its coefficients
+    /// where one is not above zero (`P07-S002`).
+    QualityFactor,
+    /// A duration in seconds; held at or above zero by the slot, since a segment cannot last
+    /// a negative time (`P07-S002`).
+    Seconds,
 }
 
 /// How long a parameter takes to reach a new resolved value — `SOUND-INV-024`'s
@@ -85,9 +91,11 @@ pub enum ParameterUnit {
 /// ADR-0006 decides the ramp's shape and leaves its duration to the declaration. The policy
 /// is `None` for a gate and for every `ControlRate::Sample` destination, whose timing
 /// `SOUND-INV-016` owns; `a_sample_positioned_control_declares_no_smoothing` holds every
-/// declaration to that. No declared parameter smooths yet: an oscillator's amplitude is the
-/// one quantum-rate control, and whether it de-zippers over a quantum as V1's level does is
-/// a delivered-behaviour decision the `SOUND-INV-024` conformance row records as open.
+/// declaration to that. No declared parameter smooths yet: whether an oscillator's amplitude
+/// de-zippers over a quantum as V1's level does is a delivered-behaviour decision the
+/// `SOUND-INV-024` conformance row records as open (`P05-R001`), and the filter's corner and
+/// quality and the envelope's times and sustain, quantum-rate since `P07-S002a`, are likewise
+/// unsmoothed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Smoothing {
     /// A step: the new value is read on its first frame.
@@ -253,6 +261,10 @@ pub enum ParameterDefault {
     NormalizedLevel(crate::quantities::NormalizedLevel),
     /// A gate value: zero or below released, above zero held.
     Gate(crate::quantities::ParameterValue),
+    /// A filter's quality factor.
+    QualityFactor(crate::quantities::Resonance),
+    /// A duration in seconds.
+    Seconds(crate::quantities::Seconds),
 }
 
 impl ParameterDefault {
@@ -264,6 +276,8 @@ impl ParameterDefault {
             Self::LinearAmplitude(_) => ParameterUnit::LinearAmplitude,
             Self::NormalizedLevel(_) => ParameterUnit::NormalizedLevel,
             Self::Gate(_) => ParameterUnit::Gate,
+            Self::QualityFactor(_) => ParameterUnit::QualityFactor,
+            Self::Seconds(_) => ParameterUnit::Seconds,
         }
     }
 
@@ -275,6 +289,8 @@ impl ParameterDefault {
             Self::LinearAmplitude(value) => value.as_f32(),
             Self::NormalizedLevel(value) => value.as_f32(),
             Self::Gate(value) => value.as_f32(),
+            Self::QualityFactor(value) => value.as_f32(),
+            Self::Seconds(value) => value.as_f32(),
         }
     }
 
@@ -288,6 +304,8 @@ impl ParameterDefault {
             }
             Self::NormalizedLevel(value) => crate::quantities::ParameterValue::from_level(value),
             Self::Gate(value) => value,
+            Self::QualityFactor(value) => crate::quantities::ParameterValue::from_resonance(value),
+            Self::Seconds(value) => crate::quantities::ParameterValue::from_seconds(value),
         }
     }
 }
@@ -612,30 +630,28 @@ fn prepare_envelope(
     else {
         return Err(declared_for_another_kind(node));
     };
-    // Each segment as the frames it lasts. The level a segment moves *through* is not
-    // prepared, because it is not known until the segment starts: a note let go during
-    // its attack releases from wherever it had reached.
-    let mut frames = [SegmentFrames::NONE; 3];
-    for (slot, duration) in frames.iter_mut().zip([attack, decay, release]) {
-        match frames_in(duration, rate) {
-            Some(count) => *slot = count,
-            None => {
-                return Err(CompileError::NodeNotPreparable {
-                    node,
-                    fault: PreparationFault::SegmentTooLong {
-                        duration,
-                        limit: u32::MAX,
-                    },
-                });
-            }
+    // Each authored segment has to be a frame count the counter holds, which is where a
+    // plan is refused rather than given a segment that never advances. The frames
+    // themselves are derived by the kernel where a segment starts, from the duration its
+    // slot holds at that frame (`P07-S002`), by the same arithmetic.
+    for duration in [attack, decay, release] {
+        if frames_in(duration, rate).is_none() {
+            return Err(CompileError::NodeNotPreparable {
+                node,
+                fault: PreparationFault::SegmentTooLong {
+                    duration,
+                    limit: u32::MAX,
+                },
+            });
         }
     }
     Ok(PreparedNode::Envelope {
-        attack_frames: frames[0],
-        decay_frames: frames[1],
-        release_frames: frames[2],
+        attack,
+        decay,
+        release,
         sustain,
         velocity_sensitivity,
+        rate: f64::from(rate.as_f32()),
     })
 }
 
@@ -979,17 +995,62 @@ pub(crate) static ENVELOPE: NodeDeclaration = NodeDeclaration {
             rate: ControlRate::Quantum,
             magnitude: None,
         },
+        // `P07-S002`: the segment times and the sustain level as addressable, quantum-rate
+        // controls — V1's automation targets. A time is read where its segment starts, the
+        // sustain where it is held; each is the physical-additive law over seconds or the
+        // normalized law over a level.
+        ControlSpec {
+            parameter: parameters::ENVELOPE_ATTACK,
+            name: "attack",
+            default: ParameterDefault::Seconds(Seconds::ZERO),
+            law: ModulationLaw::PhysicalLinearAdditive,
+            smoothing: Smoothing::None,
+            control: kernels::ENVELOPE_ATTACK,
+            rate: ControlRate::Quantum,
+            magnitude: None,
+        },
+        ControlSpec {
+            parameter: parameters::ENVELOPE_DECAY,
+            name: "decay",
+            default: ParameterDefault::Seconds(Seconds::ZERO),
+            law: ModulationLaw::PhysicalLinearAdditive,
+            smoothing: Smoothing::None,
+            control: kernels::ENVELOPE_DECAY,
+            rate: ControlRate::Quantum,
+            magnitude: None,
+        },
+        ControlSpec {
+            parameter: parameters::ENVELOPE_SUSTAIN,
+            name: "sustain",
+            default: ParameterDefault::NormalizedLevel(crate::quantities::NormalizedLevel::FULL),
+            law: ModulationLaw::NormalizedAdditive,
+            smoothing: Smoothing::None,
+            control: kernels::ENVELOPE_SUSTAIN,
+            rate: ControlRate::Quantum,
+            magnitude: None,
+        },
+        ControlSpec {
+            parameter: parameters::ENVELOPE_RELEASE,
+            name: "release",
+            default: ParameterDefault::Seconds(Seconds::ZERO),
+            law: ModulationLaw::PhysicalLinearAdditive,
+            smoothing: Smoothing::None,
+            control: kernels::ENVELOPE_RELEASE,
+            rate: ControlRate::Quantum,
+            magnitude: None,
+        },
     ],
     in_place_safe: false,
     note_control: Some(kernels::ENVELOPE_GATE),
     taps: &[],
     prepare: prepare_envelope,
     prepared_bytes: size_of::<(
-        SegmentFrames,
-        SegmentFrames,
-        SegmentFrames,
+        Seconds,
+        Seconds,
+        Seconds,
         NormalizedLevel,
         NormalizedLevel,
+        f64,
     )>() as u64,
     state_bytes: size_of::<(
         kernels::Segment,
@@ -1201,13 +1262,39 @@ pub(crate) static FILTER: NodeDeclaration = NodeDeclaration {
     name: "low-pass filter",
     kernel: kernels::FILTER,
     ports: &[AUDIO_IN, AUDIO_OUT],
-    controls: &[],
+    // `P07-S002`: the corner and the quality as addressable, quantum-rate controls — V1's
+    // `FilterCutoff` and `FilterResonance` targets. The corner is a frequency under the
+    // semitone law, as V1 modulates it; the quality is its own unit under the physical law.
+    // The kernel re-derives its coefficients where the pair moves and holds them where the
+    // pair has no usable filter.
+    controls: &[
+        ControlSpec {
+            parameter: parameters::FILTER_CUTOFF,
+            name: "cutoff",
+            default: ParameterDefault::Hertz(crate::quantities::Frequency::A4),
+            law: ModulationLaw::SemitoneAdditive,
+            smoothing: Smoothing::None,
+            control: kernels::FILTER_CUTOFF,
+            rate: ControlRate::Quantum,
+            magnitude: None,
+        },
+        ControlSpec {
+            parameter: parameters::FILTER_RESONANCE,
+            name: "resonance",
+            default: ParameterDefault::QualityFactor(Resonance::BUTTERWORTH),
+            law: ModulationLaw::PhysicalLinearAdditive,
+            smoothing: Smoothing::None,
+            control: kernels::FILTER_RESONANCE,
+            rate: ControlRate::Quantum,
+            magnitude: None,
+        },
+    ],
     in_place_safe: true,
     note_control: None,
     taps: &[],
     prepare: prepare_filter,
-    prepared_bytes: size_of::<[f32; 3]>() as u64,
-    state_bytes: size_of::<(f32, f32)>() as u64,
+    prepared_bytes: size_of::<([f32; 3], CutoffFrequency, Resonance, f64)>() as u64,
+    state_bytes: size_of::<(f32, f32, f32, f32, [f32; 3])>() as u64,
 };
 
 /// Every declaration, for the surfaces that walk kinds rather than resolve one.
@@ -1665,10 +1752,11 @@ fn low_pass(
         });
     }
 
-    let g = (std::f64::consts::PI * f64::from(cutoff.as_f32()) / f64::from(rate.as_f32())).tan();
-    let damping = 1.0 / f64::from(resonance.as_f32());
-    let first = 1.0 / (1.0 + g * (g + damping));
-    let integrator = [first as f32, (g * first) as f32, (g * g * first) as f32];
+    let integrator = kernels::low_pass_coefficients(
+        f64::from(cutoff.as_f32()),
+        f64::from(resonance.as_f32()),
+        f64::from(rate.as_f32()),
+    );
 
     // The **derived** values are what the kernel reads, so they are what is checked, and
     // the check is what the form makes possible: this filter's gain at DC is one by
@@ -1683,9 +1771,7 @@ fn low_pass(
     // several of the processors this runs on. Exact zero stays legal for the last
     // coefficient, which is `g²` scaled and is genuinely zero for a corner frequency
     // near the bottom of the range.
-    let representable = |value: f32| value == 0.0 || value.is_normal();
-    let usable = integrator.iter().copied().all(representable) && integrator[1].is_normal();
-    if !usable {
+    if !kernels::coefficients_representable(integrator) {
         return Err(CompileError::NodeNotPreparable {
             node,
             fault: PreparationFault::CoefficientsUnusable { cutoff, resonance },
@@ -1700,21 +1786,19 @@ fn low_pass(
     // when the determinant is below one and the trace is inside `1 + determinant`. A
     // quality factor in the tens of millions rounds `a1` up far enough to fail it, after
     // which an impulse response climbs for as long as the stream runs.
-    let (first, second, third) = (
-        f64::from(integrator[0]),
-        f64::from(integrator[1]),
-        f64::from(integrator[2]),
-    );
-    let trace = 2.0 * first - 2.0 * third;
-    let determinant = (2.0 * first - 1.0) * (1.0 - 2.0 * third) + 4.0 * second * second;
-    if determinant >= 1.0 || trace.abs() >= 1.0 + determinant {
+    if !kernels::coefficients_stable(integrator) {
         return Err(CompileError::NodeNotPreparable {
             node,
             fault: PreparationFault::CoefficientsUnstable { cutoff, resonance },
         });
     }
 
-    Ok(PreparedNode::Filter { integrator })
+    Ok(PreparedNode::Filter {
+        integrator,
+        cutoff,
+        resonance,
+        rate: f64::from(rate.as_f32()),
+    })
 }
 
 /// The prepared data the compiler's copy operation carries.
@@ -2291,6 +2375,9 @@ mod tests {
                     ParameterUnit::LinearAmplitude => ModulationLaw::DecibelAdditive,
                     ParameterUnit::NormalizedLevel => ModulationLaw::NormalizedAdditive,
                     ParameterUnit::Gate => ModulationLaw::ThresholdedBoolean,
+                    ParameterUnit::QualityFactor | ParameterUnit::Seconds => {
+                        ModulationLaw::PhysicalLinearAdditive
+                    }
                 };
                 assert_eq!(
                     spec.law,

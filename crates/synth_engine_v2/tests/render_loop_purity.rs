@@ -561,6 +561,16 @@ fn every_call_the_render_loop_makes_is_inside_the_checked_region() {
         "count_note_outside_zone",
         "floor",
         "sin",
+        // `P07-S002`: the filter re-derives its coefficients where its corner or quality
+        // moves — `f64::tan` and `f32::is_normal`, both pure — and the envelope converts a
+        // duration to frames where a segment starts, with `f64::round`. None allocates,
+        // locks or panics.
+        "tan",
+        "is_normal",
+        "round",
+        // `Iterator::all` over a three-element array of coefficients, in the representability
+        // check the kernel shares with preparation: three comparisons, no allocation.
+        "all",
         // `f64::is_finite` is one exponent comparison and compiles to a bit test. The
         // sawtooth's band-limiting residual uses it to refuse a step it cannot place in its
         // domain, which is the alternative to a negated partial-order comparison that reads

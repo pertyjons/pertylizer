@@ -1057,3 +1057,406 @@ fn the_lfo_is_discoverable_with_its_two_quantum_rate_controls() {
     assert_eq!(entry.ports.len(), 1);
     assert_eq!(entry.ports[0].domain, SignalDomain::Control);
 }
+
+// --- `P07-S002a`: the filter's and the envelope's controls ---------------------------------
+
+const FILTER: NodeId = NodeId::new(40);
+const CUTOFF: f32 = 1_000.0;
+
+/// A sawtooth into a low-pass into the output, all in one scope, with an LFO and the edges
+/// given: a shape with harmonics for the corner to act on.
+fn filtered(
+    lfos: &[(NodeId, IrNodeKind)],
+    edges: &[(NodeId, synth_engine_v2::ir::ParameterId, ModulationDepth)],
+) -> GraphIr {
+    let mut builder = GraphIr::builder()
+        .node(
+            SOURCE,
+            IrNodeKind::Saw {
+                frequency: hz(110.0),
+                amplitude: Amplitude::new(PEAK).expect("finite"),
+            },
+            ExecutionScope::Global,
+        )
+        .node(
+            FILTER,
+            IrNodeKind::Filter {
+                cutoff: synth_engine_v2::quantities::CutoffFrequency::new(CUTOFF)
+                    .expect("positive"),
+                resonance: synth_engine_v2::quantities::Resonance::BUTTERWORTH,
+            },
+            ExecutionScope::Global,
+        )
+        .node(OUTPUT, IrNodeKind::Output, ExecutionScope::Global)
+        .connect(
+            (SOURCE, PortId::FIRST),
+            (FILTER, PortId::FIRST),
+            SignalDomain::Audio,
+        )
+        .connect(
+            (FILTER, PortId::FIRST),
+            (OUTPUT, PortId::FIRST),
+            SignalDomain::Audio,
+        );
+    for (id, kind) in lfos {
+        builder = builder.node(*id, *kind, ExecutionScope::Global);
+    }
+    for (source, parameter, depth) in edges {
+        builder = builder.modulate((*source, PortId::FIRST), (FILTER, *parameter), *depth);
+    }
+    builder.build().expect("a readable plan")
+}
+
+/// The filtered sawtooth alone, driven by one quantum-rate write per boundary on `parameter`
+/// carrying `value_at(q)`.
+fn driven_filter(
+    parameter: synth_engine_v2::ir::ParameterId,
+    value_at: impl Fn(u64) -> f32,
+) -> Vec<f32> {
+    let plan = admit(&filtered(&[], &[]));
+    let slot = plan
+        .resolve_parameter(FILTER, parameter)
+        .expect("the filter declares it");
+    let events: Vec<OfflineEvent> = (0..QUANTA)
+        .map(|q| {
+            OfflineEvent::new(
+                SampleTime::new(q * Q),
+                CompiledPayload::SetParameter {
+                    slot,
+                    value: ParameterValue::new(value_at(q)).expect("finite"),
+                },
+            )
+        })
+        .collect();
+    render(&plan, &events)
+}
+
+#[test]
+fn an_lfo_on_the_filters_cutoff_is_the_filter_driven_by_the_composed_corner_at_each_boundary() {
+    // The corner is quantum-rate under the semitone law: the kernel re-derives its
+    // coefficients at the first frame of every quantum the corner moves, and the oracle is
+    // the filter alone written the composed corner at every boundary.
+    let modulator = lfo(LfoWaveform::Sine, 3.0);
+    let plan = admit(&filtered(
+        &[(LFO, modulator)],
+        &[(LFO, parameters::FILTER_CUTOFF, semitones(24.0))],
+    ));
+    let wave = read_lfo(modulator);
+    let swept = render(&plan, &[]);
+    let driven = driven_filter(parameters::FILTER_CUTOFF, |q| {
+        composed_frequency(CUTOFF, 24.0 * wave[(q * Q) as usize])
+    });
+    assert_eq!(bits(&swept), bits(&driven));
+    let still = render(&admit(&filtered(&[], &[])), &[]);
+    assert_ne!(
+        bits(&swept),
+        bits(&still),
+        "two octaves of sweep changed nothing"
+    );
+    assert!(still.iter().any(|sample| sample.abs() > 0.05));
+}
+
+#[test]
+fn an_lfo_on_the_filters_resonance_is_the_filter_driven_by_the_composed_quality() {
+    // A triangle started a quarter turn in, so it rises from zero through the render and the
+    // quality moves from its authored value upward rather than below zero, where it is held.
+    let modulator = IrNodeKind::Lfo {
+        waveform: LfoWaveform::Triangle,
+        rate: hz(2.0),
+        depth: NormalizedLevel::FULL,
+        phase_offset: PhaseOffset::new(0.25).expect("in range"),
+        polarity: LfoPolarity::Bipolar,
+    };
+    let plan = admit(&filtered(
+        &[(LFO, modulator)],
+        &[(
+            LFO,
+            parameters::FILTER_RESONANCE,
+            depth(ModulationUnit::Physical, 4.0),
+        )],
+    ));
+    let wave = read_lfo(modulator);
+    let swept = render(&plan, &[]);
+    let base = synth_engine_v2::quantities::Resonance::BUTTERWORTH.as_f32();
+    let driven = driven_filter(parameters::FILTER_RESONANCE, |q| {
+        base + 4.0 * wave[(q * Q) as usize]
+    });
+    assert_eq!(bits(&swept), bits(&driven));
+    assert_ne!(
+        bits(&swept),
+        bits(&render(&admit(&filtered(&[], &[])), &[])),
+        "the quality's sweep changed nothing"
+    );
+}
+
+#[test]
+fn a_corner_with_no_usable_filter_holds_the_coefficients_in_force() {
+    // Two hundred semitones on a kilohertz is far past Nyquist, and a quality moved below
+    // zero has no filter: the kernel keeps the coefficients it had, so the render is the
+    // unmodulated filter's, bit for bit, rather than a filter nobody asked for or a `NaN`.
+    let still = render(&admit(&filtered(&[], &[])), &[]);
+    let constant = IrNodeKind::Lfo {
+        waveform: LfoWaveform::Sine,
+        rate: hz(0.0),
+        depth: NormalizedLevel::FULL,
+        phase_offset: PhaseOffset::new(0.25).expect("in range"),
+        polarity: LfoPolarity::Bipolar,
+    };
+    let past_nyquist = admit(&filtered(
+        &[(LFO, constant)],
+        &[(LFO, parameters::FILTER_CUTOFF, semitones(200.0))],
+    ));
+    assert_eq!(bits(&render(&past_nyquist, &[])), bits(&still));
+    let below_zero = admit(&filtered(
+        &[(LFO, constant)],
+        &[(
+            LFO,
+            parameters::FILTER_RESONANCE,
+            depth(ModulationUnit::Physical, -5.0),
+        )],
+    ));
+    assert_eq!(bits(&render(&below_zero, &[])), bits(&still));
+    // A corner near Nyquist with a quality in the tens of millions passes the range tests
+    // and fails Jury's criterion on the rounded coefficients, which preparation refuses as
+    // unstable; the kernel holds. Both edges move from the first quantum, so the pair is
+    // never usable and the unmodulated coefficients stand throughout.
+    let unstable = admit(&filtered(
+        &[(LFO, constant)],
+        &[
+            (LFO, parameters::FILTER_CUTOFF, semitones(52.0)),
+            (
+                LFO,
+                parameters::FILTER_RESONANCE,
+                depth(ModulationUnit::Physical, 5.4e7),
+            ),
+        ],
+    ));
+    assert_eq!(bits(&render(&unstable, &[])), bits(&still));
+    // The same corner at the authored quality is usable, so the hold was the quality's.
+    let near_nyquist = admit(&filtered(
+        &[(LFO, constant)],
+        &[(LFO, parameters::FILTER_CUTOFF, semitones(52.0))],
+    ));
+    assert_ne!(bits(&render(&near_nyquist, &[])), bits(&still));
+    assert!(
+        render(&past_nyquist, &[])
+            .iter()
+            .all(|sample| sample.is_finite())
+    );
+}
+
+/// A played voice — sine, envelope, amplifier — with an LFO and the edges given into the
+/// envelope, one compiled voice, twelve-tone tuning.
+fn played_envelope(
+    attack: f32,
+    lfos: &[(NodeId, IrNodeKind)],
+    edges: &[(NodeId, synth_engine_v2::ir::ParameterId, ModulationDepth)],
+) -> CompiledPlan {
+    let mut builder = GraphIr::builder()
+        .node(SOURCE, sine(), ExecutionScope::Voice)
+        .node(
+            ENVELOPE,
+            IrNodeKind::Envelope {
+                attack: Seconds::new(attack).expect("finite"),
+                decay: Seconds::new(0.005).expect("finite"),
+                sustain: NormalizedLevel::new(0.5).expect("in range"),
+                release: Seconds::new(0.01).expect("finite"),
+                velocity_sensitivity: NormalizedLevel::FULL,
+            },
+            ExecutionScope::Voice,
+        )
+        .node(AMPLIFIER, IrNodeKind::Amplifier, ExecutionScope::Voice)
+        .node(OUTPUT, IrNodeKind::Output, ExecutionScope::Global)
+        .connect(
+            (SOURCE, PortId::FIRST),
+            (AMPLIFIER, PortId::FIRST),
+            SignalDomain::Audio,
+        )
+        .connect(
+            (ENVELOPE, PortId::FIRST),
+            (AMPLIFIER, AMPLIFIER_CONTROL),
+            SignalDomain::Control,
+        )
+        .connect(
+            (AMPLIFIER, PortId::FIRST),
+            (OUTPUT, PortId::FIRST),
+            SignalDomain::Audio,
+        )
+        .tuning(ExecutionScope::Voice, common::twelve_tet())
+        .declaring(common::compiled_notes(1));
+    for (id, kind) in lfos {
+        builder = builder.node(*id, *kind, ExecutionScope::InstrumentInstance);
+    }
+    for (source, parameter, depth) in edges {
+        builder = builder.modulate((*source, PortId::FIRST), (ENVELOPE, *parameter), *depth);
+    }
+    admit(&builder.build().expect("a readable plan"))
+}
+
+/// Three notes across the render, each held fourteen quanta, as offline events.
+///
+/// Fourteen quanta is 896 frames: past the longest attack the tests modulate (nine
+/// milliseconds, 432 frames) plus the five-millisecond decay (240), so every note reaches
+/// its sustain and holds it before the release — an independent read found the notes
+/// released mid-decay, with the sustain never held.
+fn three_notes(plan: &CompiledPlan) -> Vec<OfflineEvent> {
+    let slot = plan
+        .resolve_note(ENVELOPE)
+        .expect("the envelope is playable");
+    let mut events = Vec::new();
+    for start in [2_u64, 20, 40] {
+        events.push(OfflineEvent::new(
+            SampleTime::new(start * Q + 7),
+            CompiledPayload::NoteOn {
+                slot,
+                key: common::any_key(),
+                velocity: synth_engine_v2::quantities::NoteVelocity::FULL,
+            },
+        ));
+        events.push(OfflineEvent::new(
+            SampleTime::new((start + 14) * Q + 7),
+            CompiledPayload::NoteOff {
+                slot,
+                key: common::any_key(),
+            },
+        ));
+    }
+    events
+}
+
+#[test]
+fn an_lfo_on_the_envelopes_attack_and_sustain_is_the_envelope_driven_at_each_boundary() {
+    // The attack is read where a gate rises, the sustain where it is held; both are
+    // quantum-rate under the physical and the normalized law. The oracle is the same voice
+    // written the composed values at every boundary, playing the same three notes.
+    let modulator = lfo(LfoWaveform::Sine, 0.7);
+    let plan = played_envelope(
+        0.005,
+        &[(LFO, modulator)],
+        &[
+            (
+                LFO,
+                parameters::ENVELOPE_ATTACK,
+                depth(ModulationUnit::Physical, 0.004),
+            ),
+            (
+                LFO,
+                parameters::ENVELOPE_SUSTAIN,
+                depth(ModulationUnit::Normalized, 0.4),
+            ),
+        ],
+    );
+    let wave = read_lfo(modulator);
+    let shaped = render(&plan, &three_notes(&plan));
+
+    let alone = played_envelope(0.005, &[], &[]);
+    let attack = alone
+        .resolve_parameter(ENVELOPE, parameters::ENVELOPE_ATTACK)
+        .expect("declared");
+    let sustain = alone
+        .resolve_parameter(ENVELOPE, parameters::ENVELOPE_SUSTAIN)
+        .expect("declared");
+    let mut events = three_notes(&alone);
+    for q in 0..QUANTA {
+        let v = wave[(q * Q) as usize];
+        events.push(OfflineEvent::new(
+            SampleTime::new(q * Q),
+            CompiledPayload::SetParameter {
+                slot: attack,
+                value: ParameterValue::new(0.005 + 0.004 * v).expect("finite"),
+            },
+        ));
+        events.push(OfflineEvent::new(
+            SampleTime::new(q * Q),
+            CompiledPayload::SetParameter {
+                slot: sustain,
+                value: ParameterValue::new((0.5_f32 + 0.4 * v).clamp(0.0, 1.0)).expect("finite"),
+            },
+        ));
+    }
+    events.sort_by_key(|event| event.time());
+    let driven = render(&alone, &events);
+    assert_eq!(bits(&shaped), bits(&driven));
+    assert_ne!(
+        bits(&shaped),
+        bits(&render(&alone, &three_notes(&alone))),
+        "the modulation changed nothing"
+    );
+    assert!(shaped.iter().any(|sample| sample.abs() > 0.1));
+    // Each control on its own moves the render, so neither could be ignored behind the other.
+    for (parameter, unit, amount) in [
+        (parameters::ENVELOPE_ATTACK, ModulationUnit::Physical, 0.004),
+        (
+            parameters::ENVELOPE_SUSTAIN,
+            ModulationUnit::Normalized,
+            0.4,
+        ),
+    ] {
+        let one = played_envelope(
+            0.005,
+            &[(LFO, modulator)],
+            &[(LFO, parameter, depth(unit, amount))],
+        );
+        assert_ne!(
+            bits(&render(&one, &three_notes(&one))),
+            bits(&render(&alone, &three_notes(&alone))),
+            "{parameter:?} changed nothing"
+        );
+    }
+}
+
+#[test]
+fn a_duration_moved_below_zero_is_an_instant_segment() {
+    // The slot holds a duration at or above zero: an attack of fifty milliseconds moved by
+    // minus one second is the instant attack, bit for bit.
+    let constant = IrNodeKind::Lfo {
+        waveform: LfoWaveform::Sine,
+        rate: hz(0.0),
+        depth: NormalizedLevel::FULL,
+        phase_offset: PhaseOffset::new(0.25).expect("in range"),
+        polarity: LfoPolarity::Bipolar,
+    };
+    let negative = played_envelope(
+        0.05,
+        &[(LFO, constant)],
+        &[(
+            LFO,
+            parameters::ENVELOPE_ATTACK,
+            depth(ModulationUnit::Physical, -1.0),
+        )],
+    );
+    let instant = played_envelope(0.0, &[], &[]);
+    assert_eq!(
+        bits(&render(&negative, &three_notes(&negative))),
+        bits(&render(&instant, &three_notes(&instant)))
+    );
+}
+
+#[test]
+fn the_filter_and_the_envelope_are_discoverable_with_their_new_controls() {
+    use synth_engine_v2::node::{NodeKindId, catalog};
+    let entries = catalog();
+    let filter = entries
+        .iter()
+        .find(|entry| entry.id == NodeKindId::Filter)
+        .expect("discoverable");
+    let names: Vec<&str> = filter.parameters.iter().map(|p| p.name).collect();
+    assert_eq!(names, ["cutoff", "resonance"]);
+    let envelope = entries
+        .iter()
+        .find(|entry| entry.id == NodeKindId::Envelope)
+        .expect("discoverable");
+    let names: Vec<&str> = envelope.parameters.iter().map(|p| p.name).collect();
+    assert_eq!(
+        names,
+        [
+            "gate",
+            "velocity",
+            "velocity_sensitivity",
+            "attack",
+            "decay",
+            "sustain",
+            "release"
+        ]
+    );
+}

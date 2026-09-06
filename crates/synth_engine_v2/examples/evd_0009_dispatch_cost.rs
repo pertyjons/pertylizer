@@ -662,7 +662,7 @@ impl Fused {
             integrator: [0.0; 3],
         };
         for prepared in plan.prepared_nodes() {
-            if let PreparedNode::Filter { integrator } = prepared {
+            if let PreparedNode::Filter { integrator, .. } = prepared {
                 fused.integrator = *integrator;
             }
         }

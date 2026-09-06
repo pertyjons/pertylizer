@@ -23,8 +23,8 @@
 
 use crate::plan::{BufferRegion, InputBinding, NodeStep, SampleSlot};
 use crate::quantities::{
-    Amplitude, ChannelLayout, Frequency, GainFactor, KeyIdentity, NormalizedLevel, NoteVelocity,
-    ParameterValue, SegmentFrames,
+    Amplitude, ChannelLayout, CutoffFrequency, Frequency, GainFactor, KeyIdentity, NormalizedLevel,
+    NoteVelocity, ParameterValue, Resonance, Seconds, SegmentFrames,
 };
 use crate::sample::{
     KeyRange, LoopRegion, PlayMode, PlaybackRegion, PreparedSample, SUSTAIN_FADE_FRAMES,
@@ -202,24 +202,25 @@ pub enum PreparedNode {
     /// still releasing ramps from where it is, over its authored attack, with no click
     /// and no shortened segment.
     Envelope {
-        /// How many frames an attack lasts.
+        /// The authored attack, the base its slot starts from (`P07-S002`).
         ///
-        /// Its own type rather than [`crate::time::FrameCount`]: that one is a position
-        /// or a span on the stream's timeline, in `u64`, and a segment length is
-        /// neither.
-        attack_frames: SegmentFrames,
-        /// How many frames a decay lasts.
-        decay_frames: SegmentFrames,
-        /// How many frames a release lasts.
-        release_frames: SegmentFrames,
-        /// The level a held gate settles at.
+        /// Seconds rather than frames since the times became controls: the kernel reads a
+        /// duration per frame from its slot and converts it where a segment starts, by
+        /// the arithmetic preparation used to refuse an authored duration no counter holds.
+        attack: Seconds,
+        /// The authored decay.
+        decay: Seconds,
+        /// The authored release.
+        release: Seconds,
+        /// The level a held gate settles at, the base its slot starts from.
         ///
-        /// Still the validated type: it is the one authored value that survives
-        /// preparation unchanged, and a raw `f32` here would let a prepared record carry
-        /// a sustain the IR would have refused.
+        /// Still the validated type: a raw `f32` here would let a prepared record carry a
+        /// sustain the IR would have refused.
         sustain: NormalizedLevel,
         /// The authored velocity sensitivity, the base its slot starts from (ADR-0059).
         velocity_sensitivity: NormalizedLevel,
+        /// The stream's rate, as the frame conversion multiplies by it.
+        rate: f64,
     },
     /// A one-zone sampler's zone, resolved against the plan (ADR-0026).
     ///
@@ -281,12 +282,18 @@ pub enum PreparedNode {
     /// responses agreeing to 0.068 dB across six octave bands. Nothing is shared, and a
     /// fix to one does not reach the other.
     Filter {
-        /// The three derived integrator coefficients.
+        /// The three derived integrator coefficients for the authored corner and quality,
+        /// what the state starts with and what an unmodulated filter reads throughout.
         ///
         /// The damping the quality factor implies is *inside* them; a low-pass output
-        /// never reads it separately, and carrying it as well would be prepared data no
-        /// kernel touches.
+        /// never reads it separately.
         integrator: [f32; 3],
+        /// The authored corner frequency, the base its slot starts from (`P07-S002`).
+        cutoff: CutoffFrequency,
+        /// The authored quality factor, the base its slot starts from.
+        resonance: Resonance,
+        /// The stream's rate, for the coefficients a moved corner or quality needs.
+        rate: f64,
     },
     /// One audio input scaled by one control input. It carries nothing of its own.
     Amplifier,
@@ -406,6 +413,14 @@ pub enum NodeState {
         band: f32,
         /// The low-pass integrator.
         low: f32,
+        /// The corner frequency last read from its slot (`P07-S002`): a pair equal to the
+        /// last one read re-derives nothing.
+        cutoff: f32,
+        /// The quality factor last read from its slot.
+        resonance: f32,
+        /// The coefficients in force: those of the last **usable** pair read, which is the
+        /// pair above except where that pair had no usable filter and these were held.
+        integrator: [f32; 3],
     },
     /// A phase accumulator and the sample-positioned frequency.
     ///
@@ -470,9 +485,17 @@ impl NodeState {
                 phase: 0.0,
                 frequency: *frequency,
             },
-            PreparedNode::Filter { .. } => Self::Filter {
+            PreparedNode::Filter {
+                integrator,
+                cutoff,
+                resonance,
+                ..
+            } => Self::Filter {
                 band: 0.0,
                 low: 0.0,
+                cutoff: cutoff.as_f32(),
+                resonance: resonance.as_f32(),
+                integrator: *integrator,
             },
             PreparedNode::Envelope { .. } => Self::Envelope {
                 segment: Segment::Idle,
@@ -583,12 +606,27 @@ pub(crate) fn authored_value(
             _ => None,
         },
         PreparedNode::Envelope {
+            attack,
+            decay,
+            release,
+            sustain,
             velocity_sensitivity,
             ..
         } => match control {
             ENVELOPE_VELOCITY_SENSITIVITY => {
                 Some(ParameterValue::from_level(*velocity_sensitivity))
             }
+            ENVELOPE_ATTACK => Some(ParameterValue::saturating(attack.as_f32())),
+            ENVELOPE_DECAY => Some(ParameterValue::saturating(decay.as_f32())),
+            ENVELOPE_SUSTAIN => Some(ParameterValue::from_level(*sustain)),
+            ENVELOPE_RELEASE => Some(ParameterValue::saturating(release.as_f32())),
+            _ => None,
+        },
+        PreparedNode::Filter {
+            cutoff, resonance, ..
+        } => match control {
+            FILTER_CUTOFF => Some(ParameterValue::saturating(cutoff.as_f32())),
+            FILTER_RESONANCE => Some(ParameterValue::saturating(resonance.as_f32())),
             _ => None,
         },
         PreparedNode::VelocityScaler { sensitivity } => match control {
@@ -613,7 +651,6 @@ pub(crate) fn authored_value(
         | PreparedNode::Constant { .. }
         | PreparedNode::Impulse { .. }
         | PreparedNode::Gain { .. }
-        | PreparedNode::Filter { .. }
         | PreparedNode::Amplifier
         | PreparedNode::Copy => None,
     }
@@ -670,6 +707,18 @@ pub const ENVELOPE_VELOCITY: ControlIndex = ControlIndex::new(1);
 /// The envelope's velocity sensitivity, `s` in V1's `1 − s × (1 − v)` (ADR-0059): a
 /// quantum-rate control, read per frame from its slot's ramp.
 pub const ENVELOPE_VELOCITY_SENSITIVITY: ControlIndex = ControlIndex::new(2);
+/// The envelope's attack, in seconds; quantum-rate (`P07-S002`).
+pub const ENVELOPE_ATTACK: ControlIndex = ControlIndex::new(3);
+/// The envelope's decay, in seconds.
+pub const ENVELOPE_DECAY: ControlIndex = ControlIndex::new(4);
+/// The envelope's sustain level.
+pub const ENVELOPE_SUSTAIN: ControlIndex = ControlIndex::new(5);
+/// The envelope's release, in seconds.
+pub const ENVELOPE_RELEASE: ControlIndex = ControlIndex::new(6);
+/// The filter's corner frequency; quantum-rate (`P07-S002`).
+pub const FILTER_CUTOFF: ControlIndex = ControlIndex::new(0);
+/// The filter's quality factor.
+pub const FILTER_RESONANCE: ControlIndex = ControlIndex::new(1);
 
 /// The velocity scaler's velocity destination (ADR-0059): `SOUND-INV-021`'s second velocity
 /// write, held as a level like the envelope's.
@@ -1240,6 +1289,81 @@ pub fn gain(prepared: &PreparedNode, _state: &mut NodeState, io: &mut NodeIo<'_>
     }
 }
 
+/// How many frames `seconds` last at `rate`: rounded, and held to the counter's range.
+///
+/// The kernel's twin of preparation's `frames_in`, which **refuses** an authored duration
+/// no counter holds; here the value came through a slot and nothing can refuse, so the
+/// duration saturates to the longest segment the counter names. The product is the same
+/// `f64` arithmetic, so an unmodulated duration converts to exactly the frames preparation
+/// would have counted, and a decimal duration is not truncated one frame short.
+fn frames_of(seconds: f32, rate: f64) -> SegmentFrames {
+    let frames = (f64::from(seconds) * rate).round();
+    if frames.is_finite() && frames >= 0.0 && frames <= f64::from(u32::MAX) {
+        // Proven to fit: finite, non-negative and at most `u32::MAX` by the test above.
+        SegmentFrames::new(frames as u32)
+    } else {
+        SegmentFrames::new(u32::MAX)
+    }
+}
+
+/// The value a quantum-rate control holds at `frame`, or the authored base where the node
+/// was handed no buffer for it — a harness's shape, never the renderer's.
+fn control_at(ramp: &[f32], frame: usize, authored: f32) -> f32 {
+    ramp.get(frame).or(ramp.last()).copied().unwrap_or(authored)
+}
+
+/// The three integrator coefficients of a two-pole low-pass in the topology-preserving
+/// state-variable form: `g = tan(pi f / fs)`, a damping of `1/Q`, and the three that follow.
+///
+/// In `f64`, as preparation always derived them; the kernel calls this where a corner or a
+/// quality moves, and preparation where a plan is admitted, so an unmodulated filter and a
+/// modulated one standing at its authored values read the same coefficients.
+#[must_use]
+pub fn low_pass_coefficients(cutoff: f64, resonance: f64, rate: f64) -> [f32; 3] {
+    let g = (std::f64::consts::PI * cutoff / rate).tan();
+    let damping = 1.0 / resonance;
+    let first = 1.0 / (1.0 + g * (g + damping));
+    [first as f32, (g * first) as f32, (g * g * first) as f32]
+}
+
+/// Whether every coefficient is representable: zero or normal, and the middle one normal.
+///
+/// A subnormal coefficient has lost most of its significand and would stall the audio
+/// thread on processors without flush-to-zero; preparation refuses such a plan, and the
+/// kernel holds its previous coefficients where a moved value produces one.
+#[must_use]
+pub fn coefficients_representable(integrator: [f32; 3]) -> bool {
+    let representable = |value: f32| value == 0.0 || value.is_normal();
+    integrator.iter().copied().all(representable) && integrator[1].is_normal()
+}
+
+/// Whether the recurrence with these coefficients is stable, by Jury's criterion over the
+/// rounded values the kernel will multiply.
+#[must_use]
+pub fn coefficients_stable(integrator: [f32; 3]) -> bool {
+    let (first, second, third) = (
+        f64::from(integrator[0]),
+        f64::from(integrator[1]),
+        f64::from(integrator[2]),
+    );
+    let trace = 2.0 * first - 2.0 * third;
+    let determinant = (2.0 * first - 1.0) * (1.0 - 2.0 * third) + 4.0 * second * second;
+    determinant < 1.0 && trace.abs() < 1.0 + determinant
+}
+
+/// The coefficients for a corner and quality the slot handed the kernel, or `None` where
+/// the pair has no usable filter: a corner not above zero or at or above Nyquist, a quality
+/// not above zero, or coefficients preparation would have refused. The kernel then holds
+/// the coefficients in force rather than rendering a filter nobody asked for.
+fn usable_low_pass(cutoff: f64, resonance: f64, rate: f64) -> Option<[f32; 3]> {
+    if !(cutoff > 0.0 && cutoff < rate * 0.5 && resonance > 0.0) {
+        return None;
+    }
+    let integrator = low_pass_coefficients(cutoff, resonance, rate);
+    (coefficients_representable(integrator) && coefficients_stable(integrator))
+        .then_some(integrator)
+}
+
 /// The signed per-frame step and the frame count of one segment.
 ///
 /// `level = target + remaining * step` holds at every frame, so the level starts exactly
@@ -1261,10 +1385,11 @@ const fn ramp(from: f32, to: f32, frames: SegmentFrames) -> (f32, SegmentFrames)
 /// it named rather than on the quantum boundary that follows it.
 pub fn envelope(prepared: &PreparedNode, state: &mut NodeState, io: &mut NodeIo<'_>) {
     let PreparedNode::Envelope {
-        attack_frames,
-        decay_frames,
-        release_frames,
+        attack,
+        decay,
+        release,
         sustain,
+        rate,
         ..
     } = prepared
     else {
@@ -1272,6 +1397,16 @@ pub fn envelope(prepared: &PreparedNode, state: &mut NodeState, io: &mut NodeIo<
     };
     // ADR-0059: the velocity sensitivity, quantum-rate, one value per frame from its slot.
     let sensitivity = ramp_of(io.ramps, 0);
+    // `P07-S002`: the times and the sustain level, quantum-rate slots read per frame in the
+    // declaration's order. A time is converted where its segment starts; the sustain is
+    // read where it is held.
+    let (attacks, decays, sustains, releases) = (
+        ramp_of(io.ramps, 1),
+        ramp_of(io.ramps, 2),
+        ramp_of(io.ramps, 3),
+        ramp_of(io.ramps, 4),
+    );
+    let (attack, decay, release, rate) = (attack.as_f32(), decay.as_f32(), release.as_f32(), *rate);
     let NodeState::Envelope {
         segment,
         level,
@@ -1294,12 +1429,16 @@ pub fn envelope(prepared: &PreparedNode, state: &mut NodeState, io: &mut NodeIo<
         velocity: *velocity,
     };
 
-    let sustain = sustain.as_f32();
+    let authored_sustain = sustain.as_f32();
+    let mut sustain = authored_sustain;
+    let mut decay_frames = frames_of(decay, rate);
     // The envelope's own port table admits one channel, so a frame is a sample and an
     // offset indexes `out` directly. Deriving the frame from the channel count anyway
     // would be arithmetic defending against a layout this kind cannot be given.
     let mut due = 0_usize;
     for (frame, sample) in io.out.iter_mut().enumerate() {
+        sustain = control_at(sustains, frame, authored_sustain);
+        decay_frames = frames_of(control_at(decays, frame, decay), rate);
         // Before `hand_over` and before the write, which is exactly where the boundary
         // path put a gate when it was an ordinary control: the edge is applied to the
         // level the frame was going to start from. `while` rather than `if` because two
@@ -1311,7 +1450,12 @@ pub fn envelope(prepared: &PreparedNode, state: &mut NodeState, io: &mut NodeIo<
             }
             due += 1;
             match control.control {
-                ENVELOPE_GATE => run.gate(control.value, sustain, *attack_frames, *release_frames),
+                ENVELOPE_GATE => run.gate(
+                    control.value,
+                    sustain,
+                    frames_of(control_at(attacks, frame, attack), rate),
+                    frames_of(control_at(releases, frame, release), rate),
+                ),
                 // `SOUND-INV-021`'s velocity destination. A level rather than an edge, so
                 // it is stored and not consumed: it stands until the next note-on writes
                 // it. Written **before** the gate of the note it arrives with, which is
@@ -1342,7 +1486,7 @@ pub fn envelope(prepared: &PreparedNode, state: &mut NodeState, io: &mut NodeIo<
                 _ => {}
             }
         }
-        run.hand_over(sustain, *decay_frames);
+        run.hand_over(sustain, decay_frames);
         let level = match run.stage {
             Segment::Idle => 0.0,
             Segment::Sustain => sustain,
@@ -1371,7 +1515,7 @@ pub fn envelope(prepared: &PreparedNode, state: &mut NodeState, io: &mut NodeIo<
     }
     // Settled before it is stored, so a quantum that ends exactly on a segment boundary
     // leaves the state on the segment that follows rather than on the exhausted one.
-    run.hand_over(sustain, *decay_frames);
+    run.hand_over(sustain, decay_frames);
     // And the level stored is the one the **next** sample will have, not the last one
     // written: the counter has already moved past it. A gate edge arriving at a quantum
     // boundary starts its ramp from this value, and starting from the previous sample
@@ -1485,25 +1629,68 @@ impl Run {
 
 /// A two-pole low-pass, as a topology-preserving state-variable filter.
 pub fn filter(prepared: &PreparedNode, state: &mut NodeState, io: &mut NodeIo<'_>) {
-    let PreparedNode::Filter { integrator } = prepared else {
+    let PreparedNode::Filter {
+        cutoff: authored_cutoff,
+        resonance: authored_resonance,
+        rate,
+        ..
+    } = prepared
+    else {
         return;
     };
-    let NodeState::Filter { band, low } = state else {
+    let NodeState::Filter {
+        band,
+        low,
+        cutoff,
+        resonance,
+        integrator,
+    } = state
+    else {
         return;
     };
+    // `P07-S002`: the corner and the quality are quantum-rate slots read per frame. The
+    // coefficients are re-derived only where the pair moves, so an unmodulated filter reads
+    // the prepared ones throughout; a pair with no usable filter — a corner at or above
+    // Nyquist, a quality not above zero, coefficients preparation would refuse — holds the
+    // coefficients in force rather than rendering a filter nobody asked for.
+    let (cutoffs, resonances) = (ramp_of(io.ramps, 0), ramp_of(io.ramps, 1));
+    let (mut last_cutoff, mut last_resonance) = (*cutoff, *resonance);
+    let mut coefficients = *integrator;
     let source = io.inputs[0];
     let (mut first, mut second) = (*band, *low);
     let mut due = 0_usize;
     for (index, sample) in io.out.iter_mut().enumerate() {
         // The filter declares no sample-positioned control of its own; the one control it
-        // takes is the loop's reset (ADR-0058), which clears both integrators at the frame.
+        // takes is the loop's reset (ADR-0058), which clears both integrators at the frame
+        // and returns the pair and coefficients to the prepared ones as the reference the
+        // slot's values are then compared against — a modulated pair re-derives at the same
+        // frame, an unmodulated one reads the prepared coefficients on.
         while let Some(control) = io.controls.get(due) {
             if control.offset.as_usize() != index {
                 break;
             }
             due += 1;
-            if matches!(control.control, ControlIndex::RESET) {
+            if matches!(control.control, ControlIndex::RESET)
+                && let NodeState::Filter {
+                    cutoff: prepared_cutoff,
+                    resonance: prepared_resonance,
+                    integrator: prepared_integrator,
+                    ..
+                } = NodeState::initial(prepared)
+            {
                 (first, second) = (0.0, 0.0);
+                (last_cutoff, last_resonance) = (prepared_cutoff, prepared_resonance);
+                coefficients = prepared_integrator;
+            }
+        }
+        let wanted_cutoff = control_at(cutoffs, index, authored_cutoff.as_f32());
+        let wanted_resonance = control_at(resonances, index, authored_resonance.as_f32());
+        if wanted_cutoff != last_cutoff || wanted_resonance != last_resonance {
+            (last_cutoff, last_resonance) = (wanted_cutoff, wanted_resonance);
+            if let Some(next) =
+                usable_low_pass(f64::from(wanted_cutoff), f64::from(wanted_resonance), *rate)
+            {
+                coefficients = next;
             }
         }
         // The three input states again, and the filter is where collapsing them would be
@@ -1515,8 +1702,8 @@ pub fn filter(prepared: &PreparedNode, state: &mut NodeState, io: &mut NodeIo<'_
             InputBuffer::Unpatched => 0.0,
         };
         let drive = input - second;
-        let band_pass = integrator[0] * first + integrator[1] * drive;
-        let low_pass = second + integrator[1] * first + integrator[2] * drive;
+        let band_pass = coefficients[0] * first + coefficients[1] * drive;
+        let low_pass = second + coefficients[1] * first + coefficients[2] * drive;
         first = 2.0 * band_pass - first;
         second = 2.0 * low_pass - second;
         *sample = low_pass;
@@ -1529,6 +1716,7 @@ pub fn filter(prepared: &PreparedNode, state: &mut NodeState, io: &mut NodeIo<'_
     // check refuses subnormal coefficients to avoid. The threshold is roughly -600 dB,
     // far below anything a signal path carries.
     (*band, *low) = (flush(first), flush(second));
+    (*cutoff, *resonance, *integrator) = (last_cutoff, last_resonance, coefficients);
 }
 
 /// Zero, where a value is too small to be signal.

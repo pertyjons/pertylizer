@@ -896,6 +896,17 @@ impl ParameterValue {
         Self(velocity.0)
     }
 
+    /// A quality factor as the value a control write carries. Infallible: finite by
+    /// construction (`P07-S002`).
+    pub const fn from_resonance(resonance: Resonance) -> Self {
+        Self(resonance.0)
+    }
+
+    /// A duration as the value a control write carries. Infallible: finite by construction.
+    pub const fn from_seconds(seconds: Seconds) -> Self {
+        Self(seconds.0)
+    }
+
     /// This value as an amplitude. Infallible, for the same reason.
     pub const fn into_amplitude(self) -> Amplitude {
         Amplitude(self.0)

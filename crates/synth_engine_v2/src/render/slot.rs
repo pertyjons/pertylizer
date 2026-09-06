@@ -256,7 +256,17 @@ impl ParameterUnit {
     pub(crate) fn hold_to_domain(self, value: f32) -> f32 {
         match self {
             Self::NormalizedLevel => value.clamp(0.0, 1.0),
-            Self::Hertz | Self::LinearAmplitude | Self::Gate => value,
+            // A duration cannot be negative; a corner or a quality with no usable filter is
+            // the kernel's to hold, since the bound is the stream's rate rather than the
+            // type's.
+            Self::Seconds => {
+                if value < 0.0 {
+                    0.0
+                } else {
+                    value
+                }
+            }
+            Self::Hertz | Self::LinearAmplitude | Self::Gate | Self::QualityFactor => value,
         }
     }
 }

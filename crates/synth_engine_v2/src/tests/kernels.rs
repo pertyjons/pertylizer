@@ -61,14 +61,23 @@ fn amplitude_of(prepared: &PreparedNode) -> f32 {
     }
 }
 
+/// The rate the envelope fixtures convert their segment frames at.
+const RATE: f64 = 48_000.0;
+
+/// `frames` frames at [`RATE`], as the seconds the prepared record now carries: the kernel
+/// rounds the product back to exactly `frames`.
+fn secs(frames: SegmentFrames) -> crate::quantities::Seconds {
+    crate::quantities::Seconds::new(frames.get() as f32 / RATE as f32).expect("finite")
+}
 /// An envelope whose segments each last `frames` frames at the given sustain level.
 fn adsr(frames: u32, sustain: f32) -> PreparedNode {
     PreparedNode::Envelope {
-        attack_frames: SegmentFrames::new(frames),
-        decay_frames: SegmentFrames::new(frames),
-        release_frames: SegmentFrames::new(frames),
+        attack: secs(SegmentFrames::new(frames)),
+        decay: secs(SegmentFrames::new(frames)),
+        release: secs(SegmentFrames::new(frames)),
         sustain: NormalizedLevel::new(sustain).expect("a level within the range"),
         velocity_sensitivity: crate::quantities::NormalizedLevel::FULL,
+        rate: RATE,
     }
 }
 
@@ -307,11 +316,12 @@ fn a_zero_length_attack_is_instantaneous_rather_than_infinite() {
     // The division-by-zero case, which is also the ordinary way to ask for a click: a
     // segment shorter than a frame moves the whole distance in one sample.
     let prepared = PreparedNode::Envelope {
-        attack_frames: SegmentFrames::NONE,
-        decay_frames: SegmentFrames::new(2),
-        release_frames: SegmentFrames::new(2),
+        attack: secs(SegmentFrames::NONE),
+        decay: secs(SegmentFrames::new(2)),
+        release: secs(SegmentFrames::new(2)),
         sustain: NormalizedLevel::new(0.5).expect("a level within the range"),
         velocity_sensitivity: crate::quantities::NormalizedLevel::FULL,
+        rate: RATE,
     };
     let mut state = NodeState::initial(&prepared);
     let rendered = run_with(envelope, &prepared, &mut state, 4, &[gate_at(0, true)]);
@@ -352,11 +362,12 @@ fn a_gate_edge_inside_a_quantum_takes_effect_at_its_own_sample() {
     // task — puts it at frame 0 instead.
     const OFFSET: u16 = 37;
     let prepared = PreparedNode::Envelope {
-        attack_frames: SegmentFrames::NONE,
-        decay_frames: SegmentFrames::NONE,
-        release_frames: SegmentFrames::NONE,
+        attack: secs(SegmentFrames::NONE),
+        decay: secs(SegmentFrames::NONE),
+        release: secs(SegmentFrames::NONE),
         sustain: NormalizedLevel::new(0.5).expect("a level within the range"),
         velocity_sensitivity: crate::quantities::NormalizedLevel::FULL,
+        rate: RATE,
     };
     let mut state = NodeState::initial(&prepared);
     let rendered = run_with(
@@ -384,11 +395,12 @@ fn two_edges_in_one_quantum_each_take_effect_at_their_own_sample() {
     const OFF: u16 = 20;
     const ON: u16 = 23;
     let prepared = PreparedNode::Envelope {
-        attack_frames: SegmentFrames::NONE,
-        decay_frames: SegmentFrames::NONE,
-        release_frames: SegmentFrames::NONE,
+        attack: secs(SegmentFrames::NONE),
+        decay: secs(SegmentFrames::NONE),
+        release: secs(SegmentFrames::NONE),
         sustain: NormalizedLevel::new(0.5).expect("a level within the range"),
         velocity_sensitivity: crate::quantities::NormalizedLevel::FULL,
+        rate: RATE,
     };
     let mut state = NodeState::initial(&prepared);
     run_with(envelope, &prepared, &mut state, 64, &[gate_at(0, true)]);
