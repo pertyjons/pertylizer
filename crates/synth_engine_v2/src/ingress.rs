@@ -227,6 +227,13 @@ pub enum IngressRefused {
         /// The store that was offered.
         offered: IngressStoreId,
     },
+    /// A per-note event names an occurrence this producer does not hold open.
+    #[error("bend names {identity}, which this producer does not hold open")]
+    OrphanExpression {
+        /// The occurrence the event named.
+        identity: NoteIdentity,
+    },
+
     /// The stamp is further ahead than the forward horizon allows.
     ///
     /// `HOST-INV-013` evaluates the horizon exactly once, at the boundary that admits into
@@ -319,6 +326,8 @@ struct PendingStart {
     ends: Option<SampleTime>,
     /// Whether the drain has published that release.
     off_published: bool,
+    /// A bend offered before the start, displaced with it.
+    bend: Option<(SampleTime, crate::quantities::Cents)>,
     /// Whether the minter has freed the index: only once the displaced release has passed,
     /// so a note-on in between finds the voice committed rather than free. An independent
     /// read found the index freed at the offer, ahead of the deferred start that then
@@ -340,6 +349,7 @@ pub struct IngressCounters {
     dropped_hold: u64,
     dropped_identity: u64,
     orphan_releases: u64,
+    orphan_expressions: u64,
     released_after_steal: u64,
     non_monotone: u64,
     beyond_horizon: u64,
@@ -385,6 +395,11 @@ impl IngressCounters {
     /// Releases refused because this producer holds no such note open.
     pub const fn orphan_releases(&self) -> u64 {
         self.orphan_releases
+    }
+
+    /// Bends refused because their occurrence is not this producer's live note.
+    pub const fn orphan_expressions(&self) -> u64 {
+        self.orphan_expressions
     }
 
     /// Releases dropped because a steal had already ended their note (ADR-0058 clause 5).
@@ -764,9 +779,15 @@ impl PerformanceIngress {
             .iter()
             .filter(|slot| slot.is_some_and(|record| !record.started))
             .count();
+        let waiting_bends = self
+            .pending
+            .iter()
+            .filter(|slot| slot.is_some_and(|record| record.bend.is_some()))
+            .count();
         let needed = self
             .len
             .saturating_add(unstarted.saturating_mul(2))
+            .saturating_add(waiting_bends)
             .saturating_add(self.holds_outstanding.get() as usize)
             .saturating_add(entries)
             .saturating_add(holds);
@@ -1027,6 +1048,7 @@ impl PerformanceIngress {
                 starts,
                 started: false,
                 ends: None,
+                bend: None,
                 off_published: false,
                 table_released: false,
             });
@@ -1121,6 +1143,75 @@ impl PerformanceIngress {
         key: crate::quantities::KeyIdentity,
     ) -> bool {
         table.key_of(victim) == Some(key)
+    }
+
+    /// Offer a per-note bend for a note this producer holds open (`SOUND-INV-021`).
+    ///
+    /// A bend opens no obligation, so it takes a slot and nothing else, as a parameter write
+    /// does. One for a note whose start a steal deferred waits with that start, displaced by
+    /// the same fade; one for a note that is not this producer's live occurrence is refused as
+    /// an orphan and counted, never queued to be refused a pass later.
+    pub(crate) fn offer_bend(
+        &mut self,
+        table: &mut IdentityTable,
+        time: SampleTime,
+        identity: NoteIdentity,
+        cents: crate::quantities::Cents,
+    ) -> Result<(), IngressRefused> {
+        self.admit(time)?;
+        self.sweep(table, time);
+        let index = usize::from(identity.index());
+        if let Some(Some(pending)) = self.pending.get_mut(index)
+            && pending.identity == identity
+            && !pending.started
+        {
+            let fade = self
+                .stealing
+                .fade()
+                .unwrap_or(crate::time::FrameCount::ZERO);
+            // A displaced time the clock cannot hold is past every horizon.
+            let Ok(at) = time.checked_add(fade) else {
+                self.counters.beyond_horizon = self.counters.beyond_horizon.saturating_add(1);
+                return Err(IngressRefused::BeyondHorizon {
+                    time,
+                    horizon_end: time,
+                });
+            };
+            let had_bend = pending.bend.is_some();
+            pending.bend = Some((at, cents));
+            // Charged as the one live-class entry the drain will publish, like the start it
+            // waits with; a bend replacing one still waiting takes no more room.
+            if !had_bend && !self.room_for_entries(0, 0) {
+                if let Some(Some(record)) = self.pending.get_mut(index) {
+                    record.bend = None;
+                }
+                self.counters.dropped_slot = self.counters.dropped_slot.saturating_add(1);
+                return Err(IngressRefused::Dropped {
+                    resource: ExhaustedResource::Slot,
+                });
+            }
+            return Ok(());
+        }
+        if identity.table() != table.id()
+            || !self.owns(identity)
+            || table.resolve(identity) != Resolution::Live
+        {
+            self.counters.orphan_expressions = self.counters.orphan_expressions.saturating_add(1);
+            return Err(IngressRefused::OrphanExpression { identity });
+        }
+        if !self.room_for_entries(1, 0) {
+            self.counters.dropped_slot = self.counters.dropped_slot.saturating_add(1);
+            return Err(IngressRefused::Dropped {
+                resource: ExhaustedResource::Slot,
+            });
+        }
+        self.push(time, EventPayload::Bend { identity, cents }, false);
+        Ok(())
+    }
+
+    /// Whether an identity's index lies in this producer's admitted range.
+    fn owns(&self, identity: NoteIdentity) -> bool {
+        self.pending.get(usize::from(identity.index())).is_some()
     }
 
     /// Offer the release of a note this producer opened.

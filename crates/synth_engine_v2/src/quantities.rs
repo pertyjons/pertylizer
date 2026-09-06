@@ -1047,6 +1047,49 @@ impl std::fmt::Display for WritesPerNote {
 /// one out of range is the case `AGENTS.md`'s numeric rule exists to prevent — the render would
 /// simply play a different note than the project says, with nothing reporting it. This refuses
 /// instead, at the boundary where a diagnostic is still possible.
+/// A per-note pitch offset in cents, `SOUND-INV-021`'s bend: how far a note has moved from
+/// the frequency its key resolves to. Finite, and within ten octaves either way, so the
+/// semitone law's `2^(m/12)` it feeds is always finite.
+#[derive(Debug, Clone, Copy, PartialEq, PartialOrd)]
+#[must_use]
+pub struct Cents(f32);
+
+impl Cents {
+    /// No offset.
+    pub const ZERO: Self = Self(0.0);
+    /// The widest bend either way, in cents: ten octaves.
+    pub const LIMIT: f32 = 12_000.0;
+
+    /// A bend, refused if not finite or beyond [`Self::LIMIT`].
+    pub fn new(cents: f32) -> Result<Self, QuantityError> {
+        if !cents.is_finite() {
+            return Err(QuantityError::NotFinite {
+                quantity: "Cents",
+                value: cents,
+            });
+        }
+        if cents.abs() > Self::LIMIT {
+            return Err(QuantityError::OutsideInterval {
+                quantity: "Cents",
+                value: cents,
+                minimum: -Self::LIMIT,
+                maximum: Self::LIMIT,
+            });
+        }
+        Ok(Self(cents))
+    }
+
+    /// The offset in cents.
+    pub const fn as_f32(self) -> f32 {
+        self.0
+    }
+
+    /// The offset in semitones, the unit the semitone law composes in.
+    pub const fn as_semitones(self) -> f32 {
+        self.0 / 100.0
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[must_use]
 pub struct KeyIdentity(u8);

@@ -77,6 +77,8 @@ fn activation() -> TransportActivation {
             .expect("an empty partition"),
         omitted_releases: 0,
         released_after_steal: 0,
+        omitted_expressions: 0,
+        expressions_after_steal: 0,
         catch_up: Vec::new(),
         loop_interval: None,
         producers: Vec::new(),

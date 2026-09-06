@@ -796,6 +796,55 @@ fn a_loops_repeating_pass_charges_a_steals_expansion_where_it_lands() {
 }
 
 #[test]
+fn a_bend_of_a_note_opened_before_the_anchor_is_omitted_and_counted() {
+    // A seek lands inside a note: the boundary release ends it, so a bend of it after the
+    // anchor moves nothing and is omitted and counted, as its release is; a bend of a note the
+    // suffix opens is stamped.
+    let plan = plan();
+    let (mut control, _renderer) =
+        StreamControl::open(plan.clone(), ORIGIN).expect("the stream opens");
+    let quiet = admitted(&plan, &[]);
+    let _scheduler =
+        CompiledEventScheduler::prepare(&mut control, &quiet).expect("an empty stream prepares");
+    let slot = plan.resolve_note(ENVELOPE).expect("playable");
+    let bend = |at: u64, key: u8| {
+        PlanEvent::new(
+            PlanPosition::new(at),
+            CompiledPayload::Bend {
+                slot,
+                key: KeyIdentity::new(key).expect("a keyboard position"),
+                cents: synth_engine_v2::quantities::Cents::new(50.0).expect("a bend"),
+            },
+        )
+    };
+    let stream = admitted(
+        &plan,
+        &[
+            keyed(&plan, 0, 60, true),
+            bend(6 * Q, 60),
+            keyed(&plan, 8 * Q, 67, true),
+            bend(9 * Q, 67),
+            keyed(&plan, 10 * Q, 60, false),
+            keyed(&plan, 12 * Q, 67, false),
+        ],
+    );
+    let activation = control
+        .plan_activation(&stream, request(4 * Q, 4 * Q))
+        .expect("the seek builds");
+    assert_eq!(
+        activation.omitted_expressions(),
+        1,
+        "the bend of the ended note"
+    );
+    assert_eq!(activation.omitted_releases(), 1);
+    assert_eq!(
+        activation.events(),
+        4,
+        "the suffix's note, its bend and release, and the crossing release's bare gate-down"
+    );
+}
+
+#[test]
 fn a_release_across_the_anchor_pairs_by_key_and_not_by_node() {
     // `SOUND-INV-025`: a release names the newest open note **of its key** on its node, and
     // the anchored walk must classify it by the same rule. Key A opens before the

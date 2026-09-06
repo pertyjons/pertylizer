@@ -168,6 +168,24 @@ impl ModulationSum {
     pub const fn as_f32(self) -> f32 {
         self.0
     }
+
+    /// A per-note bend as the semitone law's modulation (`SOUND-INV-021`, ADR-0058 clause 5's
+    /// expression). Infallible: a [`Cents`](crate::quantities::Cents) is finite and bounded.
+    pub const fn from_bend(cents: crate::quantities::Cents) -> Self {
+        Self(cents.as_semitones())
+    }
+
+    /// A sum computed in the loop from two finite sums: infinite only on overflow, held to
+    /// the largest finite value rather than refused where nothing can refuse.
+    pub(crate) fn saturating(sum: f32) -> Self {
+        if sum.is_finite() {
+            Self(sum)
+        } else if sum.is_sign_negative() {
+            Self(f32::MIN)
+        } else {
+            Self(f32::MAX)
+        }
+    }
 }
 
 impl ModulationLaw {

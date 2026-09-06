@@ -708,6 +708,7 @@ pub struct DiagnosticsReport {
     ingress_dropped_identity: u64,
     ingress_orphan_releases: u64,
     ingress_released_after_steal: u64,
+    ingress_orphan_expressions: u64,
     oversized_callback_faults: u64,
     clock_exhaustion_faults: u64,
     publication_faults: u64,
@@ -817,6 +818,12 @@ impl DiagnosticsReport {
     /// (ADR-0058 clause 5). Not orphans: the producer released a note it had opened.
     pub const fn ingress_released_after_steal(&self) -> u64 {
         self.ingress_released_after_steal
+    }
+
+    /// Bends the live boundary refused because their occurrence was not the producer's live
+    /// note (`SOUND-INV-021`, `SOUND-INV-017`).
+    pub const fn ingress_orphan_expressions(&self) -> u64 {
+        self.ingress_orphan_expressions
     }
 
     /// Every drop at the live boundary, whatever the resource.
@@ -1007,15 +1014,28 @@ impl DiagnosticsReport {
     /// this method would need to name which store it is carrying.
     pub(crate) const fn mirror_ingress_boundary(
         &mut self,
-        slot: u64,
-        hold: u64,
-        identity: u64,
-        orphans: u64,
-        released_after_steal: u64,
-        beyond_horizon: u64,
+        counters: &crate::ingress::IngressCounters,
     ) {
+        let (
+            slot,
+            hold,
+            identity,
+            orphans,
+            released_after_steal,
+            orphan_expressions,
+            beyond_horizon,
+        ) = (
+            counters.dropped_slot(),
+            counters.dropped_hold(),
+            counters.dropped_identity(),
+            counters.orphan_releases(),
+            counters.released_after_steal(),
+            counters.orphan_expressions(),
+            counters.beyond_horizon(),
+        );
         self.ingress_dropped_slot = slot;
         self.ingress_released_after_steal = released_after_steal;
+        self.ingress_orphan_expressions = orphan_expressions;
         self.ingress_dropped_hold = hold;
         self.ingress_dropped_identity = identity;
         // **The horizon count moved halves rather than disappearing.** It used to be the

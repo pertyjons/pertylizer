@@ -85,6 +85,17 @@ pub enum CompiledPayload {
         /// open notes with one key on one node keep the newest-first pairing they had.
         key: crate::quantities::KeyIdentity,
     },
+    /// Bend the newest open note on one compiled node with this key by an offset in cents —
+    /// `SOUND-INV-021`'s bend, addressed as a release is, since a compiled stream carries no
+    /// identity. Resolved to the occurrence at preparation, like the release.
+    Bend {
+        /// Which node the note plays.
+        slot: crate::plan::NoteSlot,
+        /// The key its note-on carried.
+        key: crate::quantities::KeyIdentity,
+        /// The offset from the frequency the key resolves to.
+        cents: crate::quantities::Cents,
+    },
 }
 
 /// One compiled event in **plan** time.
@@ -317,6 +328,13 @@ pub enum SchedulePrepareError {
     #[error("this stream already has a schedule; a replacement is an activation")]
     SchedulerExists,
 
+    /// A per-note event names a node and key with no note open on it.
+    #[error("compiled event {event_index} bends a node with no such note sounding")]
+    UnmatchedExpression {
+        /// Which event, in the caller's list.
+        event_index: usize,
+    },
+
     /// A steal's fade would end past the last representable sample (ADR-0058).
     #[error("compiled event {event_index} steals a voice whose fade ends past the clock")]
     StealUnrepresentable {
@@ -523,6 +541,8 @@ pub struct CompiledEventScheduler {
     catch_up_len: usize,
     /// ADR-0058 clause 5: releases preparation dropped because a steal had ended their note.
     released_after_steal: usize,
+    /// And bends dropped for the same reason.
+    expressions_after_steal: usize,
     /// How far the placed schedule is displaced from where it was stamped.
     ///
     /// ADR-0050 clause 1. A candidate is stamped against the time it **requested**, and
@@ -545,6 +565,11 @@ impl CompiledEventScheduler {
     /// How many compiled releases named a note a steal had already ended (ADR-0058).
     pub const fn released_after_steal(&self) -> usize {
         self.released_after_steal
+    }
+
+    /// How many compiled bends named a note a steal had already ended.
+    pub const fn expressions_after_steal(&self) -> usize {
+        self.expressions_after_steal
     }
 
     /// Place an admitted stream at the transport's anchor and stamp it.
@@ -627,13 +652,15 @@ impl CompiledEventScheduler {
             return Err(SchedulePrepareError::SchedulerExists);
         }
 
-        let (stamped, released_after_steal) = stamp_compiled_counted(control, &placed)?;
+        let (stamped, released_after_steal, expressions_after_steal) =
+            stamp_compiled_counted(control, &placed)?;
         control.scheduler_prepared();
         Ok(Self {
             epoch,
             arbiter: None,
             max_events_per_quantum,
             released_after_steal,
+            expressions_after_steal,
             events: stamped,
             next: 0,
             // The stream's first and only schedule, so the transport state it starts from is
@@ -773,7 +800,9 @@ impl CompiledEventScheduler {
 const fn payload_plan(payload: CompiledPayload) -> PlanId {
     match payload {
         CompiledPayload::SetParameter { slot, .. } => slot.plan(),
-        CompiledPayload::NoteOn { slot, .. } | CompiledPayload::NoteOff { slot, .. } => slot.plan(),
+        CompiledPayload::NoteOn { slot, .. }
+        | CompiledPayload::NoteOff { slot, .. }
+        | CompiledPayload::Bend { slot, .. } => slot.plan(),
     }
 }
 
@@ -811,14 +840,14 @@ pub fn stamp_compiled(
     control: &mut StreamControl,
     events: &[CompiledEvent],
 ) -> Result<Vec<TimedEvent>, SchedulePrepareError> {
-    stamp_compiled_counted(control, events).map(|(stamped, _)| stamped)
+    stamp_compiled_counted(control, events).map(|(stamped, _, _)| stamped)
 }
 
 /// [`stamp_compiled`], with the count of releases dropped after a steal (ADR-0058).
 pub(crate) fn stamp_compiled_counted(
     control: &mut StreamControl,
     events: &[CompiledEvent],
-) -> Result<(Vec<TimedEvent>, usize), SchedulePrepareError> {
+) -> Result<(Vec<TimedEvent>, usize, usize), SchedulePrepareError> {
     // Refused before anything is read: a candidate outstanding means a snapshot of this
     // minter exists that promotion will install, and any generation this stamping advanced
     // would be rewound by it.
@@ -839,7 +868,11 @@ pub(crate) fn stamp_compiled_counted(
     // What this list left live, recorded where a replacement can reach it without borrowing
     // the audio thread's schedule.
     control.add_outstanding(&outstanding);
-    Ok((stamped.events, stamped.released_after_steal))
+    Ok((
+        stamped.events,
+        stamped.released_after_steal,
+        stamped.expressions_after_steal,
+    ))
 }
 
 /// One producer's open notes, in the order they were opened, with ADR-0058's rule for a
@@ -1019,6 +1052,33 @@ impl<T: Copy> OpenNotes<T> {
         Closed::Unmatched
     }
 
+    /// The newest note on the slot with the key that a per-note event may address at `now`:
+    /// open, or released and still in the tail before its displaced release.
+    pub(crate) fn find(
+        &mut self,
+        now: u64,
+        slot: crate::plan::NoteSlot,
+        key: crate::quantities::KeyIdentity,
+    ) -> Option<OpenNote<T>> {
+        self.purge(now);
+        self.entries
+            .iter()
+            .rev()
+            .find(|open| open.slot == slot && open.key == key)
+            .copied()
+    }
+
+    /// Whether a note on the slot with the key was taken by a steal and awaits its release.
+    pub(crate) fn taken(
+        &self,
+        slot: crate::plan::NoteSlot,
+        key: crate::quantities::KeyIdentity,
+    ) -> bool {
+        self.stolen
+            .iter()
+            .any(|open| open.slot == slot && open.key == key)
+    }
+
     /// The notes open and unreleased, oldest first.
     pub(crate) fn entries(&self) -> Vec<OpenNote<T>> {
         self.entries
@@ -1098,6 +1158,8 @@ pub(crate) struct Stamped {
     pub(crate) outstanding: Vec<crate::identity::NoteIdentity>,
     /// Releases dropped because a steal had already ended their note (ADR-0058 clause 5).
     pub(crate) released_after_steal: usize,
+    /// Bends dropped for the same reason: expression addressed to a taken note.
+    pub(crate) expressions_after_steal: usize,
 }
 
 /// Give every compiled note an occurrence, pairing releases and stealing under ADR-0058.
@@ -1175,6 +1237,19 @@ pub(crate) fn stamp_all(
                     return Err(SchedulePrepareError::UnmatchedRelease { event_index });
                 }
             }
+            CompiledPayload::Bend { slot, key, .. } => {
+                if slot.plan() != expected {
+                    return Err(SchedulePrepareError::ForeignPlan {
+                        event_index,
+                        expected,
+                        actual: slot.plan(),
+                    });
+                }
+                let now = event.time().as_u64();
+                if sounding.find(now, slot, key).is_none() && !sounding.taken(slot, key) {
+                    return Err(SchedulePrepareError::UnmatchedExpression { event_index });
+                }
+            }
         }
     }
 
@@ -1186,6 +1261,7 @@ pub(crate) fn stamp_all(
     let mut open: OpenNotes<crate::identity::NoteIdentity> = OpenNotes::new(capacity, policy);
     let mut stamped = Vec::with_capacity(events.len());
     let mut released_after_steal = 0_usize;
+    let mut expressions_after_steal = 0_usize;
     let mut stole = false;
     // A released note's index is freed in the minter when its **displaced** release lands,
     // not when the release is placed: a stolen-in note ends `fade` frames after its authored
@@ -1354,6 +1430,30 @@ pub(crate) fn stamp_all(
                     return Err(SchedulePrepareError::UnmatchedRelease { event_index });
                 }
             },
+            // `SOUND-INV-021`'s bend, resolved to the occurrence as a release is and displaced
+            // with a note that took a voice, so it never precedes the start it moves. A bend
+            // for a note a steal ended is dropped and counted with that note's release.
+            CompiledPayload::Bend { slot, key, cents } => match open.find(now, slot, key) {
+                Some(note) => {
+                    let at = event
+                        .time()
+                        .checked_add(note.delay)
+                        .map_err(|_| SchedulePrepareError::StealUnrepresentable { event_index })?;
+                    stamped.push(stamp(
+                        at,
+                        EventPayload::Bend {
+                            identity: note.tag,
+                            cents,
+                        },
+                    ));
+                }
+                None if open.taken(slot, key) => {
+                    expressions_after_steal = expressions_after_steal.saturating_add(1);
+                }
+                None => {
+                    return Err(SchedulePrepareError::UnmatchedExpression { event_index });
+                }
+            },
         }
     }
 
@@ -1385,5 +1485,6 @@ pub(crate) fn stamp_all(
         events: stamped,
         outstanding,
         released_after_steal,
+        expressions_after_steal,
     })
 }

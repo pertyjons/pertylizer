@@ -381,6 +381,17 @@ pub enum EventPayload {
         /// The occurrence about to start on the instance, whose index names it.
         identity: crate::identity::NoteIdentity,
     },
+    /// `SOUND-INV-021`'s bend: move one occurrence's pitch by an offset in cents, after its
+    /// key has been resolved — the per-note expression event ADR-0047 clause 9 reserved. It
+    /// lands as the modulation layer of the occurrence's pitch destinations, composed in the
+    /// slot under the semitone law, at this event's position; a new occurrence on the voice
+    /// starts with the layer at identity. An identity naming no live note is an orphan.
+    Bend {
+        /// The occurrence whose pitch moves.
+        identity: crate::identity::NoteIdentity,
+        /// How far, from the frequency its key resolves to.
+        cents: crate::quantities::Cents,
+    },
 }
 
 /// One stamped event.
@@ -466,6 +477,11 @@ pub(crate) struct DueEvent {
     /// they perform. `None` is an event with no sample-positioned effect: an orphan release,
     /// or a parameter whose target is control-rate.
     pub(crate) target: Option<ResolvedTarget>,
+    /// The node a bend's occurrence sounds on, resolved once with the target above and for
+    /// the same reason: the registry the passes would otherwise read is mutated by the same
+    /// walk, and a bend followed in one call by its note's release would find the note gone
+    /// and move nothing. An independent read found the passes reading the registry.
+    pub(crate) bend_of: Option<crate::plan::NoteSlot>,
 }
 
 /// Where a sample-positioned event's effect lands, resolved once per call.
@@ -491,6 +507,7 @@ impl DueEvent {
     /// allocate, but a `Vec::push` is still a call that can.
     const FILL: Self = Self {
         position: SampleTime::ZERO,
+        bend_of: None,
         arrival: 0,
         target: None,
         payload: EventPayload::SetParameter {

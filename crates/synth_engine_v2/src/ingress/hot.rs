@@ -55,15 +55,7 @@ impl PerformanceIngress {
         // producing half, before acceptance, where the report cannot be reached. Mirrored
         // first so a fault below still leaves them published — a stream that ended on a
         // contract violation is exactly when someone reads them.
-        let counters = self.counters;
-        diagnostics.mirror_ingress_boundary(
-            counters.dropped_slot(),
-            counters.dropped_hold(),
-            counters.dropped_identity(),
-            counters.orphan_releases(),
-            counters.released_after_steal(),
-            counters.beyond_horizon(),
-        );
+        diagnostics.mirror_ingress_boundary(&self.counters);
         self.publish_pending(publication)?;
 
         let capacity = self.entries.len();
@@ -160,6 +152,24 @@ impl PerformanceIngress {
                 // voice has started and may be taken.
                 if let Some(slot) = self.pending.get_mut(index) {
                     *slot = Some(pending);
+                }
+            }
+            if let Some((at, cents)) = pending.bend
+                && pending.started
+            {
+                let bend = stamp(
+                    at,
+                    crate::render::EventPayload::Bend {
+                        identity: pending.identity,
+                        cents,
+                    },
+                );
+                if publication.reaches(bend) {
+                    publication.charge(ProducerClass::Live, bend)?;
+                    pending.bend = None;
+                    if let Some(slot) = self.pending.get_mut(index) {
+                        *slot = Some(pending);
+                    }
                 }
             }
             let Some(ends) = pending.ends else {

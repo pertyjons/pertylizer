@@ -450,11 +450,15 @@ fn the_registry_scopes_a_mass_release_to_one_producer_and_names_what_it_ended() 
         let identity = table.mint(A, node()).expect("room");
         // The registry answers to `minter`, so the occurrence has to carry that id.
         let identity = rekey(identity, minter.id());
-        registry.admit(identity, slot(index));
+        registry.admit(
+            identity,
+            slot(index),
+            crate::quantities::KeyIdentity::LOWEST,
+        );
         mine.push(identity);
     }
     let theirs = rekey(table.mint(B, node()).expect("room"), minter.id());
-    registry.admit(theirs, slot(9));
+    registry.admit(theirs, slot(9), crate::quantities::KeyIdentity::LOWEST);
 
     let mut ended = [None; 8];
     assert_eq!(
@@ -506,7 +510,11 @@ fn the_registrys_mass_release_ends_nothing_it_cannot_name() {
     let mut mine = Vec::new();
     for index in 0..3 {
         let identity = rekey(table.mint(A, node()).expect("room"), minter.id());
-        registry.admit(identity, slot(index));
+        registry.admit(
+            identity,
+            slot(index),
+            crate::quantities::KeyIdentity::LOWEST,
+        );
         mine.push(identity);
     }
 
@@ -548,7 +556,7 @@ fn the_registry_ignores_a_producer_it_has_no_range_for() {
     let mut registry = LiveNotes::for_ranges(minter.id(), &[held(4)]).expect("a valid registry");
     let mut table = IdentityTable::new(held(512), &[held(4)]).expect("a valid table");
     let identity = rekey(table.mint(A, node()).expect("room"), minter.id());
-    registry.admit(identity, slot(0));
+    registry.admit(identity, slot(0), crate::quantities::KeyIdentity::LOWEST);
 
     let mut ended = [None; 4];
     assert_eq!(

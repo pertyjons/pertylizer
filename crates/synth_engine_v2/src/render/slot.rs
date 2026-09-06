@@ -56,6 +56,10 @@ pub(crate) struct SlotState {
     /// The modulation sum `m`, in the law's units; the law's identity until a modulator
     /// writes it.
     modulation: ModulationSum,
+    /// The occurrence's own contribution — `SOUND-INV-021`'s bend — kept apart from the
+    /// modulators' sum: a note-on returns it to the law's identity for the new occurrence and
+    /// leaves a modulator in force on the destination in force, which one sum could not do.
+    expression: ModulationSum,
 }
 
 impl SlotState {
@@ -79,6 +83,7 @@ impl SlotState {
             base,
             override_value: None,
             modulation: law.identity(),
+            expression: law.identity(),
         };
         // Through the same composition every later value takes, so a base outside its
         // law's domain — which admission does not refuse — starts clamped as it will read.
@@ -168,20 +173,30 @@ impl SlotState {
         self.frames = frames;
     }
 
-    /// The modulation sum, and the value the kernel reads as a result.
+    /// The modulators' sum, and the value the kernel reads as a result.
     ///
-    /// Crate-private and compiled for tests only: Phase 7's modulators are its callers,
-    /// and until then the render tests are, through `PreparedRenderer::modulate`.
+    /// Crate-private and compiled for tests only: Phase 7's modulators are its callers, and
+    /// until then the render tests are, through `PreparedRenderer::modulate`. The per-note
+    /// bend has its own layer, [`Self::express`], so a modulator in force survives a note-on.
     #[cfg(test)]
     pub(crate) fn modulate(&mut self, sum: ModulationSum) -> ParameterValue {
         self.modulation = sum;
         self.retarget()
     }
 
+    /// The occurrence's own layer — a per-note bend — and the value the kernel reads as a
+    /// result. A note-on sets it to the law's identity before it writes its key.
+    pub(crate) fn express(&mut self, sum: ModulationSum) -> ParameterValue {
+        self.expression = sum;
+        self.retarget()
+    }
+
     /// The layers composed: the override where present, else the base; the law; the clamp.
     pub(crate) fn resolved(&self) -> ParameterValue {
         let base = self.override_value.unwrap_or(self.base);
-        let composed = self.law.resolve(base, self.modulation);
+        let composed = self
+            .law
+            .resolve(base, self.law.combine(self.modulation, self.expression));
         ParameterValue::saturating(self.unit.hold_to_domain(composed))
     }
 }
@@ -205,6 +220,27 @@ impl ParameterUnit {
 }
 
 impl ModulationLaw {
+    /// Two contributions in the law's units as one: their sum under every additive law and
+    /// their product under the multiplicative one, each law's identity being neutral.
+    pub(crate) fn combine(
+        self,
+        modulation: ModulationSum,
+        expression: ModulationSum,
+    ) -> ModulationSum {
+        let (m, e) = (modulation.as_f32(), expression.as_f32());
+        let combined = match self {
+            Self::MultiplicativeGain => m * e,
+            Self::NormalizedAdditive
+            | Self::BipolarAdditive
+            | Self::SemitoneAdditive
+            | Self::DecibelAdditive
+            | Self::PhysicalLinearAdditive
+            | Self::ThresholdedBoolean
+            | Self::NotModulatable => m + e,
+        };
+        ModulationSum::saturating(combined)
+    }
+
     /// The record's arithmetic, over a base `b` and a modulation sum `m` in the law's units.
     /// Returns the raw intermediate: the type's clamp and the finite bound follow in
     /// [`SlotState::resolved`], which is the only caller.

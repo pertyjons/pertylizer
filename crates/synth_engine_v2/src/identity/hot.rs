@@ -186,7 +186,12 @@ impl LiveNotes {
     /// Silently overwrites a slot already holding an older generation. That is the reissued
     /// index, and it is the intended case: the older occurrence's release, if one is still in
     /// flight, then resolves as an orphan, which is what it is.
-    pub fn admit(&mut self, identity: NoteIdentity, note: crate::plan::NoteSlot) {
+    pub fn admit(
+        &mut self,
+        identity: NoteIdentity,
+        note: crate::plan::NoteSlot,
+        key: crate::quantities::KeyIdentity,
+    ) {
         if identity.table != self.id {
             return;
         }
@@ -194,7 +199,24 @@ impl LiveNotes {
             *slot = Some(LiveNote {
                 generation: identity.generation,
                 note,
+                key,
             });
+        }
+    }
+
+    /// The node and key an occurrence is sounding on, if it names a live one.
+    pub fn note_and_key(
+        &self,
+        identity: NoteIdentity,
+    ) -> Option<(crate::plan::NoteSlot, crate::quantities::KeyIdentity)> {
+        if identity.table != self.id {
+            return None;
+        }
+        match self.slots.get(usize::from(identity.index)) {
+            Some(Some(live)) if live.generation == identity.generation => {
+                Some((live.note, live.key))
+            }
+            _ => None,
         }
     }
 

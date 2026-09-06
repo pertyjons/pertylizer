@@ -688,6 +688,11 @@ fn every_call_the_render_loop_makes_is_inside_the_checked_region() {
         // `const fn` constructors — no allocation, no branch, called per deferred start.
         "released_after_steal",
         "stamp",
+        // `ModulationSum::from_bend` is a `const fn` unit conversion, cents to semitones, on a
+        // bounded finite `Cents`: one division, for `SOUND-INV-021`'s per-note bend.
+        "from_bend",
+        // One more `const fn` counter read the drain mirrors into the report.
+        "orphan_expressions",
         // `PerformanceIngress::envelope_for` is a `const fn` building an `EventEnvelope` from
         // the store's epoch and a time — the one site that writes the simulated source —
         // called by the drain's `stamp` closure for each deferred start.

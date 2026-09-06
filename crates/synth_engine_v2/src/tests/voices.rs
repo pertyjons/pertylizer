@@ -14,8 +14,8 @@ use crate::plan::{CompiledPlan, PlanOp};
 use crate::profile::HostProfile;
 use crate::publish::PublicationArbiter;
 use crate::quantities::{
-    Amplitude, ChannelLayout, EventCount, Frequency, HeldNoteCount, KeyIdentity, NormalizedLevel,
-    NoteVelocity, SampleRate, Seconds,
+    Amplitude, Cents, ChannelLayout, EventCount, Frequency, HeldNoteCount, KeyIdentity,
+    NormalizedLevel, NoteVelocity, SampleRate, Seconds,
 };
 use crate::render::{AudioBlockMut, PreparedRenderer};
 use crate::report::{ResourceAmount, ResourceField};
@@ -553,7 +553,11 @@ fn render(plan: &CompiledPlan, notes: &[Vec<PlanEvent>], quanta: u64) -> Vec<f32
 }
 
 /// [`render`], and how many releases preparation dropped after a steal (ADR-0058).
-fn render_counted(plan: &CompiledPlan, notes: &[Vec<PlanEvent>], quanta: u64) -> (Vec<f32>, usize) {
+fn render_counted(
+    plan: &CompiledPlan,
+    notes: &[Vec<PlanEvent>],
+    quanta: u64,
+) -> (Vec<f32>, usize, usize) {
     let mut events: Vec<PlanEvent> = notes.iter().flatten().copied().collect();
     events.sort_by_key(|event| event.position());
     let (mut control, mut renderer) =
@@ -568,7 +572,11 @@ fn render_counted(plan: &CompiledPlan, notes: &[Vec<PlanEvent>], quanta: u64) ->
         &mut arbiter,
         (quanta * Q) as usize,
     );
-    (out, scheduler.released_after_steal())
+    (
+        out,
+        scheduler.released_after_steal(),
+        scheduler.expressions_after_steal(),
+    )
 }
 
 /// The gain the fade applies `i` frames in, as the sum kernel computes it.
@@ -598,7 +606,7 @@ fn a_full_producer_takes_the_oldest_voice_fades_it_and_starts_the_new_note_when_
     let alone_a = render(&plan, std::slice::from_ref(&a), 24);
     let alone_b = render(&plan, std::slice::from_ref(&b), 24);
     let alone_c = render(&plan, &[note(&plan, 72, 0, 30 * Q)], 24);
-    let (together, dropped) = render_counted(&plan, &[a, b, c], 24);
+    let (together, dropped, _) = render_counted(&plan, &[a, b, c], 24);
     assert_eq!(dropped, 1, "A's release names a note the steal ended");
     // Output lags engine time by the primed quantum. The reset voice is a **fresh** one —
     // its oscillator restarts at phase zero — so C's oracle is C rendered from time zero on a
@@ -655,7 +663,7 @@ fn a_same_note_policy_retriggers_the_held_key_at_once_and_without_a_fade() {
     let again = struck(&plan, 60, NoteVelocity::saturating(0.5), p, 18 * Q);
     let alone_a = render(&plan, std::slice::from_ref(&a), 24);
     let alone_b = render(&plan, std::slice::from_ref(&b), 24);
-    let (together, dropped) = render_counted(&plan, &[a, b, again], 24);
+    let (together, dropped, _) = render_counted(&plan, &[a, b, again], 24);
     assert_eq!(dropped, 1, "the new note's own release, after A's ended it");
     let from = (p + Q) as usize;
     let ended = (20 * Q + Q) as usize;
@@ -768,7 +776,7 @@ fn a_note_shorter_than_the_fade_still_starts_and_ends_on_the_voice_it_took() {
     let alone_a = render(&plan, std::slice::from_ref(&a), 16);
     let alone_b = render(&plan, std::slice::from_ref(&b), 16);
     let alone_short = render(&plan, &[note(&plan, 72, 0, 50)], 16);
-    let (together, dropped) = render_counted(&plan, &[a, b, short], 16);
+    let (together, dropped, _) = render_counted(&plan, &[a, b, short], 16);
     assert_eq!(dropped, 1, "A's release");
     let fade_from = (p + Q) as usize;
     let fade_to = fade_from + FADE as usize;
@@ -947,6 +955,276 @@ fn a_note_on_finding_every_voice_waiting_to_start_is_an_over_emission() {
         })
     ));
     assert!(prepare(p + FADE).is_ok());
+}
+
+/// A bend of the newest open note on the envelope with `key`, at `at`.
+fn bend(plan: &CompiledPlan, key: u8, at: u64, cents: f32) -> PlanEvent {
+    let slot = plan
+        .resolve_note(ENVELOPE)
+        .expect("the envelope is playable");
+    PlanEvent::new(
+        PlanPosition::new(at),
+        CompiledPayload::Bend {
+            slot,
+            key: KeyIdentity::new(key).expect("a keyboard position"),
+            cents: Cents::new(cents).expect("a bend"),
+        },
+    )
+}
+
+#[test]
+fn a_bend_moves_one_occurrence_by_its_cents_under_the_semitone_law() {
+    // `SOUND-INV-021`'s bend, held to `SOUND-INV-023`'s law: on one voice, a bend of +100
+    // cents at `p` renders exactly what a sample-positioned write of the frequency the law
+    // resolves for one semitone above the key renders — the same arithmetic, in the slot,
+    // reached by two paths. The oracle takes the law's own figure, so nothing here restates
+    // the arithmetic.
+    let plan = admit(&voice(1));
+    let p = 4 * Q + 5;
+    let a = note(&plan, 60, 0, 30 * Q);
+    let bent = render(&plan, &[a.clone(), vec![bend(&plan, 60, p, 100.0)]], 16);
+    let tuning = crate::tuning::PreparedTuning::equal_temperament().expect("prepares");
+    let base = crate::quantities::ParameterValue::from_frequency(
+        tuning.frequency_of(KeyIdentity::new(60).expect("a keyboard position")),
+    );
+    let resolved = crate::quantities::ParameterValue::saturating(
+        crate::node::ModulationLaw::SemitoneAdditive.resolve(
+            base,
+            crate::node::ModulationSum::from_bend(Cents::new(100.0).expect("a bend")),
+        ),
+    );
+    let frequency = plan
+        .resolve_parameter(OSCILLATOR, crate::ir::parameters::SINE_FREQUENCY)
+        .expect("the frequency is addressable");
+    let written = render(
+        &plan,
+        &[
+            a,
+            vec![PlanEvent::new(
+                PlanPosition::new(p),
+                CompiledPayload::SetParameter {
+                    slot: frequency,
+                    value: resolved,
+                },
+            )],
+        ],
+        16,
+    );
+    assert_eq!(
+        bent, written,
+        "the bend did not resolve under the semitone law"
+    );
+    let unbent = render(&plan, &[note(&plan, 60, 0, 30 * Q)], 16);
+    assert_ne!(
+        bent[(p + Q) as usize..],
+        unbent[(p + Q) as usize..],
+        "the bend moved nothing"
+    );
+}
+
+#[test]
+fn a_bend_followed_by_its_notes_release_in_one_call_still_moves_the_note() {
+    // The independent read's case: the release lands forty frames after the bend, in the
+    // same render call, and the walk that resolves targets applies every release before the
+    // passes run. A bend that looked the note up at pass time found it gone and moved nothing;
+    // resolved once with its target, it moves the note for the frames it has.
+    let plan = admit(&voice(1));
+    let p = 4 * Q + 5;
+    let bent = render(
+        &plan,
+        &[note(&plan, 60, 0, p + 40), vec![bend(&plan, 60, p, 100.0)]],
+        16,
+    );
+    let tuning = crate::tuning::PreparedTuning::equal_temperament().expect("prepares");
+    let base = crate::quantities::ParameterValue::from_frequency(
+        tuning.frequency_of(KeyIdentity::new(60).expect("a keyboard position")),
+    );
+    let resolved = crate::quantities::ParameterValue::saturating(
+        crate::node::ModulationLaw::SemitoneAdditive.resolve(
+            base,
+            crate::node::ModulationSum::from_bend(Cents::new(100.0).expect("a bend")),
+        ),
+    );
+    let frequency = plan
+        .resolve_parameter(OSCILLATOR, crate::ir::parameters::SINE_FREQUENCY)
+        .expect("the frequency is addressable");
+    let written = render(
+        &plan,
+        &[
+            note(&plan, 60, 0, p + 40),
+            vec![PlanEvent::new(
+                PlanPosition::new(p),
+                CompiledPayload::SetParameter {
+                    slot: frequency,
+                    value: resolved,
+                },
+            )],
+        ],
+        16,
+    );
+    assert_eq!(
+        bent, written,
+        "the bend before the release in one call moved nothing"
+    );
+    let unbent = render(&plan, &[note(&plan, 60, 0, p + 40)], 16);
+    assert_ne!(bent, unbent);
+}
+
+#[test]
+fn a_bend_reaches_only_the_occurrence_it_names() {
+    // Two voices held; a bend names the first key's note. Its instance moves and the other is
+    // untouched, so the render is the bent note alone plus the other alone — and the velocity
+    // destination of the bent note is not touched either, which a half velocity shows: a bend
+    // that landed on every row of the note would move it through the normalized law.
+    let plan = admit(&voice(2));
+    let p = 4 * Q + 5;
+    let a = struck(&plan, 60, NoteVelocity::saturating(0.5), 0, 30 * Q);
+    let b = note(&plan, 67, 2 * Q, 30 * Q);
+    let alone_a_bent = render(&plan, &[a.clone(), vec![bend(&plan, 60, p, -350.0)]], 16);
+    let alone_a = render(&plan, std::slice::from_ref(&a), 16);
+    let alone_b = render(&plan, std::slice::from_ref(&b), 16);
+    let together = render(&plan, &[a, b, vec![bend(&plan, 60, p, -350.0)]], 16);
+    for (k, actual) in together.iter().copied().enumerate() {
+        assert_eq!(actual, alone_a_bent[k] + alone_b[k], "frame {k}");
+    }
+    assert_ne!(
+        alone_a_bent[(p + Q) as usize..],
+        alone_a[(p + Q) as usize..]
+    );
+}
+
+#[test]
+fn a_new_occurrence_on_a_voice_starts_unbent() {
+    // Per-note expression is the occurrence's: A is bent and released, and the next note on
+    // the same voice starts at exactly the frequency its own key resolves to, read from the
+    // oscillator's state. A bend that outlived its note would carry into C.
+    use crate::node::kernels::SINE_FREQUENCY;
+    let plan = admit(&voice(1));
+    let p = 4 * Q + 5;
+    let mut events: Vec<PlanEvent> = [
+        note(&plan, 60, 0, 8 * Q),
+        vec![bend(&plan, 60, p, 700.0)],
+        note(&plan, 72, 10 * Q, 30 * Q),
+    ]
+    .iter()
+    .flatten()
+    .copied()
+    .collect();
+    events.sort_by_key(|event| event.position());
+    let (mut control, mut renderer) =
+        StreamControl::open(plan.clone(), ORIGIN).expect("the stream opens");
+    let stream = AdmittedCompiledStream::admit(&plan, &events).expect("the stream fits");
+    let mut scheduler =
+        CompiledEventScheduler::prepare(&mut control, &stream).expect("the stream prepares");
+    let mut arbiter = PublicationArbiter::prepare(&profile()).expect("the store is preparable");
+    let _ = drive(
+        &mut scheduler,
+        &mut renderer,
+        &mut arbiter,
+        (12 * Q) as usize,
+    );
+    let tuning = crate::tuning::PreparedTuning::equal_temperament().expect("prepares");
+    let expected = crate::quantities::ParameterValue::from_frequency(
+        tuning.frequency_of(KeyIdentity::new(72).expect("a keyboard position")),
+    );
+    let frequencies: Vec<_> = renderer
+        .node_states()
+        .iter()
+        .filter(|state| matches!(state, crate::node::kernels::NodeState::Sine { .. }))
+        .filter_map(|state| state.control_value(SINE_FREQUENCY))
+        .collect();
+    assert_eq!(frequencies, vec![expected], "C carried A's bend");
+}
+
+#[test]
+fn a_bend_for_a_note_a_steal_ended_is_dropped_and_counted_with_its_release() {
+    // ADR-0058 clause 5: expression addressed to a taken note is an orphan. On the compiled
+    // path preparation drops it, and counts it beside the taken note's release.
+    let plan = admit(&voice_with(
+        2,
+        StealingPolicy::Oldest {
+            fade: FrameCount::new(FADE),
+        },
+    ));
+    let p = 4 * Q + 5;
+    let (_, releases, bends) = render_counted(
+        &plan,
+        &[
+            note(&plan, 60, 0, 30 * Q),
+            note(&plan, 67, 2 * Q, 30 * Q),
+            note(&plan, 72, p, 30 * Q),
+            vec![bend(&plan, 60, p + 3 * Q, 50.0)],
+        ],
+        16,
+    );
+    assert_eq!(
+        (releases, bends),
+        (1, 1),
+        "A's release, and A's bend, each under its own name"
+    );
+}
+
+#[test]
+fn a_bend_naming_no_open_note_is_refused_at_preparation() {
+    let plan = admit(&voice(2));
+    let events = vec![bend(&plan, 60, Q, 10.0)];
+    let (mut control, _renderer) =
+        StreamControl::open(plan.clone(), ORIGIN).expect("the stream opens");
+    let stream = AdmittedCompiledStream::admit(&plan, &events).expect("the stream fits");
+    assert!(matches!(
+        CompiledEventScheduler::prepare(&mut control, &stream),
+        Err(crate::schedule::SchedulePrepareError::UnmatchedExpression { event_index: 0 })
+    ));
+}
+
+#[test]
+fn a_bend_of_a_note_that_took_a_voice_is_displaced_with_its_start() {
+    // C takes A's voice at `p` and starts at `p + 128`; a bend of C at `p + 50` cannot move a
+    // note that has not started, so it lands at `p + 178`, displaced as C's edges are.
+    let plan = admit(&voice_with(
+        2,
+        StealingPolicy::Oldest {
+            fade: FrameCount::new(FADE),
+        },
+    ));
+    let p = 4 * Q + 5;
+    let mut events: Vec<PlanEvent> = [
+        note(&plan, 60, 0, 30 * Q),
+        note(&plan, 67, 2 * Q, 30 * Q),
+        note(&plan, 72, p, 30 * Q),
+        vec![bend(&plan, 72, p + 50, 25.0)],
+    ]
+    .iter()
+    .flatten()
+    .copied()
+    .collect();
+    events.sort_by_key(|event| event.position());
+    let (mut control, _renderer) =
+        StreamControl::open(plan.clone(), ORIGIN).expect("the stream opens");
+    let stream = AdmittedCompiledStream::admit(&plan, &events).expect("the stream fits");
+    let placed: Vec<crate::schedule::CompiledEvent> = stream
+        .events()
+        .iter()
+        .map(|event| {
+            crate::schedule::CompiledEvent::new(
+                SampleTime::new(event.position().as_u64()),
+                event.payload(),
+            )
+        })
+        .collect();
+    let mut minter = control.minter_mut().working_copy();
+    let (stamped, _) = crate::schedule::stamp_into(&mut minter, &plan, control.epoch(), &placed)
+        .expect("the list stamps");
+    let bends: Vec<(u64, u16)> = stamped
+        .iter()
+        .filter_map(|event| match event.payload() {
+            crate::render::EventPayload::Bend { identity, .. } => {
+                Some((event.envelope().time().as_u64(), identity.index()))
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(bends, vec![(p + 50 + FADE, 0)]);
 }
 
 #[test]

@@ -233,7 +233,8 @@ impl PreparedRenderer {
                 // foreign slot and is filtered here for the same reason.
                 EventPayload::Note { identity, .. }
                 | EventPayload::Fade { identity, .. }
-                | EventPayload::Reset { identity } => identity.table() != self.live_notes.id(),
+                | EventPayload::Reset { identity }
+                | EventPayload::Bend { identity, .. } => identity.table() != self.live_notes.id(),
             };
             if foreign {
                 pending.foreign_slot = pending.foreign_slot.saturating_add(1);
@@ -317,6 +318,7 @@ impl PreparedRenderer {
                 position,
                 // Resolved below, once the whole span is in render order.
                 target: None,
+                bend_of: None,
                 // Four billion events in one span is unreachable, and a saturated arrival
                 // index only affects tie order among events at one position.
                 arrival: u32::try_from(index).unwrap_or(u32::MAX),
@@ -369,7 +371,10 @@ impl PreparedRenderer {
             // A note has no quantum-rate effect at all. Every edge it carries is
             // sample-positioned, so the whole payload is the other pass's — and so are a
             // steal's fade and reset (ADR-0058).
-            EventPayload::Note { .. } | EventPayload::Fade { .. } | EventPayload::Reset { .. } => {}
+            EventPayload::Note { .. }
+            | EventPayload::Fade { .. }
+            | EventPayload::Reset { .. }
+            | EventPayload::Bend { .. } => {}
             EventPayload::SetParameter { slot, value } => {
                 // A slot indexes **one** plan's target table, and one from another plan
                 // was already refused and counted during resolution — before it could
@@ -503,6 +508,25 @@ impl PreparedRenderer {
                         }
                     }
                 }
+                // A bend is one write per pitch destination of the occurrence's node, on the
+                // occurrence's own rows; an orphan bend resolved to no node and writes nothing.
+                EventPayload::Bend { identity, .. } => {
+                    let Some(slot) = event.bend_of else {
+                        continue;
+                    };
+                    for magnitude in self.plan.note_magnitudes_of(slot) {
+                        if magnitude.magnitude != crate::node::NoteMagnitude::Pitch {
+                            continue;
+                        }
+                        if let Some(row) =
+                            self.voice_row(magnitude.parameter.index(), identity.index())
+                            && let Some(node) = self.slot_node(row)
+                            && let Some(count) = self.control_starts.get_mut(node + 1)
+                        {
+                            *count = count.saturating_add(1);
+                        }
+                    }
+                }
                 _ => {}
             }
         }
@@ -575,7 +599,28 @@ impl PreparedRenderer {
                     else {
                         continue;
                     };
-                    self.push_timed_control(row, event.position.quantum_offset(), value);
+                    // A new occurrence starts with its per-note layer at identity: whatever
+                    // bend the voice's previous occupant carried ends with it.
+                    self.push_timed_write(row, event.position.quantum_offset(), value, true);
+                }
+            }
+            if let EventPayload::Bend { identity, cents } = event.payload
+                && let Some(slot) = event.bend_of
+            {
+                let sum = crate::node::ModulationSum::from_bend(cents);
+                for position in 0..self.plan.note_magnitudes_of(slot).len() {
+                    let Some(magnitude) = self.plan.note_magnitudes_of(slot).get(position).copied()
+                    else {
+                        break;
+                    };
+                    if magnitude.magnitude != crate::node::NoteMagnitude::Pitch {
+                        continue;
+                    }
+                    let Some(row) = self.voice_row(magnitude.parameter.index(), identity.index())
+                    else {
+                        continue;
+                    };
+                    self.push_timed_modulation(row, event.position.quantum_offset(), sum);
                 }
             }
             // ADR-0058's two loop-reserved controls, on the instance the identity's index
@@ -679,6 +724,19 @@ impl PreparedRenderer {
         offset: crate::time::QuantumOffset,
         value: crate::quantities::ParameterValue,
     ) {
+        self.push_timed_write(slot, offset, value, false);
+    }
+
+    /// [`Self::push_timed_control`], and with `fresh` the row's modulation layer returned to
+    /// its law's identity first: a note-on's magnitudes start a new occurrence, whose
+    /// per-note expression is its own (`SOUND-INV-021`'s bend, ADR-0058 clause 5).
+    fn push_timed_write(
+        &mut self,
+        slot: usize,
+        offset: crate::time::QuantumOffset,
+        value: crate::quantities::ParameterValue,
+        fresh: bool,
+    ) {
         let (Some(target), Some(composed)) = (
             self.plan.parameter_targets().get(slot).copied(),
             self.parameter_slots.get_mut(slot),
@@ -686,7 +744,29 @@ impl PreparedRenderer {
             return;
         };
         let (node, control) = (target.node.index(), target.control);
+        if fresh {
+            let _ = composed.express(target.law.identity());
+        }
         let value = composed.write_override(value);
+        self.push_node_control(node, offset, control, value);
+    }
+
+    /// A per-note bend: the row's modulation layer set and the resolved value written at the
+    /// offset — `SOUND-INV-023`'s composition, the law applied in the slot and never here.
+    fn push_timed_modulation(
+        &mut self,
+        slot: usize,
+        offset: crate::time::QuantumOffset,
+        sum: crate::node::ModulationSum,
+    ) {
+        let (Some(target), Some(composed)) = (
+            self.plan.parameter_targets().get(slot).copied(),
+            self.parameter_slots.get_mut(slot),
+        ) else {
+            return;
+        };
+        let (node, control) = (target.node.index(), target.control);
+        let value = composed.express(sum);
         self.push_node_control(node, offset, control, value);
     }
 
@@ -743,14 +823,16 @@ impl PreparedRenderer {
             let Some(event) = self.event_scratch.get(index).copied() else {
                 break;
             };
+            let mut bend_of = None;
             let target = match event.payload {
                 EventPayload::Note {
                     identity,
-                    edge: NoteEdge::On { slot, .. },
+                    edge: NoteEdge::On { slot, key, .. },
                 } => {
                     // The on edge names what is played; the registry records it against the
-                    // occurrence so the release does not have to carry it.
-                    self.live_notes.admit(identity, slot);
+                    // occurrence so the release does not have to carry it — and the key, so a
+                    // bend can move the pitch from what the key resolved to.
+                    self.live_notes.admit(identity, slot, key);
                     self.note_target(slot, identity)
                 }
                 EventPayload::Note {
@@ -788,9 +870,20 @@ impl PreparedRenderer {
                     None
                 }
                 EventPayload::Reset { .. } => None,
+                // `SOUND-INV-017`: an expression event naming no live note is an orphan,
+                // refused and counted. It lands through the magnitudes, so it has no target.
+                EventPayload::Bend { identity, .. } => {
+                    bend_of = self.live_notes.note_and_key(identity).map(|(slot, _)| slot);
+                    if bend_of.is_none() {
+                        pending.orphan_note = pending.orphan_note.saturating_add(1);
+                        pending.last_orphan_note = Some(identity);
+                    }
+                    None
+                }
             };
             if let Some(slot) = self.event_scratch.get_mut(index) {
                 slot.target = target;
+                slot.bend_of = bend_of;
             }
         }
     }
@@ -815,7 +908,9 @@ impl PreparedRenderer {
         match payload {
             EventPayload::Note { edge, .. } => Some(edge.value()),
             EventPayload::SetParameter { value, .. } => Some(value),
-            EventPayload::Fade { .. } | EventPayload::Reset { .. } => None,
+            EventPayload::Fade { .. } | EventPayload::Reset { .. } | EventPayload::Bend { .. } => {
+                None
+            }
         }
     }
 

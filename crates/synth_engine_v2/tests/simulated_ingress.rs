@@ -284,6 +284,8 @@ struct Edge {
     velocity: f32,
     /// `Some(n)`: the release of the `n`th note-on offered, by order; `None`: a note-on.
     releases: Option<usize>,
+    /// With `releases`, a bend of that note by these cents rather than its release.
+    cents: Option<f32>,
 }
 
 const fn on(at: u64, key: u8, velocity: f32) -> Edge {
@@ -292,6 +294,7 @@ const fn on(at: u64, key: u8, velocity: f32) -> Edge {
         key,
         velocity,
         releases: None,
+        cents: None,
     }
 }
 
@@ -301,12 +304,78 @@ const fn off(at: u64, of: usize) -> Edge {
         key: 0,
         velocity: 0.0,
         releases: Some(of),
+        cents: None,
     }
+}
+
+const fn bend(at: u64, of: usize, cents: f32) -> Edge {
+    Edge {
+        at,
+        key: 0,
+        velocity: 0.0,
+        releases: Some(of),
+        cents: Some(cents),
+    }
+}
+
+/// A voice with a pitch destination — a sine through the envelope into the amplifier, tuned —
+/// where the gated constant has none, so a bend has something to move.
+fn pitched(declarations: PlanDeclarations) -> CompiledPlan {
+    const OSCILLATOR: NodeId = NodeId::new(31);
+    let ir = GraphIr::builder()
+        .node(
+            OSCILLATOR,
+            IrNodeKind::Sine {
+                frequency: synth_engine_v2::quantities::Frequency::new(220.0).expect("finite"),
+                amplitude: synth_engine_v2::quantities::Amplitude::new(0.25).expect("finite"),
+            },
+            ExecutionScope::Voice,
+        )
+        .node(
+            ENVELOPE,
+            IrNodeKind::Envelope {
+                attack: synth_engine_v2::quantities::Seconds::ZERO,
+                decay: synth_engine_v2::quantities::Seconds::ZERO,
+                sustain: synth_engine_v2::quantities::NormalizedLevel::FULL,
+                release: synth_engine_v2::quantities::Seconds::ZERO,
+            },
+            ExecutionScope::Voice,
+        )
+        .node(AMPLIFIER, IrNodeKind::Amplifier, ExecutionScope::Voice)
+        .node(OUTPUT, IrNodeKind::Output, ExecutionScope::Global)
+        .connect(
+            (OSCILLATOR, PortId::FIRST),
+            (AMPLIFIER, PortId::FIRST),
+            SignalDomain::Audio,
+        )
+        .connect(
+            (ENVELOPE, PortId::FIRST),
+            (AMPLIFIER, synth_engine_v2::node::AMPLIFIER_CONTROL),
+            SignalDomain::Control,
+        )
+        .connect(
+            (AMPLIFIER, PortId::FIRST),
+            (OUTPUT, PortId::FIRST),
+            SignalDomain::Audio,
+        )
+        .tuning(ExecutionScope::Voice, common::twelve_tet())
+        .declaring(declarations)
+        .build()
+        .expect("a readable plan");
+    common::admit(
+        &ir,
+        common::profile(TOTAL_FRAMES as u64, ChannelLayout::Mono),
+    )
 }
 
 /// The compiled path's render of `edges` under `declarations`, `quanta` quanta long.
 fn render_compiled_edges(declarations: PlanDeclarations, edges: &[Edge], quanta: u64) -> Vec<f32> {
-    let plan = plan_with(declarations);
+    render_compiled_edges_on(&plan_with(declarations), edges, quanta)
+}
+
+/// [`render_compiled_edges`] on a given plan.
+fn render_compiled_edges_on(plan: &CompiledPlan, edges: &[Edge], quanta: u64) -> Vec<f32> {
+    let plan = plan.clone();
     let slot = plan.resolve_note(ENVELOPE).expect("playable");
     let mut keys: Vec<u8> = Vec::new();
     let mut events: Vec<PlanEvent> = Vec::new();
@@ -320,9 +389,16 @@ fn render_compiled_edges(declarations: PlanDeclarations, edges: &[Edge], quanta:
                     velocity: synth_engine_v2::quantities::NoteVelocity::saturating(edge.velocity),
                 }
             }
-            Some(of) => CompiledPayload::NoteOff {
-                slot,
-                key: synth_engine_v2::quantities::KeyIdentity::new(keys[of]).expect("key"),
+            Some(of) => match edge.cents {
+                Some(cents) => CompiledPayload::Bend {
+                    slot,
+                    key: synth_engine_v2::quantities::KeyIdentity::new(keys[of]).expect("key"),
+                    cents: synth_engine_v2::quantities::Cents::new(cents).expect("a bend"),
+                },
+                None => CompiledPayload::NoteOff {
+                    slot,
+                    key: synth_engine_v2::quantities::KeyIdentity::new(keys[of]).expect("key"),
+                },
             },
         };
         events.push(PlanEvent::new(PlanPosition::new(edge.at), payload));
@@ -361,7 +437,16 @@ fn render_live_edges(
     edges: &[Edge],
     quanta: u64,
 ) -> (Vec<f32>, IngressCounters, PreparedRenderer) {
-    let plan = plan_with(declarations);
+    render_live_edges_on(&plan_with(declarations), edges, quanta)
+}
+
+/// [`render_live_edges`] on a given plan.
+fn render_live_edges_on(
+    plan: &CompiledPlan,
+    edges: &[Edge],
+    quanta: u64,
+) -> (Vec<f32>, IngressCounters, PreparedRenderer) {
+    let plan = plan.clone();
     let (mut control, mut renderer) =
         StreamControl::open(plan.clone(), ORIGIN).expect("preparation succeeds");
     let empty = AdmittedCompiledStream::admit(&plan, &[]).expect("an empty stream fits");
@@ -414,9 +499,19 @@ fn render_live_edges(
                     .expect("the note-on is admitted, stealing if it must");
                 identities.push(identity);
             }
-            Some(of) => control
-                .offer_note_off(&mut store, SampleTime::new(edge.at), identities[of])
-                .expect("the release is admitted"),
+            Some(of) => match edge.cents {
+                Some(cents) => control
+                    .offer_bend(
+                        &mut store,
+                        SampleTime::new(edge.at),
+                        identities[of],
+                        synth_engine_v2::quantities::Cents::new(cents).expect("a bend"),
+                    )
+                    .expect("the bend is admitted"),
+                None => control
+                    .offer_note_off(&mut store, SampleTime::new(edge.at), identities[of])
+                    .expect("the release is admitted"),
+            },
         }
     }
     while done < total {
@@ -643,6 +738,141 @@ fn a_live_note_on_finding_every_voice_waiting_to_start_is_dropped_by_name() {
         }
     ));
     assert_eq!(store.counters().dropped_identity(), 1);
+}
+
+#[test]
+fn a_live_bend_moves_the_note_it_names_as_the_compiled_one_does() {
+    // `SOUND-INV-021`'s bend through the live boundary, addressed by the occurrence the
+    // note-on returned: the same edges bent live and stated compiled render the same samples,
+    // and the untouched note is untouched.
+    let plain = synth_engine_v2::ir::StealingPolicy::None;
+    let edges = [
+        on(0, 60, 0.5),
+        on(2 * Q, 67, 1.0),
+        bend(4 * Q + 5, 0, -350.0),
+        bend(8 * Q, 1, 100.0),
+        off(20 * Q, 0),
+        off(22 * Q, 1),
+    ];
+    let compiled = render_compiled_edges_on(
+        &pitched(stealing(compiled_only_notes(2), plain)),
+        &edges,
+        26,
+    );
+    let (live, counters, renderer) =
+        render_live_edges_on(&pitched(stealing(live_only(2, 2), plain)), &edges, 26);
+    assert_same(
+        &live,
+        &compiled,
+        "the live bend did not render as the compiled one",
+    );
+    assert_eq!(counters.orphan_expressions(), 0);
+    assert_eq!(renderer.diagnostics().orphan_note_events(), 0);
+    // And the bend did something: the unbent render differs from the first bend on.
+    let unbent = render_compiled_edges_on(
+        &pitched(stealing(compiled_only_notes(2), plain)),
+        &[
+            on(0, 60, 0.5),
+            on(2 * Q, 67, 1.0),
+            off(20 * Q, 0),
+            off(22 * Q, 1),
+        ],
+        26,
+    );
+    let from = (4 * Q + 5 + Q) as usize;
+    assert_ne!(
+        &compiled[from..from + 64],
+        &unbent[from..from + 64],
+        "the bend moved nothing"
+    );
+}
+
+#[test]
+fn a_live_bend_of_a_note_whose_start_is_deferred_waits_with_it() {
+    // C takes a voice and waits to start; a bend of C offered before the start is displaced
+    // with it, as the compiled path displaces its bend, and both render alike.
+    let oldest = synth_engine_v2::ir::StealingPolicy::Oldest { fade: FADE };
+    let p = 4 * Q + 5;
+    let edges = [
+        on(0, 60, 1.0),
+        on(2 * Q, 67, 1.0),
+        on(p, 72, 1.0),
+        bend(p + 50, 2, 25.0),
+        off(20 * Q, 0),
+        off(22 * Q, 1),
+        off(24 * Q, 2),
+    ];
+    let compiled = render_compiled_edges_on(
+        &pitched(stealing(compiled_only_notes(2), oldest)),
+        &edges,
+        28,
+    );
+    let (live, counters, _) =
+        render_live_edges_on(&pitched(stealing(live_only(2, 2), oldest)), &edges, 28);
+    assert_same(
+        &live,
+        &compiled,
+        "the deferred live bend did not render as the compiled one",
+    );
+    assert_eq!(counters.orphan_expressions(), 0);
+    let unbent = render_compiled_edges_on(
+        &pitched(stealing(compiled_only_notes(2), oldest)),
+        &[
+            on(0, 60, 1.0),
+            on(2 * Q, 67, 1.0),
+            on(p, 72, 1.0),
+            off(20 * Q, 0),
+            off(22 * Q, 1),
+            off(24 * Q, 2),
+        ],
+        28,
+    );
+    let from = (p + 50 + 128 + Q) as usize;
+    assert_ne!(
+        &compiled[from..from + 64],
+        &unbent[from..from + 64],
+        "the bend moved nothing"
+    );
+}
+
+#[test]
+fn a_live_bend_naming_a_note_the_producer_does_not_hold_is_refused_as_an_orphan() {
+    // A bend for a released occurrence, or one from another table, is refused at the boundary
+    // and counted as an orphan expression — never queued to be refused a pass later.
+    let plan = plan_with(live_only(2, 2));
+    let (mut control, renderer) =
+        StreamControl::open(plan.clone(), ORIGIN).expect("preparation succeeds");
+    let host = common::profile(TOTAL_FRAMES as u64, ChannelLayout::Mono);
+    let mut store = PerformanceIngress::prepare(&host, &plan, ONLY_PRODUCER, &renderer)
+        .expect("the live producer has a store");
+    let slot = plan.resolve_note(ENVELOPE).expect("playable");
+    let identity = control
+        .offer_note_on(
+            &mut store,
+            SampleTime::new(0),
+            slot,
+            common::any_key(),
+            synth_engine_v2::quantities::NoteVelocity::FULL,
+        )
+        .expect("admitted");
+    control
+        .offer_note_off(&mut store, SampleTime::new(Q), identity)
+        .expect("released");
+    let refused = control
+        .offer_bend(
+            &mut store,
+            SampleTime::new(2 * Q),
+            identity,
+            synth_engine_v2::quantities::Cents::new(10.0).expect("a bend"),
+        )
+        .expect_err("the note is released");
+    assert!(matches!(refused, IngressRefused::OrphanExpression { .. }));
+    assert_eq!(store.counters().orphan_expressions(), 1);
+    assert_eq!(
+        store.len(),
+        2,
+        "the note's two edges, and no bend queued behind them"
+    );
 }
 
 #[test]

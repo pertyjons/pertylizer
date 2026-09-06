@@ -271,6 +271,11 @@ pub struct TransportActivation {
     /// the second, and a named transformation is what tells a reader that a seek through a
     /// held note did something rather than nothing.
     pub(crate) omitted_releases: usize,
+    /// Bends omitted because the note they move was opened before the anchor and ended by
+    /// the boundary release (`SOUND-INV-021`).
+    pub(crate) omitted_expressions: usize,
+    /// Bends the suffix's stamping dropped because a steal had ended their note.
+    pub(crate) expressions_after_steal: usize,
     /// ADR-0058 clause 5: releases the history or the suffix dropped because a steal had
     /// already ended their note.
     pub(crate) released_after_steal: usize,
@@ -401,6 +406,16 @@ impl TransportActivation {
     /// How many releases the suffix omitted because their note-on precedes the anchor.
     pub const fn omitted_releases(&self) -> usize {
         self.omitted_releases
+    }
+
+    /// How many bends moved a note the anchor's boundary release ended.
+    pub const fn omitted_expressions(&self) -> usize {
+        self.omitted_expressions
+    }
+
+    /// How many bends named a note a steal had already ended.
+    pub const fn expressions_after_steal(&self) -> usize {
+        self.expressions_after_steal
     }
 
     /// How many releases named a note a steal had already ended (ADR-0058 clause 5).

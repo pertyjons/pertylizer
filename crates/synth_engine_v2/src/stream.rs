@@ -363,6 +363,11 @@ fn rebase(error: SchedulePrepareError, sources: &[usize]) -> SchedulePrepareErro
                 event_index: at(event_index),
             }
         }
+        SchedulePrepareError::UnmatchedExpression { event_index } => {
+            SchedulePrepareError::UnmatchedExpression {
+                event_index: at(event_index),
+            }
+        }
         SchedulePrepareError::StealsOverrunShare { source } => {
             SchedulePrepareError::StealsOverrunShare { source }
         }
@@ -676,6 +681,7 @@ impl StreamControl {
         let mut in_suffix: crate::schedule::OpenNotes<()> =
             crate::schedule::OpenNotes::new(admitted_notes, policy);
         let mut released_after_steal = 0_usize;
+        let mut omitted_expressions = 0_usize;
         let mut placed = Vec::with_capacity(stream.events().len());
         // Where each placed event came from in the caller's admitted stream. The suffix drops
         // history and crossing-note releases, so a stamping error's index would otherwise name
@@ -713,6 +719,10 @@ impl StreamControl {
                                 *entry = Some(value);
                             }
                         }
+                        // A bend in the history moves a note the boundary release ends; the
+                        // catch-up restores the destination's override, never a note's own
+                        // layer, so there is nothing of it to carry.
+                        CompiledPayload::Bend { .. } => {}
                         CompiledPayload::NoteOn {
                             slot,
                             key,
@@ -871,6 +881,20 @@ impl StreamControl {
                     // than a seek, and stamping refuses it by name.
                 }
                 CompiledPayload::SetParameter { .. } => {}
+                // A bend of a note the suffix opened is stamped there; one whose note-on
+                // precedes the anchor moves a note the boundary release ended, and is
+                // omitted and counted, as its release would be.
+                CompiledPayload::Bend { slot, key, .. } => {
+                    let now = event.position().as_u64();
+                    if in_suffix.find(now, slot, key).is_none()
+                        && !in_suffix.taken(slot, key)
+                        && (before_anchor.find(now, slot, key).is_some()
+                            || before_anchor.taken(slot, key))
+                    {
+                        omitted_expressions = omitted_expressions.saturating_add(1);
+                        continue;
+                    }
+                }
             }
             placed.push(crate::schedule::CompiledEvent::new(time, event.payload()));
             sources.push(event_index);
@@ -981,7 +1005,9 @@ impl StreamControl {
             outstanding,
             minter,
             omitted_releases,
+            omitted_expressions,
             released_after_steal: released_after_steal.saturating_add(stamped.released_after_steal),
+            expressions_after_steal: stamped.expressions_after_steal,
             catch_up,
             loop_interval: request.loop_interval,
             producers: self.note_producers(),
@@ -1243,7 +1269,7 @@ impl StreamControl {
                     CompiledPayload::NoteOff { slot, key } => {
                         let _ = before.close(position.as_u64(), slot, key);
                     }
-                    CompiledPayload::SetParameter { .. } => {}
+                    CompiledPayload::SetParameter { .. } | CompiledPayload::Bend { .. } => {}
                 }
                 continue;
             }
@@ -1297,7 +1323,9 @@ impl StreamControl {
                         }
                     }
                 }
-                CompiledPayload::SetParameter { .. } => positions.push(position),
+                CompiledPayload::SetParameter { .. } | CompiledPayload::Bend { .. } => {
+                    positions.push(position);
+                }
             }
         }
         RepeatingPass {
@@ -1419,6 +1447,18 @@ impl StreamControl {
     ) -> Result<(), crate::ingress::IngressRefused> {
         self.latch_store(store)?;
         store.offer_parameter(time, slot, value)
+    }
+
+    /// Offer a per-note bend through this stream's minter (`SOUND-INV-021`).
+    pub fn offer_bend(
+        &mut self,
+        store: &mut crate::ingress::PerformanceIngress,
+        time: crate::time::SampleTime,
+        identity: NoteIdentity,
+        cents: crate::quantities::Cents,
+    ) -> Result<(), crate::ingress::IngressRefused> {
+        self.latch_store(store)?;
+        store.offer_bend(&mut self.minter, time, identity, cents)
     }
 
     /// Adopt this stream's one ingress store, or refuse a second.

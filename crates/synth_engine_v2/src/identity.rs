@@ -370,6 +370,8 @@ pub struct IdentityTable {
 pub(crate) struct LiveNote {
     pub(super) generation: u32,
     pub(super) note: crate::plan::NoteSlot,
+    /// The key the note-on named, so a bend can re-resolve the pitch it moves from.
+    pub(super) key: crate::quantities::KeyIdentity,
 }
 
 /// Which occurrences are currently sounding, and on which node.
