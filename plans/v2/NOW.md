@@ -1,6 +1,6 @@
 # Core V2: Current Work
 
-Last updated: 2026-09-05
+Last updated: 2026-09-06
 
 This file contains only active Core V2 state, blockers and next actions. Durable
 contracts live in ADRs and specifications; completed Phase 3 coordination
@@ -10,7 +10,10 @@ and Phase 4's durable record is [REV-P04](reviews/phase-04-exit-review.md)
 together with its section in the [master plan](master-plan.md#phase-4-current-project-lowering-and-offline-ab-path).
 Phase 5's durable record is [REV-P05](reviews/phase-05-exit-review.md) with its section in the
 [master plan](master-plan.md#phase-5-declarative-node-and-parameter-api); its slice table is
-archived in [`archive/phase-05/`](archive/phase-05/INDEX.md).
+archived in [`archive/phase-05/`](archive/phase-05/INDEX.md). Phase 6's durable record is
+[REV-P06](reviews/phase-06-exit-review.md) with its section in the
+[master plan](master-plan.md#phase-6-polyphony-and-instrument-runtime); its slice table is archived
+in [`archive/phase-06/`](archive/phase-06/INDEX.md).
 
 ## Phase 4 — closed and merged
 
@@ -73,6 +76,67 @@ decision. The slice table is archived at `archive/phase-06/`.
 
 ## Active streams
 
+### Phase 7 — active since 2026-09-06
+
+Activated by selection, as the Phase 6 exit said it would be. Its entry prerequisites are met:
+Phase 6 is `Complete` under [REV-P06](reviews/phase-06-exit-review.md), and the Phase 3 gate the
+master plan names as the one this phase may not begin before passed under
+[REV-P03](reviews/phase-03-exit-review.md). No record is drafted at entry. Under `PROCESS.md`'s
+decision-timing rule the phase's open decisions bind the slices that need them, not the entry:
+
+- **ADR-0008**, YAMS state identity and reload policy, is a register row with no record yet. Its
+  identity and seed half binds the first slice that gives a node persistent script state or a
+  seed — `P07-S005` below, together with `P06-R001` — and the record is drafted before that slice.
+  Its reload half is coupled to Phase 9's plan swap (ADR-0009, ADR-0010) and stays `Proposed` or
+  `Deferred` there: an option that cannot be implemented before a live swap exists is not
+  accepted here.
+- **ADR-0012**, automation conflict policy, stays `Proposed` for Phase 10. This phase applies the
+  master plan's multiple-writer rule in its strict form: two absolute writers on one target at
+  one sample are refused at compilation by name. That is a refusal, not a product choice, and
+  fails closed.
+- **ADR-0054 clause 2** binds the first slice that makes an authored-runtime producer executable
+  (`P07-S007`): it measures that class's high-water occupancy and reselects or retains its share
+  before a downstream consumer can enable it.
+- **ADR-0007's revisit condition** — the first modulator no listed law expresses — reopens that
+  record by amendment, with the new law's arithmetic stated.
+
+What V2 has at the phase's start: one parameter slot per addressable parameter, composing the
+base, an override, the modulation sum and a per-note expression layer under one declared law
+(`SOUND-INV-023`) and then a linear segment (`SOUND-INV-024`) — and the modulation sum has no
+producer; a crate-private test seam writes it. The declared controls are the oscillators'
+`frequency` (semitone law, sample-positioned, the pitch destination) and `amplitude` (decibel
+law, quantum rate), the envelope's gate, velocity and sensitivity, the velocity scaler's and the
+sampler's; the low-pass filter declares **no** control, so its cutoff and resonance are authored
+fields nothing can address, and the envelope's times are likewise. Control-domain edges run
+between ports (the envelope's per-sample output into the amplifier), but no signal feeds a slot,
+no modulator kind exists, and nothing consumes randomness. The compiled timeline stamps
+`SetParameter` override writes at plan positions under the compiled share, which is the
+mechanism an automation lane lowers onto. The lowerer refuses a placed pattern carrying
+automation and a Mod Grid instance V1's own builder returns, and reports a saved YAMS script
+as unrepresented, each naming this phase; the note-processor rack and Note Grid graphs are
+refused under a Phase 6 label that phase never claimed. The profile carries the phase's
+capacities unchanged from V1 — the script limits, `max_mod_graph_nodes` and the two per-voice
+slot counts — reported against themselves until a plan declares usage
+(`spec-host-profile-and-render-limits`). What V1 has is inventoried: the per-module Mod Matrix
+(`CAP-0024`), the pooled Mod Grid and Note Grid graphs (`CAP-0026`), the YAMS runtimes
+(`CAP-0030`) and the automation tools (`CAP-0007`).
+
+| Task | State | Current boundary |
+|---|---|---|
+| P07-S001 — the modulation edge and the first native modulator | **Selected** 2026-09-06 | A **modulation edge** in the IR — a control-domain output into a declared parameter, with an amount in the target law's units — validated (units against the law, a not-modulatable target, a source that is not control-domain), admitted (edges into a voice scope's parameters counted per voice against `mod_matrix_slots_per_voice`, which moves that row into the refusal set), scheduled by dependency (the source's step before the slot's resolve before the consumer's), and summed into the slot's modulation sum once per quantum, so the layer gains its producer and the test seam is retired. Scope: an instrument-scope source into a voice-scope parameter broadcasts to every instance; a voice-scope source is per instance; a voice-scope source into an outer-scope target is refused by name, and no reduction is built. The first source is an **`Lfo`** kind with a quantum-rate control output — V1's deterministic waveforms (sine, triangle, sawtooth, square), rate in hertz and depth as declared controls so they are themselves targets, phase offset, bipolar or unipolar — with `SampleAndHold` and `SmoothRandom` refused by name until ADR-0008 gives a node a seed. The first target is the oscillator's `frequency`, the one semitone-law control that exists: vibrato. **Completion check:** a sine under an LFO at `±n` semitones renders at each quantum the pitch `base × 2^(n·lfo/12)` against an oracle from the LFO's closed form, sample for sample; sample-identical under four host partitions, which is the exit gate's cadence shape for a native modulator; a plan with no edge renders bit-identically to today (EVD-0013 and the `quantum_cost` digests reproduce); two edges on one slot sum; an override write with an edge in force keeps the modulation; the unit mismatch, the not-modulatable target, the voice-to-instrument edge, the random waveform and a per-voice edge count over the profile are each refused by name; the purity scan covers the LFO kernel and the per-quantum sum; mutation-verified. `P05-R001` does not bind: the target is a pitch, not an amplitude. Real-time path and admission: the core Rust gate and one independent review apply |
+| P07-S002 — automation as the override layer | Not started | Declare the filter's cutoff and resonance and the envelope's attack, decay, sustain and release as controls under their laws, which is what makes V1's instrument automation targets addressable at all; then lower a placed pattern's automation lanes on those targets into per-quantum override writes at plan positions under the compiled share, with V1's curves (linear, step, exponential, S-curve) evaluated where V1 evaluates them and the count admitted; two absolute writers on one target at one sample refused at compilation by name. Inherits `P05-R001` if it addresses an amplitude. Track-scoped lanes and targets stay Phase 8's |
+| P07-S003 — the Mod Matrix and the Mod Grid as edges | Not started | Lower V1's per-module Mod Matrix slots and the Mod Grid instances V1's own builder returns into modulation edges under `SOUND-INV-023`, each V1 per-target scale becoming the edge's amount in the law's units (ADR-0007's accepted cost). Sources and hosted kinds arrive as the corpus demands them, one kind with V1's law at a time; a random-family node is refused by name until ADR-0008; a track-scoped graph, a track or master target and an audio tap wait for Phase 8 |
+| P07-S004 — controllers and per-note expression as sources | Not started | Mod wheel, aftertouch, pitch bend and MIDI CC as the controller layer `SOUND-INV-023` declares and nothing exercises, and polyphonic pressure and release velocity as the per-note expression vocabulary ADR-0047 clause 9 reserves for this phase; the event class needs its admitting declaration, checked relation and registry row before it runs (ADR-0054 clause 5) |
+| P07-S005 — YAMS Control as a node kind | Not started | Needs ADR-0008's identity and seed half first, and inherits `P06-R001`: a render is deterministic for a fixed seed as `tests/determinism.rs` holds it for a fixed stream, and the slice states where the seed enters. Compile source off-thread with the existing `synth_script` compiler into immutable program data with an interface schema, stable local parameter keys, source and destination declarations, a state layout and a cost estimate; a `Script` kind whose sources are bound to slots — runtime code resolves no name — whose local `param` knobs are ordinary declared controls, so a lane automates one through the same pipeline as a native parameter, and whose output is a typed control signal that never writes a stored parameter; one bounded evaluation per quantum charged to the profile's script limits times polyphony; a missing, cyclic or scope-invalid binding refused with a source-level diagnostic; a time-varying program sample-identical under partitions; removing or renaming a script parameter orphans its lane with a diagnostic rather than retargeting it |
+| P07-S006 — YAMS Audio | Not started | The per-sample domain as a kind: bounded and allocation-free at the maximum configured block size and voice count, with the cost warning published for an expensive program multiplied by maximum polyphony |
+| P07-S007 — YAMS Note and the authored-runtime producer | Not started | The event-transformation domain, which is the first authored-runtime producer: measured under ADR-0054 clause 2 and its share reselected or retained before a consumer can enable it. The note-processor rack and the Note Grid graphs the lowerer refuses today are this domain's first consumers; whether they lower in this phase is decided at this slice |
+| P07-S008 — one combine order, and determinism for a fixed seed | Not started | The exit's evidence: one target driven by a Mod Matrix edge, a Mod Grid edge and a script through the one slot, held to the documented order by an oracle; and the seed clause `P06-R001` carried from Phase 6, held on every path once `P07-S005` gives a node a seed |
+
+Inherited before it builds: `P06-R001` (a fixed project seed, `P07-S005`) and `P05-R001` (a
+lowered level's smoothing policy, binding the first slice that modulates or automates a V2
+amplitude or maps V1's amplifier level). `P06-R002` is Phase 9's and `P05-R002` is Phase 10D's;
+neither binds this phase.
+
 ### Phase 0B — active in parallel
 
 Phase 0B remains `Active, parallel`; Phase 10 still waits for its exit.
@@ -113,17 +177,16 @@ Phase 3 is complete. Its exit review accepted these bounded residuals:
 
 ## Current blockers
 
-**Phase 7's entry is the next decision.** Phase 6 is closed; Phase 7 — YAMS, the Mod Grid and
-unified modulation — waits on its own records (ADR-0008 among them) and on the user's selection.
-Residuals bind later work by name rather than blocking Phase 7's entry: `P06-R001` — a fixed
-project seed — binds the first slice that gives a node one; `P06-R002` binds Phase 9's live host;
-`P05-R002` binds Phase 10D's digest; `P05-R001` — a lowered
-level's smoothing policy — before a lowering maps V1's amplifier level onto a V2 parameter or
-writes a V2 amplitude dynamically; and Phase 3's residuals, which block only their named
+Nothing blocks the selected slice. Residuals bind later work by name: `P06-R001` — a fixed
+project seed — binds `P07-S005`, the first slice that gives a node one, and ADR-0008 is drafted
+before it; `P06-R002` binds Phase 9's live host; `P05-R002` binds Phase 10D's digest; `P05-R001`
+— a lowered level's smoothing policy — binds the first slice that modulates or automates a V2
+amplitude or maps V1's amplifier level; and Phase 3's residuals block only their named
 consumers. `P04-R004` binds the first shared render surface, which is Phase 10B's.
 
-One stream is active: Phase 0B, with `P00B-T003` as its selected slice. Phase 6 is closed
-under `REV-P06`.
+Two streams are active: Phase 7, with `P07-S001` selected, and Phase 0B, with `P00B-T003` as
+its selected slice.
 
-Next action: the user's selection of the next phase; `ROADMAP.md` names Phase 7, whose entry
-needs its own records drafted first.
+Next action: **build `P07-S001`** on a branch off `main`; its completion check is in the table
+above. ADR-0008 is drafted before `P07-S005`, not before this slice, because this slice's
+modulator is deterministic and refuses the random waveforms by name.
