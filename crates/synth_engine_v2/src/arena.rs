@@ -176,6 +176,10 @@ fn accesses(op: PlanOp) -> (Vec<usize>, Option<usize>) {
             Some(step.out().index()),
         ),
         PlanOp::Output { source } => (vec![source.index()], None),
+        // A modulation step reads its source's first frame and writes no buffer: the value
+        // it produces lands in a parameter slot, which is not arena storage
+        // (`SOUND-INV-027`). Reading here is what keeps the source live until the step.
+        PlanOp::Modulate(step) => (vec![step.source().index()], None),
     }
 }
 
@@ -189,7 +193,7 @@ fn accesses(op: PlanOp) -> (Vec<usize>, Option<usize>) {
 const fn in_place_safe(op: PlanOp) -> bool {
     match op {
         PlanOp::Node(step) => step.in_place_safe(),
-        PlanOp::Output { .. } => false,
+        PlanOp::Output { .. } | PlanOp::Modulate(_) => false,
     }
 }
 
@@ -465,6 +469,7 @@ pub(crate) fn rewrite(ops: &mut [PlanOp], mapping: &[BufferSlot], regions: &[Buf
                 step.remap(physical(step.out()), inputs, regions);
             }
             PlanOp::Output { source } => *source = physical(*source),
+            PlanOp::Modulate(step) => step.remap(physical(step.source())),
         }
     }
 }

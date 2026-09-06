@@ -142,6 +142,8 @@ pub const VELOCITY_SCALER: Kernel = Kernel(velocity_scaler);
 pub const SAMPLER: Kernel = Kernel(sampler);
 /// The monitor's kernel: its input, unchanged.
 pub const MONITOR: Kernel = Kernel(monitor);
+/// The low-frequency oscillator's kernel (`SOUND-INV-027`).
+pub const LFO: Kernel = Kernel(lfo);
 
 /// A node's immutable prepared data.
 ///
@@ -294,6 +296,22 @@ pub enum PreparedNode {
     /// makes a mono-to-stereo widening a scheduled operation with an identity, and this
     /// is the kernel that performs it.
     Copy,
+    /// A low-frequency oscillator's shape, polarity and offset, with its phase step and the
+    /// bases its two slots start from (`SOUND-INV-027`).
+    Lfo {
+        /// One frame as a fraction of a second, as a sine's is.
+        seconds_per_frame: f64,
+        /// The shape traced over one period.
+        waveform: crate::ir::LfoWaveform,
+        /// Whether the shape is folded into `[0, 1]`.
+        polarity: crate::ir::LfoPolarity,
+        /// Where in the period the cycle starts, added where the shape is read.
+        phase_offset: f64,
+        /// The rate the slot starts from.
+        rate: Frequency,
+        /// The depth the slot starts from.
+        depth: NormalizedLevel,
+    },
 }
 
 /// A node's mutable state.
@@ -309,6 +327,12 @@ pub enum NodeState {
     Scaled {
         /// The velocity last written, applied to every sample.
         velocity: NoteVelocity,
+    },
+    /// An LFO's place in its period, in `[0, 1)` (`SOUND-INV-027`). Its rate and depth are
+    /// quantum-rate slots and are read from the ramps, so nothing else is kept.
+    Lfo {
+        /// The accumulator, before the authored offset.
+        phase: f64,
     },
     /// A sampler's playback, held between quanta (ADR-0026 clause 9).
     ///
@@ -466,6 +490,7 @@ impl NodeState {
             PreparedNode::VelocityScaler { .. } => Self::Scaled {
                 velocity: NoteVelocity::FULL,
             },
+            PreparedNode::Lfo { .. } => Self::Lfo { phase: 0.0 },
             PreparedNode::Sampler { .. } => Self::Sampler {
                 position: 0.0,
                 rate: 0.0,
@@ -522,7 +547,7 @@ impl NodeState {
                 SAMPLER_VELOCITY => ParameterValue::new(velocity.as_f32()).ok(),
                 _ => None,
             },
-            Self::Filter { .. } | Self::Sum { .. } | Self::Stateless => None,
+            Self::Filter { .. } | Self::Sum { .. } | Self::Lfo { .. } | Self::Stateless => None,
         }
     }
 }
@@ -568,6 +593,11 @@ pub(crate) fn authored_value(
         },
         PreparedNode::VelocityScaler { sensitivity } => match control {
             VELOCITY_SCALER_SENSITIVITY => Some(ParameterValue::from_level(*sensitivity)),
+            _ => None,
+        },
+        PreparedNode::Lfo { rate, depth, .. } => match control {
+            LFO_RATE => Some(ParameterValue::from_frequency(*rate)),
+            LFO_DEPTH => Some(ParameterValue::from_level(*depth)),
             _ => None,
         },
         PreparedNode::Sampler {
@@ -667,6 +697,10 @@ pub const SAW_FREQUENCY: ControlIndex = ControlIndex::new(0);
 
 /// A sawtooth's amplitude control.
 pub const SAW_AMPLITUDE: ControlIndex = ControlIndex::new(1);
+/// An LFO's rate, quantum-rate (`SOUND-INV-027`).
+pub const LFO_RATE: ControlIndex = ControlIndex::new(0);
+/// An LFO's depth, quantum-rate.
+pub const LFO_DEPTH: ControlIndex = ControlIndex::new(1);
 
 /// What one of a kernel's inputs turned out to be.
 ///
@@ -956,6 +990,85 @@ pub fn sine(prepared: &PreparedNode, state: &mut NodeState, io: &mut NodeIo<'_>)
         // backwards, so wrapping only at 1.0 would let it fall below zero and grow
         // without bound — feeding `sin` ever-larger arguments, which loses precision to
         // range reduction instead of staying periodic.
+        if !(0.0..1.0).contains(&running) {
+            running -= running.floor();
+        }
+    }
+    *phase = running;
+}
+
+/// A low-frequency oscillator: one control-rate value per frame from a phase accumulator,
+/// `SOUND-INV-027`'s first modulation source.
+///
+/// Per frame, `depth × shape(phase + offset)`, the shape folded to `[0, 1]` under the
+/// unipolar polarity; then the phase advances by the frame's rate. Both the rate and the
+/// depth are quantum-rate slots read per frame from the ramps, so the kernel composes
+/// nothing. The shapes are V1's own: `sin(2πp)`, a triangle from `-1` at the period's start
+/// through `1` at its middle, `2p − 1`, and a square high through the first half. The two
+/// random shapes reach no kernel — validation refuses them by name until ADR-0008 gives a
+/// node a seed — and the arm writes silence rather than inventing a stream.
+///
+/// The only sample-positioned control it answers is the loop's reset (ADR-0058): the
+/// accumulator returns to the start of the authored cycle before the frame named is written.
+pub fn lfo(prepared: &PreparedNode, state: &mut NodeState, io: &mut NodeIo<'_>) {
+    let PreparedNode::Lfo {
+        seconds_per_frame,
+        waveform,
+        polarity,
+        phase_offset,
+        ..
+    } = prepared
+    else {
+        return;
+    };
+    let NodeState::Lfo { phase } = state else {
+        return;
+    };
+    let rate = ramp_of(io.ramps, 0);
+    let depth = ramp_of(io.ramps, 1);
+    let mut running = *phase;
+    let mut due = 0_usize;
+    for (frame, sample) in io.out.iter_mut().enumerate() {
+        while let Some(control) = io.controls.get(due) {
+            if control.offset.as_usize() != frame {
+                break;
+            }
+            due += 1;
+            if matches!(control.control, ControlIndex::RESET) {
+                running = 0.0;
+            }
+        }
+        let mut position = running + phase_offset;
+        if !(0.0..1.0).contains(&position) {
+            position -= position.floor();
+        }
+        let raw = match waveform {
+            crate::ir::LfoWaveform::Sine => (std::f64::consts::TAU * position).sin(),
+            crate::ir::LfoWaveform::Triangle => {
+                if position < 0.5 {
+                    4.0 * position - 1.0
+                } else {
+                    3.0 - 4.0 * position
+                }
+            }
+            crate::ir::LfoWaveform::Sawtooth => 2.0 * position - 1.0,
+            crate::ir::LfoWaveform::Square => {
+                if position < 0.5 {
+                    1.0
+                } else {
+                    -1.0
+                }
+            }
+            crate::ir::LfoWaveform::SampleAndHold | crate::ir::LfoWaveform::SmoothRandom => 0.0,
+        };
+        let shaped = match polarity {
+            crate::ir::LfoPolarity::Bipolar => raw,
+            crate::ir::LfoPolarity::Unipolar => (raw + 1.0) * 0.5,
+        };
+        let peak = f64::from(depth.get(frame).or(depth.last()).copied().unwrap_or(0.0));
+        *sample = (peak * shaped) as f32;
+        let hertz = f64::from(rate.get(frame).or(rate.last()).copied().unwrap_or(0.0));
+        running += hertz * seconds_per_frame;
         if !(0.0..1.0).contains(&running) {
             running -= running.floor();
         }

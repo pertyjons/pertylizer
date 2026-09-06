@@ -385,7 +385,6 @@ impl ResourceField {
                 | Self::EventEgressCapacity
                 | Self::TelemetryRingFrames
                 | Self::AnalyzerFftSize
-                | Self::ModMatrixSlotsPerVoice
                 | Self::ScriptHostSlotsPerVoice
                 | Self::PredictedQuantumCostRatio
                 | Self::MaxEventsPerQuantum

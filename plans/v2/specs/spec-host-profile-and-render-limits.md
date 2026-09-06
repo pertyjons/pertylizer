@@ -242,17 +242,19 @@ open owner is a starting point recorded honestly, not a rule invented here.
    against a quantity a plan states — and two cannot. It also
    moves `max_events_per_quantum` out of the checked set: a plan no longer requests the cap directly, and cannot
    exceed it without exceeding a share first, because the shares sum to at most the cap.
-   Once that contract is enabled, **eighteen** of fifty fields do not take this refusal, in seven groups: the three
+   Once that contract is enabled, **seventeen** of fifty fields do not take this refusal, in seven groups: the three
    queried capabilities, which describe what a plan is *prepared against*; `accepted_sample_rates`; the three sizing
-   fields, which bound nothing; the seven capacities a plan does not request — `forward_event_horizon`, the three
-   queue depths, the two per-voice slot counts, and `max_concurrent_retiring_voices`, which is derived so that it
+   fields, which bound nothing; the six capacities a plan does not request — `forward_event_horizon`, the three
+   queue depths, the script host slots per voice, and `max_concurrent_retiring_voices`, which is derived so that it
    cannot bind; the advisory `predicted_quantum_cost_ratio`, whose excess produces a warning; `max_events_per_quantum`
    for the reason above; and the **live** and **release** shares, which bound a runtime queue rather than a plan and
    are enforced at publication instead of at admission. The authored-runtime and internal shares were in this group
    until `PlanDeclarations` gained the declarations that let a plan state what they bound; a share reported against
    itself cannot be exceeded, which is why the group is now two rather than four.
-   The other **thirty-two** each have a refusal case. The two per-voice slot counts move into that set when a phase
-   declares per-voice slot *usage*, which is Phase 7's; until then their rows report the profile's own value.
+   The other **thirty-three** each have a refusal case. `mod_matrix_slots_per_voice` joined them with `P07-S001`
+   (`SOUND-INV-027`): a modulation edge into a voice-scope parameter is one slot per voice, and the count is
+   admitted. `script_host_slots_per_voice` moves in when a script declares per-voice slot *usage*; until then its
+   row reports the profile's own value.
 
    **That does not discharge `LIMIT-0004`'s disposition, and an earlier revision claimed it did "in substance".** The
    ledger requires a *job* outside the range to be refused with a job admission error naming the requested rate and the
@@ -1139,7 +1141,7 @@ profile field.** See below.
 | `max_eval_stack_depth` | `SlotCount` | 64 | V1 carry-over | `LIMIT-0036` | Phase 7 |
 | `max_arrays_per_program`, `max_array_elements` | `SlotCount` | 16 / 256 | V1 carry-over | `LIMIT-0039` | Phase 7 |
 | `max_emits_per_program` | `SlotCount` | 4 | V1 carry-over | `LIMIT-0042` | Phase 7 |
-| `mod_matrix_slots_per_voice` | `SlotCount` | 16 | V1 carry-over. **Two fields with a floor relation**, not one — see below | `LIMIT-0023` | Phase 7 |
+| `mod_matrix_slots_per_voice` | `SlotCount` | 16 | V1 carry-over. **Two fields with a floor relation**, not one — see below. Admitted since `P07-S001`: one slot per modulation edge into a voice-scope parameter (`SOUND-INV-027`) | `LIMIT-0023` | Phase 7 |
 | `script_host_slots_per_voice` | `SlotCount` | 16 | V1 carry-over. Validated `>= mod_matrix_slots_per_voice` at construction (HOST-INV-016), which is the relation V1's assertion actually states | `LIMIT-0041` | Phase 7 |
 
 **Two capacities with a floor relation, and the reason is weaker than an earlier revision claimed.** `LIMIT-0023`

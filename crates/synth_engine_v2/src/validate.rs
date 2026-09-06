@@ -32,7 +32,7 @@
 use std::collections::HashMap;
 
 use crate::diagnostics::{CompileError, CompileWarning};
-use crate::ir::{EdgeId, GraphIr, IrNodeKind, NodeId, PortId, SignalDomain};
+use crate::ir::{EdgeId, ExecutionScope, GraphIr, IrNodeKind, NodeId, PortId, SignalDomain};
 use crate::quantities::{ChannelLayout, EventCount, NodeCount};
 
 /// Which way a signal crosses a port.
@@ -182,6 +182,10 @@ struct Index<'a> {
     ports: Vec<Vec<PortSpec>>,
     /// Edge indices leaving each node, by position, in edge order.
     outgoing: Vec<Vec<usize>>,
+    /// Modulation-edge indices leaving each node, by position, in identity order. A
+    /// modulation source runs before its target, so these are dependencies the schedule
+    /// must honour exactly as cables are (`SOUND-INV-027`).
+    outgoing_modulations: Vec<Vec<usize>>,
 }
 
 impl<'a> Index<'a> {
@@ -213,11 +217,27 @@ impl<'a> Index<'a> {
                     .map_or((NodeId::FIRST, PortId::FIRST), |edge| edge.to())
             });
         }
+        let mut outgoing_modulations = vec![Vec::new(); ir.nodes().len()];
+        for (index, modulation) in ir.modulations().iter().enumerate() {
+            if let Some(slot) = position.get(&modulation.source().0)
+                && let Some(list) = outgoing_modulations.get_mut(*slot)
+            {
+                list.push(index);
+            }
+        }
+        for list in &mut outgoing_modulations {
+            list.sort_by_key(|index| {
+                ir.modulations()
+                    .get(*index)
+                    .map_or(NodeId::FIRST, |modulation| modulation.target().0)
+            });
+        }
         Self {
             ir,
             position,
             ports,
             outgoing,
+            outgoing_modulations,
         }
     }
 
@@ -412,6 +432,7 @@ pub(crate) fn validate(ir: &GraphIr, stream: ChannelLayout) -> Result<Validated,
         }
     }
 
+    modulations(ir, &index)?;
     fan_in(ir)?;
     let order = topological_order(&index)?;
     let warnings = outputs(ir)?;
@@ -421,6 +442,140 @@ pub(crate) fn validate(ir: &GraphIr, stream: ChannelLayout) -> Result<Validated,
         conversions,
         warnings,
     })
+}
+
+/// How far from the plan's root a scope runs: the master plan's hierarchy, global outermost
+/// and voice innermost. A modulation may broadcast outward-to-inward and not the reverse.
+const fn scope_depth(scope: ExecutionScope) -> u8 {
+    match scope {
+        ExecutionScope::Global => 0,
+        ExecutionScope::Bus => 1,
+        ExecutionScope::Channel => 2,
+        ExecutionScope::InstrumentInstance => 3,
+        ExecutionScope::Voice => 4,
+    }
+}
+
+/// `SOUND-INV-027`'s rules over every modulation edge, in edge order.
+///
+/// Each refusal names what a reader can act on: the edge, the node, and the port,
+/// parameter, unit or scope that was wrong. The source rules come first because a source
+/// that cannot be read makes the target rules moot; the random-shape rule runs over every
+/// LFO whether or not an edge reads it, since the seed is the node's problem, not the
+/// edge's.
+fn modulations(ir: &GraphIr, index: &Index<'_>) -> Result<(), CompileError> {
+    for node in ir.nodes() {
+        if let IrNodeKind::Lfo { waveform, .. } = node.kind()
+            && waveform.needs_seed()
+        {
+            return Err(CompileError::SeedlessRandomWaveform {
+                node: node.id(),
+                waveform,
+            });
+        }
+    }
+    for modulation in ir.modulations() {
+        let (source_node, source_port) = modulation.source();
+        let (target_node, parameter) = modulation.target();
+        let Some(source) = index.port(source_node, source_port, PortDirection::Output) else {
+            return Err(CompileError::ModulationUnknownPort {
+                modulation: modulation.id(),
+                node: source_node,
+                port: source_port,
+            });
+        };
+        if source.domain() != SignalDomain::Control {
+            return Err(CompileError::ModulationSourceNotControl {
+                modulation: modulation.id(),
+                node: source_node,
+                port: source_port,
+                domain: source.domain(),
+            });
+        }
+        // The source is evaluated ahead of the quantum's positioned writes, so it may
+        // neither consume a buffer the main walk writes nor a control those writes place.
+        let ahead = ir
+            .node(source_node)
+            .and_then(|node| crate::node::descriptor(node.kind()));
+        let runs_ahead = ahead.as_ref().is_some_and(|descriptor| {
+            descriptor
+                .ports
+                .iter()
+                .all(|port| port.direction() == PortDirection::Output)
+                && descriptor
+                    .controls
+                    .iter()
+                    .all(|spec| spec.rate == crate::plan::ControlRate::Quantum)
+        });
+        if !runs_ahead {
+            return Err(CompileError::ModulationSourceNotAhead {
+                modulation: modulation.id(),
+                node: source_node,
+            });
+        }
+        // A voice-scope source read outside its scope by a cable would be summed there, and
+        // the sum's steps would land in the pre-pass beyond a steal's fade. Refused by name.
+        if ir.scope_of(source_node) == Some(ExecutionScope::Voice)
+            && ir.edges().iter().any(|edge| {
+                edge.from().0 == source_node
+                    && ir.scope_of(edge.to().0) != Some(ExecutionScope::Voice)
+            })
+        {
+            return Err(CompileError::ModulationSourceReadOutsideScope {
+                modulation: modulation.id(),
+                node: source_node,
+            });
+        }
+        let Some(spec) = ir
+            .node(target_node)
+            .and_then(|node| crate::node::descriptor(node.kind()))
+            .and_then(|descriptor| {
+                descriptor
+                    .controls
+                    .iter()
+                    .find(|spec| spec.parameter == parameter)
+                    .copied()
+            })
+        else {
+            return Err(CompileError::ModulationUnknownParameter {
+                modulation: modulation.id(),
+                node: target_node,
+                parameter,
+            });
+        };
+        let Some(expected) = spec.law.depth_unit() else {
+            return Err(CompileError::ModulationTargetNotModulatable {
+                modulation: modulation.id(),
+                node: target_node,
+                parameter,
+            });
+        };
+        if modulation.depth().unit() != expected {
+            return Err(CompileError::ModulationUnitMismatch {
+                modulation: modulation.id(),
+                node: target_node,
+                parameter,
+                declared: modulation.depth().unit(),
+                law: spec.law,
+                expected,
+            });
+        }
+        let (Some(source_scope), Some(target_scope)) =
+            (ir.scope_of(source_node), ir.scope_of(target_node))
+        else {
+            continue;
+        };
+        if scope_depth(source_scope) > scope_depth(target_scope) {
+            return Err(CompileError::ModulationScopeCrossing {
+                modulation: modulation.id(),
+                source_node,
+                source_scope,
+                target_node,
+                target_scope,
+            });
+        }
+    }
+    Ok(())
 }
 
 /// One source per input, and the competing edges named when there are more.
@@ -475,6 +630,13 @@ fn topological_order(index: &Index<'_>) -> Result<Vec<NodeId>, CompileError> {
         Done,
     }
 
+    /// Which kind of edge a successor was reached through, for naming a cycle.
+    #[derive(Clone, Copy)]
+    enum Dependency {
+        Cable(EdgeId),
+        Modulation(crate::ir::ModulationId),
+    }
+
     let ir = index.ir;
     // Ascending identity, so the order is a function of what the nodes *are* rather
     // than of the order someone happened to declare them in.
@@ -501,29 +663,55 @@ fn topological_order(index: &Index<'_>) -> Result<Vec<NodeId>, CompileError> {
         stack.push((*root, 0));
 
         while let Some((slot, cursor)) = stack.pop() {
-            let next = index
-                .outgoing
-                .get(slot)
-                .and_then(|edges| edges.get(cursor))
-                .copied();
+            // A node's successors are the targets of its cables and then of its modulation
+            // edges (`SOUND-INV-027`), one list after the other under one cursor, so a
+            // modulation is a dependency the order honours exactly as a cable is.
+            let cables = index.outgoing.get(slot).map_or(0, Vec::len);
+            let next = if cursor < cables {
+                index
+                    .outgoing
+                    .get(slot)
+                    .and_then(|edges| edges.get(cursor))
+                    .copied()
+                    .and_then(|edge_index| ir.edges().get(edge_index))
+                    .map(|edge| (edge.to().0, Dependency::Cable(edge.id())))
+            } else {
+                index
+                    .outgoing_modulations
+                    .get(slot)
+                    .and_then(|edges| edges.get(cursor - cables))
+                    .copied()
+                    .and_then(|modulation_index| ir.modulations().get(modulation_index))
+                    .map(|modulation| {
+                        (
+                            modulation.target().0,
+                            Dependency::Modulation(modulation.id()),
+                        )
+                    })
+            };
             match next {
-                Some(edge_index) => {
+                Some((successor, dependency)) => {
                     stack.push((slot, cursor + 1));
-                    let Some(edge) = ir.edges().get(edge_index) else {
-                        continue;
-                    };
-                    let successor = edge.to().0;
                     let Some(successor_slot) = index.position.get(&successor).copied() else {
                         continue;
                     };
                     match marks.get(successor_slot).copied().unwrap_or(Mark::Done) {
                         Mark::OnStack => {
-                            return Err(CompileError::Cycle {
-                                edge: edge.id(),
-                                node: successor,
-                                nodes: NodeCount::measured(
-                                    u32::try_from(stack.len()).unwrap_or(u32::MAX),
-                                ),
+                            let nodes =
+                                NodeCount::measured(u32::try_from(stack.len()).unwrap_or(u32::MAX));
+                            return Err(match dependency {
+                                Dependency::Cable(edge) => CompileError::Cycle {
+                                    edge,
+                                    node: successor,
+                                    nodes,
+                                },
+                                Dependency::Modulation(modulation) => {
+                                    CompileError::ModulationCycle {
+                                        modulation,
+                                        node: successor,
+                                        nodes,
+                                    }
+                                }
                             });
                         }
                         Mark::Done => {}

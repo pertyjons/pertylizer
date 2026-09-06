@@ -360,7 +360,7 @@ fn baseline_path(fixture: &Fixture) -> PathBuf {
 fn output_storage(plan: &CompiledPlan, op: usize) -> usize {
     let mut nodes = plan.ops().iter().filter_map(|op| match op {
         PlanOp::Node(step) => Some(step.out().index()),
-        PlanOp::Output { .. } => None,
+        PlanOp::Output { .. } | PlanOp::Modulate(_) => None,
     });
     nodes
         .nth(op)

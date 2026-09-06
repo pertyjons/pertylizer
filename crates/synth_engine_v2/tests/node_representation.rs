@@ -241,7 +241,7 @@ fn a_gain_reading_its_own_slot_scales_rather_than_silences() {
             .copied()
             .flatten()
             .is_some_and(|input| input == step.out()),
-        PlanOp::Output { .. } => false,
+        PlanOp::Output { .. } | PlanOp::Modulate(_) => false,
     });
     assert!(
         merged,
@@ -327,7 +327,8 @@ fn a_widened_signal_is_copied_by_a_scheduled_kernel() {
 fn a_declared_kind_appears_in_the_registry_only_by_deferring_to_its_declaration() {
     // The variant as it is spelled in a pattern — fieldless kinds have no `{ .. }` — and
     // the declaration constant it forwards to.
-    const DECLARED: [(&str, &str); 12] = [
+    const DECLARED: [(&str, &str); 13] = [
+        ("Lfo { .. }", "LFO"),
         ("Saw { .. }", "SAW"),
         ("VelocityScaler { .. }", "VELOCITY_SCALER"),
         ("Sampler { .. }", "SAMPLER"),
@@ -473,13 +474,20 @@ fn discovery_and_validation_describe_the_same_ports() {
                 release: Seconds::ZERO,
                 velocity_sensitivity: synth_engine_v2::quantities::NormalizedLevel::FULL,
             },
+            NodeKindId::Lfo => IrNodeKind::Lfo {
+                waveform: synth_engine_v2::ir::LfoWaveform::Sine,
+                rate: Frequency::ONE,
+                depth: synth_engine_v2::quantities::NormalizedLevel::FULL,
+                phase_offset: synth_engine_v2::quantities::PhaseOffset::ZERO,
+                polarity: synth_engine_v2::ir::LfoPolarity::Bipolar,
+            },
         }
     };
 
     let entries = catalog();
     assert_eq!(
         entries.len(),
-        12,
+        13,
         "every kind but the output node is discoverable"
     );
     for entry in entries {

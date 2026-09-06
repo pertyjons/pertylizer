@@ -376,7 +376,7 @@ fn in_place_is_declined_where_the_input_is_read_again() {
                 .copied()
                 .flatten()
                 .map(|source| (step.out().index(), source.index())),
-            PlanOp::Output { .. } => None,
+            PlanOp::Output { .. } | PlanOp::Modulate(_) => None,
         })
         .expect("the plan has a gain");
     assert_ne!(
@@ -676,7 +676,7 @@ fn a_tapped_signal_stays_live_to_the_end_of_the_quantum() {
         .iter()
         .any(|op| match op {
             PlanOp::Node(step) => unpinned.mapping[step.out().index()] == monitor_physical,
-            PlanOp::Output { .. } => false,
+            PlanOp::Output { .. } | PlanOp::Modulate(_) => false,
         });
     assert!(
         reused_later,

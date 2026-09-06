@@ -451,6 +451,13 @@ catalog! {
     } => IrNodeKind::Filter { .. },
     IrNodeKind::Amplifier => IrNodeKind::Amplifier,
     IrNodeKind::Monitor => IrNodeKind::Monitor,
+    IrNodeKind::Lfo {
+        waveform: synth_engine_v2::ir::LfoWaveform::Sine,
+        rate: synth_engine_v2::quantities::Frequency::ONE,
+        depth: NormalizedLevel::FULL,
+        phase_offset: synth_engine_v2::quantities::PhaseOffset::ZERO,
+        polarity: synth_engine_v2::ir::LfoPolarity::Bipolar,
+    } => IrNodeKind::Lfo { .. },
     IrNodeKind::Output => IrNodeKind::Output,
 }
 

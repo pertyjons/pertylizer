@@ -218,6 +218,23 @@ impl ModulationLaw {
     pub const fn admits_writes(self) -> bool {
         !matches!(self, Self::NotModulatable)
     }
+
+    /// The unit a modulation edge into a parameter under this law states its depth in, or
+    /// `None` where no edge may reach it (`SOUND-INV-027`; ADR-0007 clause 5's "validation
+    /// refuses an edge whose units do not match the target's law").
+    #[must_use]
+    pub const fn depth_unit(self) -> Option<crate::ir::ModulationUnit> {
+        match self {
+            Self::NormalizedAdditive => Some(crate::ir::ModulationUnit::Normalized),
+            Self::BipolarAdditive => Some(crate::ir::ModulationUnit::Bipolar),
+            Self::SemitoneAdditive => Some(crate::ir::ModulationUnit::Semitones),
+            Self::DecibelAdditive => Some(crate::ir::ModulationUnit::Decibels),
+            Self::PhysicalLinearAdditive => Some(crate::ir::ModulationUnit::Physical),
+            Self::MultiplicativeGain => Some(crate::ir::ModulationUnit::Factor),
+            Self::ThresholdedBoolean => Some(crate::ir::ModulationUnit::Boolean),
+            Self::NotModulatable => None,
+        }
+    }
 }
 
 /// A parameter's resting value, carried in its own quantity type.
@@ -488,6 +505,31 @@ fn prepare_saw(
     })
 }
 
+fn prepare_lfo(
+    node: NodeId,
+    kind: IrNodeKind,
+    ctx: &PrepareContext<'_>,
+) -> Result<PreparedNode, CompileError> {
+    let IrNodeKind::Lfo {
+        waveform,
+        rate,
+        depth,
+        phase_offset,
+        polarity,
+    } = kind
+    else {
+        return Err(declared_for_another_kind(node));
+    };
+    Ok(PreparedNode::Lfo {
+        seconds_per_frame: seconds_per_frame(ctx.rate),
+        waveform,
+        polarity,
+        phase_offset: f64::from(phase_offset.as_f32()),
+        rate,
+        depth,
+    })
+}
+
 fn prepare_gain(
     node: NodeId,
     kind: IrNodeKind,
@@ -730,6 +772,8 @@ pub enum NodeKindId {
     Filter,
     /// An envelope.
     Envelope,
+    /// A low-frequency oscillator, the first native modulation source (`SOUND-INV-027`).
+    Lfo,
 }
 
 /// The stable identity of a node's kind, or `None` for the output node, which has none.
@@ -810,9 +854,13 @@ impl NodeDeclaration {
                 ControlRate::Quantum => crate::render::slot::RAMP_BUFFER_BYTES,
                 ControlRate::Sample => 0,
             };
+            // The slot, its buffer offset, its buffer, and the one-byte mark that says
+            // whether a modulation edge lands on it (`SOUND-INV-027`), which decides
+            // where in the quantum the slot advances.
             total
                 .saturating_add(size_of::<crate::render::slot::SlotState>() as u64)
                 .saturating_add(size_of::<usize>() as u64)
+                .saturating_add(size_of::<bool>() as u64)
                 .saturating_add(buffer)
         })
     }
@@ -997,6 +1045,59 @@ pub(crate) static SINE: NodeDeclaration = NodeDeclaration {
     state_bytes: size_of::<(f64, crate::quantities::Frequency)>() as u64,
 };
 
+/// The low-frequency oscillator, declared once — `P07-S001`, `SOUND-INV-027`'s first
+/// modulation source.
+///
+/// One control-domain output and two quantum-rate controls, and **no** input port and no
+/// sample-positioned control: that is what lets the renderer evaluate it before the
+/// quantum's positioned writes are placed, so the value a modulation edge composes into a
+/// target is this quantum's. Its rate pairs with the semitone law as every frequency does,
+/// and its depth with the normalized law; both are ordinary slots, so an LFO is itself a
+/// target — V1's `LfoRate` and `LfoDepth` destinations. The byte attributions name the
+/// kernel's layouts: a phase step, a shape, a polarity, an offset and two bases prepared;
+/// one phase kept.
+pub(crate) static LFO: NodeDeclaration = NodeDeclaration {
+    id: NodeKindId::Lfo,
+    name: "lfo",
+    kernel: kernels::LFO,
+    ports: &[CONTROL_OUT],
+    controls: &[
+        ControlSpec {
+            parameter: parameters::LFO_RATE,
+            name: "rate",
+            default: ParameterDefault::Hertz(crate::quantities::Frequency::ONE),
+            law: ModulationLaw::SemitoneAdditive,
+            smoothing: Smoothing::None,
+            control: kernels::LFO_RATE,
+            rate: ControlRate::Quantum,
+            magnitude: None,
+        },
+        ControlSpec {
+            parameter: parameters::LFO_DEPTH,
+            name: "depth",
+            default: ParameterDefault::NormalizedLevel(crate::quantities::NormalizedLevel::FULL),
+            law: ModulationLaw::NormalizedAdditive,
+            smoothing: Smoothing::None,
+            control: kernels::LFO_DEPTH,
+            rate: ControlRate::Quantum,
+            magnitude: None,
+        },
+    ],
+    in_place_safe: false,
+    note_control: None,
+    taps: &[],
+    prepare: prepare_lfo,
+    prepared_bytes: size_of::<(
+        f64,
+        crate::ir::LfoWaveform,
+        crate::ir::LfoPolarity,
+        f64,
+        crate::quantities::Frequency,
+        NormalizedLevel,
+    )>() as u64,
+    state_bytes: size_of::<f64>() as u64,
+};
+
 /// Zeros, declared once — `P05-S003`. No control, nothing prepared, nothing kept.
 pub(crate) static SILENCE: NodeDeclaration = NodeDeclaration {
     id: NodeKindId::Silence,
@@ -1116,7 +1217,7 @@ pub(crate) static FILTER: NodeDeclaration = NodeDeclaration {
 /// the declarations are `static` rather than `const`: a `const` is materialised at each
 /// use and has no single address to compare — so a kind declared but left out here cannot
 /// be discovered, and one listed here but not resolvable cannot compile.
-static DECLARED: [&NodeDeclaration; 12] = [
+static DECLARED: [&NodeDeclaration; 13] = [
     &SILENCE,
     &CONSTANT,
     &IMPULSE,
@@ -1129,6 +1230,7 @@ static DECLARED: [&NodeDeclaration; 12] = [
     &MONITOR,
     &VELOCITY_SCALER,
     &SAMPLER,
+    &LFO,
 ];
 
 /// V1's voice-output velocity stage, declared once — ADR-0059. Its sensitivity is prepared;
@@ -1403,6 +1505,7 @@ pub(crate) fn declaration(kind: IrNodeKind) -> Option<&'static NodeDeclaration> 
         IrNodeKind::VelocityScaler { .. } => Some(&VELOCITY_SCALER),
         IrNodeKind::Sampler { .. } => Some(&SAMPLER),
         IrNodeKind::Filter { .. } => Some(&FILTER),
+        IrNodeKind::Lfo { .. } => Some(&LFO),
         // The output node has no kernel and no declaration: writing the stream's channels
         // is the renderer's boundary rather than a node's work.
         IrNodeKind::Output => None,
@@ -1445,6 +1548,7 @@ pub(crate) fn descriptor(kind: IrNodeKind) -> Option<NodeDescriptor> {
         IrNodeKind::Gain { .. } => declared.map(NodeDeclaration::descriptor),
         IrNodeKind::VelocityScaler { .. } => declared.map(NodeDeclaration::descriptor),
         IrNodeKind::Sampler { .. } => declared.map(NodeDeclaration::descriptor),
+        IrNodeKind::Lfo { .. } => declared.map(NodeDeclaration::descriptor),
     }
 }
 
@@ -1666,6 +1770,7 @@ pub fn prepared_payload_bytes(kind: IrNodeKind) -> u64 {
         // The output node has no kernel, so it carries no prepared data of its own.
         IrNodeKind::Output => 0,
         IrNodeKind::Envelope { .. } => return declared.map_or(0, |d| d.prepared_bytes),
+        IrNodeKind::Lfo { .. } => return declared.map_or(0, |d| d.prepared_bytes),
     }) as u64
 }
 
@@ -1710,6 +1815,7 @@ pub fn state_payload_bytes(kind: IrNodeKind) -> u64 {
         IrNodeKind::VelocityScaler { .. } => return declared.map_or(0, |d| d.state_bytes),
         IrNodeKind::Sampler { .. } => return declared.map_or(0, |d| d.state_bytes),
         IrNodeKind::Envelope { .. } => return declared.map_or(0, |d| d.state_bytes),
+        IrNodeKind::Lfo { .. } => return declared.map_or(0, |d| d.state_bytes),
         IrNodeKind::Output => 0,
     }) as u64
 }
@@ -1804,6 +1910,13 @@ mod tests {
                 sustain: crate::quantities::NormalizedLevel::FULL,
                 release: crate::quantities::Seconds::ZERO,
                 velocity_sensitivity: crate::quantities::NormalizedLevel::FULL,
+            },
+            IrNodeKind::Lfo {
+                waveform: crate::ir::LfoWaveform::Sine,
+                rate: crate::quantities::Frequency::ONE,
+                depth: NormalizedLevel::FULL,
+                phase_offset: crate::quantities::PhaseOffset::ZERO,
+                polarity: crate::ir::LfoPolarity::Bipolar,
             },
             IrNodeKind::Filter {
                 cutoff: CutoffFrequency::new(1_000.0).expect("positive"),
@@ -1982,7 +2095,7 @@ mod tests {
             .collect();
         assert_eq!(
             declared.len(),
-            12,
+            13,
             "every kind but the output node is declared"
         );
 
@@ -2039,6 +2152,7 @@ mod tests {
                     | (IrNodeKind::Filter { .. }, PreparedNode::Filter { .. })
                     | (IrNodeKind::Envelope { .. }, PreparedNode::Envelope { .. })
                     | (IrNodeKind::Sampler { .. }, PreparedNode::Sampler { .. })
+                    | (IrNodeKind::Lfo { .. }, PreparedNode::Lfo { .. })
             );
             assert!(matches_kind, "{kind:?} prepared as {prepared:?}");
             // The kind resolves to the identity its declaration states.
@@ -2062,7 +2176,8 @@ mod tests {
                 | IrNodeKind::Gain { .. } => (true, false),
                 IrNodeKind::Filter { .. }
                 | IrNodeKind::VelocityScaler { .. }
-                | IrNodeKind::Sampler { .. } => (true, true),
+                | IrNodeKind::Sampler { .. }
+                | IrNodeKind::Lfo { .. } => (true, true),
                 IrNodeKind::Silence | IrNodeKind::Amplifier | IrNodeKind::Monitor => (false, false),
                 other => panic!("{other:?} is declared but this test does not know its shape"),
             };

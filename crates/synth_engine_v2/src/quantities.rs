@@ -516,6 +516,9 @@ impl Frequency {
     /// and the frequency the lowerer prepares an oscillator with before a note reaches it.
     pub const A4: Self = Self(440.0);
 
+    /// One cycle per second, the resting rate a declaration presents for a modulator.
+    pub const ONE: Self = Self(1.0);
+
     /// A frequency. Must be finite.
     pub fn new(hz: f32) -> Result<Self, QuantityError> {
         if hz.is_finite() {
@@ -1087,6 +1090,46 @@ impl Cents {
     /// The offset in semitones, the unit the semitone law composes in.
     pub const fn as_semitones(self) -> f32 {
         self.0 / 100.0
+    }
+}
+
+/// Where in its cycle an oscillator starts, as a fraction of one period in `[0, 1)`.
+///
+/// An LFO's authored phase offset (`SOUND-INV-027`): applied where the shape is read, never
+/// to the accumulator, so a reset restarts the cycle at the same place it was authored to
+/// start. Finite and inside one period by construction; a full period is the same place as
+/// none and is refused rather than silently wrapped, so a saved `1.0` cannot mean `0.0`
+/// without the lowering saying so.
+#[derive(Debug, Clone, Copy, PartialEq, PartialOrd)]
+#[must_use]
+pub struct PhaseOffset(f32);
+
+impl PhaseOffset {
+    /// The cycle's start.
+    pub const ZERO: Self = Self(0.0);
+
+    /// An offset, refused if not finite or outside `[0, 1)`.
+    pub fn new(fraction: f32) -> Result<Self, QuantityError> {
+        if !fraction.is_finite() {
+            return Err(QuantityError::NotFinite {
+                quantity: "PhaseOffset",
+                value: fraction,
+            });
+        }
+        if !(0.0..1.0).contains(&fraction) {
+            return Err(QuantityError::OutsideInterval {
+                quantity: "PhaseOffset",
+                value: fraction,
+                minimum: 0.0,
+                maximum: 1.0,
+            });
+        }
+        Ok(Self(fraction))
+    }
+
+    /// The offset as a fraction of one period.
+    pub const fn as_f32(self) -> f32 {
+        self.0
     }
 }
 

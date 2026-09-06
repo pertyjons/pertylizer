@@ -691,6 +691,13 @@ fn every_call_the_render_loop_makes_is_inside_the_checked_region() {
         // orphan and never to branch into work.
         "voice_instances",
         "is_none",
+        // `SOUND-INV-027`'s modulation step, three `const fn` field reads on a `Copy` step
+        // the plan carries — the row a contribution lands on, the edge's depth, and the
+        // count of leading operations the pre-pass runs — beside `source` and `last`, which
+        // the lists above already carry for other readers. None allocates, locks or panics.
+        "row",
+        "depth",
+        "prepass_ops",
         // The live drain's deferred starts (ADR-0058 at the boundary). `released_after_steal`
         // is one more `const fn` counter read mirrored into the report beside the others;
         // `stamp` is a local closure in `publish_pending` that builds a `TimedEvent` from two

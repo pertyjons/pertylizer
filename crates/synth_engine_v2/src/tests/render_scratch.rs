@@ -101,6 +101,8 @@ fn check_one(simultaneous: u32, voice: bool) {
                 }),
             ir.max_writes_per_note()
                 .fanned_out(ir.sample_positioned_fan_out()),
+            ir.modulated_sample_positioned_rows(),
+            ir.voice_instances(),
         );
         let held = renderer.control_scratch_bytes();
         assert!(

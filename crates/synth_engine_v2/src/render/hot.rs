@@ -20,6 +20,7 @@ use crate::diagnostics::RenderError;
 use crate::node::kernels;
 use crate::node::kernels::TimedControl;
 use crate::plan::{ControlRate, PlanOp};
+use crate::time::QuantumOffset;
 use crate::time::{FrameCount, PlanPosition, QUANTUM_FRAMES, SampleTime, TimeSource};
 
 impl PreparedRenderer {
@@ -453,6 +454,17 @@ impl PreparedRenderer {
         self.control_starts.fill(0);
         self.control_fill.fill(0);
 
+        // `SOUND-INV-027`: a modulated sample-positioned row hands its composed value to the
+        // quantum's first frame as one control, every quantum — the only path a value has
+        // to such a kernel. Counted with the quantum's own changes, as the gate-downs are.
+        for row in 0..self.parameter_slots.len() {
+            if let Some(node) = self.modulated_sample_row_node(row)
+                && let Some(count) = self.control_starts.get_mut(node + 1)
+            {
+                *count = count.saturating_add(1);
+            }
+        }
+
         // An adopted activation's gate-downs belong to the quantum at its boundary, which is
         // this one: adoption runs between renderer calls, so the first collection after it is
         // the first quantum the new mapping governs. They are counted with the quantum's own
@@ -593,7 +605,20 @@ impl PreparedRenderer {
             *start = running;
         }
 
-        // The adoption gates first, because they sit at offset zero and a run has to come out
+        // The modulated rows' values first, at offset zero, composed by the pre-pass: a
+        // positioned write later in the quantum composes with the same sum and lands after.
+        for row in 0..self.parameter_slots.len() {
+            let (Some(node), Some(target), Some(composed)) = (
+                self.modulated_sample_row_node(row),
+                self.plan.parameter_targets().get(row).copied(),
+                self.parameter_slots.get(row),
+            ) else {
+                continue;
+            };
+            let value = composed.current();
+            self.push_node_control(node, QuantumOffset::ZERO, target.control, value);
+        }
+        // Then the adoption gates, which also sit at offset zero, so a run comes out
         // ascending by offset. Every event in this quantum is at or after that boundary.
         for index in 0..self.adoption_gate_len {
             let (Some(slot), Some(gate)) = (
@@ -788,6 +813,29 @@ impl PreparedRenderer {
     fn steal_instance(&self, identity: crate::identity::NoteIdentity) -> Option<usize> {
         let instance = usize::from(identity.index());
         (instance < self.plan.voice_instances().get() as usize).then_some(instance)
+    }
+
+    /// The node of a row that a modulation lands on and whose control is sample-positioned,
+    /// or `None` for every other row (`SOUND-INV-027`).
+    fn modulated_sample_row_node(&self, row: usize) -> Option<usize> {
+        if !self.modulated.get(row).copied().unwrap_or(false) {
+            return None;
+        }
+        let target = self.plan.parameter_targets().get(row)?;
+        if !matches!(target.rate, ControlRate::Sample) {
+            return None;
+        }
+        Some(target.node.index())
+    }
+
+    /// The voice instance a scheduled record belongs to, or `None` for a record outside
+    /// every instance group — a node the plan renders once. One indexed read of the table
+    /// preparation built from the plan's instance groups; the pre-pass uses it to hand a
+    /// modulator its instance's reset (ADR-0058 clause 4). An independent read found this
+    /// as a bounded walk over the groups, which is a search the loop may not perform.
+    fn instance_of(&self, node: usize) -> Option<usize> {
+        let instance = self.record_instance.get(node).copied()?;
+        (instance != u16::MAX).then_some(usize::from(instance))
     }
 
     /// The node a parameter slot's control belongs to, from the target table.
@@ -1012,31 +1060,102 @@ impl PreparedRenderer {
     }
 
     /// Render exactly one quantum and append it to the output carry.
-    fn render_quantum(&mut self) -> Result<(), RenderError> {
+    /// Advance one quantum-rate row's segment into its buffer, `SOUND-INV-024`'s one add per
+    /// frame. A sample-positioned row has no buffer and advances nothing.
+    fn advance_row(&mut self, row: usize) {
         let quantum = QUANTUM_FRAMES as usize;
-        let quantum_start = self.clock;
+        let Some(offset) = self.ramp_offsets.get(row).copied() else {
+            return;
+        };
+        let (Some(slot), Some(buffer)) = (
+            self.parameter_slots.get_mut(row),
+            self.ramp_buffers
+                .get_mut(offset..offset.saturating_add(quantum)),
+        ) else {
+            return;
+        };
+        slot.advance(buffer);
+    }
 
-        // The plan position of this quantum's first sample. Anchoring is the only
-        // place engine time and plan time meet.
-        let plan_start = self.plan_position_of(quantum_start);
+    /// Compose one modulation edge into its row (`SOUND-INV-027`): the source's first frame
+    /// this quantum times the edge's depth, gathered into the row's pending sum; and, on the
+    /// row's last edge, the sum composed under the row's law and the segment advanced. The
+    /// law runs in the slot; nothing here composes.
+    fn compose_modulation(&mut self, step: crate::plan::ModulationStep) {
+        let Some(region) = self.plan.region(step.source()) else {
+            return;
+        };
+        let value = self.buffers.get(region.offset()).copied().unwrap_or(0.0);
+        let Some(slot) = self.parameter_slots.get_mut(step.row()) else {
+            return;
+        };
+        slot.accumulate(step.depth() * value);
+        if step.last() {
+            let _ = slot.compose_pending();
+            self.advance_row(step.row());
+        }
+    }
 
-        // `SOUND-INV-024`: every quantum-rate slot advances **before** any kernel reads, one
-        // add per frame into its buffer. The one place a segment moves.
-        for index in 0..self.parameter_slots.len() {
-            let Some(offset) = self.ramp_offsets.get(index).copied() else {
-                break;
-            };
-            let (Some(slot), Some(buffer)) = (
-                self.parameter_slots.get_mut(index),
-                self.ramp_buffers
-                    .get_mut(offset..offset.saturating_add(quantum)),
-            ) else {
+    /// The modulation pre-pass (`SOUND-INV-027`): every row a modulation does not land on
+    /// advances its segment; the quantum's steal resets are marked per instance; and the
+    /// plan's leading operations — the modulation sources' steps and every composition —
+    /// run, each modulated row advancing once its last edge has been composed. `cursor` is
+    /// where this quantum's events begin in the scratch, which the collection that follows
+    /// walks from the same place.
+    fn render_prepass(&mut self, cursor: usize) {
+        for row in 0..self.parameter_slots.len() {
+            if self.modulated.get(row).copied().unwrap_or(false) {
                 continue;
-            };
-            slot.advance(buffer);
+            }
+            self.advance_row(row);
         }
 
-        for index in 0..self.plan.ops().len() {
+        // ADR-0058 clause 4 reaches a modulator here: its instance is reset at the frame the
+        // steal names, before that frame is written, exactly as the main walk's kernels are
+        // reset through their runs. Two resets of one instance inside one quantum keep the
+        // later, which is the one the new note starts after.
+        self.prepass_reset_due.fill(false);
+        if let Ok(end) = self.clock.checked_add(FrameCount::QUANTUM) {
+            let mut index = cursor;
+            while let Some(event) = self.event_scratch.get(index) {
+                if index >= self.scratch_len || event.position >= end {
+                    break;
+                }
+                index += 1;
+                if let EventPayload::Reset { identity } = event.payload
+                    && let Some(instance) = self.steal_instance(identity)
+                {
+                    let offset = event.position.quantum_offset();
+                    if let Some(mark) = self.prepass_resets.get_mut(instance) {
+                        *mark = TimedControl {
+                            offset,
+                            control: kernels::ControlIndex::RESET,
+                            value: crate::quantities::ParameterValue::ZERO,
+                        };
+                    }
+                    if let Some(due) = self.prepass_reset_due.get_mut(instance) {
+                        *due = true;
+                    }
+                }
+            }
+        }
+
+        let plan_start = self.plan_position_of(self.clock);
+        self.walk_ops(0, self.plan.prepass_ops(), plan_start, true);
+    }
+
+    /// Run `ops[first..end]`, in order. In the pre-pass a node step is handed its
+    /// instance's reset mark as its positioned controls; in the main walk it is handed its
+    /// run of the quantum's collected changes.
+    fn walk_ops(
+        &mut self,
+        first: usize,
+        end: usize,
+        plan_start: Option<PlanPosition>,
+        prepass: bool,
+    ) {
+        let quantum = QUANTUM_FRAMES as usize;
+        for index in first..end {
             // Borrowed, not copied. A step is the widest thing the schedule holds and a
             // prepared record is the widest variant of its enum; copying either per node
             // per quantum would be work proportional to the representation rather than to
@@ -1055,25 +1174,43 @@ impl PreparedRenderer {
                     else {
                         continue;
                     };
-                    let Some(state) = self.node_states.get_mut(step.node().index()) else {
+                    let node = step.node().index();
+                    let gates: &[TimedControl] = if prepass {
+                        // A modulator's one positioned control is its instance's reset.
+                        match self.instance_of(node) {
+                            Some(instance) => {
+                                let due = usize::from(
+                                    self.prepass_reset_due
+                                        .get(instance)
+                                        .copied()
+                                        .unwrap_or(false),
+                                );
+                                self.prepass_resets
+                                    .get(instance..instance.saturating_add(due))
+                                    .unwrap_or(&[])
+                            }
+                            None => &[],
+                        }
+                    } else {
+                        // Resolved before the arena is borrowed mutably: these are two
+                        // disjoint fields of one renderer, and taking the slice first is
+                        // what lets the borrow checker see that.
+                        let (Some(start), Some(end)) = (
+                            self.control_starts.get(node).copied(),
+                            self.control_starts.get(node + 1).copied(),
+                        ) else {
+                            continue;
+                        };
+                        self.timed_controls
+                            .get(start as usize..end as usize)
+                            .unwrap_or(&[])
+                    };
+                    let Some(state) = self.node_states.get_mut(node) else {
                         continue;
                     };
-                    // Resolved before the arena is borrowed mutably: these are two
-                    // disjoint fields of one renderer, and taking the slice first is what
-                    // lets the borrow checker see that.
-                    let (Some(start), Some(end)) = (
-                        self.control_starts.get(step.node().index()).copied(),
-                        self.control_starts.get(step.node().index() + 1).copied(),
-                    ) else {
-                        continue;
-                    };
-                    let gates = self
-                        .timed_controls
-                        .get(start as usize..end as usize)
-                        .unwrap_or(&[]);
                     let (Some(ramp_start), Some(ramp_end)) = (
-                        self.ramp_starts.get(step.node().index()).copied(),
-                        self.ramp_starts.get(step.node().index() + 1).copied(),
+                        self.ramp_starts.get(node).copied(),
+                        self.ramp_starts.get(node + 1).copied(),
                     ) else {
                         continue;
                     };
@@ -1090,6 +1227,10 @@ impl PreparedRenderer {
                         continue;
                     };
                     step.kernel().run(prepared, state, &mut io);
+                }
+                PlanOp::Modulate(step) => {
+                    let step = *step;
+                    self.compose_modulation(step);
                 }
                 PlanOp::Output { source } => {
                     // ADR-0041 clause 11: the plan's output signal already has the
@@ -1113,6 +1254,24 @@ impl PreparedRenderer {
                 }
             }
         }
+    }
+
+    fn render_quantum(&mut self) -> Result<(), RenderError> {
+        let quantum = QUANTUM_FRAMES as usize;
+        let quantum_start = self.clock;
+
+        // The plan position of this quantum's first sample. Anchoring is the only
+        // place engine time and plan time meet.
+        let plan_start = self.plan_position_of(quantum_start);
+
+        // The main walk: everything after the pre-pass, whose rows were advanced and whose
+        // sources were run by `render_prepass` before this quantum's controls were placed.
+        self.walk_ops(
+            self.plan.prepass_ops(),
+            self.plan.ops().len(),
+            plan_start,
+            false,
+        );
 
         // A plan with no output operation renders silence rather than leaving the
         // carry holding whatever the previous quantum left there.
@@ -1229,6 +1388,10 @@ impl PreparedRenderer {
         for _ in 0..quanta {
             let boundary = self.clock;
             cursor = self.apply_control_events(boundary, cursor);
+            // `SOUND-INV-027`: the modulation sources and every composition run **before**
+            // the quantum's positioned writes are placed, so a write inside the quantum is
+            // composed with this quantum's modulation rather than the last one's.
+            self.render_prepass(timed);
             // After the boundary controls and before the quantum: the edges are a property
             // of the samples about to be written, and the kernel that writes them is what
             // places each one.

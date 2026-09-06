@@ -83,6 +83,8 @@ pub fn timed_control_scratch_bytes(
     scheduled_records: RecordCount,
     identity_indices: crate::quantities::HeldNoteCount,
     writes_per_note: crate::quantities::WritesPerNote,
+    modulated_sample_positioned_rows: u32,
+    voice_instances: crate::quantities::VoiceCount,
 ) -> u64 {
     // One quantum's events **times what one of them can expand to**, plus the notes an
     // activation can end at a boundary.
@@ -99,10 +101,18 @@ pub fn timed_control_scratch_bytes(
     // exactly why they need room here rather than there: an activation that ended more
     // notes than a quantum admits events would otherwise have nowhere to put them. A
     // release expands to no magnitudes, so it is not multiplied.
+    // `SOUND-INV-027`: a modulated sample-positioned row receives its composed value as one
+    // control at the quantum's first frame, every quantum, beside the quantum's own writes.
     let controls = u64::from(max_events_per_quantum.get())
         .saturating_mul(u64::from(writes_per_note.get()))
         .saturating_add(u64::from(identity_indices.get()))
+        .saturating_add(u64::from(modulated_sample_positioned_rows))
         .saturating_mul(size_of::<TimedControl>() as u64);
+    // And the pre-pass's reset marks: one control and one flag per voice instance, which is
+    // how a steal's reset reaches a modulator evaluated ahead of the quantum's positioned
+    // writes.
+    let prepass_resets = u64::from(voice_instances.get())
+        .saturating_mul((size_of::<TimedControl>() + size_of::<bool>()) as u64);
     // And the queue those gate-downs wait in between adoption and the boundary quantum: one
     // control and one node index per identity the partition holds. Preparation allocates
     // both, so a budget that charged only the scratch above would report a ceiling
@@ -116,8 +126,11 @@ pub fn timed_control_scratch_bytes(
     let index = u64::from(scheduled_records.get())
         .saturating_mul(2)
         .saturating_add(1)
-        .saturating_mul(size_of::<u32>() as u64);
+        .saturating_mul(size_of::<u32>() as u64)
+        // And the per-record instance table the pre-pass resolves a reset's instance by.
+        .saturating_add(u64::from(scheduled_records.get()).saturating_mul(size_of::<u16>() as u64));
     controls
+        .saturating_add(prepass_resets)
         .saturating_add(adoption_gates)
         .saturating_add(index)
 }
@@ -597,6 +610,21 @@ pub struct PreparedRenderer {
     /// Where each node's run of buffers starts, plus a terminator — the slice a kernel is
     /// handed as its ramps, in its declaration's control order.
     ramp_starts: Vec<usize>,
+    /// Whether a modulation lands on each row (`SOUND-INV-027`). A marked row advances its
+    /// segment in the pre-pass, once its last edge has been composed, rather than ahead of
+    /// it; an unmarked row advances before the pre-pass as before.
+    modulated: Vec<bool>,
+    /// The pre-pass's reset marks, one per voice instance: the quantum's steal reset for
+    /// that instance, handed to each modulator step of the instance as its one positioned
+    /// control where `prepass_reset_due` says one is (ADR-0058 clause 4, `SOUND-INV-027`).
+    /// Two vectors rather than one of options so the slice a kernel is handed is a
+    /// bounds-checked `get` over this one.
+    prepass_resets: Vec<TimedControl>,
+    prepass_reset_due: Vec<bool>,
+    /// The voice instance each scheduled record belongs to, `u16::MAX` for a record the
+    /// plan renders once; built from the plan's instance groups so the pre-pass resolves an
+    /// instance by one indexed read rather than a walk over the groups.
+    record_instance: Vec<u16>,
     /// Whether the plan writes the carry at all, decided once at preparation so the
     /// loop does not re-derive a topology fact per quantum.
     has_output: bool,
@@ -701,33 +729,73 @@ impl PreparedRenderer {
                 slot::SlotState::prepared(target.law, target.unit, target.smoothing, target.base)
             })
             .collect();
-        // One quantum of values per quantum-rate slot, laid out node by node in target
-        // order — which is declaration order, because the compiler pushes a node's controls
-        // contiguously — so a node's ramps are one slice.
-        let mut ramp_offsets = Vec::with_capacity(parameter_slots.len());
-        let mut ramp_starts = vec![0_usize; node_states.len().saturating_add(1)];
-        let mut running = 0_usize;
+        // One quantum of values per quantum-rate slot, laid out **node by node**, each
+        // node's buffers in the order its rows appear in the target table — which is its
+        // declaration's control order, since the compiler pushes a node's controls in that
+        // order — so a node's ramps are one slice a kernel indexes by control.
+        //
+        // Grouped by node rather than taken in table order: since `P06-S001` a voice-scope
+        // node's rows are pushed control by control across its instances, so in table order
+        // the second instance's first control follows the first instance's, and a layout
+        // that assumed a node's rows contiguous handed an instance with two quantum-rate
+        // controls another instance's buffer. `P07-S001`'s LFO — two such controls, two
+        // voices — is what found it: one instance read the other's depth as its rate.
+        let records = node_states.len();
+        let mut per_node = vec![0_usize; records];
         for target in plan.parameter_targets() {
-            match target.rate {
-                crate::plan::ControlRate::Quantum => {
-                    ramp_offsets.push(running);
-                    running = running.saturating_add(quantum);
-                }
-                crate::plan::ControlRate::Sample => ramp_offsets.push(usize::MAX),
+            if matches!(target.rate, crate::plan::ControlRate::Quantum)
+                && let Some(count) = per_node.get_mut(target.node.index())
+            {
+                *count = count.saturating_add(1);
             }
-            if let Some(next) = ramp_starts.get_mut(target.node.index().saturating_add(1)) {
+        }
+        let mut ramp_starts = vec![0_usize; records.saturating_add(1)];
+        let mut running = 0_usize;
+        for (node, count) in per_node.iter().enumerate() {
+            running = running.saturating_add(count.saturating_mul(quantum));
+            if let Some(next) = ramp_starts.get_mut(node.saturating_add(1)) {
                 *next = running;
             }
         }
-        // A node with no quantum-rate control inherits the previous node's end, so every
-        // node's slice is well-formed and empty where it has nothing.
-        for index in 1..ramp_starts.len() {
-            let previous = ramp_starts.get(index - 1).copied().unwrap_or(0);
-            if let Some(start) = ramp_starts.get_mut(index) {
-                *start = (*start).max(previous);
+        let mut placed = vec![0_usize; records];
+        let mut ramp_offsets = Vec::with_capacity(parameter_slots.len());
+        for target in plan.parameter_targets() {
+            match target.rate {
+                crate::plan::ControlRate::Quantum => {
+                    let node = target.node.index();
+                    let start = ramp_starts.get(node).copied().unwrap_or(0);
+                    let already = placed.get(node).copied().unwrap_or(0);
+                    ramp_offsets.push(start.saturating_add(already.saturating_mul(quantum)));
+                    if let Some(count) = placed.get_mut(node) {
+                        *count = count.saturating_add(1);
+                    }
+                }
+                crate::plan::ControlRate::Sample => ramp_offsets.push(usize::MAX),
             }
         }
         let ramp_buffers = vec![0.0_f32; running];
+        // `SOUND-INV-027`: which rows the pre-pass composes, from the steps the lowering
+        // built, so the two advance sites cannot both advance one row.
+        let mut modulated = vec![false; parameter_slots.len()];
+        for op in plan.ops() {
+            if let PlanOp::Modulate(step) = op
+                && let Some(mark) = modulated.get_mut(step.row())
+            {
+                *mark = true;
+            }
+        }
+        let voices = plan.voice_instances().get() as usize;
+        let prepass_resets = vec![TimedControl::FILL; voices];
+        let prepass_reset_due = vec![false; voices];
+        let mut record_instance = vec![u16::MAX; node_states.len()];
+        for first in plan.instance_groups() {
+            for instance in 0..voices {
+                if let Some(entry) = record_instance.get_mut(first.index().saturating_add(instance))
+                {
+                    *entry = u16::try_from(instance).unwrap_or(u16::MAX);
+                }
+            }
+        }
 
         // A call renders at most one quantum more than its frame count spans, so this
         // bounds both the per-quantum tally and the event scratch.
@@ -743,7 +811,6 @@ impl PreparedRenderer {
             .get() as usize;
         // One index entry per scheduled record, from the table the renderer already keeps
         // one state per — so the two cannot be counted differently.
-        let records = node_states.len();
 
         // The identity partition, which bounds how many notes one activation can end and so
         // how many gate-downs a boundary can owe. Summed from the same declaration both
@@ -784,6 +851,10 @@ impl PreparedRenderer {
             ramp_buffers,
             ramp_offsets,
             ramp_starts,
+            modulated,
+            prepass_resets,
+            prepass_reset_due,
+            record_instance,
             has_output,
             event_scratch: vec![DueEvent::FILL; events_per_quantum.saturating_mul(quanta_per_call)],
             scratch_len: 0,
@@ -797,6 +868,9 @@ impl PreparedRenderer {
                 events_per_quantum
                     .saturating_mul(writes_per_note)
                     .saturating_add(identity_indices)
+                    .saturating_add(
+                        plan.modulated_sample_positioned_rows() as usize
+                    )
             ],
             // One gate-down per ended note plus, since ADR-0026, one per trigger
             // destination of its scope: bounded by a note's width, which the charge uses.
@@ -824,18 +898,15 @@ impl PreparedRenderer {
 
     /// Write one parameter slot's modulation sum, in its law's units.
     ///
-    /// **`P05-S007a`'s seam, off the audio thread.** `SOUND-INV-023`'s modulation layer has
-    /// no producer until Phase 7's modulation edges, and this is what stands in for one so
-    /// that the layer's composition is tested rather than claimed: a modulation in force
-    /// survives an override write and an activation's catch-up, and reaches the kernel
-    /// composed. A quantum-rate target retargets its segment now, as an `apply` of a write
-    /// would, and the kernel reads the result per frame from the slot's buffer; a
-    /// sample-positioned target takes it at its next positioned write, which is the only
-    /// path a value has to such a kernel. A slot index the plan has no row for writes
-    /// nothing.
-    ///
-    /// Compiled for tests only, which is what a seam with no production caller is: the
-    /// attribute comes off with Phase 7's first modulator.
+    /// **`P05-S007a`'s seam, off the audio thread.** The production writer of the layer is
+    /// the pre-pass's modulation step since `P07-S001` (`SOUND-INV-027`); this remains for
+    /// the render tests that hold the layer's composition apart from any source: a
+    /// modulation in force survives an override write and an activation's catch-up, and
+    /// reaches the kernel composed. A quantum-rate target retargets its segment now, as an
+    /// `apply` of a write would, and the kernel reads the result per frame from the slot's
+    /// buffer; a sample-positioned target takes it at its next positioned write, which is
+    /// the only path a value has to such a kernel from here. A slot index the plan has no
+    /// row for writes nothing.
     #[cfg(test)]
     pub(crate) fn modulate(
         &mut self,
@@ -867,6 +938,7 @@ impl PreparedRenderer {
             .saturating_mul(size_of::<slot::SlotState>())
             .saturating_add(self.ramp_buffers.len().saturating_mul(size_of::<f32>()))
             .saturating_add(self.ramp_offsets.len().saturating_mul(size_of::<usize>()))
+            .saturating_add(self.modulated.len().saturating_mul(size_of::<bool>()))
     }
 
     /// One tap's samples as the last rendered quantum left them: the region the tapped
@@ -946,6 +1018,17 @@ impl PreparedRenderer {
             .len()
             .saturating_add(self.adoption_gates.len())
             .saturating_mul(size_of::<TimedControl>())
+            .saturating_add(
+                self.prepass_resets
+                    .len()
+                    .saturating_mul(size_of::<TimedControl>()),
+            )
+            .saturating_add(
+                self.prepass_reset_due
+                    .len()
+                    .saturating_mul(size_of::<bool>()),
+            )
+            .saturating_add(self.record_instance.len().saturating_mul(size_of::<u16>()))
             .saturating_add(self.adoption_gate_slots.len() * size_of::<usize>())
             .saturating_add(
                 self.control_starts

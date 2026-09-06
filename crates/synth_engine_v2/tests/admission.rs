@@ -19,8 +19,8 @@ use synth_engine_v2::diagnostics::{CompileError, CompileWarning};
 use synth_engine_v2::identity::ProducerId;
 use synth_engine_v2::ir::{
     AuthoredSourceDeclaration, ExecutionScope, GraphIr, InternalProducerDeclaration, IrNodeKind,
-    IrObject, IrProgram, NodeId, NoteProducerDeclaration, PlanDeclarations, PortId, ProgramId,
-    SignalDomain,
+    IrObject, IrProgram, LfoPolarity, LfoWaveform, ModulationDepth, ModulationUnit, NodeId,
+    NoteProducerDeclaration, PlanDeclarations, PortId, ProgramId, SignalDomain, parameters,
 };
 use synth_engine_v2::profile::{
     CostBudget, EventLimits, GraphLimits, HostProfile, MemoryLimits, MixingLimits,
@@ -29,8 +29,8 @@ use synth_engine_v2::profile::{
 };
 use synth_engine_v2::quantities::{
     Amplitude, BusCount, ChannelLayout, CostRatio, EdgeCount, EventCount, FanOut, Frequency,
-    GainFactor, HeldNoteCount, InstructionCount, MixChannelCount, NodeCount, PreparedBytes,
-    SendCount, SlotCount, TapCount, VoiceCount,
+    GainFactor, HeldNoteCount, InstructionCount, MixChannelCount, NodeCount, NormalizedLevel,
+    PhaseOffset, PreparedBytes, SendCount, SlotCount, TapCount, VoiceCount,
 };
 use synth_engine_v2::report::{ResourceAmount, ResourceField, ResourceReport};
 use synth_engine_v2::time::FrameCount;
@@ -289,6 +289,48 @@ fn refusal_cases(host: &HostProfile) -> Vec<(ResourceField, GraphIr, HostProfile
         .build()
         .expect("readable plan");
     let declares = declaring(declared());
+    // `SOUND-INV-027`: two modulation edges into one voice-scope parameter are two Mod
+    // Matrix slots per voice, which a profile admitting one refuses. The source is in the
+    // global scope, which may broadcast into a voice; the target is the sine's frequency,
+    // the one semitone-law control there is.
+    let modulated_voice = GraphIr::builder()
+        .node(
+            NodeId::new(30),
+            IrNodeKind::Lfo {
+                waveform: LfoWaveform::Sine,
+                rate: Frequency::new(2.0).expect("finite"),
+                depth: NormalizedLevel::FULL,
+                phase_offset: PhaseOffset::ZERO,
+                polarity: LfoPolarity::Bipolar,
+            },
+            ExecutionScope::Global,
+        )
+        .node(
+            SOURCE,
+            IrNodeKind::Sine {
+                frequency: Frequency::new(440.0).expect("finite"),
+                amplitude: Amplitude::new(0.5).expect("finite"),
+            },
+            ExecutionScope::Voice,
+        )
+        .node(OUTPUT, IrNodeKind::Output, ExecutionScope::Global)
+        .connect(
+            (SOURCE, PortId::FIRST),
+            (OUTPUT, PortId::FIRST),
+            SignalDomain::Audio,
+        )
+        .modulate(
+            (NodeId::new(30), PortId::FIRST),
+            (SOURCE, parameters::SINE_FREQUENCY),
+            ModulationDepth::new(ModulationUnit::Semitones, 1.0).expect("finite"),
+        )
+        .modulate(
+            (NodeId::new(30), PortId::FIRST),
+            (SOURCE, parameters::SINE_FREQUENCY),
+            ModulationDepth::new(ModulationUnit::Semitones, 2.0).expect("finite"),
+        )
+        .build()
+        .expect("readable plan");
 
     // ADR-0046 clause 1 raised the floor under two of these limits, so the shared
     // fixture's declaration of two no longer exceeds either. The cap cannot go below six
@@ -382,6 +424,23 @@ fn refusal_cases(host: &HostProfile) -> Vec<(ResourceField, GraphIr, HostProfile
             slots(values[6]),
             slots(values[7]),
             slots(16),
+            slots(16),
+        )
+        .expect("the overridden capacities are above zero");
+        groups.build(host)
+    };
+    let matrix_slots = |per_voice: u32| {
+        let mut groups = Groups::of(host);
+        groups.script = ScriptLimits::new(
+            InstructionCount::limit(256).expect("positive"),
+            slots(32),
+            slots(16),
+            slots(16),
+            slots(64),
+            slots(16),
+            slots(256),
+            slots(4),
+            slots(per_voice),
             slots(16),
         )
         .expect("the overridden capacities are above zero");
@@ -709,6 +768,11 @@ fn refusal_cases(host: &HostProfile) -> Vec<(ResourceField, GraphIr, HostProfile
             script([256, 32, 16, 16, 64, 16, 256, 1]),
         ),
         (
+            ResourceField::ModMatrixSlotsPerVoice,
+            modulated_voice,
+            matrix_slots(1),
+        ),
+        (
             ResourceField::MaxHeldNotesPerTake,
             declares.clone(),
             recording(1, 4_096),
@@ -746,13 +810,14 @@ fn every_limit_a_plan_can_exceed_has_a_refusal_case() {
         covered, checked,
         "the refusal cases and the admission-checked set have diverged"
     );
-    // Thirty-two, not thirty: `authored_runtime_event_share` and `internal_event_share`
-    // joined when `PlanDeclarations` gained the two declarations that let a plan state what
-    // those shares bound. Before that each share was reported against itself and no plan
-    // could exceed it, which is why `HOST-INV-007`'s conformance row could not be satisfied
-    // for them. `session_event_share` and `release_hold_capacity` joined in the two slices
-    // before this one, each for the same kind of reason.
-    assert_eq!(checked.len(), 32, "the admission-checked set changed size");
+    // Thirty-three: `authored_runtime_event_share` and `internal_event_share` joined when
+    // `PlanDeclarations` gained the two declarations that let a plan state what those
+    // shares bound. Before that each share was reported against itself and no plan could
+    // exceed it, which is why `HOST-INV-007`'s conformance row could not be satisfied for
+    // them. `session_event_share` and `release_hold_capacity` joined in the two slices
+    // before that, each for the same kind of reason, and `mod_matrix_slots_per_voice`
+    // joined with `P07-S001`, when a modulation edge became a slot a plan can spend.
+    assert_eq!(checked.len(), 33, "the admission-checked set changed size");
 }
 
 #[test]

@@ -13,9 +13,9 @@
 
 use crate::quantities::{
     Amplitude, BusCount, CostRatio, CutoffFrequency, EventCount, Frequency, GainFactor,
-    HeldNoteCount, InstructionCount, MixChannelCount, NodeCount, NormalizedLevel, PreparedBytes,
-    RecordCount, Resonance, ScriptWorkPerQuantum, Seconds, SendCount, SlotCount, VoiceCount,
-    WritesPerNote,
+    HeldNoteCount, InstructionCount, MixChannelCount, NodeCount, NormalizedLevel, PhaseOffset,
+    PreparedBytes, RecordCount, Resonance, ScriptWorkPerQuantum, Seconds, SendCount, SlotCount,
+    VoiceCount, WritesPerNote,
 };
 use crate::sample::{PlayDirection, PlayMode, PreparedSample, SampleMap, SampleMapRef};
 use crate::time::{FrameCount, PlanPosition};
@@ -67,6 +67,12 @@ typed_id!(
     "A parameter's identity within its node."
 );
 typed_id!(BufferId, u32, "buffer", "A buffer's identity in the plan.");
+typed_id!(
+    ModulationId,
+    u32,
+    "modulation",
+    "A modulation edge's stable identity (`SOUND-INV-027`)."
+);
 typed_id!(ProgramId, u32, "program", "A script program's identity.");
 
 /// What kind of signal crosses an edge.
@@ -130,6 +136,8 @@ pub enum IrObject {
     Edge(EdgeId),
     /// One script program.
     Program(ProgramId),
+    /// One modulation edge.
+    Modulation(ModulationId),
 }
 
 impl std::fmt::Display for IrObject {
@@ -140,6 +148,7 @@ impl std::fmt::Display for IrObject {
             Self::Port(node, port) => write!(f, "{node} {port}"),
             Self::Edge(id) => write!(f, "{id}"),
             Self::Program(id) => write!(f, "{id}"),
+            Self::Modulation(id) => write!(f, "{id}"),
         }
     }
 }
@@ -304,6 +313,188 @@ pub enum IrNodeKind {
     /// than a conversion the compiler inserted: inserting implicit conversions is
     /// Phase 2's work, and pretending to do it here would preempt it.
     Output,
+    /// A low-frequency oscillator: a control-rate signal from a phase accumulator, the
+    /// first native modulation source (`SOUND-INV-027`, `P07-S001`).
+    ///
+    /// Its rate and depth are quantum-rate controls, so an LFO can itself be a modulation
+    /// target — V1's `LfoRate` and `LfoDepth` destinations. The offset is applied where the
+    /// shape is read rather than to the accumulator, so a reset restarts the authored cycle.
+    Lfo {
+        /// The shape it traces over one period.
+        waveform: LfoWaveform,
+        /// Cycles per second. Negative runs the cycle backwards, as an oscillator's does.
+        rate: Frequency,
+        /// The peak the shape is scaled to.
+        depth: NormalizedLevel,
+        /// Where in the period it starts.
+        phase_offset: PhaseOffset,
+        /// Whether the shape spans `[-1, 1]` or `[0, 1]`.
+        polarity: LfoPolarity,
+    },
+}
+
+/// The shape an [`IrNodeKind::Lfo`] traces, V1's six by name.
+///
+/// The two random shapes are **declared and refused**: a node that consumes randomness needs
+/// a seed, and what a seed is belongs to ADR-0008, which is `Proposed`. Naming them here is
+/// what lets a plan authoring one be refused by name at validation rather than mapped to a
+/// deterministic shape without a word — `P06-R001` fails closed the same way.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum LfoWaveform {
+    /// `sin(2πp)`.
+    Sine,
+    /// Rising from `-1` at the period's start to `1` at its middle and back, V1's shape.
+    Triangle,
+    /// `2p − 1`: rising through the period and dropping at its end.
+    Sawtooth,
+    /// `1` through the first half, `-1` through the second.
+    Square,
+    /// A new random level at each period's start. Refused until ADR-0008 gives it a seed.
+    SampleAndHold,
+    /// A random target per period, reached by cosine interpolation. Refused likewise.
+    SmoothRandom,
+}
+
+impl LfoWaveform {
+    /// Whether the shape draws on a random stream, which no node may do before ADR-0008.
+    #[must_use]
+    pub const fn needs_seed(self) -> bool {
+        matches!(self, Self::SampleAndHold | Self::SmoothRandom)
+    }
+}
+
+impl std::fmt::Display for LfoWaveform {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::Sine => "sine",
+            Self::Triangle => "triangle",
+            Self::Sawtooth => "sawtooth",
+            Self::Square => "square",
+            Self::SampleAndHold => "sample-and-hold",
+            Self::SmoothRandom => "smooth random",
+        })
+    }
+}
+
+/// Whether an LFO's shape spans both signs or is folded into `[0, 1]`, V1's two modes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum LfoPolarity {
+    /// The shape as traced, in `[-1, 1]`.
+    Bipolar,
+    /// `(shape + 1) / 2`, in `[0, 1]`.
+    Unipolar,
+}
+
+/// The unit a modulation edge's depth is stated in — one per law with a unit
+/// (`SOUND-INV-023`), so that validation can hold an edge to its target's law by name
+/// rather than by trusting a bare number (ADR-0007 clause 5).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ModulationUnit {
+    /// Normalized units, for a normalized-additive target.
+    Normalized,
+    /// Bipolar units, for a bipolar-additive target.
+    Bipolar,
+    /// Semitones, for a semitone-additive target: a pitch or a cutoff.
+    Semitones,
+    /// Decibels, for a decibel-additive target: a linear amplitude.
+    Decibels,
+    /// The target's own physical unit, for a physical-linear-additive target.
+    Physical,
+    /// A linear factor, for a multiplicative-gain target.
+    Factor,
+    /// Threshold units, for a thresholded-boolean target such as a gate.
+    Boolean,
+}
+
+impl std::fmt::Display for ModulationUnit {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::Normalized => "normalized",
+            Self::Bipolar => "bipolar",
+            Self::Semitones => "semitones",
+            Self::Decibels => "decibels",
+            Self::Physical => "physical",
+            Self::Factor => "factor",
+            Self::Boolean => "boolean",
+        })
+    }
+}
+
+/// How much a modulation edge moves its target per unit of its source, in the target law's
+/// units (ADR-0007 clause 3: the depth is the edge's, never a scale hidden in the target).
+///
+/// The unit and the amount are one value so a depth cannot be read in a unit it was not
+/// stated in, and the amount is finite by construction.
+#[derive(Debug, Clone, Copy, PartialEq)]
+#[must_use]
+pub struct ModulationDepth {
+    unit: ModulationUnit,
+    amount: f32,
+}
+
+impl ModulationDepth {
+    /// A depth. The amount must be finite.
+    pub fn new(
+        unit: ModulationUnit,
+        amount: f32,
+    ) -> Result<Self, crate::quantities::QuantityError> {
+        if amount.is_finite() {
+            Ok(Self { unit, amount })
+        } else {
+            Err(crate::quantities::QuantityError::NotFinite {
+                quantity: "ModulationDepth",
+                value: amount,
+            })
+        }
+    }
+
+    /// The unit the amount is in.
+    pub const fn unit(self) -> ModulationUnit {
+        self.unit
+    }
+
+    /// The amount, per unit of the source.
+    pub const fn amount(self) -> f32 {
+        self.amount
+    }
+}
+
+/// One modulation edge: a control-domain output feeding a declared parameter's modulation
+/// layer, at a depth (`SOUND-INV-027`).
+///
+/// Distinct from an [`IrEdge`]: that one connects two ports and carries a signal a kernel
+/// reads; this one names a parameter, and what it carries is composed into the parameter's
+/// slot under its law before the kernel runs. The source's scope may enclose the target's or
+/// equal it; a source inside the target's scope is refused, since nothing reduces it.
+#[derive(Debug, Clone, Copy, PartialEq)]
+#[must_use]
+pub struct IrModulation {
+    id: ModulationId,
+    source: (NodeId, PortId),
+    target: (NodeId, ParameterId),
+    depth: ModulationDepth,
+}
+
+impl IrModulation {
+    /// This edge's stable identity.
+    pub const fn id(&self) -> ModulationId {
+        self.id
+    }
+
+    /// The node and output port read each quantum.
+    pub const fn source(&self) -> (NodeId, PortId) {
+        self.source
+    }
+
+    /// The node and parameter modulated.
+    pub const fn target(&self) -> (NodeId, ParameterId) {
+        self.target
+    }
+
+    /// How far the target moves per unit of the source, in the law's units.
+    pub const fn depth(&self) -> ModulationDepth {
+        self.depth
+    }
 }
 
 impl IrNodeKind {
@@ -370,6 +561,10 @@ pub mod parameters {
     pub const SAMPLER_LEVEL: ParameterId = ParameterId::new(3);
     /// The sampler's velocity sensitivity (ADR-0026).
     pub const SAMPLER_VELOCITY_SENSITIVITY: ParameterId = ParameterId::new(4);
+    /// An LFO's rate in hertz. Quantum-rate, and a modulation target itself.
+    pub const LFO_RATE: ParameterId = ParameterId::new(0);
+    /// An LFO's depth, the peak its shape is scaled to. Quantum-rate.
+    pub const LFO_DEPTH: ParameterId = ParameterId::new(1);
 }
 
 /// One node in the IR.
@@ -795,6 +990,22 @@ pub enum IrError {
         /// The dangling reference.
         map: SampleMapRef,
     },
+    /// A modulation edge names a node that is not in the plan (`SOUND-INV-027`).
+    #[error("{modulation} refers to {node}, which the plan does not declare")]
+    UnknownModulationNode {
+        /// The edge holding the dangling reference.
+        modulation: ModulationId,
+        /// The node it names.
+        node: NodeId,
+    },
+    /// A modulation edge leaves a node that produces nothing.
+    #[error("{modulation} leaves {node}, which is not a source")]
+    ModulationNotFromASource {
+        /// The offending edge.
+        modulation: ModulationId,
+        /// The node it leaves.
+        node: NodeId,
+    },
 }
 
 /// What one execution scope declares, accumulated in one pass over a plan's nodes.
@@ -869,6 +1080,8 @@ pub struct GraphIr {
     samples: Vec<PreparedSample>,
     /// The sample maps the plan's samplers consume, indexed by [`SampleMapRef`].
     maps: Vec<SampleMap>,
+    /// The modulation edges, in the order they were connected (`SOUND-INV-027`).
+    modulations: Vec<IrModulation>,
 }
 
 /// The tuning one execution scope resolves its keys through.
@@ -924,8 +1137,83 @@ impl GraphIr {
             tunings: Vec::new(),
             samples: Vec::new(),
             maps: Vec::new(),
+            modulations: Vec::new(),
             next_edge: 0,
+            next_modulation: 0,
         }
+    }
+
+    /// The modulation edges, in the order they were connected.
+    pub fn modulations(&self) -> &[IrModulation] {
+        &self.modulations
+    }
+
+    /// Whether `node` is read by a modulation edge, and so is a modulator the renderer
+    /// evaluates before the quantum's positioned writes are placed (`SOUND-INV-027`).
+    #[must_use]
+    pub fn is_modulation_source(&self, node: NodeId) -> bool {
+        self.modulations
+            .iter()
+            .any(|modulation| modulation.source().0 == node)
+    }
+
+    /// The scope a node runs in, where the plan declares the node.
+    #[must_use]
+    pub fn scope_of(&self, id: NodeId) -> Option<ExecutionScope> {
+        self.node(id).map(IrNode::scope)
+    }
+
+    /// How many modulation edges land on a voice-scope parameter: each is one Mod Matrix
+    /// slot **per voice**, which is what the profile's `mod_matrix_slots_per_voice` bounds
+    /// (`SOUND-INV-027`). Attributed to the target node of the last such edge.
+    pub fn voice_modulation_slots(&self) -> (SlotCount, IrObject) {
+        let mut count = 0_u32;
+        let mut contributor = IrObject::Plan;
+        for modulation in &self.modulations {
+            let (target, _) = modulation.target();
+            if self.scope_of(target) == Some(ExecutionScope::Voice) {
+                count = count.saturating_add(1);
+                contributor = IrObject::Node(target);
+            }
+        }
+        (SlotCount::measured(count), contributor)
+    }
+
+    /// How many parameter rows a modulation edge lands on whose control is
+    /// sample-positioned: one per instance of the target's scope for each such edge's
+    /// target, counted once per **row** however many edges reach it.
+    ///
+    /// What the timed-control scratch is charged for beside a note-on's expansion: such a row
+    /// receives its composed value as one control at the quantum's first frame, every quantum
+    /// (`SOUND-INV-027`). [`crate::plan::CompiledPlan::modulated_sample_positioned_rows`]
+    /// derives the same figure from the compiled plan, and a test holds the two equal.
+    pub fn modulated_sample_positioned_rows(&self) -> u32 {
+        let voices = self.voice_instances().get();
+        let mut targets: Vec<(NodeId, ParameterId)> =
+            self.modulations.iter().map(IrModulation::target).collect();
+        targets.sort_unstable();
+        targets.dedup();
+        targets.iter().fold(0_u32, |total, (node, parameter)| {
+            let Some(declared) = self.node(*node) else {
+                return total;
+            };
+            let sample_positioned =
+                crate::node::descriptor(declared.kind()).is_some_and(|descriptor| {
+                    descriptor.controls.iter().any(|spec| {
+                        spec.parameter == *parameter
+                            && spec.rate == crate::plan::ControlRate::Sample
+                    })
+                });
+            if !sample_positioned {
+                return total;
+            }
+            let instances = if declared.scope() == ExecutionScope::Voice {
+                voices
+            } else {
+                1
+            };
+            total.saturating_add(instances)
+        })
     }
 
     /// The tuning each scope resolves through, in declaration order.
@@ -1353,8 +1641,14 @@ impl GraphIr {
     /// that takes four billion comparisons to reject a plan is not a compiler that
     /// gets used.
     pub fn peak_fan_out(&self) -> (crate::quantities::FanOut, IrObject) {
-        let mut sources: Vec<(NodeId, PortId)> =
-            self.edges.iter().map(super::ir::IrEdge::from).collect();
+        // A modulation edge leaves a port as a cable does and is read from it as one is
+        // (`SOUND-INV-027`), so it counts toward that port's fan-out.
+        let mut sources: Vec<(NodeId, PortId)> = self
+            .edges
+            .iter()
+            .map(super::ir::IrEdge::from)
+            .chain(self.modulations.iter().map(IrModulation::source))
+            .collect();
         sources.sort_unstable();
 
         let mut peak = (0_u32, IrObject::Plan);
@@ -1443,7 +1737,9 @@ pub struct GraphIrBuilder {
     tunings: Vec<ScopeTuning>,
     samples: Vec<PreparedSample>,
     maps: Vec<SampleMap>,
+    modulations: Vec<IrModulation>,
     next_edge: u32,
+    next_modulation: u32,
 }
 
 impl GraphIrBuilder {
@@ -1491,6 +1787,25 @@ impl GraphIrBuilder {
         self
     }
 
+    /// Feed one node's control-domain output into another node's parameter at a depth
+    /// (`SOUND-INV-027`). Its [`ModulationId`] is its position in the order the edges were
+    /// connected, as an edge's is.
+    pub fn modulate(
+        mut self,
+        source: (NodeId, PortId),
+        target: (NodeId, ParameterId),
+        depth: ModulationDepth,
+    ) -> Self {
+        self.modulations.push(IrModulation {
+            id: ModulationId::new(self.next_modulation),
+            source,
+            target,
+            depth,
+        });
+        self.next_modulation = self.next_modulation.saturating_add(1);
+        self
+    }
+
     /// Replace what the plan declares it needs.
     pub fn declaring(mut self, declarations: PlanDeclarations) -> Self {
         self.declarations = declarations;
@@ -1527,6 +1842,28 @@ impl GraphIrBuilder {
             if !source.is_source() {
                 return Err(IrError::NotASource {
                     edge: edge.id(),
+                    node: source_id,
+                });
+            }
+        }
+        for modulation in &self.modulations {
+            let (source_id, _) = modulation.source();
+            let (target_id, _) = modulation.target();
+            let source = kinds
+                .get(&source_id)
+                .ok_or(IrError::UnknownModulationNode {
+                    modulation: modulation.id(),
+                    node: source_id,
+                })?;
+            if !kinds.contains_key(&target_id) {
+                return Err(IrError::UnknownModulationNode {
+                    modulation: modulation.id(),
+                    node: target_id,
+                });
+            }
+            if !source.is_source() {
+                return Err(IrError::ModulationNotFromASource {
+                    modulation: modulation.id(),
                     node: source_id,
                 });
             }
@@ -1581,6 +1918,7 @@ impl GraphIrBuilder {
             tunings: self.tunings,
             samples: self.samples,
             maps: self.maps,
+            modulations: self.modulations,
         })
     }
 }

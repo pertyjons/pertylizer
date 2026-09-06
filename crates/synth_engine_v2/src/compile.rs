@@ -439,10 +439,16 @@ fn build_rows(
         ir.max_writes_per_note()
             .fanned_out(ir.sample_positioned_fan_out())
             .widest(ir.steal_expansion()),
+        ir.modulated_sample_positioned_rows(),
+        ir.voice_instances(),
     );
 
     let node_count = NodeCount::measured(u32::try_from(ir.nodes().len()).unwrap_or(u32::MAX));
-    let edge_count = EdgeCount::measured(u32::try_from(ir.edges().len()).unwrap_or(u32::MAX));
+    // A modulation edge is an edge of the plan (`SOUND-INV-027`): it is walked by the
+    // schedule and read every quantum, so it is admitted against the same count.
+    let edge_count = EdgeCount::measured(
+        u32::try_from(ir.edges().len().saturating_add(ir.modulations().len())).unwrap_or(u32::MAX),
+    );
     // `SOUND-INV-022`: the taps a plan carries are its nodes' declarations', and nothing
     // else's — the same walk the lowering makes, so the admitted count is the table's.
     // One row per instance of a voice-scope node (`P06-S001`): a monitor in the voice scope
@@ -981,14 +987,17 @@ fn push_script_rows(rows: &mut Vec<ResourceRow>, ir: &GraphIr, profile: &HostPro
         ResourceAmount::Slots(script.max_emits_per_program()),
         emits_at,
     ));
-    // Both slot capacities are reported, and the floor between them is validated at
-    // profile construction rather than here: `HOST-INV-017` wants the relation
-    // declared once, not maintained at a use site.
+    // `SOUND-INV-027`: a modulation edge into a voice-scope parameter is one Mod Matrix
+    // slot per voice, and the count is admitted against the profile's. The script host
+    // slots stay reported against themselves until a script declares usage; the floor
+    // between the two is validated at profile construction rather than here, as
+    // `HOST-INV-017` wants the relation declared once.
+    let (voice_slots, voice_slots_at) = ir.voice_modulation_slots();
     rows.push(ResourceRow::new(
         ResourceField::ModMatrixSlotsPerVoice,
+        ResourceAmount::Slots(voice_slots),
         ResourceAmount::Slots(script.mod_matrix_slots_per_voice()),
-        ResourceAmount::Slots(script.mod_matrix_slots_per_voice()),
-        IrObject::Plan,
+        voice_slots_at,
     ));
     rows.push(ResourceRow::new(
         ResourceField::ScriptHostSlotsPerVoice,
@@ -1010,6 +1019,8 @@ fn scratch_bytes(
     scheduled_records: RecordCount,
     note_producer_ranges: &[crate::quantities::HeldNoteCount],
     writes_per_note: crate::quantities::WritesPerNote,
+    modulated_sample_positioned_rows: u32,
+    voice_instances: crate::quantities::VoiceCount,
 ) -> PreparedBytes {
     let channels = profile.capabilities().channel_layout().channels() as u64;
     let carry_frames = profile
@@ -1048,6 +1059,8 @@ fn scratch_bytes(
         scheduled_records,
         crate::quantities::HeldNoteCount::measured(identity_indices),
         writes_per_note,
+        modulated_sample_positioned_rows,
+        voice_instances,
     );
 
     // And ADR-0047's two identity halves, both sized by the producer partition this plan
@@ -1111,6 +1124,8 @@ struct Lowered {
     /// (ADR-0058).
     instance_groups: Vec<NodeSlot>,
     sum_groups: Vec<NodeSlot>,
+    /// How many leading operations are the modulation pre-pass (`SOUND-INV-027`).
+    prepass: usize,
 }
 
 impl Lowered {
@@ -1188,6 +1203,7 @@ impl Lowered {
             declarations.stealing,
             self.instance_groups,
             self.sum_groups,
+            self.prepass,
         )
     }
 }
@@ -1372,7 +1388,36 @@ fn lower(
         samples: &sample_slots,
     };
 
-    for id in validated.order() {
+    // `SOUND-INV-027`: the modulation sources are lowered first, in the validated order
+    // among themselves, so their steps form the pre-pass the renderer runs ahead of the
+    // quantum's positioned writes. A source depends on no cable (validation refused one
+    // with an input) and on no node but an earlier source (a modulation into it), so
+    // pulling it forward keeps every dependency the order established. A plan with no
+    // modulation lowers in exactly the validated order, and its schedule is unchanged.
+    let mut order: Vec<NodeId> = validated
+        .order()
+        .iter()
+        .copied()
+        .filter(|id| ir.is_modulation_source(*id))
+        .collect();
+    let sources = order.len();
+    order.extend(
+        validated
+            .order()
+            .iter()
+            .copied()
+            .filter(|id| !ir.is_modulation_source(*id)),
+    );
+    // The modulation steps for targets outside the pre-pass, gathered as their rows are
+    // built and spliced in after the last source's step; the steps for targets inside it
+    // are inserted ahead of the target's own step as it is lowered.
+    let mut deferred_modulations: Vec<PlanOp> = Vec::new();
+    let mut prepass_end: Option<usize> = None;
+
+    for (position, id) in order.iter().enumerate() {
+        if position == sources {
+            prepass_end = Some(state.ops.len());
+        }
         let Some(kind) = kinds.get(id).copied() else {
             continue;
         };
@@ -1511,11 +1556,49 @@ fn lower(
         // it, grouped: a write to the slot fans out over the group, and a note's magnitude
         // lands on the row of its own instance (`P06-S001`). A not-modulatable control
         // compiles to no slot at all (`SOUND-INV-023`).
+        //
+        // `SOUND-INV-027`: the modulation steps into each row, one per edge landing on the
+        // control, the last of them marked so the row composes once. A source in the voice
+        // scope is read from the row's own instance; one outside it is read from the buffer
+        // every instance shares. A step for a control of a modulation source is inserted
+        // ahead of the source's own steps in the pre-pass; a step for any other control is
+        // deferred and spliced in after the last source.
+        let is_source = ir.is_modulation_source(*id);
+        let mut own_modulations: Vec<PlanOp> = Vec::new();
         for spec in &descriptor.controls {
             if !spec.law.admits_writes() {
                 continue;
             }
             let slot = ParameterSlot::new(plan_id, parameter_targets.len());
+            let landing: Vec<&crate::ir::IrModulation> = ir
+                .modulations()
+                .iter()
+                .filter(|modulation| modulation.target() == (*id, spec.parameter))
+                .collect();
+            for instance in 0..instances {
+                let row = parameter_targets.len().saturating_add(instance);
+                for (position, modulation) in landing.iter().enumerate() {
+                    let (source, _) = modulation.source();
+                    let buffer = match voice_slots.get(&source) {
+                        Some(per_instance) => per_instance.get(instance).copied(),
+                        None => slots.get(&source).copied(),
+                    };
+                    let Some(buffer) = buffer else {
+                        continue;
+                    };
+                    let step = PlanOp::Modulate(crate::plan::ModulationStep::new(
+                        buffer,
+                        row,
+                        modulation.depth().amount(),
+                        position + 1 == landing.len(),
+                    ));
+                    if is_source {
+                        own_modulations.push(step);
+                    } else {
+                        deferred_modulations.push(step);
+                    }
+                }
+            }
             for instance in 0..instances {
                 parameter_targets.push(ParameterTarget {
                     node: NodeSlot::new(node_slot.index().saturating_add(instance)),
@@ -1538,6 +1621,14 @@ fn lower(
                 parameter: spec.parameter,
                 slot,
             });
+        }
+        if !own_modulations.is_empty() {
+            // Ahead of this source's steps: the composition its kernel then reads. The steps
+            // are the last `instances` operations scheduled, since a source has no sum.
+            let at = state.ops.len().saturating_sub(instances);
+            for (offset, step) in own_modulations.into_iter().enumerate() {
+                state.ops.insert(at.saturating_add(offset), step);
+            }
         }
 
         // `SOUND-INV-022`: the kind's declared taps, one row per instance, each naming that
@@ -1619,6 +1710,14 @@ fn lower(
         fault = fault.or(Some(error));
     }
 
+    // `SOUND-INV-027`: the pre-pass is the sources' steps, their own compositions, and then
+    // every composition into a target outside it — all before the first main-walk step.
+    let prepass_end = prepass_end.unwrap_or(state.ops.len());
+    let prepass = prepass_end.saturating_add(deferred_modulations.len());
+    for (offset, step) in deferred_modulations.into_iter().enumerate() {
+        state.ops.insert(prepass_end.saturating_add(offset), step);
+    }
+
     // ADR-0005: lowering emits one buffer per value; the arena decides which of them
     // share storage, once, here. The render loop reads slot indices and learns nothing
     // about it.
@@ -1653,6 +1752,7 @@ fn lower(
         note_magnitudes,
         prepared_tunings,
         prepared_samples,
+        prepass,
     }
 }
 

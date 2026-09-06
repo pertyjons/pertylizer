@@ -400,6 +400,165 @@ pub enum CompileError {
         nodes: crate::quantities::NodeCount,
     },
 
+    /// A modulation edge closes a dependency cycle (`SOUND-INV-027`).
+    ///
+    /// The same rule as [`Self::Cycle`], through the other kind of edge: a modulation
+    /// source runs before its target, so two nodes each modulating the other have no order.
+    #[error(
+        "{modulation} re-enters {node} after {nodes} of nodes; the modulation cycle is refused"
+    )]
+    ModulationCycle {
+        /// The modulation edge that closes the cycle.
+        modulation: crate::ir::ModulationId,
+        /// The node it re-enters.
+        node: crate::ir::NodeId,
+        /// How many nodes were on the walk when it closed.
+        nodes: crate::quantities::NodeCount,
+    },
+
+    /// A modulation edge leaves a port its source does not declare as an output.
+    #[error("{modulation} leaves {node} {port}, which the node does not declare as an output")]
+    ModulationUnknownPort {
+        /// The offending edge.
+        modulation: crate::ir::ModulationId,
+        /// The source node.
+        node: crate::ir::NodeId,
+        /// The port it names.
+        port: crate::ir::PortId,
+    },
+
+    /// A modulation edge leaves a port that does not carry a control signal.
+    ///
+    /// `SOUND-INV-027`: a modulation source is a control-domain output, read once per
+    /// quantum. An audio port is a signal a kernel reads per frame, and reading its first
+    /// frame as a control value would be a downsampling law nobody declared.
+    #[error(
+        "{modulation} leaves {node} {port}, which carries {domain} rather than a control signal"
+    )]
+    ModulationSourceNotControl {
+        /// The offending edge.
+        modulation: crate::ir::ModulationId,
+        /// The source node.
+        node: crate::ir::NodeId,
+        /// The port it names.
+        port: crate::ir::PortId,
+        /// What that port carries.
+        domain: crate::ir::SignalDomain,
+    },
+
+    /// A modulation source cannot run ahead of the quantum's positioned writes.
+    ///
+    /// `SOUND-INV-027` evaluates a source **before** the quantum's sample-positioned controls
+    /// are placed, so that a write composes with this quantum's modulation. A kind with an
+    /// input port needs a buffer the main walk writes, and one with a sample-positioned
+    /// control needs the writes themselves; neither exists yet where the source runs. Refused
+    /// by name rather than evaluated a quantum late.
+    #[error(
+        "{modulation} reads {node}, whose kind declares an input port or a sample-positioned \
+         control and so cannot be evaluated ahead of the quantum's positioned writes"
+    )]
+    ModulationSourceNotAhead {
+        /// The offending edge.
+        modulation: crate::ir::ModulationId,
+        /// The source node.
+        node: crate::ir::NodeId,
+    },
+
+    /// A voice-scope modulation source is also read, through a cable, outside its scope.
+    ///
+    /// Such a source would be summed across its voices for the outer reader, and the sum's
+    /// steps would then sit in the pre-pass, where a steal's fade cannot reach them — a
+    /// stolen voice's contribution to that sum would not fade. Refused by name rather than
+    /// summed unfaded; a control signal summed across voices has no consumer yet.
+    #[error(
+        "{modulation} reads {node} in the voice scope, and a cable also carries {node} outside \
+         it, which would sum the source across voices where a steal's fade cannot reach"
+    )]
+    ModulationSourceReadOutsideScope {
+        /// The offending edge.
+        modulation: crate::ir::ModulationId,
+        /// The source node.
+        node: crate::ir::NodeId,
+    },
+
+    /// A modulation edge names a parameter its target does not declare.
+    #[error("{modulation} lands on {node} {parameter}, which the node does not declare")]
+    ModulationUnknownParameter {
+        /// The offending edge.
+        modulation: crate::ir::ModulationId,
+        /// The target node.
+        node: crate::ir::NodeId,
+        /// The parameter it names.
+        parameter: crate::ir::ParameterId,
+    },
+
+    /// A modulation edge lands on a parameter whose law admits no write but the base.
+    #[error("{modulation} lands on {node} {parameter}, which is declared not modulatable")]
+    ModulationTargetNotModulatable {
+        /// The offending edge.
+        modulation: crate::ir::ModulationId,
+        /// The target node.
+        node: crate::ir::NodeId,
+        /// The parameter it names.
+        parameter: crate::ir::ParameterId,
+    },
+
+    /// A modulation edge states its depth in a unit its target's law does not compose in.
+    ///
+    /// ADR-0007 clause 5: validation refuses an edge whose units do not match the target's
+    /// law. A depth in decibels on a pitch would be read as semitones without a word.
+    #[error(
+        "{modulation} states its depth in {declared} units, and {node} {parameter} composes \
+         under {law:?}, which takes {expected}"
+    )]
+    ModulationUnitMismatch {
+        /// The offending edge.
+        modulation: crate::ir::ModulationId,
+        /// The target node.
+        node: crate::ir::NodeId,
+        /// The parameter it names.
+        parameter: crate::ir::ParameterId,
+        /// The unit the edge stated.
+        declared: crate::ir::ModulationUnit,
+        /// The target's law.
+        law: crate::node::ModulationLaw,
+        /// The unit that law composes in.
+        expected: crate::ir::ModulationUnit,
+    },
+
+    /// A modulation edge crosses from an inner scope to an outer one.
+    ///
+    /// The master plan's scope rule: an outer value may broadcast inward, an inner value
+    /// reaches outward only through an explicit reduction, and none is built. A voice's LFO
+    /// feeding an instrument's parameter would otherwise have some voice win by schedule
+    /// order.
+    #[error(
+        "{modulation} reads {source_node} in {source_scope:?} into {target_node} in \
+         {target_scope:?}; a source inside its target's scope needs a reduction, and none exists"
+    )]
+    ModulationScopeCrossing {
+        /// The offending edge.
+        modulation: crate::ir::ModulationId,
+        /// The source node.
+        source_node: crate::ir::NodeId,
+        /// Where it runs.
+        source_scope: crate::ir::ExecutionScope,
+        /// The target node.
+        target_node: crate::ir::NodeId,
+        /// Where it runs.
+        target_scope: crate::ir::ExecutionScope,
+    },
+
+    /// An LFO authors a random shape, and no node may consume randomness before ADR-0008
+    /// decides what a seed is (`P06-R001`).
+    #[error("{node} authors the {waveform} shape, which needs a seed no record defines yet")]
+    SeedlessRandomWaveform {
+        /// The LFO.
+        node: crate::ir::NodeId,
+        /// The shape it asked for.
+        waveform: crate::ir::LfoWaveform,
+    },
+
     /// The plan has sources but nowhere for them to go.
     #[error("the plan declares {sources} of sources and no output node")]
     MissingOutput {

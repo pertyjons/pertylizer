@@ -13,10 +13,10 @@
 //! kernel reads per frame, and the segment's last frame reads exactly the target. Every
 //! declared policy is `Smoothing::None` today, so every write is still a step; the
 //! mechanism is exercised through a crate-private, test-only policy seam until a
-//! declaration smooths. What is **not** here: a modulator. The sum is written by
-//! [`SlotState::modulate`], which Phase 7's modulation edges will call per quantum and
-//! which a test seam calls today, so that the override-leaves-modulation-in-force
-//! property is a tested fact rather than a claim about code with no caller.
+//! declaration smooths. The modulation sum has its producer since `P07-S001`: the
+//! renderer's pre-pass accumulates each edge's `depth × source` into the row through
+//! [`SlotState::accumulate`] and composes the sum through [`SlotState::modulate`] once the
+//! row's last edge has landed (`SOUND-INV-027`).
 
 use crate::node::{ModulationLaw, ModulationSum, ParameterUnit, Smoothing};
 use crate::quantities::ParameterValue;
@@ -60,6 +60,9 @@ pub(crate) struct SlotState {
     /// modulators' sum: a note-on returns it to the law's identity for the new occurrence and
     /// leaves a modulator in force on the destination in force, which one sum could not do.
     expression: ModulationSum,
+    /// This quantum's contributions so far, gathered edge by edge before they are composed
+    /// as one sum (`SOUND-INV-027`). The law's identity between quanta.
+    pending: ModulationSum,
 }
 
 impl SlotState {
@@ -84,6 +87,7 @@ impl SlotState {
             override_value: None,
             modulation: law.identity(),
             expression: law.identity(),
+            pending: law.identity(),
         };
         // Through the same composition every later value takes, so a base outside its
         // law's domain — which admission does not refuse — starts clamped as it will read.
@@ -158,12 +162,6 @@ impl SlotState {
         }
     }
 
-    /// What the kernel reads on the next frame, without advancing.
-    #[cfg(test)]
-    pub(crate) const fn current(&self) -> ParameterValue {
-        self.value
-    }
-
     /// Override the declared policy with a segment length in frames.
     ///
     /// Test-only, until a declaration smooths: every declared policy is `None`, and this is
@@ -175,13 +173,57 @@ impl SlotState {
 
     /// The modulators' sum, and the value the kernel reads as a result.
     ///
-    /// Crate-private and compiled for tests only: Phase 7's modulators are its callers, and
-    /// until then the render tests are, through `PreparedRenderer::modulate`. The per-note
-    /// bend has its own layer, [`Self::express`], so a modulator in force survives a note-on.
-    #[cfg(test)]
+    /// Called by the pre-pass once a row's last edge has landed, and by the render tests
+    /// through `PreparedRenderer::modulate`. The per-note bend has its own layer,
+    /// [`Self::express`], so a modulator in force survives a note-on.
     pub(crate) fn modulate(&mut self, sum: ModulationSum) -> ParameterValue {
         self.modulation = sum;
         self.retarget()
+    }
+
+    /// Gather one edge's contribution — its depth times its source's value, in the law's
+    /// units — into this quantum's pending sum (`SOUND-INV-027`).
+    ///
+    /// Under every additive law the contributions add; under the multiplicative one they
+    /// multiply, from the law's identity, which is what "sum" means for a factor. The
+    /// pending value is composed by [`Self::compose_pending`], never read by a kernel.
+    pub(crate) fn accumulate(&mut self, contribution: f32) {
+        let pending = self.pending.as_f32();
+        let gathered = match self.law {
+            ModulationLaw::MultiplicativeGain => pending * contribution,
+            ModulationLaw::NormalizedAdditive
+            | ModulationLaw::BipolarAdditive
+            | ModulationLaw::SemitoneAdditive
+            | ModulationLaw::DecibelAdditive
+            | ModulationLaw::PhysicalLinearAdditive
+            | ModulationLaw::ThresholdedBoolean
+            | ModulationLaw::NotModulatable => pending + contribution,
+        };
+        self.pending = ModulationSum::saturating(gathered);
+    }
+
+    /// Compose what this quantum's edges gathered as the modulation sum, and start the next
+    /// quantum's gathering from the law's identity.
+    ///
+    /// A sum equal to the one in force retargets nothing: the composition runs every
+    /// quantum, and ADR-0006 clause 3 restarts a segment from the current value on every
+    /// retarget, so a constant modulator under a smoothing policy would otherwise approach
+    /// its target by halves and never reach it. Under a step policy the two are the same
+    /// value either way.
+    pub(crate) fn compose_pending(&mut self) -> ParameterValue {
+        let sum = self.pending;
+        self.pending = self.law.identity();
+        if sum == self.modulation {
+            return self.value;
+        }
+        self.modulate(sum)
+    }
+
+    /// What the kernel reads on the next frame, without advancing: the segment's current
+    /// value. The pre-pass hands a sample-positioned row's value to the quantum's first
+    /// frame through this (`SOUND-INV-027`).
+    pub(crate) const fn current(&self) -> ParameterValue {
+        self.value
     }
 
     /// The occurrence's own layer — a per-note bend — and the value the kernel reads as a

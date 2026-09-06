@@ -146,3 +146,7 @@ mod tuning_tests;
 #[cfg(test)]
 #[path = "tests/sampler.rs"]
 mod sampler_tests;
+
+#[cfg(test)]
+#[path = "tests/modulation.rs"]
+mod modulation_tests;

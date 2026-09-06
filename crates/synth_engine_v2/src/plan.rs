@@ -522,13 +522,17 @@ impl PartialEq for NodeStep {
 
 /// One operation, in execution order.
 ///
-/// Two variants, and it stays two: a node kernel, and the renderer's own boundary. The
-/// Phase 1 shape had one variant per node kind, which is what ADR-0004 clause 2 rejects —
-/// a node addition was a new arm inside the quantum loop.
+/// Three variants, and none of them is a node kind: a node kernel, the renderer's own
+/// boundary, and — since `P07-S001` — the composition of one modulation edge into one
+/// parameter row. The Phase 1 shape had one variant per node kind, which is what ADR-0004
+/// clause 2 rejects: a node addition was a new arm inside the quantum loop.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum PlanOp {
     /// Run one prepared node kernel.
     Node(NodeStep),
+    /// Read one modulation source and compose it into one parameter row
+    /// (`SOUND-INV-027`).
+    Modulate(ModulationStep),
     /// Write one region to the stream.
     ///
     /// **One** operation, not one per channel: since ADR-0041 clause 11 a signal whose
@@ -542,6 +546,60 @@ pub enum PlanOp {
         /// The region to write out, `Q` frames of the stream's channels.
         source: BufferSlot,
     },
+}
+
+/// One modulation edge landing on one parameter row, as the renderer applies it
+/// (`SOUND-INV-027`).
+///
+/// The source is a buffer the plan's pre-pass has already written this quantum, read at its
+/// first frame; the depth is in the target law's units; and `last` marks the final edge
+/// into the row, after which the row's accumulated sum is composed under its law and — for
+/// a quantum-rate control — its segment advanced. Rows rather than slots, because a
+/// voice-scope target has one row per instance and each instance reads its own source.
+#[derive(Debug, Clone, Copy, PartialEq)]
+#[must_use]
+pub struct ModulationStep {
+    source: BufferSlot,
+    row: usize,
+    depth: f32,
+    last: bool,
+}
+
+impl ModulationStep {
+    /// A step. Admission builds these.
+    pub(crate) const fn new(source: BufferSlot, row: usize, depth: f32, last: bool) -> Self {
+        Self {
+            source,
+            row,
+            depth,
+            last,
+        }
+    }
+
+    /// The buffer whose first frame is the source's value this quantum.
+    pub const fn source(&self) -> BufferSlot {
+        self.source
+    }
+
+    /// The parameter row the contribution lands on.
+    pub const fn row(&self) -> usize {
+        self.row
+    }
+
+    /// The edge's depth, in the target law's units.
+    pub const fn depth(&self) -> f32 {
+        self.depth
+    }
+
+    /// Whether this is the last edge into its row this quantum.
+    pub const fn last(&self) -> bool {
+        self.last
+    }
+
+    /// Rebind the source to its physical slot, once the arena has assigned it.
+    pub(crate) const fn remap(&mut self, source: BufferSlot) {
+        self.source = source;
+    }
 }
 
 /// A prepared record of a compiled plan, by index.
@@ -925,6 +983,10 @@ pub struct CompiledPlan {
     /// The subset of [`Self::instance_groups`] that are voice sums, whose steps carry the
     /// taken voice's fade.
     sum_groups: Vec<NodeSlot>,
+    /// How many leading operations are the **pre-pass**: the modulation sources' steps and
+    /// every [`PlanOp::Modulate`], run before the quantum's positioned writes are placed so
+    /// that a write composes with this quantum's modulation (`SOUND-INV-027`).
+    prepass: usize,
 }
 
 impl CompiledPlan {
@@ -962,6 +1024,7 @@ impl CompiledPlan {
         stealing: crate::ir::StealingPolicy,
         instance_groups: Vec<NodeSlot>,
         sum_groups: Vec<NodeSlot>,
+        prepass: usize,
     ) -> Self {
         Self {
             id,
@@ -991,7 +1054,37 @@ impl CompiledPlan {
             stealing,
             instance_groups,
             sum_groups,
+            prepass,
         }
+    }
+
+    /// How many leading operations the pre-pass holds (`SOUND-INV-027`): the modulation
+    /// sources and every modulation step, in dependency order. `ops()[..prepass_ops()]` runs
+    /// before the quantum's positioned writes are placed; the rest runs after.
+    pub const fn prepass_ops(&self) -> usize {
+        self.prepass
+    }
+
+    /// How many parameter rows a modulation lands on whose control is sample-positioned —
+    /// each receives one control at the quantum's first frame every quantum, and the
+    /// timed-control scratch is sized on it. The renderer's side of
+    /// [`crate::ir::GraphIr::modulated_sample_positioned_rows`], derived from the steps the
+    /// lowering built; a test holds the two equal.
+    pub fn modulated_sample_positioned_rows(&self) -> u32 {
+        let rows = self
+            .ops
+            .iter()
+            .filter_map(|op| match op {
+                PlanOp::Modulate(step) if step.last() => Some(step.row()),
+                _ => None,
+            })
+            .filter(|row| {
+                self.parameter_targets
+                    .get(*row)
+                    .is_some_and(|target| matches!(target.rate, ControlRate::Sample))
+            })
+            .count();
+        u32::try_from(rows).unwrap_or(u32::MAX)
     }
 
     /// ADR-0058's policy for a full producer.
