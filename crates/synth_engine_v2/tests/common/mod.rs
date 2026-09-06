@@ -29,6 +29,18 @@ pub fn twelve_tet() -> synth_engine_v2::tuning::PreparedTuning {
         .expect("twelve-tone equal temperament prepares")
 }
 
+/// Nineteen-tone equal temperament, the one non-twelve-tone mapping Phase 6's gate holds
+/// every path to (`P06-S006`). It steps smaller than a semitone, so a key resolved through
+/// it cannot coincide with the twelve-tone value by accident, and it cannot share a digest
+/// with [`twelve_tet`].
+#[allow(dead_code, reason = "each test binary uses the helpers it needs")]
+pub fn nineteen_tet() -> synth_engine_v2::tuning::PreparedTuning {
+    synth_engine_v2::tuning::PreparedTuning::prepare(
+        &synth_core::tuning::TuningTable::equal_temperament_19(),
+    )
+    .expect("nineteen-tone equal temperament prepares")
+}
+
 /// The key a fixture plays where the pitch is not what it is testing.
 ///
 /// Middle C. `SOUND-INV-021` makes every note-on carry one, so a fixture about identity,

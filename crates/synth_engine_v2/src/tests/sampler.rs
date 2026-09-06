@@ -102,7 +102,16 @@ const PLAIN: Authored = Authored {
 /// envelope plays the voice and is authored to be transparent — attack and release zero,
 /// sustain full, velocity ignored — so the render **is** the sampler's output.
 fn voice(samples: Vec<PreparedSample>, map: SampleMap, authored: Authored) -> GraphIr {
-    voice_wired(samples, map, authored, false)
+    voice_wired(samples, map, authored, false, twelve_tet())
+}
+
+fn twelve_tet() -> crate::tuning::PreparedTuning {
+    crate::tuning::PreparedTuning::equal_temperament().expect("12-TET prepares")
+}
+
+fn nineteen_tet() -> crate::tuning::PreparedTuning {
+    crate::tuning::PreparedTuning::prepare(&synth_core::tuning::TuningTable::equal_temperament_19())
+        .expect("19-TET prepares")
 }
 
 /// The same voice with the sampler feeding the output **directly**, past the amplifier
@@ -110,7 +119,7 @@ fn voice(samples: Vec<PreparedSample>, map: SampleMap, authored: Authored) -> Gr
 /// fade, a one-shot playing out — is then audible on its own. The envelope still plays
 /// the voice and the sampler still starts on its trigger; only the audio path differs.
 fn voice_direct(samples: Vec<PreparedSample>, map: SampleMap, authored: Authored) -> GraphIr {
-    voice_wired(samples, map, authored, true)
+    voice_wired(samples, map, authored, true, twelve_tet())
 }
 
 fn voice_wired(
@@ -118,6 +127,7 @@ fn voice_wired(
     map: SampleMap,
     authored: Authored,
     direct: bool,
+    tuning: crate::tuning::PreparedTuning,
 ) -> GraphIr {
     let mut builder = GraphIr::builder();
     for sample in samples {
@@ -175,10 +185,7 @@ fn voice_wired(
             )
     };
     builder
-        .tuning(
-            ExecutionScope::Voice,
-            crate::tuning::PreparedTuning::equal_temperament().expect("12-TET prepares"),
-        )
+        .tuning(ExecutionScope::Voice, tuning)
         .declaring(PlanDeclarations {
             note_producers: vec![NoteProducerDeclaration {
                 compiled: true,
@@ -926,5 +933,38 @@ fn a_fine_tune_scales_the_rate_by_v1s_factor() {
             "frame {k} at position {position}"
         );
         position += rate;
+    }
+}
+
+#[test]
+fn the_rate_is_the_scopes_tunings_ratio_under_a_non_twelve_tone_scale() {
+    // `P06-S006` and ADR-0026 clause 6: the rate is the tuning's answer for the key over
+    // its answer for the root, whichever tuning the scope states. Under nineteen-tone equal
+    // temperament key 72 is not an octave above 60, so a kernel converting the key itself
+    // would read at rate two and fail here; the oracle reads the ratio from the table.
+    let tuning = nineteen_tet();
+    let ratio = f64::from(tuning.frequency_of(key(72)).as_f32())
+        / f64::from(tuning.frequency_of(key(60)).as_f32());
+    assert!(
+        ratio > 1.5 && ratio < 1.6,
+        "twelve steps of 19-TET is not an octave: {ratio}"
+    );
+    let plan = admit(&voice_wired(
+        vec![mono_sample()],
+        SampleMap::new(vec![zone(SampleRef::new(0), None)]),
+        PLAIN,
+        false,
+        tuning,
+    ));
+    let frames = mono_frames();
+    let out = render(&plan, &[note(&plan, 72, 0, 30 * Q)], 8);
+    let mut position = 0.0_f64;
+    for (k, actual) in out.iter().copied().enumerate() {
+        assert_eq!(
+            actual,
+            v1_read(&frames, 1, FRAMES, None, position),
+            "frame {k} at position {position}"
+        );
+        position += ratio;
     }
 }

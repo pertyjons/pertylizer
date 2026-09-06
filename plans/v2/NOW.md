@@ -83,7 +83,7 @@ derives. The phase turns the voice scope into a `VoicePlan` — one immutable pr
 | P06-S003 — per-note expression and the bend clause | **Merged** 2026-09-06 (`4b754619`); one independent read (agy), one defect and four lesser points repaired | ADR-0047 clause 9's reserved per-note event, `SOUND-INV-021`'s bend clause (a cents offset after resolution), and the rule that allocation, stealing, sustain, retrigger and release preserve or clear expression; note identity must still route expression after stealing and after a plan recompilation |
 | P06-S004 — velocity composition | **Merged** 2026-09-06 (`faa5e535`); ADR-0059 accepted with the user's selection; one independent read (agy), one defect and three lesser points repaired | Inherited `P04-R001` and closed it: V1 applies one saved velocity under two independent sensitivities, and V2 now has two velocity destinations — the envelope's `1 − s(1 − v)` and a voice-output scaler's `(1 − s) + s·v`, V1's formulas bit for bit — each with an authored sensitivity the lowerer fills from `vel_sens` and `velocity_amp_sensitivity`. The velocity mark comes off placed notes; `LOWER-INV-003` keeps its general rule, and Phase 8's marks still hold a placed note at `UnsupportedScope` |
 | P06-S005 — the one-zone sampler on the prepared map/zone contract | **Merged** 2026-09-06 (`ca0c66bf`); ADR-0026 accepted with the user's selection; `SOUND-INV-026` written; one independent read (agy), two defects and two contract holes repaired | An immutable sample map with zones, key/velocity selection, root and tuning, playback region and a prepared sample held once per plan, of which the native sampler selects exactly one zone without a per-note allocation or a single-sample API; the sampler starts on a declared **trigger** destination rather than as a second playable node, and plays under V1's law — rate through the tuning, two-tap interpolation, mono downmix, one-shot/sustain/loop forward with V1's 512-frame fade. Reverse and ping-pong and a map beyond one zone are refused by name; the lowering of a saved sampler module waits for the first sampler corpus case (Phase 0B's bundle fixture) |
-| P06-S006 — one tuning through every path | Not started | Built-in 12-TET and one non-12-TET mapping produce the same pitches through the live, sequenced, offline and analysis-facing paths; the prepared tuning contract already exists and this holds every consumer to it |
+| P06-S006 — one tuning through every path | **Built** 2026-09-06 on `feat/v2-phase6-s006`; independent read pending | Built-in 12-TET and nineteen-tone equal temperament produce the same pitches through the live, sequenced, offline and analysis-facing (observation tap) paths, held sample for sample in `tests/tuning_paths.rs`; the sampler's rate follows the scope's tuning; and the case S005 handed over — a sampler under a seek — is measured, with the mechanism that lowers its trigger established by combined mutations (the catch-up's restore of every target on the compiled path; the explicit boundary-release sites are the fallback). No code changed: the contract already made this structural, and the slice is its evidence |
 | P06-S007 — determinism under pressure | Not started | The exit's evidence: polyphonic output deterministic for a fixed seed and event stream under stealing pressure, and equivalent offline and live instance behaviour |
 
 Inherited before it builds: `P05-R001` (a lowered level's smoothing policy, binding the
@@ -140,10 +140,8 @@ writes a V2 amplitude dynamically; and Phase 3's residuals, which block only the
 consumers. `P04-R004` binds the first shared render surface, which is Phase 10B's.
 
 Two streams are active: Phase 6, with `P06-S001` through `P06-S005` merged and `P06-S006`
-next, and Phase 0B, with `P00B-T003` as its selected slice.
+built and awaiting its independent read, and Phase 0B, with `P00B-T003` as its selected
+slice.
 
-Next action: **`P06-S006`**, one tuning through every path: built-in 12-TET and one
-non-12-TET mapping produce the same pitches through the live, sequenced, offline and
-analysis-facing paths, holding every consumer to the prepared tuning contract. It also owns
-the one uncovered site S005 names — a sampler's trigger lowered by an activation's boundary
-release.
+Next action: **`P06-S006`**'s independent read and merge; then **`P06-S007`**, determinism
+under pressure — the phase's exit evidence — and the Phase 6 exit review.

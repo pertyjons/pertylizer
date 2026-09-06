@@ -322,6 +322,16 @@ const fn bend(at: u64, of: usize, cents: f32) -> Edge {
 /// A voice with a pitch destination — a sine through the envelope into the amplifier, tuned —
 /// where the gated constant has none, so a bend has something to move.
 fn pitched(declarations: PlanDeclarations) -> CompiledPlan {
+    pitched_with(declarations, common::twelve_tet())
+}
+
+/// The pitched voice under a stated tuning (`P06-S006`): the live boundary carries a key,
+/// and which frequency that is belongs to the scope's prepared tuning on this path as on
+/// the compiled one.
+fn pitched_with(
+    declarations: PlanDeclarations,
+    tuning: synth_engine_v2::tuning::PreparedTuning,
+) -> CompiledPlan {
     const OSCILLATOR: NodeId = NodeId::new(31);
     let ir = GraphIr::builder()
         .node(
@@ -360,7 +370,7 @@ fn pitched(declarations: PlanDeclarations) -> CompiledPlan {
             (OUTPUT, PortId::FIRST),
             SignalDomain::Audio,
         )
-        .tuning(ExecutionScope::Voice, common::twelve_tet())
+        .tuning(ExecutionScope::Voice, tuning)
         .declaring(declarations)
         .build()
         .expect("a readable plan");
@@ -368,6 +378,46 @@ fn pitched(declarations: PlanDeclarations) -> CompiledPlan {
         &ir,
         common::profile(TOTAL_FRAMES as u64, ChannelLayout::Mono),
     )
+}
+
+#[test]
+fn a_live_note_under_nineteen_tet_reaches_the_same_samples_as_the_compiled_one() {
+    // `P06-S006`: the live boundary offers a key and never a frequency, so the tuning the
+    // plan states is the one both paths resolve through. Under nineteen-tone equal
+    // temperament the live and the compiled renders of one key are the same samples, and
+    // both differ from the twelve-tone render of that key — the second assertion is what
+    // makes the first say something, since two paths ignoring the tuning would also agree.
+    let plain = synth_engine_v2::ir::StealingPolicy::None;
+    let edges = [on(0, 72, 1.0), off(20 * Q, 0)];
+    let compiled = render_compiled_edges_on(
+        &pitched_with(
+            stealing(compiled_only_notes(2), plain),
+            common::nineteen_tet(),
+        ),
+        &edges,
+        24,
+    );
+    let (live, counters, renderer) = render_live_edges_on(
+        &pitched_with(stealing(live_only(2, 2), plain), common::nineteen_tet()),
+        &edges,
+        24,
+    );
+    assert_same(
+        &live,
+        &compiled,
+        "the live note under nineteen-tone did not render as the compiled one",
+    );
+    assert_eq!(counters.orphan_releases(), 0);
+    assert_eq!(renderer.diagnostics().orphan_note_events(), 0);
+    let twelve = render_compiled_edges_on(
+        &pitched(stealing(compiled_only_notes(2), plain)),
+        &edges,
+        24,
+    );
+    assert!(
+        live.iter().zip(&twelve).any(|(a, b)| a != b),
+        "nineteen-tone rendered the twelve-tone samples, so the tuning reached neither path"
+    );
 }
 
 /// The compiled path's render of `edges` under `declarations`, `quanta` quanta long.
