@@ -163,6 +163,39 @@ impl PreparedRenderer {
                 if let Some(entry) = self.adoption_gate_slots.get_mut(self.adoption_gate_len - 1) {
                     *entry = row;
                 }
+                // ADR-0026: the boundary release lowers the note's trigger destinations
+                // beside its gate, so a sampler does not play on across a seek its
+                // envelope was cut at. Sized with the gates: a note's width per identity.
+                for position in 0..self.plan.note_magnitudes_of(note.note).len() {
+                    let Some(magnitude) = self
+                        .plan
+                        .note_magnitudes_of(note.note)
+                        .get(position)
+                        .copied()
+                    else {
+                        break;
+                    };
+                    if magnitude.magnitude != crate::node::NoteMagnitude::Trigger {
+                        continue;
+                    }
+                    let Some(slot) = self.adoption_gates.get_mut(self.adoption_gate_len) else {
+                        break;
+                    };
+                    *slot = TimedControl {
+                        offset: crate::time::QuantumOffset::ZERO,
+                        control: magnitude.control,
+                        value: crate::quantities::ParameterValue::ZERO,
+                    };
+                    let Some(row) = self.voice_row(magnitude.parameter.index(), note.index) else {
+                        continue;
+                    };
+                    self.adoption_gate_len = self.adoption_gate_len.saturating_add(1);
+                    if let Some(entry) =
+                        self.adoption_gate_slots.get_mut(self.adoption_gate_len - 1)
+                    {
+                        *entry = row;
+                    }
+                }
             }
         }
     }
@@ -318,7 +351,7 @@ impl PreparedRenderer {
                 position,
                 // Resolved below, once the whole span is in render order.
                 target: None,
-                bend_of: None,
+                note_of: None,
                 // Four billion events in one span is unreachable, and a saturated arrival
                 // index only affects tie order among events at one position.
                 arrival: u32::try_from(index).unwrap_or(u32::MAX),
@@ -510,8 +543,30 @@ impl PreparedRenderer {
                 }
                 // A bend is one write per pitch destination of the occurrence's node, on the
                 // occurrence's own rows; an orphan bend resolved to no node and writes nothing.
+                // ADR-0026: a release writes the off edge to every trigger destination of
+                // the note's scope, beside its gate.
+                EventPayload::Note {
+                    identity,
+                    edge: NoteEdge::Off,
+                } => {
+                    let Some(slot) = event.note_of else {
+                        continue;
+                    };
+                    for magnitude in self.plan.note_magnitudes_of(slot) {
+                        if magnitude.magnitude != crate::node::NoteMagnitude::Trigger {
+                            continue;
+                        }
+                        if let Some(row) =
+                            self.voice_row(magnitude.parameter.index(), identity.index())
+                            && let Some(node) = self.slot_node(row)
+                            && let Some(count) = self.control_starts.get_mut(node + 1)
+                        {
+                            *count = count.saturating_add(1);
+                        }
+                    }
+                }
                 EventPayload::Bend { identity, .. } => {
-                    let Some(slot) = event.bend_of else {
+                    let Some(slot) = event.note_of else {
                         continue;
                     };
                     for magnitude in self.plan.note_magnitudes_of(slot) {
@@ -592,6 +647,13 @@ impl PreparedRenderer {
                         break;
                     };
                     let Some(value) = self.plan.magnitude_value(&magnitude, key, velocity) else {
+                        // ADR-0026 clause 2: a trigger the note's key or velocity does not
+                        // select is written nothing and the note is counted as outside
+                        // the zone; a pitch with no tuning cannot reach here, admission
+                        // refused it.
+                        if magnitude.magnitude == crate::node::NoteMagnitude::Trigger {
+                            self.diagnostics.count_note_outside_zone();
+                        }
                         continue;
                     };
                     // The row of the note's own voice instance (`P06-S001`).
@@ -604,8 +666,37 @@ impl PreparedRenderer {
                     self.push_timed_write(row, event.position.quantum_offset(), value, true);
                 }
             }
+            // ADR-0026 clause 5: the off edge reaches every trigger destination of the
+            // note's scope at the release's own position, through the destination's slot as
+            // the on edge did.
+            if let EventPayload::Note {
+                identity,
+                edge: NoteEdge::Off,
+            } = event.payload
+                && let Some(slot) = event.note_of
+            {
+                for position in 0..self.plan.note_magnitudes_of(slot).len() {
+                    let Some(magnitude) = self.plan.note_magnitudes_of(slot).get(position).copied()
+                    else {
+                        break;
+                    };
+                    if magnitude.magnitude != crate::node::NoteMagnitude::Trigger {
+                        continue;
+                    }
+                    let Some(row) = self.voice_row(magnitude.parameter.index(), identity.index())
+                    else {
+                        continue;
+                    };
+                    self.push_timed_write(
+                        row,
+                        event.position.quantum_offset(),
+                        crate::quantities::ParameterValue::ZERO,
+                        false,
+                    );
+                }
+            }
             if let EventPayload::Bend { identity, cents } = event.payload
-                && let Some(slot) = event.bend_of
+                && let Some(slot) = event.note_of
             {
                 let sum = crate::node::ModulationSum::from_bend(cents);
                 for position in 0..self.plan.note_magnitudes_of(slot).len() {
@@ -823,7 +914,7 @@ impl PreparedRenderer {
             let Some(event) = self.event_scratch.get(index).copied() else {
                 break;
             };
-            let mut bend_of = None;
+            let mut note_of = None;
             let target = match event.payload {
                 EventPayload::Note {
                     identity,
@@ -839,7 +930,13 @@ impl PreparedRenderer {
                     identity,
                     edge: NoteEdge::Off,
                 } => match self.live_notes.release(identity) {
-                    Some(slot) => self.note_target(slot, identity),
+                    // The slot is kept on the event: since ADR-0026 a release also writes
+                    // the off edge to the note's trigger destinations, and both passes
+                    // read the slot from here rather than from the registry.
+                    Some(slot) => {
+                        note_of = Some(slot);
+                        self.note_target(slot, identity)
+                    }
                     None => {
                         pending.orphan_note = pending.orphan_note.saturating_add(1);
                         pending.last_orphan_note = Some(identity);
@@ -873,8 +970,8 @@ impl PreparedRenderer {
                 // `SOUND-INV-017`: an expression event naming no live note is an orphan,
                 // refused and counted. It lands through the magnitudes, so it has no target.
                 EventPayload::Bend { identity, .. } => {
-                    bend_of = self.live_notes.note_and_key(identity).map(|(slot, _)| slot);
-                    if bend_of.is_none() {
+                    note_of = self.live_notes.note_and_key(identity).map(|(slot, _)| slot);
+                    if note_of.is_none() {
                         pending.orphan_note = pending.orphan_note.saturating_add(1);
                         pending.last_orphan_note = Some(identity);
                     }
@@ -883,7 +980,7 @@ impl PreparedRenderer {
             };
             if let Some(slot) = self.event_scratch.get_mut(index) {
                 slot.target = target;
-                slot.bend_of = bend_of;
+                slot.note_of = note_of;
             }
         }
     }
@@ -988,6 +1085,7 @@ impl PreparedRenderer {
                         plan_start,
                         gates,
                         ramps,
+                        self.plan.prepared_samples(),
                     ) else {
                         continue;
                     };

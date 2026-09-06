@@ -702,6 +702,7 @@ impl Planar {
                 position: None,
                 controls: &[],
                 ramps: sine_ramp(),
+                samples: &[],
             },
         );
         call_filter(
@@ -714,6 +715,7 @@ impl Planar {
                 position: None,
                 controls: &[],
                 ramps: &[],
+                samples: &[],
             },
         );
         call_envelope(
@@ -726,6 +728,7 @@ impl Planar {
                 position: None,
                 controls: &self.pending_gate,
                 ramps: &[],
+                samples: &[],
             },
         );
         let (out, control) = two(&mut self.arena, self.left, self.control_left);
@@ -739,6 +742,7 @@ impl Planar {
                 position: None,
                 controls: &[],
                 ramps: &[],
+                samples: &[],
             },
         );
         // The widening, into the slot the envelope has finished with.
@@ -753,6 +757,7 @@ impl Planar {
                 position: None,
                 controls: &[],
                 ramps: &[],
+                samples: &[],
             },
         );
         // The queued gate edge is consumed by this quantum and by no later one, which is
@@ -772,6 +777,7 @@ impl Planar {
                 position: None,
                 controls: &[],
                 ramps: sine_ramp(),
+                samples: &[],
             },
         );
         let (out, source) = two(&mut self.arena, self.right, self.left);
@@ -785,6 +791,7 @@ impl Planar {
                 position: None,
                 controls: &[],
                 ramps: &[],
+                samples: &[],
             },
         );
         call_filter(
@@ -797,6 +804,7 @@ impl Planar {
                 position: None,
                 controls: &[],
                 ramps: &[],
+                samples: &[],
             },
         );
         call_filter(
@@ -809,6 +817,7 @@ impl Planar {
                 position: None,
                 controls: &[],
                 ramps: &[],
+                samples: &[],
             },
         );
         call_envelope(
@@ -821,6 +830,7 @@ impl Planar {
                 position: None,
                 controls: &self.pending_gate,
                 ramps: &[],
+                samples: &[],
             },
         );
         let (out, control) = two(&mut self.arena, self.left, self.control_left);
@@ -834,6 +844,7 @@ impl Planar {
                 position: None,
                 controls: &[],
                 ramps: &[],
+                samples: &[],
             },
         );
         let (out, control) = two(&mut self.arena, self.right, self.control_left);
@@ -847,6 +858,7 @@ impl Planar {
                 position: None,
                 controls: &[],
                 ramps: &[],
+                samples: &[],
             },
         );
         self.write_carry();
@@ -872,6 +884,7 @@ impl Planar {
                 position: None,
                 controls: &[],
                 ramps: sine_ramp(),
+                samples: &[],
             },
         );
         let (out, source) = two(&mut self.arena, self.right, self.left);
@@ -885,6 +898,7 @@ impl Planar {
                 position: None,
                 controls: &[],
                 ramps: &[],
+                samples: &[],
             },
         );
         call_filter(
@@ -897,6 +911,7 @@ impl Planar {
                 position: None,
                 controls: &[],
                 ramps: &[],
+                samples: &[],
             },
         );
         call_filter(
@@ -909,6 +924,7 @@ impl Planar {
                 position: None,
                 controls: &[],
                 ramps: &[],
+                samples: &[],
             },
         );
         call_envelope(
@@ -921,6 +937,7 @@ impl Planar {
                 position: None,
                 controls: &self.pending_gate,
                 ramps: &[],
+                samples: &[],
             },
         );
         let (out, control) = two(&mut self.arena, self.left, self.control_left);
@@ -934,6 +951,7 @@ impl Planar {
                 position: None,
                 controls: &[],
                 ramps: &[],
+                samples: &[],
             },
         );
         call_envelope(
@@ -946,6 +964,7 @@ impl Planar {
                 position: None,
                 controls: &self.pending_gate,
                 ramps: &[],
+                samples: &[],
             },
         );
         let (out, control) = two(&mut self.arena, self.right, self.control_right);
@@ -959,6 +978,7 @@ impl Planar {
                 position: None,
                 controls: &[],
                 ramps: &[],
+                samples: &[],
             },
         );
         self.write_carry();
@@ -1131,6 +1151,7 @@ impl Interleaved {
                 position: None,
                 controls: &[],
                 ramps: sine_ramp(),
+                samples: &[],
             },
         );
         call_filter(
@@ -1143,6 +1164,7 @@ impl Interleaved {
                 position: None,
                 controls: &[],
                 ramps: &[],
+                samples: &[],
             },
         );
         call_envelope(
@@ -1155,6 +1177,7 @@ impl Interleaved {
                 position: None,
                 controls: &self.pending_gate,
                 ramps: &[],
+                samples: &[],
             },
         );
         let (out, control) = two(&mut self.arena, self.mono, self.control_left);
@@ -1168,6 +1191,7 @@ impl Interleaved {
                 position: None,
                 controls: &[],
                 ramps: &[],
+                samples: &[],
             },
         );
         let (out, source) = two(&mut self.arena, self.stereo, self.mono);
@@ -1181,6 +1205,7 @@ impl Interleaved {
                 position: None,
                 controls: &[],
                 ramps: &[],
+                samples: &[],
             },
         );
         self.write_carry();
@@ -1201,6 +1226,7 @@ impl Interleaved {
                 position: None,
                 controls: &[],
                 ramps: sine_ramp(),
+                samples: &[],
             },
         );
         let (out, source) = two(&mut self.arena, self.stereo, self.mono);
@@ -1214,6 +1240,7 @@ impl Interleaved {
                 position: None,
                 controls: &[],
                 ramps: &[],
+                samples: &[],
             },
         );
         filter_interleaved(
@@ -1226,6 +1253,7 @@ impl Interleaved {
                 position: None,
                 controls: &[],
                 ramps: &[],
+                samples: &[],
             },
         );
         call_envelope(
@@ -1238,6 +1266,7 @@ impl Interleaved {
                 position: None,
                 controls: &self.pending_gate,
                 ramps: &[],
+                samples: &[],
             },
         );
         let (out, control) = two(&mut self.arena, self.stereo, self.control_left);
@@ -1251,6 +1280,7 @@ impl Interleaved {
                 position: None,
                 controls: &[],
                 ramps: &[],
+                samples: &[],
             },
         );
         self.write_carry();
@@ -1271,6 +1301,7 @@ impl Interleaved {
                 position: None,
                 controls: &[],
                 ramps: sine_ramp(),
+                samples: &[],
             },
         );
         let (out, source) = two(&mut self.arena, self.stereo, self.mono);
@@ -1284,6 +1315,7 @@ impl Interleaved {
                 position: None,
                 controls: &[],
                 ramps: &[],
+                samples: &[],
             },
         );
         filter_interleaved_split(
@@ -1296,6 +1328,7 @@ impl Interleaved {
                 position: None,
                 controls: &[],
                 ramps: &[],
+                samples: &[],
             },
         );
         call_envelope(
@@ -1308,6 +1341,7 @@ impl Interleaved {
                 position: None,
                 controls: &self.pending_gate,
                 ramps: &[],
+                samples: &[],
             },
         );
         call_envelope(
@@ -1320,6 +1354,7 @@ impl Interleaved {
                 position: None,
                 controls: &self.pending_gate,
                 ramps: &[],
+                samples: &[],
             },
         );
         let (out, left, right) = three(
@@ -1338,6 +1373,7 @@ impl Interleaved {
                 position: None,
                 controls: &[],
                 ramps: &[],
+                samples: &[],
             },
         );
         self.write_carry();
@@ -1409,6 +1445,7 @@ impl Steps {
                 None,
                 &[],
                 sine_ramp(),
+                &[],
             );
             black_box(&io);
         }

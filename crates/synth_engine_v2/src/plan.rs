@@ -694,6 +694,35 @@ impl TuningSlot {
     }
 }
 
+/// One prepared sample of a plan, by index (ADR-0026 clause 3).
+///
+/// The sampler's counterpart of [`TuningSlot`]: the sample's bytes are charged once to the
+/// plan and one of these is charged per sampler node, and it carries the plan identity for
+/// the same reason — an index resolved against another plan reads whatever occupies it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[must_use]
+pub struct SampleSlot {
+    plan: PlanId,
+    index: usize,
+}
+
+impl SampleSlot {
+    /// A slot. Crate-private for the same reason [`NoteSlot::new`] is.
+    pub(crate) const fn new(plan: PlanId, index: usize) -> Self {
+        Self { plan, index }
+    }
+
+    /// Which plan this slot indexes.
+    pub const fn plan(self) -> PlanId {
+        self.plan
+    }
+
+    /// The index into that plan's sample table.
+    pub const fn index(self) -> usize {
+        self.index
+    }
+}
+
 /// Where one magnitude of a note-on lands, resolved at admission.
 ///
 /// `SOUND-INV-021`'s expansion: a note-on is a gate **and** the magnitudes that describe the
@@ -850,6 +879,11 @@ pub struct CompiledPlan {
     /// scales colliding on one would silently share a table and resolve every key of the
     /// second through the first.
     prepared_tunings: Vec<crate::tuning::PreparedTuning>,
+    /// The distinct prepared samples this plan's samplers read (ADR-0026 clause 3).
+    ///
+    /// Deduplicated at admission by comparing the frames, as the tunings are; the frames
+    /// sit behind an `Arc`, so a clone of the plan shares them.
+    prepared_samples: Vec<crate::sample::PreparedSample>,
     channel_layout: ChannelLayout,
     sample_rate: SampleRate,
     maximum_block_size: FrameCount,
@@ -913,6 +947,7 @@ impl CompiledPlan {
         note_addresses: Vec<NoteAddress>,
         note_magnitudes: Vec<NoteMagnitudeTarget>,
         prepared_tunings: Vec<crate::tuning::PreparedTuning>,
+        prepared_samples: Vec<crate::sample::PreparedSample>,
         channel_layout: ChannelLayout,
         sample_rate: SampleRate,
         maximum_block_size: FrameCount,
@@ -941,6 +976,7 @@ impl CompiledPlan {
             note_addresses,
             note_magnitudes,
             prepared_tunings,
+            prepared_samples,
             channel_layout,
             sample_rate,
             maximum_block_size,
@@ -1148,6 +1184,12 @@ impl CompiledPlan {
         &self.prepared_tunings
     }
 
+    /// The distinct prepared samples this plan's samplers read, by [`SampleSlot`] index
+    /// (ADR-0026). Indexed on the audio thread through one array read.
+    pub fn prepared_samples(&self) -> &[crate::sample::PreparedSample] {
+        &self.prepared_samples
+    }
+
     /// What one magnitude destination is written with, for a note naming `key` and `velocity`.
     ///
     /// **The one place a key becomes a frequency**, which is `SOUND-INV-021`'s "no node
@@ -1175,6 +1217,17 @@ impl CompiledPlan {
             NoteMagnitude::Velocity => Some(crate::quantities::ParameterValue::from_note_velocity(
                 velocity,
             )),
+            // ADR-0026 clause 2: the on edge, unless the destination is a sampler whose one
+            // zone the key or the velocity does not select — then nothing is written, the
+            // note plays nothing on it, and the renderer counts the note as outside the
+            // zone. Read from the prepared record the plan already holds, so the audio
+            // thread decides it with two comparisons and no lookup elsewhere.
+            NoteMagnitude::Trigger => match self.prepared_nodes.get(magnitude.node.index()) {
+                Some(crate::node::kernels::PreparedNode::Sampler {
+                    keys, velocities, ..
+                }) if !(keys.holds(key) && velocities.holds(velocity)) => None,
+                _ => Some(crate::quantities::ParameterValue::ONE),
+            },
             NoteMagnitude::Pitch => {
                 let slot = magnitude.tuning?;
                 if slot.plan() != self.id {

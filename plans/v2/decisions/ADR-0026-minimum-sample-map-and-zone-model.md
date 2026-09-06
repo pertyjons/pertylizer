@@ -238,8 +238,14 @@ name, or a later slice's multi-zone selection, is not a defect.
 - **Risk: velocity thrice.** A lowered V1 sampler patch applies velocity in the sampler, the
   envelope and the output scaler, as V1 does. That is V1's behaviour and is reproduced, not
   corrected; a user who finds it excessive turns a sensitivity down in the project.
+- **Amendment at build (`P06-S005`), from an independent read.** A sample recorded at a
+  rate other than the stream's is **refused at admission** by name rather than played at the
+  stream's rate: clause 6's law has no term for the source rate, V1's speed formula reads
+  none either, and a rate ratio or a resampler is a decision with no consumer yet. `Loop`
+  over a zone declaring no loop is likewise refused rather than played as `Sustain`.
 - **Revisit condition.** The first multi-zone consumer, which extends clause 2's selection;
-  Phase 10A's `SampleAsset`, which must meet clause 4.
+  Phase 10A's `SampleAsset`, which must meet clause 4; the first consumer with a sample at
+  another rate, which decides the ratio.
 
 ## Specification update
 

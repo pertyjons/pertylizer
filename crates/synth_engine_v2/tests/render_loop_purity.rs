@@ -550,6 +550,15 @@ fn every_call_the_render_loop_makes_is_inside_the_checked_region() {
         // where a note's magnitudes land.
         "note_magnitudes_of",
         "magnitude_value",
+        // ADR-0026: the plan's prepared-sample table, read once per kernel bind through
+        // one slice borrow; a playback region's `start` and a sample frame's `as_index`,
+        // both `const fn` field reads on `Copy` newtypes in `sample.rs`; and the
+        // outside-zone counter, a saturating add on the renderer's own report as the
+        // orphan counters above are.
+        "prepared_samples",
+        "start",
+        "as_index",
+        "count_note_outside_zone",
         "floor",
         "sin",
         // `f64::is_finite` is one exponent comparison and compiles to a bit test. The

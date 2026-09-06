@@ -260,6 +260,26 @@ pub enum CompileError {
         /// The node whose kind reached the wrong preparation.
         node: crate::ir::NodeId,
     },
+
+    /// A sampler's map holds more zones than Phase 6 builds (ADR-0026 clause 2).
+    ///
+    /// Refused by name rather than played from the first zone: which zone a key selects is
+    /// the multi-zone slice's rule, and choosing one here would be deciding it by omission.
+    #[error("{node}'s sample map holds {zones} zones; this phase plays exactly one")]
+    MapBeyondOneZone {
+        /// The sampler.
+        node: crate::ir::NodeId,
+        /// How many zones its map holds.
+        zones: usize,
+    },
+    /// A sampler declares a play direction Phase 6 does not build (ADR-0026 clause 7).
+    #[error("{node} plays {direction:?}, which is not built; only Forward is")]
+    DirectionNotBuilt {
+        /// The sampler.
+        node: crate::ir::NodeId,
+        /// The direction it declared.
+        direction: crate::sample::PlayDirection,
+    },
     /// A note destination — a gate or a magnitude — on a control with no parameter slot.
     ///
     /// The same class as [`Self::DeclaredForAnotherKind`]: a static inconsistency of the
@@ -496,6 +516,36 @@ pub enum PreparationFault {
     /// Refused where the duration becomes a frame count, because that is where it stops
     /// being a legal quantity and becomes a number this node cannot use. Left to run, it
     /// would prepare a segment that never advances — a note that never finishes starting.
+    /// A sampler names a map the IR does not hold. `GraphIr::build` refuses this first, so
+    /// reaching it means the IR was built another way.
+    #[error("its {map} is not in the plan")]
+    SampleMapMissing {
+        /// The dangling reference.
+        map: crate::sample::SampleMapRef,
+    },
+    /// A zone names a sample the IR does not hold; refused at `build` first, as above.
+    #[error("its zone's {sample} is not in the plan")]
+    SampleMissing {
+        /// The dangling reference.
+        sample: crate::sample::SampleRef,
+    },
+    /// A zone's sample was recorded at a rate other than the stream's (ADR-0026).
+    ///
+    /// Refused by name rather than played at the stream's rate: V1's speed formula never
+    /// read a source rate either, so the mismatch would play mis-pitched on both engines,
+    /// and resampling or a rate ratio is a decision with no consumer yet.
+    #[error("its zone's {sample} was recorded at {recorded} Hz for a stream at {stream} Hz")]
+    SampleRateMismatch {
+        /// The sample.
+        sample: crate::sample::SampleRef,
+        /// The rate it was recorded at.
+        recorded: crate::quantities::SampleRate,
+        /// The stream's rate.
+        stream: crate::quantities::SampleRate,
+    },
+    /// A sampler in `Loop` mode plays a zone that declares no loop (ADR-0026 clause 7).
+    #[error("it plays in Loop mode and its zone declares no loop region")]
+    LoopWithoutRegion,
     #[error("a segment of {duration} is more than the {limit} frames a segment can last")]
     SegmentTooLong {
         /// The duration the node declared.
@@ -703,6 +753,7 @@ pub struct DiagnosticsReport {
     foreign_slot_events: u64,
     orphan_note_events: u64,
     last_orphan_note: Option<crate::identity::NoteIdentity>,
+    notes_outside_zone: u64,
     ingress_dropped_slot: u64,
     ingress_dropped_hold: u64,
     ingress_dropped_identity: u64,
@@ -861,6 +912,13 @@ impl DiagnosticsReport {
         self.orphan_note_events
     }
 
+    /// Note-ons whose key or velocity selected no zone of a sampler they reached, so the
+    /// sampler played nothing for them (ADR-0026 clause 2). Counted, not refused: a range is
+    /// the zone's own, and silence is what an unmatched key is in every sampler.
+    pub const fn notes_outside_zone(&self) -> u64 {
+        self.notes_outside_zone
+    }
+
     /// The most recent orphan's occurrence.
     ///
     /// ADR-0047 clause 4 requires an orphan to be counted "against its offering producer with
@@ -974,6 +1032,10 @@ impl DiagnosticsReport {
 
     pub(crate) fn count_foreign_slot_event(&mut self) {
         self.foreign_slot_events = self.foreign_slot_events.saturating_add(1);
+    }
+
+    pub(crate) fn count_note_outside_zone(&mut self) {
+        self.notes_outside_zone = self.notes_outside_zone.saturating_add(1);
     }
 
     pub(crate) fn count_orphan_note_event(&mut self, identity: crate::identity::NoteIdentity) {

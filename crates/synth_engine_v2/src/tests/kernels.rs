@@ -45,6 +45,7 @@ fn run_with(
         position: None,
         controls,
         ramps: &ramps,
+        samples: &[],
     };
     kernel(prepared, state, &mut io);
     out
@@ -439,6 +440,7 @@ fn the_widening_writes_every_channel_of_every_frame() {
             position: None,
             controls: &[],
             ramps: &[],
+            samples: &[],
         };
         copy(
             &PreparedNode::Copy,

@@ -151,6 +151,7 @@ fn the_monitor_kernel_passes_its_input_through_in_every_input_state() {
             position: None,
             controls: &[],
             ramps: &[],
+            samples: &[],
         };
         monitor(&PreparedNode::Copy, &mut NodeState::Stateless, &mut io);
         out

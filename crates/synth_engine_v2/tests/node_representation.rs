@@ -327,9 +327,10 @@ fn a_widened_signal_is_copied_by_a_scheduled_kernel() {
 fn a_declared_kind_appears_in_the_registry_only_by_deferring_to_its_declaration() {
     // The variant as it is spelled in a pattern — fieldless kinds have no `{ .. }` — and
     // the declaration constant it forwards to.
-    const DECLARED: [(&str, &str); 11] = [
+    const DECLARED: [(&str, &str); 12] = [
         ("Saw { .. }", "SAW"),
         ("VelocityScaler { .. }", "VELOCITY_SCALER"),
+        ("Sampler { .. }", "SAMPLER"),
         ("Envelope { .. }", "ENVELOPE"),
         ("Sine { .. }", "SINE"),
         ("Silence", "SILENCE"),
@@ -452,6 +453,14 @@ fn discovery_and_validation_describe_the_same_ports() {
             NodeKindId::VelocityScaler => IrNodeKind::VelocityScaler {
                 sensitivity: synth_engine_v2::quantities::NormalizedLevel::FULL,
             },
+            NodeKindId::Sampler => IrNodeKind::Sampler {
+                map: synth_engine_v2::sample::SampleMapRef::new(0),
+                level: Amplitude::UNITY,
+                velocity_sensitivity: synth_engine_v2::quantities::NormalizedLevel::FULL,
+                start_offset: synth_engine_v2::quantities::NormalizedLevel::ZERO,
+                play_mode: synth_engine_v2::sample::PlayMode::Sustain,
+                direction: synth_engine_v2::sample::PlayDirection::Forward,
+            },
             NodeKindId::Monitor => IrNodeKind::Monitor,
             NodeKindId::Filter => IrNodeKind::Filter {
                 cutoff: CutoffFrequency::new(1_000.0).expect("positive"),
@@ -470,7 +479,7 @@ fn discovery_and_validation_describe_the_same_ports() {
     let entries = catalog();
     assert_eq!(
         entries.len(),
-        11,
+        12,
         "every kind but the output node is discoverable"
     );
     for entry in entries {

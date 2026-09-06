@@ -113,6 +113,7 @@ pub mod publish;
 pub mod quantities;
 pub mod render;
 pub mod report;
+pub mod sample;
 pub mod schedule;
 pub mod session;
 pub mod stream;
@@ -141,3 +142,7 @@ mod kernel_tests;
 #[cfg(test)]
 #[path = "tests/tuning.rs"]
 mod tuning_tests;
+
+#[cfg(test)]
+#[path = "tests/sampler.rs"]
+mod sampler_tests;

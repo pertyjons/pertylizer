@@ -62,9 +62,8 @@ model. Two decisions bind slices inside the phase rather than its entry, under `
 decision-timing rule: the voice **allocation and stealing** policy — which voice a note-on
 takes when none is free, and how the taken voice ends — is a delivered-behaviour decision no
 record holds yet and is required before the slice that steals; and ADR-0026, the sample map
-and zone model — a register entry with no record yet — is `Proposed` and required before the
-sampler slice. Until the stealing decision, a note-on that finds no free voice is refused and
-counted, which is the identity range's existing exhaustion path and fails closed.
+and zone model, required before the sampler slice. Both are decided: ADR-0058 before
+`P06-S002` and ADR-0026 before `P06-S005`, each accepted with the user's selection.
 
 What V2 has at the phase's start: one instance of the voice scope per plan, so every note a
 producer plays lands on the same envelope and oscillator; note identity per occurrence with a
@@ -83,7 +82,7 @@ derives. The phase turns the voice scope into a `VoicePlan` — one immutable pr
 | P06-S002b — stealing at the live boundary | **Merged** 2026-09-06 (`7d602dee`); one independent read (agy), three defects repaired | ADR-0058 clause 6's second site. **Design, fixed by a fact about the ring:** the live queue drains head-first and requires non-decreasing stamps, so a steal's delayed start cannot be queued as events `fade` frames ahead of offers that follow. The start is therefore deferred **in the renderer**, once, for both paths: a steal is one event at the note-on's position — the taken occurrence, the replacement occurrence, the note it starts and the fade — and the renderer fades the taken instance from there, holds the start in a table sized by the identity partition, and at that position plus `fade` resets the instance and lands the new note's gate and magnitudes as timed controls, charged to the timed-control scratch as an adoption's gate-downs are. A release for a note whose start is still pending is deferred with it, so the note keeps its authored length on both paths. The compiled path's stamped `Fade`/`Reset`/delayed `Note` and its post-stamp share re-check are replaced by that one event, which restores ADR-0058 clause 7's original form; the existing sample-exact oracles hold the behaviour unchanged. Then the boundary: the minter carries each live index's node, key and mint order, `offer_note_on` chooses the victim under the policy when the mint reports a full producer, and the taken note's later release is counted as `released_after_steal` at the boundary and discharges its hold |
 | P06-S003 — per-note expression and the bend clause | **Merged** 2026-09-06 (`4b754619`); one independent read (agy), one defect and four lesser points repaired | ADR-0047 clause 9's reserved per-note event, `SOUND-INV-021`'s bend clause (a cents offset after resolution), and the rule that allocation, stealing, sustain, retrigger and release preserve or clear expression; note identity must still route expression after stealing and after a plan recompilation |
 | P06-S004 — velocity composition | **Merged** 2026-09-06 (`faa5e535`); ADR-0059 accepted with the user's selection; one independent read (agy), one defect and three lesser points repaired | Inherited `P04-R001` and closed it: V1 applies one saved velocity under two independent sensitivities, and V2 now has two velocity destinations — the envelope's `1 − s(1 − v)` and a voice-output scaler's `(1 − s) + s·v`, V1's formulas bit for bit — each with an authored sensitivity the lowerer fills from `vel_sens` and `velocity_amp_sensitivity`. The velocity mark comes off placed notes; `LOWER-INV-003` keeps its general rule, and Phase 8's marks still hold a placed note at `UnsupportedScope` |
-| P06-S005 — the one-zone sampler on the prepared map/zone contract | Not started | Needs ADR-0026 accepted first: an immutable sample map with zones, key/velocity selection, root and tuning, playback region and a prepared sample reference, of which the native sampler selects exactly one zone without a per-note allocation or a single-sample API |
+| P06-S005 — the one-zone sampler on the prepared map/zone contract | **Built** 2026-09-06 on `feat/v2-phase6-s005`; ADR-0026 accepted with the user's selection; `SOUND-INV-026` written; independent read pending | An immutable sample map with zones, key/velocity selection, root and tuning, playback region and a prepared sample held once per plan, of which the native sampler selects exactly one zone without a per-note allocation or a single-sample API; the sampler starts on a declared **trigger** destination rather than as a second playable node, and plays under V1's law — rate through the tuning, two-tap interpolation, mono downmix, one-shot/sustain/loop forward with V1's 512-frame fade. Reverse and ping-pong and a map beyond one zone are refused by name; the lowering of a saved sampler module waits for the first sampler corpus case (Phase 0B's bundle fixture) |
 | P06-S006 — one tuning through every path | Not started | Built-in 12-TET and one non-12-TET mapping produce the same pitches through the live, sequenced, offline and analysis-facing paths; the prepared tuning contract already exists and this holds every consumer to it |
 | P06-S007 — determinism under pressure | Not started | The exit's evidence: polyphonic output deterministic for a fixed seed and event stream under stealing pressure, and equivalent offline and live instance behaviour |
 
@@ -141,9 +140,9 @@ writes a V2 amplitude dynamically; and Phase 3's residuals, which block only the
 consumers. `P04-R004` binds the first shared render surface, which is Phase 10B's.
 
 Two streams are active: Phase 6, with `P06-S001` through `P06-S004` merged and `P06-S005`
-next, and Phase 0B, with `P00B-T003` as its selected slice.
+built and awaiting its independent read, and Phase 0B, with `P00B-T003` as its selected
+slice.
 
-Next action: **ADR-0026**, the minimum sample map and zone model, drafted and put to the user
-before **`P06-S005`** builds the one-zone sampler on it. It is a persisted-data and product
-choice — what a prepared sample reference names, and which zone fields the one-zone subset
-carries — and `PROCESS.md`'s decision-timing rule makes it slice-binding now.
+Next action: **`P06-S005`**'s independent read and merge; then **`P06-S006`**, one tuning
+through every path, which also owns the one uncovered site S005 names — a sampler's trigger
+lowered by an activation's boundary release.

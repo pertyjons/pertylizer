@@ -41,7 +41,7 @@ use thiserror::Error;
 
 use crate::diagnostics::CompileError;
 use crate::identity::{IdentityTable, NoteIdentity, ProducerId};
-use crate::plan::{CompiledPlan, PlanId};
+use crate::plan::{CompiledPlan, NodeSlot, PlanId};
 use crate::quantities::HeldNoteCount;
 use crate::render::PreparedRenderer;
 use crate::schedule::{AdmittedCompiledStream, CompiledPayload, SchedulePrepareError};
@@ -300,6 +300,13 @@ fn write_magnitudes(
 ) {
     let targets = plan.parameter_targets();
     for magnitude in plan.note_magnitudes_of(slot) {
+        // ADR-0026: a trigger is an edge, not a value to restore. The note this history
+        // entry started is cut at the boundary by clause 5's mass release, whose gate-down
+        // lowers the trigger rows beside the gate's (`gate_rows`), so the sampler starts
+        // the seek silent rather than mid-sample.
+        if magnitude.magnitude == crate::node::NoteMagnitude::Trigger {
+            continue;
+        }
         let Some(value) = plan.magnitude_value(magnitude, key, velocity) else {
             continue;
         };
@@ -1132,12 +1139,25 @@ impl StreamControl {
         self.plan
             .note_targets()
             .iter()
-            .map(|note| {
+            .enumerate()
+            .map(|(index, note)| {
+                // The gate's rows, and since ADR-0026 the rows of every trigger destination
+                // the note's scope declares: a gate-down that left a sampler's trigger held
+                // would leave it playing across the boundary the gate closed.
+                let slot = crate::plan::NoteSlot::new(self.plan.id(), index);
+                let triggers: Vec<(NodeSlot, crate::node::kernels::ControlIndex)> = self
+                    .plan
+                    .note_magnitudes_of(slot)
+                    .iter()
+                    .filter(|magnitude| magnitude.magnitude == crate::node::NoteMagnitude::Trigger)
+                    .map(|magnitude| (magnitude.node, magnitude.control))
+                    .collect();
                 targets
                     .iter()
                     .enumerate()
                     .filter(|(_, target)| {
-                        target.node == note.node && target.control == note.control
+                        (target.node == note.node && target.control == note.control)
+                            || triggers.contains(&(target.node, target.control))
                     })
                     .map(|(index, _)| index)
                     .collect()

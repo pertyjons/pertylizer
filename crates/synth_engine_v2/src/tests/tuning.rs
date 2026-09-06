@@ -170,3 +170,23 @@ fn preparation_validates_values_and_not_definedness() {
         "and the key resolves to a frequency no note has, without anything refusing it"
     );
 }
+
+/// ADR-0026 clause 6 and its named risk: a lowered project's root and its notes resolve
+/// through V2's twelve-tone table, and V1 computes both with `Hertz::from_midi`. The two
+/// are one formula — `440 × 2^((key − 69) / 12)` in `f32` — and this holds them equal bit
+/// for bit over every key, so a sampler's rate under twelve-tone equal temperament is V1's
+/// ratio exactly rather than within a rounding.
+#[test]
+fn the_twelve_tone_table_is_v1s_formula_bit_for_bit() {
+    let tuning = PreparedTuning::equal_temperament().expect("equal temperament prepares");
+    for raw in 0..=127_u8 {
+        let key = KeyIdentity::new(raw).expect("a keyboard position");
+        let v2 = tuning.frequency_of(key).as_f32();
+        let v1 = synth_core::Hertz::from_midi(raw).as_f32();
+        assert_eq!(
+            v2.to_bits(),
+            v1.to_bits(),
+            "{key}: V2 resolves {v2} where V1 computes {v1}"
+        );
+    }
+}

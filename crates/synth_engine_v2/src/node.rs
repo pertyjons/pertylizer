@@ -38,6 +38,10 @@ pub enum NoteMagnitude {
     Pitch,
     /// The velocity, as the normalized magnitude it was validated as.
     Velocity,
+    /// The note's edges, for a kind that starts on a note without being its address
+    /// (ADR-0026 clause 5). The expansion writes the on edge with the note-on and the off
+    /// edge with the release; a sampler declares one, an envelope declares a gate instead.
+    Trigger,
 }
 
 impl std::fmt::Display for NoteMagnitude {
@@ -45,6 +49,7 @@ impl std::fmt::Display for NoteMagnitude {
         match self {
             Self::Pitch => f.write_str("pitch"),
             Self::Velocity => f.write_str("velocity"),
+            Self::Trigger => f.write_str("trigger"),
         }
     }
 }
@@ -381,7 +386,23 @@ fn audio_out() -> PortSpec {
 
 /// A declared kind's preparation: its prepared record from its IR fields and the rate.
 pub(crate) type PrepareFn =
-    fn(NodeId, IrNodeKind, SampleRate) -> Result<PreparedNode, CompileError>;
+    fn(NodeId, IrNodeKind, &PrepareContext<'_>) -> Result<PreparedNode, CompileError>;
+
+/// What a kind's prepared data is built against: the stream's rate, and the plan's tables
+/// for the kinds that reference one (ADR-0026).
+///
+/// A prepare function takes this rather than the rate alone because a sampler's prepared
+/// record names a **plan** slot for its sample, and only admission knows which slot the
+/// IR's reference resolved to once the table was deduplicated.
+pub(crate) struct PrepareContext<'a> {
+    /// The stream's rate.
+    pub(crate) rate: SampleRate,
+    /// The IR, for the sample maps and samples a sampler's zone names.
+    pub(crate) ir: &'a crate::ir::GraphIr,
+    /// The plan slot each IR sample reference resolved to, by reference index; `None` for
+    /// a sample no sampler reaches, which the plan does not prepare.
+    pub(crate) samples: &'a [Option<crate::plan::SampleSlot>],
+}
 
 /// What a declaration answers when handed a kind that is not its own.
 fn declared_for_another_kind(node: NodeId) -> CompileError {
@@ -397,7 +418,7 @@ fn seconds_per_frame(rate: SampleRate) -> f64 {
 fn prepare_silence(
     node: NodeId,
     kind: IrNodeKind,
-    _: SampleRate,
+    _: &PrepareContext<'_>,
 ) -> Result<PreparedNode, CompileError> {
     let IrNodeKind::Silence = kind else {
         return Err(declared_for_another_kind(node));
@@ -408,7 +429,7 @@ fn prepare_silence(
 fn prepare_constant(
     node: NodeId,
     kind: IrNodeKind,
-    _: SampleRate,
+    _: &PrepareContext<'_>,
 ) -> Result<PreparedNode, CompileError> {
     let IrNodeKind::Constant { level } = kind else {
         return Err(declared_for_another_kind(node));
@@ -419,7 +440,7 @@ fn prepare_constant(
 fn prepare_impulse(
     node: NodeId,
     kind: IrNodeKind,
-    _: SampleRate,
+    _: &PrepareContext<'_>,
 ) -> Result<PreparedNode, CompileError> {
     let IrNodeKind::Impulse { position } = kind else {
         return Err(declared_for_another_kind(node));
@@ -430,8 +451,9 @@ fn prepare_impulse(
 fn prepare_sine(
     node: NodeId,
     kind: IrNodeKind,
-    rate: SampleRate,
+    ctx: &PrepareContext<'_>,
 ) -> Result<PreparedNode, CompileError> {
+    let rate = ctx.rate;
     let IrNodeKind::Sine {
         frequency,
         amplitude,
@@ -449,8 +471,9 @@ fn prepare_sine(
 fn prepare_saw(
     node: NodeId,
     kind: IrNodeKind,
-    rate: SampleRate,
+    ctx: &PrepareContext<'_>,
 ) -> Result<PreparedNode, CompileError> {
+    let rate = ctx.rate;
     let IrNodeKind::Saw {
         frequency,
         amplitude,
@@ -468,7 +491,7 @@ fn prepare_saw(
 fn prepare_gain(
     node: NodeId,
     kind: IrNodeKind,
-    _: SampleRate,
+    _: &PrepareContext<'_>,
 ) -> Result<PreparedNode, CompileError> {
     let IrNodeKind::Gain { factor } = kind else {
         return Err(declared_for_another_kind(node));
@@ -479,7 +502,7 @@ fn prepare_gain(
 fn prepare_amplifier(
     node: NodeId,
     kind: IrNodeKind,
-    _: SampleRate,
+    _: &PrepareContext<'_>,
 ) -> Result<PreparedNode, CompileError> {
     let IrNodeKind::Amplifier = kind else {
         return Err(declared_for_another_kind(node));
@@ -510,7 +533,7 @@ pub(crate) static MONITOR: NodeDeclaration = NodeDeclaration {
 fn prepare_monitor(
     node: NodeId,
     kind: IrNodeKind,
-    _: SampleRate,
+    _: &PrepareContext<'_>,
 ) -> Result<PreparedNode, CompileError> {
     let IrNodeKind::Monitor = kind else {
         return Err(declared_for_another_kind(node));
@@ -522,8 +545,9 @@ fn prepare_monitor(
 fn prepare_filter(
     node: NodeId,
     kind: IrNodeKind,
-    rate: SampleRate,
+    ctx: &PrepareContext<'_>,
 ) -> Result<PreparedNode, CompileError> {
+    let rate = ctx.rate;
     let IrNodeKind::Filter { cutoff, resonance } = kind else {
         return Err(declared_for_another_kind(node));
     };
@@ -533,8 +557,9 @@ fn prepare_filter(
 fn prepare_envelope(
     node: NodeId,
     kind: IrNodeKind,
-    rate: SampleRate,
+    ctx: &PrepareContext<'_>,
 ) -> Result<PreparedNode, CompileError> {
+    let rate = ctx.rate;
     let IrNodeKind::Envelope {
         attack,
         decay,
@@ -576,12 +601,102 @@ fn prepare_envelope(
 fn prepare_velocityscaler(
     node: NodeId,
     kind: IrNodeKind,
-    _rate: SampleRate,
+    _: &PrepareContext<'_>,
 ) -> Result<PreparedNode, CompileError> {
     let IrNodeKind::VelocityScaler { sensitivity } = kind else {
         return Err(declared_for_another_kind(node));
     };
     Ok(PreparedNode::VelocityScaler { sensitivity })
+}
+
+/// Prepare a sampler: its one zone, resolved against the plan's sample table (ADR-0026).
+///
+/// The one-zone subset is enforced here by name — a map of two or more zones is refused as
+/// `MapBeyondOneZone` rather than played from its first — and so is the direction: only
+/// `Forward` is built, and the others are refused rather than played forwards. The zone's
+/// root is resolved through the scope's tuning at admission, not here: this function has
+/// no scope, and the frequency the kernel divides by is written into the record by
+/// `bind_note_magnitudes`, which has.
+fn prepare_sampler(
+    node: NodeId,
+    kind: IrNodeKind,
+    ctx: &PrepareContext<'_>,
+) -> Result<PreparedNode, CompileError> {
+    let IrNodeKind::Sampler {
+        map,
+        level,
+        velocity_sensitivity,
+        start_offset,
+        play_mode,
+        direction,
+    } = kind
+    else {
+        return Err(declared_for_another_kind(node));
+    };
+    if direction != crate::sample::PlayDirection::Forward {
+        return Err(CompileError::DirectionNotBuilt { node, direction });
+    }
+    let Some(map) = ctx.ir.map_of(map) else {
+        return Err(CompileError::NodeNotPreparable {
+            node,
+            fault: PreparationFault::SampleMapMissing { map },
+        });
+    };
+    let zones = map.zones();
+    let [zone] = zones else {
+        return Err(CompileError::MapBeyondOneZone {
+            node,
+            zones: zones.len(),
+        });
+    };
+    let Some(sample) = ctx.samples.get(zone.sample().index()).copied().flatten() else {
+        return Err(CompileError::NodeNotPreparable {
+            node,
+            fault: PreparationFault::SampleMissing {
+                sample: zone.sample(),
+            },
+        });
+    };
+    // The prepared rate is the stream's: V1's speed formula never read a source rate
+    // either, so a sample recorded at another rate would play mis-pitched on both engines,
+    // and this crate refuses the silent substitution by name until a consumer decides the
+    // ratio. An independent read found the rate carried and never compared.
+    if let Some(audio) = ctx.ir.samples().get(zone.sample().index())
+        && audio.rate() != ctx.rate
+    {
+        return Err(CompileError::NodeNotPreparable {
+            node,
+            fault: PreparationFault::SampleRateMismatch {
+                sample: zone.sample(),
+                recorded: audio.rate(),
+                stream: ctx.rate,
+            },
+        });
+    }
+    // `Loop` with no loop declared has no region to repeat; refused rather than played as
+    // `Sustain`, which is what a fallback would have silently substituted.
+    if play_mode == crate::sample::PlayMode::Loop && zone.loop_region().is_none() {
+        return Err(CompileError::NodeNotPreparable {
+            node,
+            fault: PreparationFault::LoopWithoutRegion,
+        });
+    }
+    Ok(PreparedNode::Sampler {
+        sample,
+        keys: zone.keys(),
+        velocities: zone.velocities(),
+        root: zone.root(),
+        // The root's frequency is filled in where the scope's tuning is known.
+        root_frequency: crate::quantities::Frequency::ZERO,
+        fine_factor: 2.0_f64.powf(f64::from(zone.fine_tune().as_f32()) / 1_200.0),
+        region: zone.region(),
+        loop_region: zone.loop_region(),
+        gain: zone.gain(),
+        level,
+        velocity_sensitivity,
+        start_offset,
+        play_mode,
+    })
 }
 
 /// A node kind's stable identity, for discovery and for anything that persists a choice.
@@ -607,6 +722,8 @@ pub enum NodeKindId {
     Gain,
     /// V1's voice-output velocity stage (ADR-0059).
     VelocityScaler,
+    /// A one-zone sampler on the prepared map/zone contract (ADR-0026).
+    Sampler,
     /// An amplifier driven by a control input.
     Amplifier,
     /// A low-pass filter.
@@ -999,7 +1116,7 @@ pub(crate) static FILTER: NodeDeclaration = NodeDeclaration {
 /// the declarations are `static` rather than `const`: a `const` is materialised at each
 /// use and has no single address to compare — so a kind declared but left out here cannot
 /// be discovered, and one listed here but not resolvable cannot compile.
-static DECLARED: [&NodeDeclaration; 11] = [
+static DECLARED: [&NodeDeclaration; 12] = [
     &SILENCE,
     &CONSTANT,
     &IMPULSE,
@@ -1011,6 +1128,7 @@ static DECLARED: [&NodeDeclaration; 11] = [
     &ENVELOPE,
     &MONITOR,
     &VELOCITY_SCALER,
+    &SAMPLER,
 ];
 
 /// V1's voice-output velocity stage, declared once — ADR-0059. Its sensitivity is prepared;
@@ -1049,6 +1167,102 @@ pub(crate) static VELOCITY_SCALER: NodeDeclaration = NodeDeclaration {
     prepare: prepare_velocityscaler,
     prepared_bytes: size_of::<NormalizedLevel>() as u64,
     state_bytes: size_of::<crate::quantities::NoteVelocity>() as u64,
+};
+
+/// The one-zone sampler, declared once — ADR-0026, `P06-S005`.
+///
+/// Three sample-positioned note destinations and no `note_control`: the **trigger** takes
+/// the note's on and off edges, the **pitch** the frequency the scope's tuning resolves,
+/// the **velocity** the note's own. Being a destination on every one of them and the
+/// address of none is what lets it sit beside the envelope that plays the voice without
+/// becoming a second playable node. Two quantum-rate controls are authored and read per
+/// frame: the level, V1's `level`, and the velocity sensitivity. The byte attributions name
+/// the kernel's layouts: the prepared zone, and a position, a rate, a velocity, a phase,
+/// a fade count and the trigger's held state kept between quanta.
+pub(crate) static SAMPLER: NodeDeclaration = NodeDeclaration {
+    id: NodeKindId::Sampler,
+    name: "sampler",
+    kernel: kernels::SAMPLER,
+    ports: &[AUDIO_OUT],
+    controls: &[
+        ControlSpec {
+            parameter: parameters::SAMPLER_TRIGGER,
+            name: "trigger",
+            default: ParameterDefault::Gate(crate::quantities::ParameterValue::ZERO),
+            law: ModulationLaw::ThresholdedBoolean,
+            smoothing: Smoothing::None,
+            control: kernels::SAMPLER_TRIGGER,
+            rate: ControlRate::Sample,
+            magnitude: Some(NoteMagnitude::Trigger),
+        },
+        ControlSpec {
+            parameter: parameters::SAMPLER_PITCH,
+            name: "pitch",
+            default: ParameterDefault::Hertz(crate::quantities::Frequency::ZERO),
+            law: ModulationLaw::SemitoneAdditive,
+            smoothing: Smoothing::None,
+            control: kernels::SAMPLER_PITCH,
+            rate: ControlRate::Sample,
+            magnitude: Some(NoteMagnitude::Pitch),
+        },
+        ControlSpec {
+            parameter: parameters::SAMPLER_VELOCITY,
+            name: "velocity",
+            default: ParameterDefault::NormalizedLevel(crate::quantities::NormalizedLevel::FULL),
+            law: ModulationLaw::NormalizedAdditive,
+            smoothing: Smoothing::None,
+            control: kernels::SAMPLER_VELOCITY,
+            rate: ControlRate::Sample,
+            magnitude: Some(NoteMagnitude::Velocity),
+        },
+        ControlSpec {
+            parameter: parameters::SAMPLER_LEVEL,
+            name: "level",
+            default: ParameterDefault::LinearAmplitude(crate::quantities::Amplitude::UNITY),
+            law: ModulationLaw::DecibelAdditive,
+            smoothing: Smoothing::None,
+            control: kernels::SAMPLER_LEVEL,
+            rate: ControlRate::Quantum,
+            magnitude: None,
+        },
+        ControlSpec {
+            parameter: parameters::SAMPLER_VELOCITY_SENSITIVITY,
+            name: "velocity_sensitivity",
+            default: ParameterDefault::NormalizedLevel(crate::quantities::NormalizedLevel::FULL),
+            law: ModulationLaw::NormalizedAdditive,
+            smoothing: Smoothing::None,
+            control: kernels::SAMPLER_VELOCITY_SENSITIVITY,
+            rate: ControlRate::Quantum,
+            magnitude: None,
+        },
+    ],
+    in_place_safe: false,
+    note_control: None,
+    taps: &[],
+    prepare: prepare_sampler,
+    prepared_bytes: size_of::<(
+        crate::plan::SampleSlot,
+        crate::sample::KeyRange,
+        crate::sample::VelocityRange,
+        crate::quantities::KeyIdentity,
+        crate::quantities::Frequency,
+        f64,
+        crate::sample::PlaybackRegion,
+        Option<crate::sample::LoopRegion>,
+        crate::quantities::GainFactor,
+        crate::quantities::Amplitude,
+        NormalizedLevel,
+        NormalizedLevel,
+        crate::sample::PlayMode,
+    )>() as u64,
+    state_bytes: size_of::<(
+        f64,
+        f64,
+        crate::quantities::NoteVelocity,
+        kernels::Playback,
+        u32,
+        bool,
+    )>() as u64,
 };
 
 /// One port, as discovery presents it.
@@ -1187,6 +1401,7 @@ pub(crate) fn declaration(kind: IrNodeKind) -> Option<&'static NodeDeclaration> 
         IrNodeKind::Monitor => Some(&MONITOR),
         IrNodeKind::Gain { .. } => Some(&GAIN),
         IrNodeKind::VelocityScaler { .. } => Some(&VELOCITY_SCALER),
+        IrNodeKind::Sampler { .. } => Some(&SAMPLER),
         IrNodeKind::Filter { .. } => Some(&FILTER),
         // The output node has no kernel and no declaration: writing the stream's channels
         // is the renderer's boundary rather than a node's work.
@@ -1229,6 +1444,7 @@ pub(crate) fn descriptor(kind: IrNodeKind) -> Option<NodeDescriptor> {
         IrNodeKind::Filter { .. } => declared.map(NodeDeclaration::descriptor),
         IrNodeKind::Gain { .. } => declared.map(NodeDeclaration::descriptor),
         IrNodeKind::VelocityScaler { .. } => declared.map(NodeDeclaration::descriptor),
+        IrNodeKind::Sampler { .. } => declared.map(NodeDeclaration::descriptor),
     }
 }
 
@@ -1292,10 +1508,10 @@ pub(crate) fn accumulate_descriptor() -> NodeDescriptor {
 pub(crate) fn prepare(
     node: NodeId,
     kind: IrNodeKind,
-    rate: SampleRate,
+    ctx: &PrepareContext<'_>,
 ) -> Result<PreparedNode, CompileError> {
     match declaration(kind) {
-        Some(declared) => (declared.prepare)(node, kind, rate),
+        Some(declared) => (declared.prepare)(node, kind, ctx),
         // The output node has no kernel and no prepared data of its own; it is given a
         // record so that the prepared and state tables stay indexed by the same slot.
         None => Ok(PreparedNode::Silence),
@@ -1445,6 +1661,7 @@ pub fn prepared_payload_bytes(kind: IrNodeKind) -> u64 {
         IrNodeKind::Monitor => return declared.map_or(0, |d| d.prepared_bytes),
         IrNodeKind::Gain { .. } => return declared.map_or(0, |d| d.prepared_bytes),
         IrNodeKind::VelocityScaler { .. } => return declared.map_or(0, |d| d.prepared_bytes),
+        IrNodeKind::Sampler { .. } => return declared.map_or(0, |d| d.prepared_bytes),
         IrNodeKind::Filter { .. } => return declared.map_or(0, |d| d.prepared_bytes),
         // The output node has no kernel, so it carries no prepared data of its own.
         IrNodeKind::Output => 0,
@@ -1491,6 +1708,7 @@ pub fn state_payload_bytes(kind: IrNodeKind) -> u64 {
         IrNodeKind::Monitor => return declared.map_or(0, |d| d.state_bytes),
         IrNodeKind::Gain { .. } => return declared.map_or(0, |d| d.state_bytes),
         IrNodeKind::VelocityScaler { .. } => return declared.map_or(0, |d| d.state_bytes),
+        IrNodeKind::Sampler { .. } => return declared.map_or(0, |d| d.state_bytes),
         IrNodeKind::Envelope { .. } => return declared.map_or(0, |d| d.state_bytes),
         IrNodeKind::Output => 0,
     }) as u64
@@ -1501,6 +1719,32 @@ mod tests {
     use super::*;
     use crate::quantities::{Amplitude, GainFactor};
     use crate::time::PlanPosition;
+
+    /// An IR holding one prepared sample and a one-zone map naming it, so the sampler
+    /// kind can be prepared like every other (ADR-0026).
+    fn sampler_fixture() -> crate::ir::GraphIr {
+        use crate::sample::{
+            PlaybackRegion, PreparedSample, SampleFrame, SampleMap, SampleRef, SampleZone,
+        };
+        let sample = PreparedSample::prepare(
+            vec![0.0, 0.5, -0.5, 0.25],
+            ChannelLayout::Mono,
+            SampleRate::new(48_000.0).expect("a real rate"),
+        )
+        .expect("four finite frames prepare");
+        let region = PlaybackRegion::new(SampleFrame::FIRST, SampleFrame::new(4))
+            .expect("a region of four frames");
+        let zone = SampleZone::new(
+            SampleRef::new(0),
+            crate::quantities::KeyIdentity::new(60).expect("a keyboard position"),
+            region,
+        );
+        crate::ir::GraphIr::builder()
+            .sample(sample)
+            .sample_map(SampleMap::new(vec![zone]))
+            .build()
+            .expect("a plan with one sample and one map builds")
+    }
 
     /// Every kind this phase has, so a scan over them is a scan over all of them.
     #[test]
@@ -1540,6 +1784,14 @@ mod tests {
             },
             IrNodeKind::Gain {
                 factor: GainFactor::UNITY,
+            },
+            IrNodeKind::Sampler {
+                map: crate::sample::SampleMapRef::new(0),
+                level: Amplitude::UNITY,
+                velocity_sensitivity: NormalizedLevel::FULL,
+                start_offset: NormalizedLevel::ZERO,
+                play_mode: crate::sample::PlayMode::Sustain,
+                direction: crate::sample::PlayDirection::Forward,
             },
             IrNodeKind::VelocityScaler {
                 sensitivity: crate::quantities::NormalizedLevel::FULL,
@@ -1730,7 +1982,7 @@ mod tests {
             .collect();
         assert_eq!(
             declared.len(),
-            11,
+            12,
             "every kind but the output node is declared"
         );
 
@@ -1756,7 +2008,20 @@ mod tests {
             // The declaration's preparation builds **this** kind's record: a declaration
             // wired to another kind's `prepare_*` is refused rather than rendered.
             let rate = SampleRate::new(48_000.0).expect("a real rate");
-            let prepared = prepare(NodeId::new(0), kind, rate).expect("a declared kind prepares");
+            // The sampler prepares against a plan's sample table (ADR-0026), so every kind
+            // is prepared against an IR holding one sample and a one-zone map naming it.
+            let ir = sampler_fixture();
+            let slots = [Some(crate::plan::SampleSlot::new(
+                crate::plan::PlanId::FILL,
+                0,
+            ))];
+            let context = PrepareContext {
+                rate,
+                ir: &ir,
+                samples: &slots,
+            };
+            let prepared =
+                prepare(NodeId::new(0), kind, &context).expect("a declared kind prepares");
             let matches_kind = matches!(
                 (kind, &prepared),
                 (IrNodeKind::Silence, PreparedNode::Silence)
@@ -1773,6 +2038,7 @@ mod tests {
                     | (IrNodeKind::Monitor, PreparedNode::Copy)
                     | (IrNodeKind::Filter { .. }, PreparedNode::Filter { .. })
                     | (IrNodeKind::Envelope { .. }, PreparedNode::Envelope { .. })
+                    | (IrNodeKind::Sampler { .. }, PreparedNode::Sampler { .. })
             );
             assert!(matches_kind, "{kind:?} prepared as {prepared:?}");
             // The kind resolves to the identity its declaration states.
@@ -1794,7 +2060,9 @@ mod tests {
                 IrNodeKind::Constant { .. }
                 | IrNodeKind::Impulse { .. }
                 | IrNodeKind::Gain { .. } => (true, false),
-                IrNodeKind::Filter { .. } | IrNodeKind::VelocityScaler { .. } => (true, true),
+                IrNodeKind::Filter { .. }
+                | IrNodeKind::VelocityScaler { .. }
+                | IrNodeKind::Sampler { .. } => (true, true),
                 IrNodeKind::Silence | IrNodeKind::Amplifier | IrNodeKind::Monitor => (false, false),
                 other => panic!("{other:?} is declared but this test does not know its shape"),
             };

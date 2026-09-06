@@ -17,6 +17,7 @@ use crate::quantities::{
     RecordCount, Resonance, ScriptWorkPerQuantum, Seconds, SendCount, SlotCount, VoiceCount,
     WritesPerNote,
 };
+use crate::sample::{PlayDirection, PlayMode, PreparedSample, SampleMap, SampleMapRef};
 use crate::time::{FrameCount, PlanPosition};
 use crate::tuning::PreparedTuning;
 use thiserror::Error;
@@ -268,6 +269,29 @@ pub enum IrNodeKind {
         /// V1's `velocity_amp_sensitivity`: one is the full velocity, zero ignores it.
         sensitivity: NormalizedLevel,
     },
+    /// A one-zone sampler on the prepared map/zone contract (ADR-0026).
+    ///
+    /// The map it consumes is one of the plan's, named by reference for the reason a node
+    /// is named by id: this kind is `Copy` and a map is not. It starts on a **trigger**
+    /// destination the note's expansion writes, resolves its rate from the pitch
+    /// destination over the zone's root, and scales its output by the velocity destination
+    /// under its own sensitivity — so it is never a note's address and one scope still
+    /// holds one playable node.
+    Sampler {
+        /// Which of the plan's sample maps it plays.
+        map: SampleMapRef,
+        /// The level it emits at, V1's `level`; quantum-rate and authored.
+        level: Amplitude,
+        /// How much the velocity scales the output: `(1 − s) + s × v`, V1's own.
+        velocity_sensitivity: NormalizedLevel,
+        /// Where in the zone's region a note starts, as a fraction of it; V1's
+        /// `start_offset`.
+        start_offset: NormalizedLevel,
+        /// How it plays once triggered.
+        play_mode: PlayMode,
+        /// Which way it plays. Only `Forward` is built.
+        direction: PlayDirection,
+    },
     /// A pass-through that declares an observation tap on its output (`SOUND-INV-022`).
     ///
     /// The one authored way a plan carries a tap: a monitor placed where a project wants
@@ -336,6 +360,16 @@ pub mod parameters {
     pub const VELOCITY_SCALER_VELOCITY: ParameterId = ParameterId::new(0);
     /// The velocity scaler's sensitivity (ADR-0059).
     pub const VELOCITY_SCALER_SENSITIVITY: ParameterId = ParameterId::new(1);
+    /// The sampler's trigger destination (ADR-0026).
+    pub const SAMPLER_TRIGGER: ParameterId = ParameterId::new(0);
+    /// The sampler's pitch destination (ADR-0026).
+    pub const SAMPLER_PITCH: ParameterId = ParameterId::new(1);
+    /// The sampler's velocity destination (ADR-0026).
+    pub const SAMPLER_VELOCITY: ParameterId = ParameterId::new(2);
+    /// The sampler's level, V1's `level` (ADR-0026).
+    pub const SAMPLER_LEVEL: ParameterId = ParameterId::new(3);
+    /// The sampler's velocity sensitivity (ADR-0026).
+    pub const SAMPLER_VELOCITY_SENSITIVITY: ParameterId = ParameterId::new(4);
 }
 
 /// One node in the IR.
@@ -731,6 +765,36 @@ pub enum IrError {
         /// The scope declared twice.
         scope: ExecutionScope,
     },
+    /// A zone names a sample the plan does not hold (ADR-0026).
+    #[error("zone {zone} of {map} plays {sample}, which the plan does not hold")]
+    UnknownSample {
+        /// The map holding the zone.
+        map: SampleMapRef,
+        /// Which zone of it.
+        zone: usize,
+        /// The dangling reference.
+        sample: crate::sample::SampleRef,
+    },
+    /// A zone's region runs past the end of its sample (ADR-0026).
+    #[error("zone {zone} of {map} plays to {end}, past its sample's {frames}")]
+    RegionOutsideSample {
+        /// The map holding the zone.
+        map: SampleMapRef,
+        /// Which zone of it.
+        zone: usize,
+        /// Where the region ends.
+        end: crate::sample::SampleFrame,
+        /// How many frames the sample holds.
+        frames: crate::sample::SampleFrame,
+    },
+    /// A sampler names a map the plan does not hold (ADR-0026).
+    #[error("{node} plays {map}, which the plan does not hold")]
+    UnknownSampleMap {
+        /// The sampler.
+        node: NodeId,
+        /// The dangling reference.
+        map: SampleMapRef,
+    },
 }
 
 /// What one execution scope declares, accumulated in one pass over a plan's nodes.
@@ -797,6 +861,14 @@ pub struct GraphIr {
     edges: Vec<IrEdge>,
     declarations: PlanDeclarations,
     tunings: Vec<ScopeTuning>,
+    /// The prepared samples the plan's zones play, indexed by [`crate::sample::SampleRef`].
+    ///
+    /// Held here rather than on the node for the reason the tunings are: a node kind is
+    /// `Copy` and PCM is not, so the kind names an entry and the plan carries the table.
+    /// Admission deduplicates the entries by content and charges each distinct one once.
+    samples: Vec<PreparedSample>,
+    /// The sample maps the plan's samplers consume, indexed by [`SampleMapRef`].
+    maps: Vec<SampleMap>,
 }
 
 /// The tuning one execution scope resolves its keys through.
@@ -850,6 +922,8 @@ impl GraphIr {
             edges: Vec::new(),
             declarations: PlanDeclarations::default(),
             tunings: Vec::new(),
+            samples: Vec::new(),
+            maps: Vec::new(),
             next_edge: 0,
         }
     }
@@ -857,6 +931,23 @@ impl GraphIr {
     /// The tuning each scope resolves through, in declaration order.
     pub fn tunings(&self) -> &[ScopeTuning] {
         &self.tunings
+    }
+
+    /// The prepared samples, by [`crate::sample::SampleRef`] index.
+    pub fn samples(&self) -> &[PreparedSample] {
+        &self.samples
+    }
+
+    /// The sample maps, by [`SampleMapRef`] index.
+    pub fn maps(&self) -> &[SampleMap] {
+        &self.maps
+    }
+
+    /// The map a sampler consumes, or `None` for a reference the plan does not hold —
+    /// which `build` has already refused, so admission reads this as a fact.
+    #[must_use]
+    pub fn map_of(&self, map: SampleMapRef) -> Option<&SampleMap> {
+        self.maps.get(map.index())
     }
 
     /// The tuning `scope` resolves through, if the plan states one.
@@ -955,6 +1046,42 @@ impl GraphIr {
             .saturating_add(references.saturating_mul(size_of::<crate::plan::TuningSlot>() as u64))
     }
 
+    /// The bytes this plan's prepared samples add to its immutable prepared total (ADR-0026).
+    ///
+    /// Exact, as [`Self::tuning_bytes`] is and for the same reason: the preflight may refuse
+    /// on the prepared row. Computed over the set admission binds — the samples the plan's
+    /// **sampler nodes** reach through their maps' zones — one entry per **distinct**
+    /// sample, compared by content, plus one slot per sampler node. A sample no sampler
+    /// reaches is never prepared into the plan and is not charged.
+    /// `the_reported_sample_charge_is_what_the_plan_holds` ties this figure to the table the
+    /// compiled plan carries.
+    pub fn sample_bytes(&self) -> u64 {
+        let mut distinct: Vec<&PreparedSample> = Vec::new();
+        let mut references = 0_u64;
+        for node in &self.nodes {
+            let IrNodeKind::Sampler { map, .. } = node.kind() else {
+                continue;
+            };
+            references = references.saturating_add(1);
+            let Some(map) = self.maps.get(map.index()) else {
+                continue;
+            };
+            for zone in map.zones() {
+                let Some(sample) = self.samples.get(zone.sample().index()) else {
+                    continue;
+                };
+                if !distinct.contains(&sample) {
+                    distinct.push(sample);
+                }
+            }
+        }
+        let tables = distinct.iter().fold(0_u64, |total, sample| {
+            total.saturating_add(sample.prepared_bytes())
+        });
+        tables
+            .saturating_add(references.saturating_mul(size_of::<crate::plan::SampleSlot>() as u64))
+    }
+
     /// The most control writes one of this plan's note-ons can expand to, gate included.
     ///
     /// `SOUND-INV-021`'s cardinality change, as the resource report needs it: the control
@@ -1022,7 +1149,9 @@ impl GraphIr {
                         summary.magnitudes = summary.magnitudes.saturating_add(1);
                         summary.pitch_destinations = summary.pitch_destinations.saturating_add(1);
                     }
-                    Some(crate::node::NoteMagnitude::Velocity) => {
+                    Some(
+                        crate::node::NoteMagnitude::Velocity | crate::node::NoteMagnitude::Trigger,
+                    ) => {
                         summary.magnitudes = summary.magnitudes.saturating_add(1);
                     }
                     None => {}
@@ -1312,6 +1441,8 @@ pub struct GraphIrBuilder {
     edges: Vec<IrEdge>,
     declarations: PlanDeclarations,
     tunings: Vec<ScopeTuning>,
+    samples: Vec<PreparedSample>,
+    maps: Vec<SampleMap>,
     next_edge: u32,
 }
 
@@ -1330,6 +1461,20 @@ impl GraphIrBuilder {
     /// in.
     pub fn tuning(mut self, scope: ExecutionScope, tuning: PreparedTuning) -> Self {
         self.tunings.push(ScopeTuning::new(scope, tuning));
+        self
+    }
+
+    /// Add a prepared sample. Its [`crate::sample::SampleRef`] is its position: the first
+    /// sample added is `SampleRef::new(0)`, as an edge's id is its position in the order
+    /// the edges were connected.
+    pub fn sample(mut self, sample: PreparedSample) -> Self {
+        self.samples.push(sample);
+        self
+    }
+
+    /// Add a sample map. Its [`SampleMapRef`] is its position, as a sample's is.
+    pub fn sample_map(mut self, map: SampleMap) -> Self {
+        self.maps.push(map);
         self
     }
 
@@ -1396,11 +1541,46 @@ impl GraphIrBuilder {
                 });
             }
         }
+        // ADR-0026: every zone names a sample the plan holds and plays a region inside it,
+        // and every sampler names a map the plan holds. Checked here, where the tables
+        // are, so a prepared record never carries a region the sample cannot serve.
+        for (map_index, map) in self.maps.iter().enumerate() {
+            let map_ref = SampleMapRef::new(u32::try_from(map_index).unwrap_or(u32::MAX));
+            for (zone_index, zone) in map.zones().iter().enumerate() {
+                let Some(sample) = self.samples.get(zone.sample().index()) else {
+                    return Err(IrError::UnknownSample {
+                        map: map_ref,
+                        zone: zone_index,
+                        sample: zone.sample(),
+                    });
+                };
+                if zone.region().end() > sample.frame_count() {
+                    return Err(IrError::RegionOutsideSample {
+                        map: map_ref,
+                        zone: zone_index,
+                        end: zone.region().end(),
+                        frames: sample.frame_count(),
+                    });
+                }
+            }
+        }
+        for node in &self.nodes {
+            if let IrNodeKind::Sampler { map, .. } = node.kind()
+                && self.maps.get(map.index()).is_none()
+            {
+                return Err(IrError::UnknownSampleMap {
+                    node: node.id(),
+                    map,
+                });
+            }
+        }
         Ok(GraphIr {
             nodes: self.nodes,
             edges: self.edges,
             declarations: self.declarations,
             tunings: self.tunings,
+            samples: self.samples,
+            maps: self.maps,
         })
     }
 }

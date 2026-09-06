@@ -136,7 +136,7 @@ pub(crate) fn compile_with(
         profile,
         arena_upper_bound(ir, profile),
         inserted_records_upper_bound(ir, profile),
-        ir.tuning_bytes(),
+        ir.tuning_bytes().saturating_add(ir.sample_bytes()),
     )
     .with_estimated_arena();
 
@@ -177,7 +177,7 @@ pub(crate) fn compile_with(
         profile,
         lowered.arena_samples() as u64,
         lowered.inserted as u64,
-        ir.tuning_bytes(),
+        ir.tuning_bytes().saturating_add(ir.sample_bytes()),
     );
 
     // The field scan runs **whatever else is wrong**, because it is also what collects
@@ -1106,6 +1106,7 @@ struct Lowered {
     note_addresses: Vec<NoteAddress>,
     note_magnitudes: Vec<NoteMagnitudeTarget>,
     prepared_tunings: Vec<crate::tuning::PreparedTuning>,
+    prepared_samples: Vec<crate::sample::PreparedSample>,
     /// The first step of each `N`-instance group, and the voice-sum groups among them
     /// (ADR-0058).
     instance_groups: Vec<NodeSlot>,
@@ -1172,6 +1173,7 @@ impl Lowered {
             self.note_addresses,
             self.note_magnitudes,
             self.prepared_tunings,
+            self.prepared_samples,
             capabilities.channel_layout(),
             capabilities.sample_rate(),
             capabilities.maximum_block_size(),
@@ -1325,6 +1327,51 @@ fn lower(
     let mut instance_groups: Vec<NodeSlot> = Vec::new();
     let mut sum_groups: Vec<NodeSlot> = Vec::new();
 
+    // ADR-0026 clause 3: the plan's sample table, one entry per **distinct** sample the IR
+    // holds, compared by content as the tunings are and for the same reason — a digest is
+    // a hash and a collision would have two zones read one buffer. Every IR reference
+    // resolves to a slot here, and that resolution is what the prepare context carries.
+    // Only the samples a sampler node reaches through its map are prepared into the plan:
+    // `GraphIr::sample_bytes` charges exactly that set, and a sample the IR holds but no
+    // sampler plays must not be allocated unpaid for. An independent read found every IR
+    // sample prepared. An unreached reference resolves to no slot.
+    let mut reached = vec![false; ir.samples().len()];
+    for node in ir.nodes() {
+        if let IrNodeKind::Sampler { map, .. } = node.kind()
+            && let Some(map) = ir.map_of(map)
+        {
+            for zone in map.zones() {
+                if let Some(flag) = reached.get_mut(zone.sample().index()) {
+                    *flag = true;
+                }
+            }
+        }
+    }
+    let mut prepared_samples: Vec<crate::sample::PreparedSample> = Vec::new();
+    let sample_slots: Vec<Option<crate::plan::SampleSlot>> = ir
+        .samples()
+        .iter()
+        .zip(reached)
+        .map(|(sample, reached)| {
+            if !reached {
+                return None;
+            }
+            let index = prepared_samples
+                .iter()
+                .position(|held| held == sample)
+                .unwrap_or_else(|| {
+                    prepared_samples.push(sample.clone());
+                    prepared_samples.len() - 1
+                });
+            Some(crate::plan::SampleSlot::new(plan_id, index))
+        })
+        .collect();
+    let context = node::PrepareContext {
+        rate,
+        ir,
+        samples: &sample_slots,
+    };
+
     for id in validated.order() {
         let Some(kind) = kinds.get(id).copied() else {
             continue;
@@ -1338,7 +1385,7 @@ fn lower(
         let in_voice = scopes.get(id) == Some(&crate::ir::ExecutionScope::Voice);
         let instances = if in_voice { voices } else { 1 };
 
-        let prepared = match node::prepare(*id, kind, rate) {
+        let mut prepared = match node::prepare(*id, kind, &context) {
             Ok(prepared) => prepared,
             Err(error) => {
                 // The schedule is still built, with silence where the node would have
@@ -1348,6 +1395,20 @@ fn lower(
                 PreparedNode::Silence
             }
         };
+        // ADR-0026 clause 6: the zone's root is a key, and its frequency is the scope's
+        // tuning's answer — resolved here, where the scope is known, and never in the
+        // kernel. A scope with no tuning leaves it at zero, which renders silence; a note
+        // reaching the sampler's pitch destination is refused by `bind_note_magnitudes`
+        // for the want of that tuning, so the zero is never what a played note gets.
+        if let PreparedNode::Sampler {
+            root,
+            root_frequency,
+            ..
+        } = &mut prepared
+            && let Some(tuning) = scopes.get(id).and_then(|scope| ir.tuning_of(*scope))
+        {
+            *root_frequency = tuning.frequency_of(*root);
+        }
         // One prepared record, whatever the instance count: shared, never cloned.
         let prepared_slot = state.prepare(prepared);
         // ADR-0041 clause 5: the channel count is a property of the port, so the width of
@@ -1591,6 +1652,7 @@ fn lower(
         note_addresses,
         note_magnitudes,
         prepared_tunings,
+        prepared_samples,
     }
 }
 
@@ -1693,6 +1755,8 @@ fn bind_note_magnitudes(
                         has_velocity = true;
                         None
                     }
+                    // ADR-0026 clause 5: an edge, resolved through nothing.
+                    NoteMagnitude::Trigger => None,
                     NoteMagnitude::Pitch => {
                         let Some(tuning) = ir.tuning_of(scope) else {
                             return Err(CompileError::ScopeWithoutTuning {

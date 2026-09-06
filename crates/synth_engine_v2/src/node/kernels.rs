@@ -21,10 +21,14 @@
 //! admission pairs the two, so a mismatch is a compiler defect, and the audio thread is
 //! the one place that cannot report it.
 
-use crate::plan::{BufferRegion, InputBinding, NodeStep};
+use crate::plan::{BufferRegion, InputBinding, NodeStep, SampleSlot};
 use crate::quantities::{
-    Amplitude, ChannelLayout, Frequency, GainFactor, NormalizedLevel, NoteVelocity, ParameterValue,
-    SegmentFrames,
+    Amplitude, ChannelLayout, Frequency, GainFactor, KeyIdentity, NormalizedLevel, NoteVelocity,
+    ParameterValue, SegmentFrames,
+};
+use crate::sample::{
+    KeyRange, LoopRegion, PlayMode, PlaybackRegion, PreparedSample, SUSTAIN_FADE_FRAMES,
+    VelocityRange,
 };
 use crate::time::{PlanPosition, QuantumOffset};
 
@@ -134,6 +138,8 @@ pub const COPY: Kernel = Kernel(copy);
 pub const ACCUMULATE: Kernel = Kernel(accumulate);
 /// [`velocity_scaler`].
 pub const VELOCITY_SCALER: Kernel = Kernel(velocity_scaler);
+/// The sampler's kernel (ADR-0026).
+pub const SAMPLER: Kernel = Kernel(sampler);
 /// The monitor's kernel: its input, unchanged.
 pub const MONITOR: Kernel = Kernel(monitor);
 
@@ -213,6 +219,40 @@ pub enum PreparedNode {
         /// The authored velocity sensitivity, the base its slot starts from (ADR-0059).
         velocity_sensitivity: NormalizedLevel,
     },
+    /// A one-zone sampler's zone, resolved against the plan (ADR-0026).
+    ///
+    /// The sample is a **slot** into the plan's table, not the frames: the record stays
+    /// `Copy` and the frames are held once per plan. The root's frequency is resolved at
+    /// admission through the scope's tuning and written here, so the kernel divides by a
+    /// number and never converts a key.
+    Sampler {
+        /// Which prepared sample of the plan the zone plays.
+        sample: SampleSlot,
+        /// The keys that select the zone; a note outside it plays nothing.
+        keys: KeyRange,
+        /// The velocities that select the zone.
+        velocities: VelocityRange,
+        /// The key the sample plays at its recorded rate.
+        root: KeyIdentity,
+        /// That key's frequency under the scope's tuning.
+        root_frequency: Frequency,
+        /// `2^(fine_cents / 1200)`, V1's fine-tune factor.
+        fine_factor: f64,
+        /// The frames the zone plays.
+        region: PlaybackRegion,
+        /// The frames it repeats in `Loop` mode, if any.
+        loop_region: Option<LoopRegion>,
+        /// The zone's own level.
+        gain: GainFactor,
+        /// The authored level, the base its quantum-rate slot starts from.
+        level: Amplitude,
+        /// The authored velocity sensitivity, the base its slot starts from.
+        velocity_sensitivity: NormalizedLevel,
+        /// Where in the region a note starts, as a fraction of it.
+        start_offset: NormalizedLevel,
+        /// How it plays once triggered.
+        play_mode: PlayMode,
+    },
     /// A velocity scaler's authored sensitivity (ADR-0059).
     VelocityScaler {
         /// The base its sensitivity slot starts from.
@@ -269,6 +309,26 @@ pub enum NodeState {
     Scaled {
         /// The velocity last written, applied to every sample.
         velocity: NoteVelocity,
+    },
+    /// A sampler's playback, held between quanta (ADR-0026 clause 9).
+    ///
+    /// One record per voice instance, sized at preparation and reset by the on edge: what
+    /// V1 allocated as a player per note is a position and a rate here.
+    Sampler {
+        /// Where in the sample the next frame is read, in frames; fractional.
+        position: f64,
+        /// Frames advanced per output frame: the resolved frequency over the root's, times
+        /// the fine-tune factor.
+        rate: f64,
+        /// The velocity last written, applied to every sample.
+        velocity: NoteVelocity,
+        /// Whether it is idle, playing, or fading after the off edge.
+        playback: Playback,
+        /// Frames left in the fade, when fading.
+        fade_remaining: u32,
+        /// Whether the trigger is currently held, so an on edge is a transition rather
+        /// than any positive value — as the envelope's gate is.
+        held: bool,
     },
     /// An envelope's segment, the ramp it is on, and its gate.
     Envelope {
@@ -361,6 +421,18 @@ pub enum Segment {
     Release,
 }
 
+/// Where a sampler is in a note (ADR-0026 clause 7).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Playback {
+    /// Nothing sounds.
+    Idle,
+    /// The region, or its loop, is being read.
+    Playing,
+    /// The off edge arrived in `Sustain` or `Loop` mode: the read continues under a
+    /// linear fade of [`SUSTAIN_FADE_FRAMES`] frames.
+    Fading,
+}
+
 impl NodeState {
     /// The state a prepared node starts in.
     #[must_use]
@@ -393,6 +465,14 @@ impl NodeState {
             },
             PreparedNode::VelocityScaler { .. } => Self::Scaled {
                 velocity: NoteVelocity::FULL,
+            },
+            PreparedNode::Sampler { .. } => Self::Sampler {
+                position: 0.0,
+                rate: 0.0,
+                velocity: NoteVelocity::FULL,
+                playback: Playback::Idle,
+                fade_remaining: 0,
+                held: false,
             },
             PreparedNode::Silence
             | PreparedNode::Amplifier
@@ -431,6 +511,15 @@ impl NodeState {
             },
             Self::Scaled { velocity } => match control {
                 VELOCITY_SCALER_VELOCITY => ParameterValue::new(velocity.as_f32()).ok(),
+                _ => None,
+            },
+            Self::Sampler { velocity, held, .. } => match control {
+                SAMPLER_TRIGGER => Some(if *held {
+                    ParameterValue::ONE
+                } else {
+                    ParameterValue::ZERO
+                }),
+                SAMPLER_VELOCITY => ParameterValue::new(velocity.as_f32()).ok(),
                 _ => None,
             },
             Self::Filter { .. } | Self::Sum { .. } | Self::Stateless => None,
@@ -479,6 +568,15 @@ pub(crate) fn authored_value(
         },
         PreparedNode::VelocityScaler { sensitivity } => match control {
             VELOCITY_SCALER_SENSITIVITY => Some(ParameterValue::from_level(*sensitivity)),
+            _ => None,
+        },
+        PreparedNode::Sampler {
+            level,
+            velocity_sensitivity,
+            ..
+        } => match control {
+            SAMPLER_LEVEL => Some(ParameterValue::from_amplitude(*level)),
+            SAMPLER_VELOCITY_SENSITIVITY => Some(ParameterValue::from_level(*velocity_sensitivity)),
             _ => None,
         },
         PreparedNode::Silence
@@ -549,6 +647,16 @@ pub const VELOCITY_SCALER_VELOCITY: ControlIndex = ControlIndex::new(0);
 
 /// The velocity scaler's sensitivity, `s` in V1's `(1 − s) + s × v` (ADR-0059).
 pub const VELOCITY_SCALER_SENSITIVITY: ControlIndex = ControlIndex::new(1);
+/// The sampler's trigger destination: the note's on and off edges (ADR-0026).
+pub const SAMPLER_TRIGGER: ControlIndex = ControlIndex::new(0);
+/// The sampler's pitch destination: the frequency the scope's tuning resolves.
+pub const SAMPLER_PITCH: ControlIndex = ControlIndex::new(1);
+/// The sampler's velocity destination.
+pub const SAMPLER_VELOCITY: ControlIndex = ControlIndex::new(2);
+/// The sampler's level, V1's `level`: a quantum-rate control, read per frame.
+pub const SAMPLER_LEVEL: ControlIndex = ControlIndex::new(3);
+/// The sampler's velocity sensitivity, `s` in V1's `(1 − s) + s × v`.
+pub const SAMPLER_VELOCITY_SENSITIVITY: ControlIndex = ControlIndex::new(4);
 /// A sine's frequency control.
 pub const SINE_FREQUENCY: ControlIndex = ControlIndex::new(0);
 /// A sine's amplitude control.
@@ -622,6 +730,9 @@ pub struct NodeIo<'a> {
     /// segment's value at that frame, and its last frame reads exactly the target. Indexed
     /// through [`ramp_of`], which is how a kernel with one such control names it.
     pub ramps: &'a [f32],
+    /// The plan's prepared samples, indexed by a prepared record's [`SampleSlot`]
+    /// (ADR-0026). Read through one index; the frames sit behind an `Arc` the plan holds.
+    pub samples: &'a [PreparedSample],
 }
 
 /// The per-frame values of a node's `index`-th quantum-rate control, from its ramps.
@@ -694,6 +805,7 @@ pub fn bind<'a>(
     position: Option<PlanPosition>,
     controls: &'a [TimedControl],
     ramps: &'a [f32],
+    samples: &'a [PreparedSample],
 ) -> Option<NodeIo<'a>> {
     let mut out: Option<&'a mut [f32]> = None;
     let mut inputs = [InputBuffer::Unpatched; MAX_INPUTS];
@@ -755,6 +867,7 @@ pub fn bind<'a>(
         position,
         controls,
         ramps,
+        samples,
     })
 }
 
@@ -1525,4 +1638,213 @@ pub fn copy(_prepared: &PreparedNode, state: &mut NodeState, io: &mut NodeIo<'_>
         }
     }
     (*fade_remaining, *fade_total) = (fade.remaining, fade.total);
+}
+
+/// A one-zone sampler — ADR-0026 clause 7, V1's playback law.
+///
+/// Per frame: every control due at the frame is applied first, as every kernel does; then
+/// one frame is read from the zone's region at the fractional position, two-tap linear with
+/// the second tap wrapped into the loop's start at the loop's end and clamped at the
+/// region's end, a stereo sample summed to mono as `(left + right) × 0.5`; then the zone's
+/// gain, the level ramp, the velocity under `(1 − s) + s × v` and the fade are applied, and
+/// the position advances by the rate. The rate was set by the pitch destination as the
+/// resolved frequency over the root's, times the fine-tune factor — V1's `set_voice_pitch`.
+///
+/// The on edge starts the read at the region's start, or at V1's `start_offset` into it
+/// when the offset is above `0.001`; the off edge starts the fade in `Sustain` and `Loop`
+/// mode and is ignored in `OneShot`. `Loop` repeats the loop region while the read
+/// continues, fade included, as V1's player keeps looping through its release. A reset
+/// (ADR-0058) silences it. A sample the slot does not resolve renders silence: the audio
+/// thread has no honest substitute for the frames a plan was admitted with.
+pub fn sampler(prepared: &PreparedNode, state: &mut NodeState, io: &mut NodeIo<'_>) {
+    let PreparedNode::Sampler {
+        sample,
+        root_frequency,
+        fine_factor,
+        region,
+        loop_region,
+        gain,
+        start_offset,
+        play_mode,
+        ..
+    } = prepared
+    else {
+        return;
+    };
+    let NodeState::Sampler {
+        position,
+        rate,
+        velocity,
+        playback,
+        fade_remaining,
+        held,
+    } = state
+    else {
+        return;
+    };
+    let level = ramp_of(io.ramps, 0);
+    let sensitivity = ramp_of(io.ramps, 1);
+    let Some(audio) = io.samples.get(sample.index()) else {
+        io.out.fill(0.0);
+        return;
+    };
+    let width = audio.channels.channels();
+    let frames = &audio.frames;
+    let start = region.start().as_index();
+    let end = region.end().as_index();
+    let (loop_start, loop_end) = match loop_region {
+        Some(region) => (region.start().as_index(), region.end().as_index()),
+        None => (start, end),
+    };
+    let looping = matches!(play_mode, PlayMode::Loop) && loop_region.is_some();
+    let root = f64::from(root_frequency.as_f32());
+    let fade_total = SUSTAIN_FADE_FRAMES as f32;
+    let gain = gain.as_f32();
+    let offset = start_offset.as_f32();
+
+    let mut run = SamplerRun {
+        position: *position,
+        rate: *rate,
+        velocity: *velocity,
+        playback: *playback,
+        fade_remaining: *fade_remaining,
+        held: *held,
+    };
+    let mut due = 0_usize;
+    for (frame, sample_out) in io.out.iter_mut().enumerate() {
+        while let Some(control) = io.controls.get(due) {
+            if control.offset.as_usize() != frame {
+                break;
+            }
+            due += 1;
+            match control.control {
+                SAMPLER_TRIGGER => {
+                    let raised = control.value.as_f32() > 0.0;
+                    if raised && !run.held {
+                        // V1 seeks into the crop only above a threshold, and so does this.
+                        let span = (end - start) as f64;
+                        run.position = if offset > 0.001 {
+                            start as f64 + span * f64::from(offset)
+                        } else {
+                            start as f64
+                        };
+                        run.playback = Playback::Playing;
+                        run.fade_remaining = 0;
+                    } else if !raised && run.held && run.playback == Playback::Playing {
+                        match play_mode {
+                            PlayMode::OneShot => {}
+                            PlayMode::Sustain | PlayMode::Loop => {
+                                run.playback = Playback::Fading;
+                                run.fade_remaining = SUSTAIN_FADE_FRAMES;
+                            }
+                        }
+                    }
+                    run.held = raised;
+                }
+                SAMPLER_PITCH => {
+                    let hz = f64::from(control.value.as_f32());
+                    run.rate = if root > 0.0 {
+                        hz / root * fine_factor
+                    } else {
+                        0.0
+                    };
+                }
+                SAMPLER_VELOCITY => {
+                    run.velocity = NoteVelocity::saturating(control.value.as_f32());
+                }
+                ControlIndex::RESET => {
+                    run = SamplerRun {
+                        position: 0.0,
+                        rate: 0.0,
+                        velocity: NoteVelocity::FULL,
+                        playback: Playback::Idle,
+                        fade_remaining: 0,
+                        held: false,
+                    };
+                }
+                _ => {}
+            }
+        }
+
+        let value = if run.playback == Playback::Idle {
+            0.0
+        } else {
+            let whole = run.position.floor();
+            let frac = (run.position - whole) as f32;
+            let index = whole as usize;
+            let mut next = index + 1;
+            if looping && next >= loop_end {
+                next = loop_start;
+            } else if next >= end {
+                next = index;
+            }
+            let mut read = 0.0_f32;
+            for channel in 0..width {
+                let s0 = frames.get(index * width + channel).copied().unwrap_or(0.0);
+                let s1 = frames.get(next * width + channel).copied().unwrap_or(0.0);
+                read += s0 + (s1 - s0) * frac;
+            }
+            if width > 1 {
+                read *= 0.5;
+            }
+            let fade = if run.playback == Playback::Fading {
+                run.fade_remaining as f32 / fade_total
+            } else {
+                1.0
+            };
+            let l = level.get(frame).or(level.last()).copied().unwrap_or(1.0);
+            let s = sensitivity
+                .get(frame)
+                .or(sensitivity.last())
+                .copied()
+                .unwrap_or(1.0);
+            let scale = (1.0 - s) + s * run.velocity.as_f32();
+            read * gain * l * scale * fade
+        };
+        *sample_out = value;
+
+        if run.playback != Playback::Idle {
+            run.position += run.rate;
+            if looping {
+                let span = (loop_end - loop_start) as f64;
+                while run.position >= loop_end as f64 {
+                    run.position -= span;
+                }
+            } else if run.position >= end as f64 {
+                run.playback = Playback::Idle;
+            }
+            if run.playback == Playback::Fading {
+                run.fade_remaining = run.fade_remaining.saturating_sub(1);
+                if run.fade_remaining == 0 {
+                    run.playback = Playback::Idle;
+                }
+            }
+        }
+    }
+
+    (
+        *position,
+        *rate,
+        *velocity,
+        *playback,
+        *fade_remaining,
+        *held,
+    ) = (
+        run.position,
+        run.rate,
+        run.velocity,
+        run.playback,
+        run.fade_remaining,
+        run.held,
+    );
+}
+
+/// A sampler's state for the duration of one quantum, written back at its end.
+struct SamplerRun {
+    position: f64,
+    rate: f64,
+    velocity: NoteVelocity,
+    playback: Playback,
+    fade_remaining: u32,
+    held: bool,
 }

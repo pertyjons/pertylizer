@@ -108,7 +108,10 @@ pub fn timed_control_scratch_bytes(
     // both, so a budget that charged only the scratch above would report a ceiling
     // preparation then allocates past — which is admission passing a plan it should refuse.
     // An independent review found the two vectors uncharged.
+    // Since ADR-0026 a note's boundary release lowers its trigger destinations beside its
+    // gate, so each ended note can owe up to a note's width of gate-downs rather than one.
     let adoption_gates = u64::from(identity_indices.get())
+        .saturating_mul(u64::from(writes_per_note.get()))
         .saturating_mul((size_of::<TimedControl>() + size_of::<usize>()) as u64);
     let index = u64::from(scheduled_records.get())
         .saturating_mul(2)
@@ -477,11 +480,13 @@ pub(crate) struct DueEvent {
     /// they perform. `None` is an event with no sample-positioned effect: an orphan release,
     /// or a parameter whose target is control-rate.
     pub(crate) target: Option<ResolvedTarget>,
-    /// The node a bend's occurrence sounds on, resolved once with the target above and for
-    /// the same reason: the registry the passes would otherwise read is mutated by the same
-    /// walk, and a bend followed in one call by its note's release would find the note gone
-    /// and move nothing. An independent read found the passes reading the registry.
-    pub(crate) bend_of: Option<crate::plan::NoteSlot>,
+    /// The node a bend's or a release's occurrence sounds on, resolved once with the target
+    /// above and for the same reason: the registry the passes would otherwise read is
+    /// mutated by the same walk, and a bend followed in one call by its note's release
+    /// would find the note gone and move nothing. An independent read found the passes
+    /// reading the registry. A release carries it since ADR-0026, for the trigger
+    /// destinations its off edge reaches.
+    pub(crate) note_of: Option<crate::plan::NoteSlot>,
 }
 
 /// Where a sample-positioned event's effect lands, resolved once per call.
@@ -507,7 +512,7 @@ impl DueEvent {
     /// allocate, but a `Vec::push` is still a call that can.
     const FILL: Self = Self {
         position: SampleTime::ZERO,
-        bend_of: None,
+        note_of: None,
         arrival: 0,
         target: None,
         payload: EventPayload::SetParameter {
@@ -793,8 +798,13 @@ impl PreparedRenderer {
                     .saturating_mul(writes_per_note)
                     .saturating_add(identity_indices)
             ],
-            adoption_gates: vec![TimedControl::FILL; identity_indices],
-            adoption_gate_slots: vec![0; identity_indices],
+            // One gate-down per ended note plus, since ADR-0026, one per trigger
+            // destination of its scope: bounded by a note's width, which the charge uses.
+            adoption_gates: vec![
+                TimedControl::FILL;
+                identity_indices.saturating_mul(writes_per_note)
+            ],
+            adoption_gate_slots: vec![0; identity_indices.saturating_mul(writes_per_note)],
             adoption_gate_len: 0,
             control_starts: vec![0; records.saturating_add(1)],
             control_fill: vec![0; records],

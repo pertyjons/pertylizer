@@ -288,6 +288,7 @@ impl Hand {
                 position: None,
                 controls: &[held_gate()],
                 ramps: &[],
+                samples: &[],
             },
         );
     }
@@ -311,6 +312,7 @@ impl Hand {
                 position: None,
                 controls: &[],
                 ramps: sine_ramp(),
+                samples: &[],
             },
         );
         filter(
@@ -323,6 +325,7 @@ impl Hand {
                 position: None,
                 controls: &[],
                 ramps: &[],
+                samples: &[],
             },
         );
         envelope(
@@ -335,6 +338,7 @@ impl Hand {
                 position: None,
                 controls: &[],
                 ramps: &[],
+                samples: &[],
             },
         );
         amplifier(
@@ -347,6 +351,7 @@ impl Hand {
                 position: None,
                 controls: &[],
                 ramps: &[],
+                samples: &[],
             },
         );
         // The plan's last operation, which the renderer performs and which a hand-written
@@ -462,6 +467,7 @@ impl Table {
                         position: None,
                         controls: &[held_gate()],
                         ramps: &[],
+                        samples: &[],
                     },
                 );
             }
@@ -493,6 +499,7 @@ impl Table {
                 None,
                 &[],
                 sine_ramp(),
+                &[],
             );
             black_box(&io);
         }
@@ -519,6 +526,7 @@ impl Table {
                 None,
                 &[],
                 sine_ramp(),
+                &[],
             ) else {
                 continue;
             };
@@ -566,6 +574,7 @@ impl Table {
                 None,
                 &[],
                 sine_ramp(),
+                &[],
             ) else {
                 continue;
             };
@@ -594,6 +603,7 @@ impl Table {
                 None,
                 &[],
                 sine_ramp(),
+                &[],
             ) else {
                 continue;
             };

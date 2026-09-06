@@ -430,6 +430,14 @@ catalog! {
     IrNodeKind::VelocityScaler {
         sensitivity: synth_engine_v2::quantities::NormalizedLevel::FULL,
     } => IrNodeKind::VelocityScaler { .. },
+    IrNodeKind::Sampler {
+        map: synth_engine_v2::sample::SampleMapRef::new(0),
+        level: level(1.0),
+        velocity_sensitivity: synth_engine_v2::quantities::NormalizedLevel::FULL,
+        start_offset: synth_engine_v2::quantities::NormalizedLevel::ZERO,
+        play_mode: synth_engine_v2::sample::PlayMode::Sustain,
+        direction: synth_engine_v2::sample::PlayDirection::Forward,
+    } => IrNodeKind::Sampler { .. },
     IrNodeKind::Envelope {
         attack: Seconds::new(0.01).expect("finite"),
         decay: Seconds::new(0.1).expect("finite"),
