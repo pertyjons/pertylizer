@@ -72,6 +72,7 @@ fn two_voices_declaring(declarations: PlanDeclarations) -> GraphIr {
         decay: Seconds::new(0.0).expect("not negative"),
         sustain: NormalizedLevel::FULL,
         release,
+        velocity_sensitivity: synth_engine_v2::quantities::NormalizedLevel::FULL,
     };
     GraphIr::builder()
         .node(

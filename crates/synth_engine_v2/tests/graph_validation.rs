@@ -427,11 +427,15 @@ catalog! {
     } => IrNodeKind::Saw { .. },
     IrNodeKind::Impulse { position: PlanPosition::ZERO } => IrNodeKind::Impulse { .. },
     IrNodeKind::Gain { factor: factor(0.5) } => IrNodeKind::Gain { .. },
+    IrNodeKind::VelocityScaler {
+        sensitivity: synth_engine_v2::quantities::NormalizedLevel::FULL,
+    } => IrNodeKind::VelocityScaler { .. },
     IrNodeKind::Envelope {
         attack: Seconds::new(0.01).expect("finite"),
         decay: Seconds::new(0.1).expect("finite"),
         sustain: NormalizedLevel::new(0.7).expect("in range"),
         release: Seconds::new(0.2).expect("finite"),
+        velocity_sensitivity: synth_engine_v2::quantities::NormalizedLevel::FULL,
     } => IrNodeKind::Envelope { .. },
     IrNodeKind::Filter {
         cutoff: CutoffFrequency::new(1_000.0).expect("positive"),

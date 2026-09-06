@@ -60,6 +60,7 @@ fn gated_constant() -> GraphIr {
                 decay: Seconds::new(0.0).expect("not negative"),
                 sustain: NormalizedLevel::FULL,
                 release: Seconds::new(0.0).expect("not negative"),
+                velocity_sensitivity: synth_engine_v2::quantities::NormalizedLevel::FULL,
             },
             ExecutionScope::Voice,
         )

@@ -30,7 +30,7 @@ discharged rather than carried.
 
 | ID | Residual | Pull-forward rule |
 |---|---|---|
-| P04-R001 | V1 applies one saved velocity twice, under two independent sensitivities; V2 applies it once as one scale on the envelope | Every lowering that places a note is marked `UnsupportedScope` and the A/B path refuses to compare it. Phase 6 owns the composition law and inherits this before it builds it. Until then nothing may issue a parity verdict over a **lowered** outcome that is not `Faithful` — no offline engine selection over saved projects, no corpus A/B batch. A harness that builds its own fixtures and never lowers, as EVD-0013's does, is outside the rule |
+| P04-R001 | V1 applies one saved velocity twice, under two independent sensitivities; V2 applied it once as one scale on the envelope | **Closed** by `P06-S004` under [ADR-0059](decisions/ADR-0059-velocity-composition.md): a voice has two velocity destinations, each with its own sensitivity and V1's formula, the lowerer carries `vel_sens` and `velocity_amp_sensitivity` to them, and a placed note no longer names velocity as unrepresented. `LOWER-INV-003`'s general rule stands: nothing may issue a parity verdict over a **lowered** outcome that is not `Faithful`, and a placed note is still `UnsupportedScope` through Phase 8's marks |
 | P04-R004 | [ADR-0028](decisions/ADR-0028-long-running-job-contract.md) is `Deferred`: a *revisioned* job contract needs Phase 10A's canonical revision and Phase 10B's job capture | All three standing constraints hold until acceptance in Phase 10B. Constraint 3 refuses streaming, progress, cancellation, multi-project A/B and a shared render request/result as **task selections**, so that work does not proceed under another name |
 
 ## Phase 5 — closed
@@ -82,14 +82,15 @@ derives. The phase turns the voice scope into a `VoicePlan` — one immutable pr
 | P06-S002 — voice stealing under a decided policy | **Merged** 2026-09-06 (`15adfbd3`); ADR-0058 accepted and reviewed with it, one independent read (agy), five defects repaired | Needs the allocation and stealing ADR first: which voice is taken (V1 offers oldest, quietest, lowest priority, same note, none), how the taken voice ends at a precise sample (a release-then-retrigger over the retirement crossfade, or a cut), and what a stolen voice's expression keeps or clears — one documented rule, tested at sample offsets |
 | P06-S002b — stealing at the live boundary | **Merged** 2026-09-06 (`7d602dee`); one independent read (agy), three defects repaired | ADR-0058 clause 6's second site. **Design, fixed by a fact about the ring:** the live queue drains head-first and requires non-decreasing stamps, so a steal's delayed start cannot be queued as events `fade` frames ahead of offers that follow. The start is therefore deferred **in the renderer**, once, for both paths: a steal is one event at the note-on's position — the taken occurrence, the replacement occurrence, the note it starts and the fade — and the renderer fades the taken instance from there, holds the start in a table sized by the identity partition, and at that position plus `fade` resets the instance and lands the new note's gate and magnitudes as timed controls, charged to the timed-control scratch as an adoption's gate-downs are. A release for a note whose start is still pending is deferred with it, so the note keeps its authored length on both paths. The compiled path's stamped `Fade`/`Reset`/delayed `Note` and its post-stamp share re-check are replaced by that one event, which restores ADR-0058 clause 7's original form; the existing sample-exact oracles hold the behaviour unchanged. Then the boundary: the minter carries each live index's node, key and mint order, `offer_note_on` chooses the victim under the policy when the mint reports a full producer, and the taken note's later release is counted as `released_after_steal` at the boundary and discharges its hold |
 | P06-S003 — per-note expression and the bend clause | **Merged** 2026-09-06 (`4b754619`); one independent read (agy), one defect and four lesser points repaired | ADR-0047 clause 9's reserved per-note event, `SOUND-INV-021`'s bend clause (a cents offset after resolution), and the rule that allocation, stealing, sustain, retrigger and release preserve or clear expression; note identity must still route expression after stealing and after a plan recompilation |
-| P06-S004 — velocity composition | Not started | Inherits `P04-R001` before it builds: V1 applies one saved velocity under two independent sensitivities; V2 states the composition as a modulation under one of `SOUND-INV-023`'s laws on the velocity destination, and the lowering's `UnsupportedScope` mark comes off placed notes when a parity verdict can be offered |
+| P06-S004 — velocity composition | **Built** 2026-09-06 on `feat/v2-phase6-s004`; ADR-0059 accepted with the user's selection; independent read pending | Inherited `P04-R001` and closed it: V1 applies one saved velocity under two independent sensitivities, and V2 now has two velocity destinations — the envelope's `1 − s(1 − v)` and a voice-output scaler's `(1 − s) + s·v`, V1's formulas bit for bit — each with an authored sensitivity the lowerer fills from `vel_sens` and `velocity_amp_sensitivity`. The velocity mark comes off placed notes; `LOWER-INV-003` keeps its general rule, and Phase 8's marks still hold a placed note at `UnsupportedScope` |
 | P06-S005 — the one-zone sampler on the prepared map/zone contract | Not started | Needs ADR-0026 accepted first: an immutable sample map with zones, key/velocity selection, root and tuning, playback region and a prepared sample reference, of which the native sampler selects exactly one zone without a per-note allocation or a single-sample API |
 | P06-S006 — one tuning through every path | Not started | Built-in 12-TET and one non-12-TET mapping produce the same pitches through the live, sequenced, offline and analysis-facing paths; the prepared tuning contract already exists and this holds every consumer to it |
 | P06-S007 — determinism under pressure | Not started | The exit's evidence: polyphonic output deterministic for a fixed seed and event stream under stealing pressure, and equivalent offline and live instance behaviour |
 
-Inherited before it builds: `P04-R001` (velocity composition, `P06-S004`) and `P05-R001` (a
-lowered level's smoothing policy, binding the lowering that first maps V1's amplifier level or
-writes a V2 amplitude dynamically). `P05-R002` is Phase 10D's and does not bind this phase.
+Inherited before it builds: `P05-R001` (a lowered level's smoothing policy, binding the
+lowering that first maps V1's amplifier level or writes a V2 amplitude dynamically).
+`P04-R001` was inherited by `P06-S004` and is closed. `P05-R002` is Phase 10D's and does not
+bind this phase.
 
 
 ### Phase 0B — active in parallel
@@ -117,10 +118,8 @@ Phase 3 is complete. Its exit review accepted these bounded residuals:
 
 ## Later-owned work
 
-- Phase 6 owns `P04-R001`'s composition law, and `SOUND-INV-021`'s **bend** clause, which is
-  not built: a per-note bend is a continuous offset in cents applied after resolution, carried
-  by the event ADR-0047 clause 9 reserves, and neither the event nor the offset exists. Nothing
-  in Phase 4 reached it, so it waits for its first consumer.
+- Phase 6 owned `P04-R001`'s composition law and `SOUND-INV-021`'s **bend** clause; both are
+  built (`P06-S003`, `P06-S004`).
 - Phase 9 owns ADR-0022 acceptance against retained platform/adapter evidence,
   P03-R001 before loop playback or phase exit, P03-R004 before production live
   ingress, and ADR-0050 clause 8's release-hold redemption and activation-time
@@ -136,18 +135,14 @@ Phase 3 is complete. Its exit review accepted these bounded residuals:
 
 **None for Phase 6's entry.** ADR-0025, its prerequisite, is accepted, and Phase 5 is closed.
 Residuals bind later work by name rather than blocking Phase 6's entry: `P05-R002` binds Phase
-10D's digest; `P04-R001` — V1's
-two velocity sensitivities — before it builds a velocity composition; `P05-R001` — a lowered
+10D's digest; `P05-R001` — a lowered
 level's smoothing policy — before a lowering maps V1's amplifier level onto a V2 parameter or
 writes a V2 amplitude dynamically; and Phase 3's residuals, which block only their named
 consumers. `P04-R004` binds the first shared render surface, which is Phase 10B's.
 
 Two streams are active: Phase 6, with `P06-S001`, `P06-S002`, `P06-S002b` and `P06-S003`
-merged and `P06-S004` next, and Phase 0B, with `P00B-T003` as its selected slice.
+merged and `P06-S004` built and awaiting its independent read, and Phase 0B, with `P00B-T003`
+as its selected slice.
 
-Next action: **`P06-S004`**, velocity composition, which inherits `P04-R001` before it
-builds: V1 applies one saved velocity under two independent sensitivities and V2 applies it once
-as a scale on the envelope; the slice states the composition as a modulation under one of
-`SOUND-INV-023`'s laws on the velocity destination, and the lowering's `UnsupportedScope` mark
-comes off placed notes when a parity verdict can be offered. A delivered-behaviour choice sits
-inside it — whether V2 reproduces V1's squared velocity or corrects it — for the user.
+Next action: **`P06-S004`**'s independent read and merge; then **`P06-S005`**, the one-zone
+sampler, which needs ADR-0026 accepted first.

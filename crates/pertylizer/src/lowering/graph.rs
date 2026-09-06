@@ -125,6 +125,22 @@ pub fn lower_voice_patch(
     connections: &[ConnectionState],
     events_per_quantum: EventCount,
 ) -> LoweredGraph {
+    lower_voice_patch_with(instrument, modules, connections, events_per_quantum, None)
+}
+
+/// [`lower_voice_patch`], with V1's voice-output velocity stage (ADR-0059).
+///
+/// `velocity_amp_sensitivity` is the instrument's saved sensitivity; `Some` places a
+/// [`IrNodeKind::VelocityScaler`] between the voice's terminating node and the output, so a
+/// note is scaled by V1's `(1 − s) + s × v` there as V1 scales it at the voice's output.
+/// `None` lowers the patch as it is, for a caller that lowers no instrument.
+pub fn lower_voice_patch_with(
+    instrument: InstrumentId,
+    modules: &[ModuleState],
+    connections: &[ConnectionState],
+    events_per_quantum: EventCount,
+    velocity_amp_sensitivity: Option<NormalizedLevel>,
+) -> LoweredGraph {
     let mut diagnostics = Vec::new();
 
     let identities = match ResolvedIdentities::resolve(modules) {
@@ -224,6 +240,19 @@ pub fn lower_voice_patch(
     let mut builder = GraphIr::builder();
     let mut refused = false;
     let mut edges: Vec<(NodeId, NodeId, ConnectionState)> = Vec::new();
+    // The output node's address, so the cable into it can be routed through the scaler.
+    let output_node = outputs
+        .first()
+        .and_then(|module| module.id.parse::<ModuleId>().ok())
+        .and_then(|id| identities.node_for(id));
+    let scaler = velocity_amp_sensitivity.map(|_| super::identity::VOICE_OUTPUT_SCALER);
+    if let Some(sensitivity) = velocity_amp_sensitivity {
+        builder = builder.node(
+            super::identity::VOICE_OUTPUT_SCALER,
+            IrNodeKind::VelocityScaler { sensitivity },
+            ExecutionScope::Voice,
+        );
+    }
 
     for module in modules {
         let Ok(id) = module.id.parse::<ModuleId>() else {
@@ -303,11 +332,24 @@ pub fn lower_voice_patch(
             &mut diagnostics,
         ) {
             Some((from, to, domain)) => {
+                // ADR-0059: the cable into the output enters the velocity stage instead, and
+                // the stage feeds the output below.
+                let to = match scaler {
+                    Some(scaler) if Some(to.0) == output_node => (scaler, PortId::FIRST),
+                    _ => to,
+                };
                 edges.push((from.0, to.0, connection.clone()));
                 builder = builder.connect(from, to, domain);
             }
             None => refused = true,
         }
+    }
+    if let (Some(scaler), Some(output)) = (scaler, output_node) {
+        builder = builder.connect(
+            (scaler, PortId::FIRST),
+            (output, PortId::FIRST),
+            SignalDomain::Audio,
+        );
     }
 
     // V2 refuses a cyclic graph at compilation, and `GraphIr::build` does not look. Without
@@ -582,7 +624,7 @@ fn lower_module(
             if !audit_parameters(
                 module,
                 &declarations,
-                &["attack", "decay", "sustain", "release"],
+                &["attack", "decay", "sustain", "release", "vel_sens"],
                 &parameter,
                 diagnostics,
             ) {
@@ -633,6 +675,19 @@ fn lower_module(
                             diagnostics,
                         )?),
                         parameter("release"),
+                        diagnostics,
+                    )?,
+                    // ADR-0059: V1's `vel_sens`, the envelope's own velocity sensitivity, read
+                    // with V1's default where the key is omitted.
+                    velocity_sensitivity: quantity(
+                        NormalizedLevel::new(v1_value(
+                            module,
+                            &declarations,
+                            "vel_sens",
+                            &parameter,
+                            diagnostics,
+                        )?),
+                        parameter("vel_sens"),
                         diagnostics,
                     )?,
                 },

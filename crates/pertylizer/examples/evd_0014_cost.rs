@@ -284,6 +284,7 @@ fn v2_graph(amplitude: f32) -> GraphIr {
                 decay: V2Seconds::new(DECAY_S).expect("finite"),
                 sustain: NormalizedLevel::new(SUSTAIN).expect("in range"),
                 release: V2Seconds::new(RELEASE_S).expect("finite"),
+                velocity_sensitivity: synth_engine_v2::quantities::NormalizedLevel::FULL,
             },
             ExecutionScope::Voice,
         )

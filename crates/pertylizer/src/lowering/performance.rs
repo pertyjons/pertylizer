@@ -577,30 +577,10 @@ pub fn lower_performance(
         return refused(diagnostics);
     };
 
-    // Velocity is **audible** and it is not V1's. `SOUND-INV-021` requires the played node's
-    // scope to declare a destination that scales the rendered amplitude, and V2's envelope
-    // multiplies its emitted level by the note's velocity — which is one of V1's two
-    // sensitivities, not their composition: V1 applies `1 − sensitivity × (1 − velocity)` at
-    // the envelope and an independent `velocity_to_amp` at the voice output, so at their
-    // defaults V1's product carries the velocity **twice** and V2's carries it once.
-    //
-    // The invariant puts that composition on Phase 6 and this record does not decide it, so
-    // the render is admissible and a parity claim over it is not. Raised once per lowering
-    // rather than once per note: it is a property of how this lowerer composes velocity, not
-    // of any note the project holds.
-    if !spans.is_empty() {
-        diagnostics.push(LoweringDiagnostic::unrepresented(
-            ProjectSubject::Instrument {
-                instrument,
-                name: instrument_name.to_owned(),
-            },
-            LoweringReason::OwnedByLaterPhase {
-                capability: "V1's two velocity sensitivities and how they compose, which V2 \
-                             applies as one scale on the envelope",
-                owner: "Phase 6, with the composition law",
-            },
-        ));
-    }
+    // Velocity is V1's since ADR-0059: the envelope lowers with its own sensitivity and the
+    // instrument's amp sensitivity lowers to a velocity scaler, so a note renders at V1's
+    // product of the two and the marker this site raised — "V1's two velocity sensitivities
+    // and how they compose" — is discharged. `P04-R001` closes with it.
 
     // A second difference, and it is **not** the overlap this lowerer refuses. Overlapping
     // gates are refused above; what remains is that V1 gives each note its own voice, so a

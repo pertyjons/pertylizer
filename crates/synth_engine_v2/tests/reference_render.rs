@@ -84,6 +84,7 @@ fn voice() -> GraphIr {
                 decay: Seconds::new(0.010).expect("not negative"),
                 sustain: NormalizedLevel::new(0.6).expect("within range"),
                 release: Seconds::new(0.020).expect("not negative"),
+                velocity_sensitivity: synth_engine_v2::quantities::NormalizedLevel::FULL,
             },
             ExecutionScope::Voice,
         )

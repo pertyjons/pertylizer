@@ -3,7 +3,7 @@
 This is the compact status index for durable Core V2 decisions. Individual ADRs own rationale and evidence; current
 specifications own implementation semantics. Do not copy review history or measurement results into this file.
 
-Next free identifier: `ADR-0059`.
+Next free identifier: `ADR-0060`.
 
 ## Status vocabulary
 
@@ -108,6 +108,7 @@ the durable-decision test in `PROCESS.md` and normally do not need an ADR.
 | ADR-0056 | V1-to-V2 consumer boundary                  | Accepted | 4                     | [ADR](decisions/ADR-0056-v1-to-v2-consumer-boundary.md)            | Phase 4's lowerer is the first non-harness consumer, so the Phase 1 gate's deletability claim needs a boundary rather than a deletion. A non-default `v2-lowering` feature carries the one optional edge; `crate_boundary` gains a check that enabling it adds exactly one dependent |
 | ADR-0057 | Refuse a parity verdict over a placed note  | Accepted | 4/6                   | [ADR](decisions/ADR-0057-refuse-parity-verdict-over-a-placed-note.md) | V1 applies one saved velocity twice and V2 applies it once, so every lowering that places a note is `UnsupportedScope` and no parity verdict may read it. The obligation is `P04-R001`, owned by Phase 6 with the composition law. Phase 4's exit gate and `ROADMAP.md`'s Phase 4 outcome are amended not to claim the deferred behaviour, and the gate's project count becomes the measured eligible set |
 | ADR-0058 | Voice allocation and stealing               | Accepted | 6                     | [ADR](decisions/ADR-0058-voice-allocation-and-stealing.md)          | Which voice a note-on takes when its producer holds every admitted index, how it ends, and what its identity becomes. Proposes a declared policy per plan — `None` (today, the default), `Oldest`, `SameNote` — V1's fade-then-start over a declared fade, the stolen note ended with its release counted under its own name, and the choice made off-thread by the minter. Accepted 2026-09-05 with the user's selection of both recommendations; `P06-S002` builds it |
+| ADR-0059 | Velocity composition                        | Accepted | 6                     | [ADR](decisions/ADR-0059-velocity-composition.md)                  | A voice has two velocity destinations, each with its own authored sensitivity: the envelope's `1 − s(1 − v)` and a voice-output scaler's `(1 − s) + s·v`, V1's formulas bit for bit, so a saved project renders its notes at V1's level and ADR-0057's parity marker is discharged. Accepted 2026-09-06 with the user's selection; built by `P06-S004` |
 
 ### Reversible decisions
 

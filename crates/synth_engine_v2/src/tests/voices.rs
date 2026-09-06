@@ -319,10 +319,10 @@ fn prepared_data_is_shared_and_state_is_per_instance() {
         3,
         "each node's record is read by four steps"
     );
-    // Parameter rows: frequency and amplitude on the sine, gate and velocity on the envelope
-    // — four controls, four rows each, four addresses.
-    assert_eq!(plan.parameter_targets().len(), 4 * 4);
-    assert_eq!(plan.parameter_addresses().len(), 4);
+    // Parameter rows: frequency and amplitude on the sine, gate, velocity and velocity
+    // sensitivity on the envelope — five controls, four rows each, five addresses.
+    assert_eq!(plan.parameter_targets().len(), 5 * 4);
+    assert_eq!(plan.parameter_addresses().len(), 5);
     assert!(
         plan.parameter_targets()
             .iter()
@@ -458,7 +458,23 @@ fn voice_with(notes: u32, stealing: StealingPolicy) -> GraphIr {
 
 /// The same, with an envelope attack, so a fresh voice is audibly fresh.
 fn voice_shaped(notes: u32, stealing: StealingPolicy, attack: Seconds) -> GraphIr {
-    GraphIr::builder()
+    voice_composed(notes, stealing, attack, NormalizedLevel::FULL, None)
+}
+
+/// V1's voice-output velocity stage, when a plan carries one.
+const SCALER: NodeId = NodeId::new(5);
+
+/// The voice with its velocity composition chosen (ADR-0059): the envelope's sensitivity, and
+/// a velocity scaler between the amplifier and the output where `scaler` names its
+/// sensitivity.
+fn voice_composed(
+    notes: u32,
+    stealing: StealingPolicy,
+    attack: Seconds,
+    envelope_sensitivity: NormalizedLevel,
+    scaler: Option<NormalizedLevel>,
+) -> GraphIr {
+    let mut builder = GraphIr::builder()
         .node(
             OSCILLATOR,
             IrNodeKind::Sine {
@@ -474,6 +490,7 @@ fn voice_shaped(notes: u32, stealing: StealingPolicy, attack: Seconds) -> GraphI
                 decay: Seconds::ZERO,
                 sustain: NormalizedLevel::FULL,
                 release: Seconds::ZERO,
+                velocity_sensitivity: envelope_sensitivity,
             },
             ExecutionScope::Voice,
         )
@@ -488,12 +505,31 @@ fn voice_shaped(notes: u32, stealing: StealingPolicy, attack: Seconds) -> GraphI
             (ENVELOPE, PortId::FIRST),
             (AMPLIFIER, crate::node::AMPLIFIER_CONTROL),
             SignalDomain::Control,
-        )
-        .connect(
+        );
+    builder = match scaler {
+        Some(sensitivity) => builder
+            .node(
+                SCALER,
+                IrNodeKind::VelocityScaler { sensitivity },
+                ExecutionScope::Voice,
+            )
+            .connect(
+                (AMPLIFIER, PortId::FIRST),
+                (SCALER, PortId::FIRST),
+                SignalDomain::Audio,
+            )
+            .connect(
+                (SCALER, PortId::FIRST),
+                (OUTPUT, PortId::FIRST),
+                SignalDomain::Audio,
+            ),
+        None => builder.connect(
             (AMPLIFIER, PortId::FIRST),
             (OUTPUT, PortId::FIRST),
             SignalDomain::Audio,
-        )
+        ),
+    };
+    builder
         .tuning(
             ExecutionScope::Voice,
             crate::tuning::PreparedTuning::equal_temperament().expect("12-TET prepares"),
@@ -1225,6 +1261,107 @@ fn a_bend_of_a_note_that_took_a_voice_is_displaced_with_its_start() {
         })
         .collect();
     assert_eq!(bends, vec![(p + 50 + FADE, 0)]);
+}
+
+#[test]
+fn the_envelope_scales_its_level_by_v1s_sensitivity_law() {
+    // ADR-0059 clause 2: the envelope's scale is V1's `1 − s × (1 − v)`, computed in the
+    // kernel from the note's velocity and the authored sensitivity. With attack zero and
+    // sustain full the envelope emits exactly that scale, and the amplifier multiplies the
+    // full-velocity render by it, so the oracle is the same `f32` expression. Sensitivity
+    // one is the bare velocity, zero ignores it.
+    let reference = admit(&voice_composed(
+        1,
+        StealingPolicy::None,
+        Seconds::ZERO,
+        NormalizedLevel::FULL,
+        None,
+    ));
+    let full = render(&reference, &[note(&reference, 60, 0, 30 * Q)], 8);
+    for (s, v) in [
+        (1.0_f32, 0.25_f32),
+        (0.0, 0.25),
+        (0.5, 0.25),
+        (0.75, 0.7559055),
+    ] {
+        let plan = admit(&voice_composed(
+            1,
+            StealingPolicy::None,
+            Seconds::ZERO,
+            NormalizedLevel::new(s).expect("in range"),
+            None,
+        ));
+        let rendered = render(
+            &plan,
+            &[struck(&plan, 60, NoteVelocity::saturating(v), 0, 30 * Q)],
+            8,
+        );
+        let scale = 1.0 - s * (1.0 - v);
+        for (k, actual) in rendered.iter().copied().enumerate() {
+            assert_eq!(actual, full[k] * scale, "s {s} v {v} frame {k}");
+        }
+    }
+}
+
+#[test]
+fn a_velocity_scaler_applies_v1s_output_law_after_the_envelope() {
+    // ADR-0059 clauses 3 and 4: with a scaler after the amplifier the note is scaled twice —
+    // the envelope's `1 − s_env × (1 − v)` and then the scaler's `(1 − s_out) + s_out × v` —
+    // and at both defaults that is V1's `velocity²`. The oracle applies the two `f32` factors
+    // to the full-velocity render in the order the graph applies them. A scaler declares a
+    // second velocity destination, so the note's expansion is three writes.
+    let reference = admit(&voice_composed(
+        1,
+        StealingPolicy::None,
+        Seconds::ZERO,
+        NormalizedLevel::FULL,
+        None,
+    ));
+    let full = render(&reference, &[note(&reference, 60, 0, 30 * Q)], 8);
+    let plan = admit(&voice_composed(
+        1,
+        StealingPolicy::None,
+        Seconds::ZERO,
+        NormalizedLevel::FULL,
+        Some(NormalizedLevel::FULL),
+    ));
+    let slot = plan.resolve_note(ENVELOPE).expect("playable");
+    assert_eq!(
+        plan.note_magnitudes_of(slot).len(),
+        3,
+        "a pitch and two velocity destinations"
+    );
+    for v in [0.25_f32, 0.5, 0.7559055] {
+        let rendered = render(
+            &plan,
+            &[struck(&plan, 60, NoteVelocity::saturating(v), 0, 30 * Q)],
+            8,
+        );
+        let envelope_scale = 1.0 - 1.0 * (1.0 - v);
+        let output_scale = (1.0 - 1.0) + 1.0 * v;
+        for (k, actual) in rendered.iter().copied().enumerate() {
+            assert_eq!(
+                actual,
+                (full[k] * envelope_scale) * output_scale,
+                "v {v} frame {k}"
+            );
+        }
+    }
+    // And a scaler at sensitivity zero is the identity: one factor only.
+    let plain = admit(&voice_composed(
+        1,
+        StealingPolicy::None,
+        Seconds::ZERO,
+        NormalizedLevel::FULL,
+        Some(NormalizedLevel::new(0.0).expect("in range")),
+    ));
+    let once = render(
+        &plain,
+        &[struck(&plain, 60, NoteVelocity::saturating(0.5), 0, 30 * Q)],
+        8,
+    );
+    let expected: Vec<f32> = full.iter().map(|x| x * 0.5).collect();
+    assert_eq!(once, expected);
 }
 
 #[test]

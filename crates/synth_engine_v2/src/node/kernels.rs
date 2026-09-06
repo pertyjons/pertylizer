@@ -132,6 +132,8 @@ pub const AMPLIFIER: Kernel = Kernel(amplifier);
 pub const COPY: Kernel = Kernel(copy);
 /// The voice sum's kernel: one instance's output added into the shared mix.
 pub const ACCUMULATE: Kernel = Kernel(accumulate);
+/// [`velocity_scaler`].
+pub const VELOCITY_SCALER: Kernel = Kernel(velocity_scaler);
 /// The monitor's kernel: its input, unchanged.
 pub const MONITOR: Kernel = Kernel(monitor);
 
@@ -208,6 +210,13 @@ pub enum PreparedNode {
         /// preparation unchanged, and a raw `f32` here would let a prepared record carry
         /// a sustain the IR would have refused.
         sustain: NormalizedLevel,
+        /// The authored velocity sensitivity, the base its slot starts from (ADR-0059).
+        velocity_sensitivity: NormalizedLevel,
+    },
+    /// A velocity scaler's authored sensitivity (ADR-0059).
+    VelocityScaler {
+        /// The base its sensitivity slot starts from.
+        sensitivity: NormalizedLevel,
     },
     /// A two-pole low-pass, as the four coefficients its integrators read.
     ///
@@ -256,6 +265,11 @@ pub enum PreparedNode {
 pub enum NodeState {
     /// A node that keeps nothing between quanta.
     Stateless,
+    /// A velocity scaler's note velocity, held between quanta (ADR-0059).
+    Scaled {
+        /// The velocity last written, applied to every sample.
+        velocity: NoteVelocity,
+    },
     /// An envelope's segment, the ramp it is on, and its gate.
     Envelope {
         /// Which segment it is in.
@@ -377,6 +391,9 @@ impl NodeState {
                 fade_remaining: 0,
                 fade_total: 0,
             },
+            PreparedNode::VelocityScaler { .. } => Self::Scaled {
+                velocity: NoteVelocity::FULL,
+            },
             PreparedNode::Silence
             | PreparedNode::Amplifier
             | PreparedNode::Constant { .. }
@@ -410,6 +427,10 @@ impl NodeState {
                     ParameterValue::ZERO
                 }),
                 ENVELOPE_VELOCITY => ParameterValue::new(velocity.as_f32()).ok(),
+                _ => None,
+            },
+            Self::Scaled { velocity } => match control {
+                VELOCITY_SCALER_VELOCITY => ParameterValue::new(velocity.as_f32()).ok(),
                 _ => None,
             },
             Self::Filter { .. } | Self::Sum { .. } | Self::Stateless => None,
@@ -447,11 +468,23 @@ pub(crate) fn authored_value(
             SAW_AMPLITUDE => Some(ParameterValue::from_amplitude(*amplitude)),
             _ => None,
         },
+        PreparedNode::Envelope {
+            velocity_sensitivity,
+            ..
+        } => match control {
+            ENVELOPE_VELOCITY_SENSITIVITY => {
+                Some(ParameterValue::from_level(*velocity_sensitivity))
+            }
+            _ => None,
+        },
+        PreparedNode::VelocityScaler { sensitivity } => match control {
+            VELOCITY_SCALER_SENSITIVITY => Some(ParameterValue::from_level(*sensitivity)),
+            _ => None,
+        },
         PreparedNode::Silence
         | PreparedNode::Constant { .. }
         | PreparedNode::Impulse { .. }
         | PreparedNode::Gain { .. }
-        | PreparedNode::Envelope { .. }
         | PreparedNode::Filter { .. }
         | PreparedNode::Amplifier
         | PreparedNode::Copy => None,
@@ -505,6 +538,17 @@ pub const ENVELOPE_GATE: ControlIndex = ControlIndex::new(0);
 /// Aiming the attack at the velocity instead would hard-code full sensitivity and would break
 /// on this kernel's own handoff, which assigns `level = 1.0` unconditionally.
 pub const ENVELOPE_VELOCITY: ControlIndex = ControlIndex::new(1);
+
+/// The envelope's velocity sensitivity, `s` in V1's `1 − s × (1 − v)` (ADR-0059): a
+/// quantum-rate control, read per frame from its slot's ramp.
+pub const ENVELOPE_VELOCITY_SENSITIVITY: ControlIndex = ControlIndex::new(2);
+
+/// The velocity scaler's velocity destination (ADR-0059): `SOUND-INV-021`'s second velocity
+/// write, held as a level like the envelope's.
+pub const VELOCITY_SCALER_VELOCITY: ControlIndex = ControlIndex::new(0);
+
+/// The velocity scaler's sensitivity, `s` in V1's `(1 − s) + s × v` (ADR-0059).
+pub const VELOCITY_SCALER_SENSITIVITY: ControlIndex = ControlIndex::new(1);
 /// A sine's frequency control.
 pub const SINE_FREQUENCY: ControlIndex = ControlIndex::new(0);
 /// A sine's amplitude control.
@@ -995,10 +1039,13 @@ pub fn envelope(prepared: &PreparedNode, state: &mut NodeState, io: &mut NodeIo<
         decay_frames,
         release_frames,
         sustain,
+        ..
     } = prepared
     else {
         return;
     };
+    // ADR-0059: the velocity sensitivity, quantum-rate, one value per frame from its slot.
+    let sensitivity = ramp_of(io.ramps, 0);
     let NodeState::Envelope {
         segment,
         level,
@@ -1088,7 +1135,13 @@ pub fn envelope(prepared: &PreparedNode, state: &mut NodeState, io: &mut NodeIo<
         // Velocity scales what leaves the node and nothing else, which is V1's law — it
         // multiplies the completed envelope rather than aiming a segment at the velocity.
         run.level = level;
-        *sample = level * run.velocity.as_f32();
+        // ADR-0059, V1's own arithmetic: `1 − s × (1 − v)`.
+        let s = sensitivity
+            .get(frame)
+            .or(sensitivity.last())
+            .copied()
+            .unwrap_or(1.0);
+        *sample = level * (1.0 - s * (1.0 - run.velocity.as_f32()));
     }
     // Settled before it is stored, so a quantum that ends exactly on a segment boundary
     // leaves the state on the segment that follows rather than on the exhausted one.
@@ -1382,6 +1435,45 @@ impl Fade {
         self.remaining = self.remaining.saturating_sub(1);
         gain
     }
+}
+
+/// V1's voice-output velocity stage (ADR-0059): every sample scaled by `(1 − s) + s × v`,
+/// `v` the velocity its own destination last received — held, as the envelope holds its —
+/// and `s` its sensitivity, read per frame from its slot's ramp. In place, like a gain.
+pub fn velocity_scaler(_prepared: &PreparedNode, state: &mut NodeState, io: &mut NodeIo<'_>) {
+    let NodeState::Scaled { velocity } = state else {
+        return;
+    };
+    let sensitivity = ramp_of(io.ramps, 0);
+    let source = io.inputs[0];
+    let mut held = *velocity;
+    let mut due = 0_usize;
+    for frame in 0..io.out.len() {
+        while let Some(control) = io.controls.get(due) {
+            if control.offset.as_usize() != frame {
+                break;
+            }
+            due += 1;
+            if matches!(control.control, VELOCITY_SCALER_VELOCITY) {
+                held = NoteVelocity::saturating(control.value.as_f32());
+            }
+        }
+        let s = sensitivity
+            .get(frame)
+            .or(sensitivity.last())
+            .copied()
+            .unwrap_or(1.0);
+        let scale = (1.0 - s) + s * held.as_f32();
+        let input = match source {
+            InputBuffer::Patched(source) => source.get(frame).copied().unwrap_or(0.0),
+            InputBuffer::InPlace => io.out.get(frame).copied().unwrap_or(0.0),
+            InputBuffer::Unpatched => 0.0,
+        };
+        if let Some(sample) = io.out.get_mut(frame) {
+            *sample = input * scale;
+        }
+    }
+    *velocity = held;
 }
 
 /// One buffer copied into another.

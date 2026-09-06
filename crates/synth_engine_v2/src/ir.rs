@@ -228,6 +228,9 @@ pub enum IrNodeKind {
         sustain: NormalizedLevel,
         /// How long the level takes to reach silence once the gate falls.
         release: Seconds,
+        /// How much the note's velocity scales the emitted level — V1's `vel_sens`: the scale
+        /// is `1 − s × (1 − v)`, so one is the full velocity and zero ignores it (ADR-0059).
+        velocity_sensitivity: NormalizedLevel,
     },
     /// A two-pole low-pass over one mono input.
     ///
@@ -258,6 +261,13 @@ pub enum IrNodeKind {
     /// in this crate — an unpatched input is silence — and the alternative would be to
     /// invent a level nobody asked for.
     Amplifier,
+    /// V1's voice-output velocity stage (ADR-0059): a pass-through scaled by
+    /// `(1 − s) + s × v` from its own velocity destination and this sensitivity, which the
+    /// lowerer places between a voice's terminating node and the output.
+    VelocityScaler {
+        /// V1's `velocity_amp_sensitivity`: one is the full velocity, zero ignores it.
+        sensitivity: NormalizedLevel,
+    },
     /// A pass-through that declares an observation tap on its output (`SOUND-INV-022`).
     ///
     /// The one authored way a plan carries a tap: a monitor placed where a project wants
@@ -320,6 +330,12 @@ pub mod parameters {
     /// parameter for the reason the gate is: one destination, one timing, whichever payload
     /// moved it.
     pub const ENVELOPE_VELOCITY: ParameterId = ParameterId::new(3);
+    /// The envelope's velocity sensitivity (ADR-0059).
+    pub const ENVELOPE_VELOCITY_SENSITIVITY: ParameterId = ParameterId::new(4);
+    /// The velocity scaler's velocity destination (ADR-0059).
+    pub const VELOCITY_SCALER_VELOCITY: ParameterId = ParameterId::new(0);
+    /// The velocity scaler's sensitivity (ADR-0059).
+    pub const VELOCITY_SCALER_SENSITIVITY: ParameterId = ParameterId::new(1);
 }
 
 /// One node in the IR.

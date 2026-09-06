@@ -897,6 +897,7 @@ fn absent_envelope_parameters_use_v1s_own_defaults() {
                 decay,
                 sustain,
                 release,
+                ..
             } => Some((
                 attack.as_f32(),
                 decay.as_f32(),
@@ -1574,10 +1575,25 @@ fn a_saved_instrument_and_song_render_through_v2_and_are_audible() {
         "and nothing refuses it, got {:?}",
         rendered.diagnostics
     );
-    // The **reporting** half is unchanged, and it is a different question: V2 applies velocity
-    // as one scale where V1 composes two sensitivities, so the render is admissible and a
-    // parity claim over it is not.
-    assert_eq!(rendered.fidelity(), Fidelity::UnsupportedScope);
+    // And since ADR-0059 the velocity half of the reporting closes too: the composition is
+    // V1's, so nothing names it as unrepresented. What still keeps this outcome from
+    // `Faithful` is Phase 8's — the master volume and the pan stages — and is named as such.
+    assert!(
+        !names_the_composition(&rendered),
+        "{:?}",
+        rendered.diagnostics
+    );
+}
+
+/// Whether any diagnostic names the velocity composition ADR-0059 built as unrepresented.
+fn names_the_composition(rendered: &super::render::SmokeRender) -> bool {
+    rendered.diagnostics.iter().any(|d| {
+        matches!(
+            d.reason(),
+            LoweringReason::OwnedByLaterPhase { capability, owner }
+                if capability.contains("velocity") || owner.contains("composition law")
+        )
+    })
 }
 
 /// Two notes overlapping on one gate are refused rather than rendered wrongly.
@@ -3663,9 +3679,10 @@ fn a_saved_notes_own_pitch_reaches_the_render() {
 
 #[test]
 fn a_saved_notes_own_velocity_reaches_the_render() {
-    // The other half. V2 applies velocity as one scale on the envelope, so half the velocity
-    // is half the peak — which is a stronger claim than "they differ" and is what
-    // distinguishes velocity reaching the amplitude from velocity reaching anything at all.
+    // The other half. The fixture's instrument has an amp sensitivity of zero, so only the
+    // envelope's sensitivity — V1's default, one — scales the note: half the velocity is half
+    // the peak, a stronger claim than "they differ" and what distinguishes velocity reaching
+    // the amplitude from velocity reaching anything at all.
     let loud = render_one_note(60, 1.0, 0.0);
     let soft = render_one_note(60, 0.5, 0.0);
     assert!(loud.is_audible() && soft.is_audible(), "both have to sound");
@@ -3676,6 +3693,66 @@ fn a_saved_notes_own_velocity_reaches_the_render() {
         "half the velocity rendered a peak ratio of {ratio}, from {} against {}",
         peak(&soft),
         peak(&loud)
+    );
+}
+
+#[test]
+fn the_envelopes_own_sensitivity_lowers_from_vel_sens() {
+    // ADR-0059 clause 5, the other saved sensitivity: the envelope module's `vel_sens` reaches
+    // the envelope's own control. At zero the envelope ignores the velocity, and with the
+    // fixture's amp sensitivity also zero, half the velocity is the **same** peak — a lowerer
+    // sending V1's default of one instead would render half.
+    let (mut modules, connections) = corpus_patch("sine");
+    let env = modules
+        .iter_mut()
+        .find(|m| m.id == "env-1")
+        .expect("the corpus patch has its envelope");
+    floats(env, &[("vel_sens", 0.0)]);
+    let saved = saved_instrument(modules, connections);
+    let render = |velocity: f32| {
+        super::render::smoke_render(
+            &saved,
+            &one_note_song(60, velocity, 0.0),
+            &crate::project::GlobalProjectState::default(),
+            harness_profile(),
+            FrameCount::new(4_800),
+        )
+    };
+    let loud = render(1.0);
+    let soft = render(0.5);
+    assert!(loud.is_audible() && soft.is_audible());
+    let ratio = peak(&soft) / peak(&loud);
+    assert!(
+        (ratio - 1.0).abs() < 0.02,
+        "an envelope ignoring the velocity rendered a peak ratio of {ratio}"
+    );
+}
+
+#[test]
+fn v1s_two_sensitivities_compose_to_the_velocity_squared() {
+    // ADR-0059 end to end through the lowerer: with the instrument's amp sensitivity at V1's
+    // default of one beside the envelope's, half the velocity is a **quarter** of the peak —
+    // V1's product — where a single scale would give half.
+    let (modules, connections) = corpus_patch("sine");
+    let mut saved = saved_instrument(modules, connections);
+    saved.velocity_amp_sensitivity = synth_core::NormalizedValue::MAX;
+    let render = |velocity: f32| {
+        super::render::smoke_render(
+            &saved,
+            &one_note_song(60, velocity, 0.0),
+            &crate::project::GlobalProjectState::default(),
+            harness_profile(),
+            FrameCount::new(4_800),
+        )
+    };
+    let loud = render(1.0);
+    let soft = render(0.5);
+    assert!(loud.is_audible() && soft.is_audible());
+    assert!(!names_the_composition(&loud), "{:?}", loud.diagnostics);
+    let ratio = peak(&soft) / peak(&loud);
+    assert!(
+        (ratio - 0.25).abs() < 0.02,
+        "half the velocity under two sensitivities rendered a peak ratio of {ratio}"
     );
 }
 
@@ -3798,9 +3875,11 @@ fn an_instrument_diagnostic_names_the_instrument_rather_than_the_song() {
     // `ProjectSubject::Instrument::name` documents itself as the instrument's. An earlier
     // revision passed the **song's** name, so a diagnostic about an instrument named the
     // project; an independent review found it. The two names differ here on purpose.
+    // Two notes through the one gate raise an instrument-level diagnostic until Phase 6's
+    // allocator lowers them, which is what this test now reads it from.
     let (modules, connections) = corpus_patch("sine");
     let saved = saved_instrument(modules, connections);
-    let mut song = one_note_song(60, 0.8, 0.0);
+    let mut song = four_note_song();
     song.name = "A Song By Another Name".to_owned();
 
     let rendered = super::render::smoke_render(
@@ -3832,26 +3911,38 @@ fn an_instrument_diagnostic_names_the_instrument_rather_than_the_song() {
 }
 
 #[test]
-fn a_render_that_places_a_note_still_refuses_a_parity_comparison() {
-    // The reporting half, and it is deliberately *not* closed by this slice. V1 applies one
-    // saved velocity twice — at the envelope and again at the voice output — and V2 applies it
-    // once, so the render is admissible and a parity claim over it is not. The work list says
-    // closing `P03-R003` "does not decide Phase 6's tuning or expression-composition model",
-    // which is what this asserts rather than assumes.
+fn a_placed_note_names_no_velocity_gap_and_still_refuses_a_parity_verdict() {
+    // The reporting half's velocity clause, closed by `P06-S004` under ADR-0059: V1 applies
+    // one saved velocity twice — at the envelope and again at the voice output — and V2 now
+    // applies both, each with its saved sensitivity, so a placed note no longer names the
+    // composition as unrepresented. The outcome is **still** `UnsupportedScope` and still
+    // refuses a parity verdict, and rightly: Phase 8's stages — the master volume and the
+    // pans — remain named, and `LOWER-INV-003` waits for the *last* unrepresented
+    // capability, not for this one. An independent read caught an earlier name for this test
+    // that claimed the verdict was admitted.
     let rendered = render_one_note(60, 0.8, 0.0);
     assert!(rendered.is_audible());
     assert_eq!(rendered.fidelity(), Fidelity::UnsupportedScope);
     assert!(
-        rendered.diagnostics.iter().any(|d| matches!(
+        !rendered.fidelity().admits_parity_comparison(),
+        "Phase 8's marks still refuse the verdict"
+    );
+    assert!(
+        !names_the_composition(&rendered),
+        "nothing names the velocity composition as unrepresented, got {:?}",
+        rendered.diagnostics
+    );
+    assert!(
+        rendered.diagnostics.iter().all(|d| matches!(
             d.reason(),
-            LoweringReason::OwnedByLaterPhase { owner, .. } if owner.contains("composition law")
+            LoweringReason::OwnedByLaterPhase { owner, .. } if owner == &"Phase 8"
         )),
-        "and it names what is unrepresented, got {:?}",
+        "and what remains is Phase 8's alone, got {:?}",
         rendered.diagnostics
     );
 
-    // Raised **once**, not once per note: it is a property of the lowering rather than of any
-    // note the project holds.
+    // And with four notes through the one gate, the same holds: nothing names the velocity
+    // composition, however many notes the project places.
     let (modules, connections) = corpus_patch("sine");
     let saved = saved_instrument(modules, connections);
     let four = super::render::smoke_render(
@@ -3861,18 +3952,7 @@ fn a_render_that_places_a_note_still_refuses_a_parity_comparison() {
         harness_profile(),
         FrameCount::new(48_000),
     );
-    assert_eq!(
-        four.diagnostics
-            .iter()
-            .filter(|d| matches!(
-                d.reason(),
-                LoweringReason::OwnedByLaterPhase { owner, .. } if owner.contains("composition law")
-            ))
-            .count(),
-        1,
-        "four notes must not raise it four times, got {:?}",
-        four.diagnostics
-    );
+    assert!(!names_the_composition(&four), "{:?}", four.diagnostics);
 }
 
 /// A cable spelled `amp-01` reaches the module declared `amp-1`, because that is how V1

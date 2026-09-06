@@ -24,7 +24,7 @@ use synth_engine_v2::quantities::EventCount;
 use synth_engine_v2::time::{FrameCount, PlanPosition};
 
 use super::diagnostics::{Fidelity, LoweringDiagnostic, LoweringReason, ProjectSubject, Severity};
-use super::graph::lower_voice_patch;
+use super::graph::lower_voice_patch_with;
 use super::performance::lower_performance;
 use crate::patch::InstrumentState;
 
@@ -270,6 +270,10 @@ fn instrument_state_dispositions(
         max_voices,
         // Carried by `P04-R001`'s composition marker, which names both sensitivities and the
         // composition V2 does not have. Raised where the notes are, not here.
+        // ADR-0059: V1's voice-output velocity stage, lowered to a velocity scaler where the
+        // patch is lowered below, read from the saved instrument there. Its sibling is set on
+        // the voice and read by nothing in V1's DSP — V1's own dead field — so it lowers to
+        // nothing and is not a fidelity mark.
         velocity_amp_sensitivity: _,
         // Measured **inert in V1** by `velocity_filter_sensitivity_is_inert_in_v1`, which is a
         // characterization test that fails the day someone implements it.
@@ -520,11 +524,35 @@ pub fn smoke_render(
     let peak = super::performance::peak_events_per_quantum(saved.id, song, sample_rate)
         .unwrap_or(EventCount::NONE);
 
-    let lowered = lower_voice_patch(
+    let amp_sensitivity = match synth_engine_v2::quantities::NormalizedLevel::new(
+        saved.velocity_amp_sensitivity.as_f32(),
+    ) {
+        Ok(level) => level,
+        Err(error) => {
+            let mut diagnostics = mixer_diagnostics;
+            diagnostics.push(LoweringDiagnostic::refused(
+                ProjectSubject::Instrument {
+                    instrument: saved.id,
+                    name: saved.name.clone(),
+                },
+                LoweringReason::UnsupportedParameterValue {
+                    value: error.to_string(),
+                },
+            ));
+            return SmokeRender {
+                samples: Vec::new(),
+                diagnostics,
+                lowered_events: EventCount::NONE,
+                lowered_frames: FrameCount::new(0),
+            };
+        }
+    };
+    let lowered = lower_voice_patch_with(
         saved.id,
         &saved.patch.modules,
         &saved.patch.connections,
         peak,
+        Some(amp_sensitivity),
     );
     let mut diagnostics = mixer_diagnostics;
     diagnostics.extend(lowered.diagnostics);

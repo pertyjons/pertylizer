@@ -67,6 +67,7 @@ fn adsr(frames: u32, sustain: f32) -> PreparedNode {
         decay_frames: SegmentFrames::new(frames),
         release_frames: SegmentFrames::new(frames),
         sustain: NormalizedLevel::new(sustain).expect("a level within the range"),
+        velocity_sensitivity: crate::quantities::NormalizedLevel::FULL,
     }
 }
 
@@ -309,6 +310,7 @@ fn a_zero_length_attack_is_instantaneous_rather_than_infinite() {
         decay_frames: SegmentFrames::new(2),
         release_frames: SegmentFrames::new(2),
         sustain: NormalizedLevel::new(0.5).expect("a level within the range"),
+        velocity_sensitivity: crate::quantities::NormalizedLevel::FULL,
     };
     let mut state = NodeState::initial(&prepared);
     let rendered = run_with(envelope, &prepared, &mut state, 4, &[gate_at(0, true)]);
@@ -353,6 +355,7 @@ fn a_gate_edge_inside_a_quantum_takes_effect_at_its_own_sample() {
         decay_frames: SegmentFrames::NONE,
         release_frames: SegmentFrames::NONE,
         sustain: NormalizedLevel::new(0.5).expect("a level within the range"),
+        velocity_sensitivity: crate::quantities::NormalizedLevel::FULL,
     };
     let mut state = NodeState::initial(&prepared);
     let rendered = run_with(
@@ -384,6 +387,7 @@ fn two_edges_in_one_quantum_each_take_effect_at_their_own_sample() {
         decay_frames: SegmentFrames::NONE,
         release_frames: SegmentFrames::NONE,
         sustain: NormalizedLevel::new(0.5).expect("a level within the range"),
+        velocity_sensitivity: crate::quantities::NormalizedLevel::FULL,
     };
     let mut state = NodeState::initial(&prepared);
     run_with(envelope, &prepared, &mut state, 64, &[gate_at(0, true)]);

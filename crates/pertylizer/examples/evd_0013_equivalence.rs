@@ -233,6 +233,7 @@ fn v2_graph(frequency: f32, cutoff_hz: f32) -> GraphIr {
                 decay: Seconds::new(DECAY_S).expect("finite"),
                 sustain: NormalizedLevel::new(SUSTAIN).expect("in range"),
                 release: Seconds::new(RELEASE_S).expect("finite"),
+                velocity_sensitivity: synth_engine_v2::quantities::NormalizedLevel::FULL,
             },
             ExecutionScope::Voice,
         )

@@ -126,6 +126,7 @@ fn voice_path() -> GraphIr {
                 decay: Seconds::new(0.1).expect("not negative"),
                 sustain: NormalizedLevel::new(0.7).expect("within range"),
                 release: Seconds::new(0.2).expect("not negative"),
+                velocity_sensitivity: synth_engine_v2::quantities::NormalizedLevel::FULL,
             },
             ExecutionScope::Voice,
         )

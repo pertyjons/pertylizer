@@ -339,6 +339,7 @@ fn monitored_voice() -> GraphIr {
                 decay: Seconds::ZERO,
                 sustain: NormalizedLevel::FULL,
                 release: Seconds::ZERO,
+                velocity_sensitivity: crate::quantities::NormalizedLevel::FULL,
             },
             ExecutionScope::Voice,
         )

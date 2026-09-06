@@ -65,6 +65,7 @@ fn gated_constant_declaring(declarations: synth_engine_v2::ir::PlanDeclarations)
                 decay: Seconds::new(0.0).expect("not negative"),
                 sustain: NormalizedLevel::FULL,
                 release: Seconds::new(0.0).expect("not negative"),
+                velocity_sensitivity: synth_engine_v2::quantities::NormalizedLevel::FULL,
             },
             ExecutionScope::Voice,
         )
@@ -2363,6 +2364,7 @@ fn empty_producer_then_sounding() -> CompiledPlan {
                 decay: Seconds::new(0.0).expect("not negative"),
                 sustain: NormalizedLevel::FULL,
                 release: Seconds::new(0.0).expect("not negative"),
+                velocity_sensitivity: synth_engine_v2::quantities::NormalizedLevel::FULL,
             },
             ExecutionScope::Voice,
         )
@@ -2462,6 +2464,7 @@ fn compiled_and_live_producers() -> CompiledPlan {
                 decay: Seconds::new(0.0).expect("not negative"),
                 sustain: NormalizedLevel::FULL,
                 release: Seconds::new(0.0).expect("not negative"),
+                velocity_sensitivity: synth_engine_v2::quantities::NormalizedLevel::FULL,
             },
             ExecutionScope::Voice,
         )
@@ -2656,6 +2659,7 @@ fn playable_without_a_producer() -> CompiledPlan {
                 decay: Seconds::new(0.0).expect("not negative"),
                 sustain: NormalizedLevel::FULL,
                 release: Seconds::new(0.0).expect("not negative"),
+                velocity_sensitivity: synth_engine_v2::quantities::NormalizedLevel::FULL,
             },
             ExecutionScope::Voice,
         )
@@ -3074,6 +3078,7 @@ fn two_gated_stages(simultaneous: u32) -> GraphIr {
                 decay: Seconds::new(0.0).expect("not negative"),
                 sustain: NormalizedLevel::FULL,
                 release: Seconds::new(0.0).expect("not negative"),
+                velocity_sensitivity: synth_engine_v2::quantities::NormalizedLevel::FULL,
             },
             ExecutionScope::Voice,
         )
@@ -3089,6 +3094,7 @@ fn two_gated_stages(simultaneous: u32) -> GraphIr {
                 decay: Seconds::new(0.0).expect("not negative"),
                 sustain: NormalizedLevel::FULL,
                 release: Seconds::new(0.0).expect("not negative"),
+                velocity_sensitivity: synth_engine_v2::quantities::NormalizedLevel::FULL,
             },
             ExecutionScope::InstrumentInstance,
         )
@@ -3421,6 +3427,7 @@ fn gated_sine(simultaneous: u32) -> GraphIr {
                 decay: Seconds::new(0.0).expect("not negative"),
                 sustain: NormalizedLevel::FULL,
                 release: Seconds::new(0.0).expect("not negative"),
+                velocity_sensitivity: synth_engine_v2::quantities::NormalizedLevel::FULL,
             },
             ExecutionScope::Voice,
         )

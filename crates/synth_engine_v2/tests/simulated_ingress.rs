@@ -93,6 +93,7 @@ fn gated_constant(declarations: PlanDeclarations) -> GraphIr {
                 decay: Seconds::new(0.0).expect("not negative"),
                 sustain: NormalizedLevel::FULL,
                 release: Seconds::new(0.0).expect("not negative"),
+                velocity_sensitivity: synth_engine_v2::quantities::NormalizedLevel::FULL,
             },
             ExecutionScope::Voice,
         )
@@ -338,6 +339,7 @@ fn pitched(declarations: PlanDeclarations) -> CompiledPlan {
                 decay: synth_engine_v2::quantities::Seconds::ZERO,
                 sustain: synth_engine_v2::quantities::NormalizedLevel::FULL,
                 release: synth_engine_v2::quantities::Seconds::ZERO,
+                velocity_sensitivity: synth_engine_v2::quantities::NormalizedLevel::FULL,
             },
             ExecutionScope::Voice,
         )

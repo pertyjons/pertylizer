@@ -453,6 +453,7 @@ fn gated_constant() -> (GraphIr, NodeId) {
                 decay: Seconds::new(0.0).expect("not negative"),
                 sustain: NormalizedLevel::new(0.5).expect("within range"),
                 release: Seconds::new(0.0).expect("not negative"),
+                velocity_sensitivity: synth_engine_v2::quantities::NormalizedLevel::FULL,
             },
             ExecutionScope::Voice,
         )

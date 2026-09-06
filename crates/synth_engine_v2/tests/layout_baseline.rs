@@ -98,6 +98,7 @@ fn envelope() -> IrNodeKind {
         decay: Seconds::new(0.100).expect("finite"),
         sustain: NormalizedLevel::new(0.700).expect("in range"),
         release: Seconds::new(0.200).expect("finite"),
+        velocity_sensitivity: synth_engine_v2::quantities::NormalizedLevel::FULL,
     }
 }
 

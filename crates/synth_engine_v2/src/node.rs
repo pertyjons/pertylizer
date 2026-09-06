@@ -540,6 +540,7 @@ fn prepare_envelope(
         decay,
         sustain,
         release,
+        velocity_sensitivity,
     } = kind
     else {
         return Err(declared_for_another_kind(node));
@@ -567,7 +568,20 @@ fn prepare_envelope(
         decay_frames: frames[1],
         release_frames: frames[2],
         sustain,
+        velocity_sensitivity,
     })
+}
+
+/// Prepare a velocity scaler: its sensitivity, as authored (ADR-0059).
+fn prepare_velocityscaler(
+    node: NodeId,
+    kind: IrNodeKind,
+    _rate: SampleRate,
+) -> Result<PreparedNode, CompileError> {
+    let IrNodeKind::VelocityScaler { sensitivity } = kind else {
+        return Err(declared_for_another_kind(node));
+    };
+    Ok(PreparedNode::VelocityScaler { sensitivity })
 }
 
 /// A node kind's stable identity, for discovery and for anything that persists a choice.
@@ -591,6 +605,8 @@ pub enum NodeKindId {
     Saw,
     /// A fixed gain.
     Gain,
+    /// V1's voice-output velocity stage (ADR-0059).
+    VelocityScaler,
     /// An amplifier driven by a control input.
     Amplifier,
     /// A low-pass filter.
@@ -786,13 +802,30 @@ pub(crate) static ENVELOPE: NodeDeclaration = NodeDeclaration {
             rate: ControlRate::Sample,
             magnitude: Some(NoteMagnitude::Velocity),
         },
+        // ADR-0059: how much the velocity scales the level, V1's `vel_sens`. Quantum-rate,
+        // authored, and read per frame by the kernel that computes `1 − s × (1 − v)`.
+        ControlSpec {
+            parameter: parameters::ENVELOPE_VELOCITY_SENSITIVITY,
+            name: "velocity_sensitivity",
+            default: ParameterDefault::NormalizedLevel(crate::quantities::NormalizedLevel::FULL),
+            law: ModulationLaw::NormalizedAdditive,
+            smoothing: Smoothing::None,
+            control: kernels::ENVELOPE_VELOCITY_SENSITIVITY,
+            rate: ControlRate::Quantum,
+            magnitude: None,
+        },
     ],
     in_place_safe: false,
     note_control: Some(kernels::ENVELOPE_GATE),
     taps: &[],
     prepare: prepare_envelope,
-    prepared_bytes: size_of::<(SegmentFrames, SegmentFrames, SegmentFrames, NormalizedLevel)>()
-        as u64,
+    prepared_bytes: size_of::<(
+        SegmentFrames,
+        SegmentFrames,
+        SegmentFrames,
+        NormalizedLevel,
+        NormalizedLevel,
+    )>() as u64,
     state_bytes: size_of::<(
         kernels::Segment,
         f32,
@@ -966,9 +999,57 @@ pub(crate) static FILTER: NodeDeclaration = NodeDeclaration {
 /// the declarations are `static` rather than `const`: a `const` is materialised at each
 /// use and has no single address to compare — so a kind declared but left out here cannot
 /// be discovered, and one listed here but not resolvable cannot compile.
-static DECLARED: [&NodeDeclaration; 10] = [
-    &SILENCE, &CONSTANT, &IMPULSE, &SINE, &SAW, &GAIN, &AMPLIFIER, &FILTER, &ENVELOPE, &MONITOR,
+static DECLARED: [&NodeDeclaration; 11] = [
+    &SILENCE,
+    &CONSTANT,
+    &IMPULSE,
+    &SINE,
+    &SAW,
+    &GAIN,
+    &AMPLIFIER,
+    &FILTER,
+    &ENVELOPE,
+    &MONITOR,
+    &VELOCITY_SCALER,
 ];
+
+/// V1's voice-output velocity stage, declared once — ADR-0059. Its sensitivity is prepared;
+/// the velocity its destination last received is kept; and it scales each sample
+/// independently, so one buffer serves as input and output.
+pub(crate) static VELOCITY_SCALER: NodeDeclaration = NodeDeclaration {
+    id: NodeKindId::VelocityScaler,
+    name: "velocity_scaler",
+    kernel: kernels::VELOCITY_SCALER,
+    ports: &[AUDIO_IN, AUDIO_OUT],
+    controls: &[
+        ControlSpec {
+            parameter: parameters::VELOCITY_SCALER_VELOCITY,
+            name: "velocity",
+            default: ParameterDefault::NormalizedLevel(crate::quantities::NormalizedLevel::FULL),
+            law: ModulationLaw::NormalizedAdditive,
+            smoothing: Smoothing::None,
+            control: kernels::VELOCITY_SCALER_VELOCITY,
+            rate: ControlRate::Sample,
+            magnitude: Some(NoteMagnitude::Velocity),
+        },
+        ControlSpec {
+            parameter: parameters::VELOCITY_SCALER_SENSITIVITY,
+            name: "sensitivity",
+            default: ParameterDefault::NormalizedLevel(crate::quantities::NormalizedLevel::FULL),
+            law: ModulationLaw::NormalizedAdditive,
+            smoothing: Smoothing::None,
+            control: kernels::VELOCITY_SCALER_SENSITIVITY,
+            rate: ControlRate::Quantum,
+            magnitude: None,
+        },
+    ],
+    in_place_safe: true,
+    note_control: None,
+    taps: &[],
+    prepare: prepare_velocityscaler,
+    prepared_bytes: size_of::<NormalizedLevel>() as u64,
+    state_bytes: size_of::<crate::quantities::NoteVelocity>() as u64,
+};
 
 /// One port, as discovery presents it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1105,6 +1186,7 @@ pub(crate) fn declaration(kind: IrNodeKind) -> Option<&'static NodeDeclaration> 
         IrNodeKind::Amplifier => Some(&AMPLIFIER),
         IrNodeKind::Monitor => Some(&MONITOR),
         IrNodeKind::Gain { .. } => Some(&GAIN),
+        IrNodeKind::VelocityScaler { .. } => Some(&VELOCITY_SCALER),
         IrNodeKind::Filter { .. } => Some(&FILTER),
         // The output node has no kernel and no declaration: writing the stream's channels
         // is the renderer's boundary rather than a node's work.
@@ -1146,6 +1228,7 @@ pub(crate) fn descriptor(kind: IrNodeKind) -> Option<NodeDescriptor> {
         IrNodeKind::Monitor => declared.map(NodeDeclaration::descriptor),
         IrNodeKind::Filter { .. } => declared.map(NodeDeclaration::descriptor),
         IrNodeKind::Gain { .. } => declared.map(NodeDeclaration::descriptor),
+        IrNodeKind::VelocityScaler { .. } => declared.map(NodeDeclaration::descriptor),
     }
 }
 
@@ -1361,6 +1444,7 @@ pub fn prepared_payload_bytes(kind: IrNodeKind) -> u64 {
         IrNodeKind::Amplifier => return declared.map_or(0, |d| d.prepared_bytes),
         IrNodeKind::Monitor => return declared.map_or(0, |d| d.prepared_bytes),
         IrNodeKind::Gain { .. } => return declared.map_or(0, |d| d.prepared_bytes),
+        IrNodeKind::VelocityScaler { .. } => return declared.map_or(0, |d| d.prepared_bytes),
         IrNodeKind::Filter { .. } => return declared.map_or(0, |d| d.prepared_bytes),
         // The output node has no kernel, so it carries no prepared data of its own.
         IrNodeKind::Output => 0,
@@ -1406,6 +1490,7 @@ pub fn state_payload_bytes(kind: IrNodeKind) -> u64 {
         IrNodeKind::Amplifier => return declared.map_or(0, |d| d.state_bytes),
         IrNodeKind::Monitor => return declared.map_or(0, |d| d.state_bytes),
         IrNodeKind::Gain { .. } => return declared.map_or(0, |d| d.state_bytes),
+        IrNodeKind::VelocityScaler { .. } => return declared.map_or(0, |d| d.state_bytes),
         IrNodeKind::Envelope { .. } => return declared.map_or(0, |d| d.state_bytes),
         IrNodeKind::Output => 0,
     }) as u64
@@ -1456,6 +1541,9 @@ mod tests {
             IrNodeKind::Gain {
                 factor: GainFactor::UNITY,
             },
+            IrNodeKind::VelocityScaler {
+                sensitivity: crate::quantities::NormalizedLevel::FULL,
+            },
             IrNodeKind::Amplifier,
             IrNodeKind::Monitor,
             IrNodeKind::Envelope {
@@ -1463,6 +1551,7 @@ mod tests {
                 decay: crate::quantities::Seconds::ZERO,
                 sustain: crate::quantities::NormalizedLevel::FULL,
                 release: crate::quantities::Seconds::ZERO,
+                velocity_sensitivity: crate::quantities::NormalizedLevel::FULL,
             },
             IrNodeKind::Filter {
                 cutoff: CutoffFrequency::new(1_000.0).expect("positive"),
@@ -1641,7 +1730,7 @@ mod tests {
             .collect();
         assert_eq!(
             declared.len(),
-            10,
+            11,
             "every kind but the output node is declared"
         );
 
@@ -1676,6 +1765,10 @@ mod tests {
                     | (IrNodeKind::Sine { .. }, PreparedNode::Sine { .. })
                     | (IrNodeKind::Saw { .. }, PreparedNode::Saw { .. })
                     | (IrNodeKind::Gain { .. }, PreparedNode::Gain { .. })
+                    | (
+                        IrNodeKind::VelocityScaler { .. },
+                        PreparedNode::VelocityScaler { .. }
+                    )
                     | (IrNodeKind::Amplifier, PreparedNode::Amplifier)
                     | (IrNodeKind::Monitor, PreparedNode::Copy)
                     | (IrNodeKind::Filter { .. }, PreparedNode::Filter { .. })
@@ -1701,7 +1794,7 @@ mod tests {
                 IrNodeKind::Constant { .. }
                 | IrNodeKind::Impulse { .. }
                 | IrNodeKind::Gain { .. } => (true, false),
-                IrNodeKind::Filter { .. } => (true, true),
+                IrNodeKind::Filter { .. } | IrNodeKind::VelocityScaler { .. } => (true, true),
                 IrNodeKind::Silence | IrNodeKind::Amplifier | IrNodeKind::Monitor => (false, false),
                 other => panic!("{other:?} is declared but this test does not know its shape"),
             };
@@ -1722,6 +1815,7 @@ mod tests {
                     IrNodeKind::Amplifier
                         | IrNodeKind::Monitor
                         | IrNodeKind::Gain { .. }
+                        | IrNodeKind::VelocityScaler { .. }
                         | IrNodeKind::Filter { .. }
                 ),
                 "{kind:?}"

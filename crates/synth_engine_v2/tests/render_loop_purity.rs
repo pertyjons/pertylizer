@@ -693,6 +693,9 @@ fn every_call_the_render_loop_makes_is_inside_the_checked_region() {
         "from_bend",
         // One more `const fn` counter read the drain mirrors into the report.
         "orphan_expressions",
+        // `ParameterValue::from_level` is a `const fn` newtype conversion, read by
+        // `authored_value` for a sensitivity's prepared base (ADR-0059).
+        "from_level",
         // `PerformanceIngress::envelope_for` is a `const fn` building an `EventEnvelope` from
         // the store's epoch and a time — the one site that writes the simulated source —
         // called by the drain's `stamp` closure for each deferred start.

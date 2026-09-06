@@ -29,8 +29,8 @@ excludes project lowering, while the rules below bind implementation now.
 
 It does not define the V2 render plan, the compiler, event scheduling or the note payload —
 those are the Sound Core render contract's, and `SOUND-INV-021` owns the payload's
-magnitudes. It does not decide how V1's two velocity sensitivities compose; that is Phase
-6's composition law, and `LOWER-INV-003` is what holds until it exists. It does not define
+magnitudes and, since ADR-0059, how V1's two velocity sensitivities compose; the lowerer
+carries each saved sensitivity to its destination and decides nothing about them. It does not define
 a comparison harness, a shared render request or a job contract; ADR-0028 owns those and
 Phase 10B accepts it. It does not decide which V1 module types are supported, which is a
 per-phase subset question rather than a contract.
@@ -67,18 +67,24 @@ per-phase subset question rather than a contract.
    must not be constructible.
 
 3. **LOWER-INV-003** — **No parity verdict may read an outcome that is not `Faithful`.**
-   While V1's two velocity sensitivities and their composition are unimplemented in V2, a
-   lowering that **produces a performance placing a note** raises exactly one `Unrepresented`
-   diagnostic naming that capability and its owning phase, and is therefore
-   `UnsupportedScope`. It is raised once per lowering, not once per note: it is a property
-   of how the lowerer composes velocity, not of any note the project holds. The render
-   itself is unaffected and still happens.
+   An outcome is `Faithful` only when its diagnostic set is empty (`LOWER-INV-002`), so a
+   verdict waits for the **last** unrepresented capability, not for any one of them: a
+   lowering that names Phase 8's master volume, or a pan stage, or two notes through one
+   gate, is as ineligible as one that named a velocity law. The render itself is unaffected
+   by any `Unrepresented` diagnostic and still happens.
 
-   **A lowering that refuses earlier does not carry this marker, and does not need to.** A
-   refused graph, an unreadable arrangement, an overlap or a note expression stops before a
-   performance exists; the outcome is `UnsupportedScope` through that refusal's own
-   diagnostic, and the first sentence — which is the one a comparison caller must obey — holds
-   for it either way. The marker's guarantee is about lowerings that **succeed**.
+   **History.** Until `P06-S004` this invariant carried a velocity clause: every lowering
+   that placed a note raised one `Unrepresented` diagnostic for V1's two velocity
+   sensitivities, which V2 applied as one scale. ADR-0059 built the composition — the
+   envelope's `vel_sens` and the instrument's `velocity_amp_sensitivity` each lower to their
+   own destination, `SOUND-INV-021` states the formulas — and the clause is discharged: a
+   lowering that places a note carries **no** diagnostic about velocity, and
+   `P04-R001` is closed. What remains named on a placed note today is Phase 8's, and the
+   general rule above is what the clause always reduced to.
+
+   **A lowering that refuses earlier is covered by the same sentence.** A refused graph, an
+   unreadable arrangement, an overlap or a note expression stops before a performance
+   exists; the outcome is `UnsupportedScope` through that refusal's own diagnostic.
 
    This invariant scopes the prohibition to **lowered outcomes**. A controlled V1/V2
    comparison that does not go through the lowerer — an evidence harness building its own
@@ -255,7 +261,8 @@ reads the diagnostics, each of which names its own subject.
 for either to gate. A lowered outcome's samples and diagnostics are readable, so a future
 caller could compare them without asking for the verdict; what prevents that today is that
 no such caller exists and ADR-0057 clause 5 refuses building one. The first consumer that
-needs a parity verdict brings the encapsulation with it, and inherits `P04-R001` first.
+needs a parity verdict brings the encapsulation with it. `P04-R001`, which it once had to
+inherit first, is closed by ADR-0059.
 
 ## Real-time and resource constraints
 
@@ -268,8 +275,8 @@ by the Sound Core render contract's own rules, which this specification does not
 | Invariant | Named test or evidence |
 |-----------|------------------------|
 | LOWER-INV-001 | `pertylizer`'s lowering tests: refusals naming an unsupported module type, an unsupported waveform, an unresolved endpoint, an unknown port, a domain mismatch, fan-in, a second output, a missing output, a note expression, an overlap, a muted instrument, a note graph, and a persisted transpose refused **by value** before the arithmetic that would panic on it |
-| LOWER-INV-002 | `Fidelity::of` takes the diagnostics and returns the verdict, so the two cannot disagree; `a_render_that_places_a_note_still_refuses_a_parity_comparison` asserts the marker on a real lowering |
-| LOWER-INV-003 | `a_render_that_places_a_note_still_refuses_a_parity_comparison`: the `UnsupportedScope` verdict, the diagnostic's named owner, and a count of exactly one over a four-note song. Its scoping is checked by EVD-0013's harness, which compiles a V2 graph directly and never calls the lowerer |
+| LOWER-INV-002 | `Fidelity::of` takes the diagnostics and returns the verdict, so the two cannot disagree; `a_placed_note_names_no_velocity_gap_and_still_refuses_a_parity_verdict` asserts on a real lowering that what remains named is Phase 8's alone, that the verdict is therefore `UnsupportedScope`, and that it refuses a parity comparison |
+| LOWER-INV-003 | `Fidelity::admits_parity_comparison` is `Faithful` alone by construction. The discharged velocity clause: `a_placed_note_names_no_velocity_gap_and_still_refuses_a_parity_verdict` asserts that no diagnostic names the velocity composition over one note and over four, that every remaining diagnostic is Phase 8's, and that the outcome still refuses a parity verdict through them; `v1s_two_sensitivities_compose_to_the_velocity_squared` asserts the lowered product at V1's defaults as a peak ratio of a quarter, which a single scale fails at a half. Its scoping is checked by EVD-0013's harness, which compiles a V2 graph directly and never calls the lowerer |
 | LOWER-INV-004 | `crate_boundary`, measured with `cargo tree --edges normal --invert` under default features; `synth_engine_v2` has no dependency on the lowering module. For the saved-state half: `every_persisted_song_field_has_a_disposition` pins the persisted field lists of `Song`, `Pattern`, `Note`, `PatternPlacement` and `SequencerTrack` with a disposition per field; `every_persisted_project_name_is_registered` pins every persisted name under `ProjectFile`, nested types included, against `lowering/persisted_fields.txt`; `every_audible_instrument_setting_is_dispositioned` walks the fields `offline_instrument_settings` measures as audible and asserts each is refused or reported, with a neutral instrument as its control; `song_level_state_is_refused_rather_than_ignored` covers the Mod Grid graph — routed and global or assigned refused, empty or unassigned rendering — the note-processor rack on a placed pattern against one unplaced, placed only on a muted track or zero-length, or zero-length under a length override, and the rule's boundary pinned as a rack on an audible pattern with no note, the Note Grid pool against a node-less binding, a rack shadowed by a node-less binding, a binding with a node, a dangling binding and a note-scope binding on a **hidden** note, the length override and the rounded-away transpose; `a_note_expression_is_refused_rather_than_played_as_authored`, whose second half puts a lead-in ornament on a hidden note; `the_render_is_bounded_by_the_song_end_as_v1_bounds_it`, a release past the song's end and a section past the last placement; `a_cable_spelled_with_a_leading_zero_resolves_as_v1_does`; `an_absent_choice_lowers_as_the_descriptor_declares`, which reads the declared default itself and asserts sample equality against it; `the_declared_event_peak_slides_a_window_as_admission_does`, two edges across an absolute quantum boundary; `a_tempo_ramp_toward_a_later_change_is_marked_unrepresented`, against a step and a trailing ramp as controls; `a_zero_length_override_is_as_inactive_as_a_zero_length_pattern`; `instrument_note_input_is_refused_rather_than_ignored`; `track_mixer_state_is_reported_rather_than_ignored`; `pattern_automation_is_refused_rather_than_flattened`, whose first half asserts a lane with no points renders, whose middle places the automation on a **muted** track so moving the check back behind the note filter fails, and whose last half places a pointed lane on a zero-length pattern; and `project_global_state_is_read_rather_than_ignored`. Mutation-verified in thirty-four directions: dropping either note-input refusal, the oversampling report, the sidechain refusal, the automation refusal, the Mod Grid refusal, the note-processor refusal, the pattern Note Grid refusal, the note-scope refusal, the length-override refusal, the fader report; reporting the fader per placement rather than per track; comparing the key range as a raw tuple; comparing the transpose without V1's rounding; reading the lane list's length instead of its points; reading the Mod Grid pool instead of V1's builder; scanning every pattern for a rack instead of the placements V1 plays; reading a Note Grid binding as a bare `Option` instead of through the pool; moving the note-scope check or the ornament check behind the hidden-note skip; refusing a node-less bound graph, or the rack beneath one; refusing a zero-length pattern's lanes or its rack, or its rack under a length override; stopping the register's schema walk at property keys; keying the amplifier's control check by spelling; naming a waveform default in a literal; leaving a release unclipped past the song's end; stopping the render at the last release; bucketing the event peak by absolute quantum; dropping the ramp diagnostic; and refusing a zero-length override as an override. **Both mechanisms are mutation-verified**: adding a field to `InstrumentState` produces `E0027` at the disposition site, and the persisted pin failed on first run — which is how `Pattern::processors` was found |
 | LOWER-INV-005 | `no_file_loading_reaches_v2`, which scans both production trees recursively and is mutation-verified against a nested module, the repository's own `project::load_file`, and V2 reading a file itself; `ResolvedIdentities` for the identity half |
 
@@ -277,7 +284,6 @@ by the Sound Core render contract's own rules, which this specification does not
 
 | Question | Blocking? | ADR or task |
 |----------|-----------|-------------|
-| How V1's envelope sensitivity and voice-output sensitivity compose into one payload magnitude | Yes for any parity verdict over a placed note; no for lowering or rendering | Phase 6's composition law; carried as `P04-R001` |
 | Where a comparison harness reads a lowered outcome, and what encapsulation it needs so `LOWER-INV-003` cannot be bypassed | Yes for the first comparison consumer | ADR-0028 and Phase 10B for the surface; ADR-0057 clause 5 refuses it meanwhile |
 | Which further V1 module types the lowerer supports | No — a per-phase subset choice, refused by name meanwhile | Phase 5 and later |
 | An instrument soloed **elsewhere** silences this one in V1, and a lowering's input is one instrument, so it cannot be seen from here | No for a single-instrument lowering, which is all this phase performs; yes for the first caller that lowers a whole project | The first multi-instrument consumer, which needs Phase 8's mixer model anyway |

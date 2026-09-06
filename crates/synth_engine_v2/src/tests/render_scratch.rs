@@ -143,6 +143,7 @@ fn plan_declaring(simultaneous: u32, voice: bool) -> (GraphIr, crate::plan::Comp
                     decay: crate::quantities::Seconds::ZERO,
                     sustain: crate::quantities::NormalizedLevel::FULL,
                     release: crate::quantities::Seconds::ZERO,
+                    velocity_sensitivity: crate::quantities::NormalizedLevel::FULL,
                 },
                 ExecutionScope::Voice,
             )

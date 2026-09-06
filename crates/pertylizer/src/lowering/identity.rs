@@ -112,6 +112,11 @@ fn address_of(id: ModuleId) -> NodeId {
     NodeId::new(((id.module_type as u32) << 16) | u32::from(id.instance))
 }
 
+/// The address of the voice-output velocity stage the lowerer inserts (ADR-0059), which no
+/// saved module has: the high sixteen bits are all ones, and no `ModuleType` discriminant
+/// reaches them, so [`address_of`] can never produce it.
+pub const VOICE_OUTPUT_SCALER: NodeId = NodeId::new(0xFFFF_0000);
+
 impl ResolvedIdentities {
     /// Resolve every module in one patch.
     ///

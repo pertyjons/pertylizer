@@ -171,6 +171,7 @@ fn voice_path(cutoff: f32, attack: f32, decay: f32, sustain: f32, release: f32) 
                 decay: Seconds::new(decay).expect("not negative"),
                 sustain: NormalizedLevel::new(sustain).expect("within range"),
                 release: Seconds::new(release).expect("not negative"),
+                velocity_sensitivity: synth_engine_v2::quantities::NormalizedLevel::FULL,
             },
             ExecutionScope::Voice,
         )

@@ -59,6 +59,7 @@ fn gated_constant() -> GraphIr {
                 decay: Seconds::new(0.0).expect("not negative"),
                 sustain: NormalizedLevel::FULL,
                 release: Seconds::new(0.0).expect("not negative"),
+                velocity_sensitivity: synth_engine_v2::quantities::NormalizedLevel::FULL,
             },
             ExecutionScope::Voice,
         )
@@ -115,6 +116,7 @@ fn voice() -> GraphIr {
                 decay: Seconds::new(0.010).expect("not negative"),
                 sustain: NormalizedLevel::new(0.6).expect("within range"),
                 release: Seconds::new(0.020).expect("not negative"),
+                velocity_sensitivity: synth_engine_v2::quantities::NormalizedLevel::FULL,
             },
             ExecutionScope::Voice,
         )
@@ -281,6 +283,7 @@ fn an_edge_mid_ramp_starts_from_the_level_that_frame_would_have_had() {
                 decay: Seconds::new(0.0).expect("not negative"),
                 sustain: NormalizedLevel::FULL,
                 release: Seconds::new(ATTACK as f32 / 48_000.0).expect("not negative"),
+                velocity_sensitivity: synth_engine_v2::quantities::NormalizedLevel::FULL,
             },
             ExecutionScope::Voice,
         )

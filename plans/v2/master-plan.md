@@ -1021,7 +1021,9 @@ difference at. No verdict has been issued against any of them, and the `Unsuppor
 is what keeps an unjudged claim from being read as a satisfied one. Phase 6's first parity run
 judges them.
 
-**Fails closed, and the closure is executable rather than recorded.** A lowering that places
+**Fails closed, and the closure is executable rather than recorded.** *(As accepted at Phase
+4's exit; `P06-S004` discharged the marker under ADR-0059, and `LOWER-INV-003` now states the
+general rule alone.)* A lowering that places
 any note raises one `OwnedByLaterPhase` diagnostic naming the capability — "V1's two velocity
 sensitivities and how they compose, which V2 applies as one scale on the envelope" — and its
 owner, "Phase 6, with the composition law". `Fidelity` is **derived** from the diagnostics
@@ -1035,7 +1037,9 @@ lowerer composes velocity and not of any note the project holds. A lowering refu
 never reaches the marker and does not need to: its own refusal already makes the outcome
 `UnsupportedScope`, which is the condition a comparison caller obeys.
 `a_render_that_places_a_note_still_refuses_a_parity_comparison` asserts the marker, the named
-owner, and the count of one over a four-note song.
+owner, and the count of one over a four-note song. (Since `P06-S004` the test is
+`a_placed_note_names_no_velocity_gap_and_still_refuses_a_parity_verdict`: the velocity marker is gone and the
+verdict is still refused, through Phase 8's marks.)
 
 **Why the render is nevertheless admissible.** The precondition the work list wrote, and
 `SOUND-INV-017` restates, is on rendering a saved **pitched** note without typed pitch and
