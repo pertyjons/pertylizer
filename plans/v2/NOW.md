@@ -51,46 +51,27 @@ read for an unevidenced observation bullet, and the ninth slice is what evidence
 | P05-R002 | The exit gate's observation bullet claimed that observation changes no semantic project digest, and that digest is defined only in Phase 10D; the clause is carried, not claimed. ADR-0027 clause 2 already keeps every observation field out of the serialized project. | Phase 10D, when it defines the semantic project digest: its digest test holds that opening, closing or saturating an observation changes no digest, before the digest is used for round-trip or migration checks. Fails closed: no digest exists to misreport |
 | P05-R001 | The smoothing policy of a lowered level, owned by the first lowering that maps V1's *amplifier* level onto a V2 parameter, or first writes a V2 amplitude dynamically. | Every declared `Smoothing` is `None`, so a write is a step. That is V1 parity for the one quantum-rate control V2 has: the lowerer maps V1's *oscillator* level onto the V2 amplitude as a static base (`lowering/graph.rs`), and V1's oscillator applies that level unsmoothed (`synth_modules/src/oscillator.rs`, `effective_level`). The control V1 does de-zipper — a linear ramp per block landing exactly on the target — is its *amplifier* level (`synth_modules/src/amplifier.rs`), which the lowerer refuses unless unity because V2's amplifier has no level of its own. The decision the user took on 2026-09-05 is therefore: no declared policy changes now; the parameter that first receives V1's amplifier level, or the first dynamic write to a V2 amplitude, decides its `Smoothing` against V1's per-block ramp with an A/B to measure. Fails closed: nothing is silently ramped. The mechanism is built and mutation-verified (`P05-S007b`), so the decision is a one-line declaration change. An independent read corrected this row's first form, which named the oscillator's own lowering as the trigger — a point already passed |
 
-## Active streams
+## Phase 6 — closed
 
-### Phase 6 — active since 2026-09-05
+[REV-P06](reviews/phase-06-exit-review.md) is **Accepted** on `e7e2d0a9`: a voice scope is one
+prepared shape and `N` instances of state, stealing under three decided policies ends the taken
+voice and starts the new note at a precise displaced sample on the compiled path and at the
+live boundary, a bend follows its occurrence through a steal, velocity composes as V1 composes
+it, one zone of a prepared sample map plays through a declared trigger, one prepared tuning is
+held to every path, and a polyphonic render under pressure is the same bits run to run, under
+every host partition, offline and live. Its gate was corrected on 2026-09-06 — the seed clause
+and the live-note-across-recompilation clause carried, not claimed — and the phase exits with
+two residuals, below. Eight slices, each merged on one independent read at the user's standing
+decision. The slice table is archived at `archive/phase-06/`.
 
-Activated by selection, as the Phase 5 exit said it would be. Its entry prerequisite is met:
-[ADR-0025](decisions/ADR-0025-tuning-representation-and-ownership.md) is **Accepted**, so a
-voice's pitch resolves through the prepared tuning the plan already holds rather than a second
-model. Two decisions bind slices inside the phase rather than its entry, under `PROCESS.md`'s
-decision-timing rule: the voice **allocation and stealing** policy — which voice a note-on
-takes when none is free, and how the taken voice ends — is a delivered-behaviour decision no
-record holds yet and is required before the slice that steals; and ADR-0026, the sample map
-and zone model, required before the sampler slice. Both are decided: ADR-0058 before
-`P06-S002` and ADR-0026 before `P06-S005`, each accepted with the user's selection.
+## Phase 6 residual obligations
 
-What V2 has at the phase's start: one instance of the voice scope per plan, so every note a
-producer plays lands on the same envelope and oscillator; note identity per occurrence with a
-disjoint index range per producer sized by `simultaneous_notes`, admitted, minted off-thread
-and released with an orphan count (`SOUND-INV-017`); the note payload's key and velocity
-expanded to every declared destination in the played node's scope, through the prepared
-tuning (`SOUND-INV-021`); one parameter slot per addressable parameter (`SOUND-INV-023`,
-`SOUND-INV-024`); and a report that admits `active_voices` as a declared count nothing yet
-derives. The phase turns the voice scope into a `VoicePlan` — one immutable prepared shape,
-`N` instances of mutable state — and routes each occurrence to its own instance.
-
-| Task | State | Current boundary |
+| ID | Residual | Pull-forward rule |
 |---|---|---|
-| P06-S001 — `N` voice instances of one prepared voice plan | **Merged** 2026-09-05 (`7f9c5ed1`); `SOUND-INV-025` built, one independent read, eight defects repaired | The compiler instantiates the voice scope once per identity index of the producer that plays it — `simultaneous_notes` instances — sharing every prepared record and cloning none: `N` node slots per voice-scope node over one prepared record, per-instance state, per-instance parameter slots and buffers for voice-scope parameters (voice-local state, with a `SetParameter` fanning its override write out to every instance and a note's magnitudes landing on its own), and a compiler-inserted **accumulate** into one voice-sum region wherever a voice-scope output feeds a non-voice node. The renderer routes a note's gate and magnitudes to the instance its identity index names, so two overlapping notes sound as two voices. A note-on with no free index is refused and counted, as today. **Completion check:** a plan declaring one simultaneous note renders bit-identically to today (EVD-0013 and the `quantum_cost` digests reproduce); two overlapping notes render as the sum of two single-note renders, sample for sample; a release ends its own voice and no other; the report's mutable and prepared rows scale with `N` for state and slots and not at all for prepared records, and preparation allocates exactly what the rows charge; `max_active_voices` is admitted against the derived instance count rather than a declared one; the purity scan covers the accumulate kernel and the per-voice routing; mutation-verified. Real-time boundary and admission: the core Rust gate and one independent review apply |
-| P06-S002 — voice stealing under a decided policy | **Merged** 2026-09-06 (`15adfbd3`); ADR-0058 accepted and reviewed with it, one independent read (agy), five defects repaired | Needs the allocation and stealing ADR first: which voice is taken (V1 offers oldest, quietest, lowest priority, same note, none), how the taken voice ends at a precise sample (a release-then-retrigger over the retirement crossfade, or a cut), and what a stolen voice's expression keeps or clears — one documented rule, tested at sample offsets |
-| P06-S002b — stealing at the live boundary | **Merged** 2026-09-06 (`7d602dee`); one independent read (agy), three defects repaired | ADR-0058 clause 6's second site. **Design, fixed by a fact about the ring:** the live queue drains head-first and requires non-decreasing stamps, so a steal's delayed start cannot be queued as events `fade` frames ahead of offers that follow. The start is therefore deferred **in the renderer**, once, for both paths: a steal is one event at the note-on's position — the taken occurrence, the replacement occurrence, the note it starts and the fade — and the renderer fades the taken instance from there, holds the start in a table sized by the identity partition, and at that position plus `fade` resets the instance and lands the new note's gate and magnitudes as timed controls, charged to the timed-control scratch as an adoption's gate-downs are. A release for a note whose start is still pending is deferred with it, so the note keeps its authored length on both paths. The compiled path's stamped `Fade`/`Reset`/delayed `Note` and its post-stamp share re-check are replaced by that one event, which restores ADR-0058 clause 7's original form; the existing sample-exact oracles hold the behaviour unchanged. Then the boundary: the minter carries each live index's node, key and mint order, `offer_note_on` chooses the victim under the policy when the mint reports a full producer, and the taken note's later release is counted as `released_after_steal` at the boundary and discharges its hold |
-| P06-S003 — per-note expression and the bend clause | **Merged** 2026-09-06 (`4b754619`); one independent read (agy), one defect and four lesser points repaired | ADR-0047 clause 9's reserved per-note event, `SOUND-INV-021`'s bend clause (a cents offset after resolution), and the rule that allocation, stealing, sustain, retrigger and release preserve or clear expression; note identity must still route expression after stealing and after a plan recompilation |
-| P06-S004 — velocity composition | **Merged** 2026-09-06 (`faa5e535`); ADR-0059 accepted with the user's selection; one independent read (agy), one defect and three lesser points repaired | Inherited `P04-R001` and closed it: V1 applies one saved velocity under two independent sensitivities, and V2 now has two velocity destinations — the envelope's `1 − s(1 − v)` and a voice-output scaler's `(1 − s) + s·v`, V1's formulas bit for bit — each with an authored sensitivity the lowerer fills from `vel_sens` and `velocity_amp_sensitivity`. The velocity mark comes off placed notes; `LOWER-INV-003` keeps its general rule, and Phase 8's marks still hold a placed note at `UnsupportedScope` |
-| P06-S005 — the one-zone sampler on the prepared map/zone contract | **Merged** 2026-09-06 (`ca0c66bf`); ADR-0026 accepted with the user's selection; `SOUND-INV-026` written; one independent read (agy), two defects and two contract holes repaired | An immutable sample map with zones, key/velocity selection, root and tuning, playback region and a prepared sample held once per plan, of which the native sampler selects exactly one zone without a per-note allocation or a single-sample API; the sampler starts on a declared **trigger** destination rather than as a second playable node, and plays under V1's law — rate through the tuning, two-tap interpolation, mono downmix, one-shot/sustain/loop forward with V1's 512-frame fade. Reverse and ping-pong and a map beyond one zone are refused by name; the lowering of a saved sampler module waits for the first sampler corpus case (Phase 0B's bundle fixture) |
-| P06-S006 — one tuning through every path | **Merged** 2026-09-06 (`e7134c53`); one independent read (agy), one real point and four lesser ones repaired | Built-in 12-TET and nineteen-tone equal temperament produce the same pitches through the live, sequenced, offline and analysis-facing (observation tap) paths, held sample for sample in `tests/tuning_paths.rs`; the sampler's rate follows the scope's tuning; and the case S005 handed over — a sampler under a seek — is measured, with the mechanism that lowers its trigger established by combined mutations (the catch-up's restore of every target on the compiled path; the explicit boundary-release sites are the fallback). No code changed: the contract already made this structural, and the slice is its evidence |
-| P06-S007 — determinism under pressure | **Built** 2026-09-06 on `feat/v2-phase6-s007`; independent read pending | The exit's evidence, in `tests/determinism.rs`: five overlapping notes on two voices under the oldest-voice policy, then every release, then a sixth note once every voice is free, render bit-identically run to run and under four host partitions, the offline render is the compiled stream's one priming quantum apart, and the live boundary's render is the compiled stream's with the same count of releases after a steal. The gate's "fixed project seed" has nothing to vary — V2 consumes no randomness and Phase 7's ADR-0008 owns what a seed is — so the exit review carries that clause as a residual rather than claiming it |
+| P06-R001 | The exit gate's first bullet claimed determinism for a fixed **project seed**, and no seed exists in V2: nothing consumes randomness and Phase 7's ADR-0008 owns what a seed is. The event-stream half is held by bits on every path; the seed half is carried, not claimed. Fails closed: no node kind accepts a seed, so a render is a function of its event stream alone | Binds the first slice that gives a node a seed — Phase 7's, under ADR-0008 — to hold a render deterministic for a fixed seed as `tests/determinism.rs` holds it for a fixed stream, and to state where the seed enters |
+| P06-R002 | The exit gate's seventh bullet claimed that note identity routes expression across a **plan recompilation**; the runtime resolves a stale identity as foreign to its new table (ADR-0047 clause 8, `an_identity_from_another_table_is_not_an_orphan`) and routes nothing, and a live note surviving a recompilation has no consumer before Phase 9's live host | Binds Phase 9, with ADR-0050 clause 8's redemption of a live note across an activation, to route or refuse such a note by a stated rule rather than by the table's refusal alone |
 
-Inherited before it builds: `P05-R001` (a lowered level's smoothing policy, binding the
-lowering that first maps V1's amplifier level or writes a V2 amplitude dynamically).
-`P04-R001` was inherited by `P06-S004` and is closed. `P05-R002` is Phase 10D's and does not
-bind this phase.
-
+## Active streams
 
 ### Phase 0B — active in parallel
 
@@ -132,15 +113,17 @@ Phase 3 is complete. Its exit review accepted these bounded residuals:
 
 ## Current blockers
 
-**None for Phase 6's entry.** ADR-0025, its prerequisite, is accepted, and Phase 5 is closed.
-Residuals bind later work by name rather than blocking Phase 6's entry: `P05-R002` binds Phase
-10D's digest; `P05-R001` — a lowered
+**Phase 7's entry is the next decision.** Phase 6 is closed; Phase 7 — YAMS, the Mod Grid and
+unified modulation — waits on its own records (ADR-0008 among them) and on the user's selection.
+Residuals bind later work by name rather than blocking Phase 7's entry: `P06-R001` — a fixed
+project seed — binds the first slice that gives a node one; `P06-R002` binds Phase 9's live host;
+`P05-R002` binds Phase 10D's digest; `P05-R001` — a lowered
 level's smoothing policy — before a lowering maps V1's amplifier level onto a V2 parameter or
 writes a V2 amplitude dynamically; and Phase 3's residuals, which block only their named
 consumers. `P04-R004` binds the first shared render surface, which is Phase 10B's.
 
-Two streams are active: Phase 6, with `P06-S001` through `P06-S006` merged and `P06-S007`
-next, and Phase 0B, with `P00B-T003` as its selected slice.
+One stream is active: Phase 0B, with `P00B-T003` as its selected slice. Phase 6 is closed
+under `REV-P06`.
 
-Next action: **`P06-S007`**'s independent read and merge; then the Phase 6 exit review,
-`REV-P06`, which needs the user's decision on the gate's seed clause.
+Next action: the user's selection of the next phase; `ROADMAP.md` names Phase 7, whose entry
+needs its own records drafted first.

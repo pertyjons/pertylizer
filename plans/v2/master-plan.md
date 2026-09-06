@@ -1379,19 +1379,65 @@ per voice:
 
 ### Exit gate
 
-- [ ] Polyphonic output is deterministic for a fixed project seed and event
-      stream.
-- [ ] Voice stealing begins and completes at precise sample offsets.
-- [ ] Increasing configured polyphony changes prepared memory, not audio-thread
+Corrected on 2026-09-06 under `PROCESS.md`'s phase-exit rule; the correction, its
+authority and its cost are recorded in [Gate correction](#gate-correction-2026-09-06)
+below. Two bullets changed: the project-seed clause of the first is carried as
+`P06-R001`, because no seed exists in V2 and what one is belongs to Phase 7's
+ADR-0008; and the recompilation clause of the seventh is rewritten to what the
+runtime holds — a stale identity is refused by its table — with a live note carried
+across a recompilation carried as `P06-R002`, because ADR-0050 clause 8 keeps live
+ingress out of an activation's scope until Phase 9.
+
+- [x] Polyphonic output is deterministic for a fixed event stream under stealing
+      pressure, run to run, under every host partition, offline and live. That it
+      is deterministic for a fixed project seed is Phase 7's to hold when ADR-0008
+      defines the seed, carried as `P06-R001`.
+- [x] Voice stealing begins and completes at precise sample offsets.
+- [x] Increasing configured polyphony changes prepared memory, not audio-thread
       allocation behavior.
-- [ ] Shared immutable plan data is not cloned once per voice.
-- [ ] A native per-voice module has no knowledge of the voice allocator.
-- [ ] Built-in 12-TET and at least one non-12-TET/Scala mapping produce the same
+- [x] Shared immutable plan data is not cloned once per voice.
+- [x] A native per-voice module has no knowledge of the voice allocator.
+- [x] Built-in 12-TET and at least one non-12-TET/Scala mapping produce the same
       pitches through live, sequenced, offline, and analysis-facing paths.
-- [ ] Note identity remains sufficient to route polyphonic pressure/per-note
-      expression after voice stealing and plan recompilation.
-- [ ] A native one-zone sampler uses the prepared map/zone contract without
+- [x] Note identity remains sufficient to route per-note expression after voice
+      stealing — built as the bend, the first payload of ADR-0047 clause 9's
+      reserved event; polyphonic pressure is a later payload of the same event,
+      owed to its first producer; across a plan recompilation a stale identity is
+      refused by its table rather than routed. Routing a live note across a
+      recompilation is Phase 9's, carried as `P06-R002`.
+- [x] A native one-zone sampler uses the prepared map/zone contract without
       per-note allocation or a special single-sample voice API.
+
+### Gate correction, 2026-09-06
+
+Recorded here rather than applied silently, for the reason the Phase 4 and Phase 5
+corrections give: a rewrite nobody can see is indistinguishable from a gate that never
+asked. Both changes carry a clause to a named owner; neither withdraws a thing.
+
+**Authority.** The user, on 2026-09-06, with the recommendation and its reasoning put
+first for the seed clause: nothing in V2 consumes randomness, no node kind carries a
+seed, and ADR-0008 — which owns what a seed is — is Phase 7's and `Proposed`, so a
+render can be shown deterministic for its event stream and for nothing else; the
+event-stream half is held by bits on every path, and the seed half is carried in the
+same shape Phase 5 carried its digest clause as `P05-R002`. The recompilation clause the user
+decided the same day, put with the exit review's draft and with the same reasoning: the runtime refuses a
+stale identity by its table and never routes it, and the case the old wording implied —
+a live note surviving a recompilation — has no consumer before Phase 9's live host,
+which ADR-0050 clause 8 already names.
+
+| Item | Before | After | Why |
+|---|---|---|---|
+| Exit gate, bullet 1 | Polyphonic output is deterministic for a fixed project seed and event stream | Deterministic for a fixed event stream under stealing pressure, on every path; the seed clause is carried as `P06-R001` | No seed exists to vary; ADR-0008 defines one in Phase 7 |
+| Exit gate, bullet 7 | Note identity remains sufficient to route polyphonic pressure/per-note expression after voice stealing and plan recompilation | After voice stealing, for the bend — the one payload built — with polyphonic pressure named as a later payload of the same event; across a recompilation a stale identity is refused by its table rather than routed; the live-note case is carried as `P06-R002` | ADR-0047 clause 8 builds a new table at a recompilation and refuses a stale identity; a live note crossing one has no consumer before Phase 9; no producer emits pressure, and the routing does not read the payload |
+
+**`P06-R001`, the seed clause.** Fails closed: no node kind accepts or consumes a seed, so
+a render is a function of its event stream alone. Binds the first slice that gives a node a
+seed — Phase 7's, under ADR-0008 — to hold a render deterministic for a fixed seed as
+`tests/determinism.rs` holds it for a fixed stream, and to state where the seed enters.
+
+**`P06-R002`, a live note across a recompilation.** Binds Phase 9's live host, with
+ADR-0050 clause 8's redemption of a live note across an activation, to route or refuse
+such a note by a stated rule rather than by the table's refusal alone.
 
 ## Phase 7: YAMS, Mod Grid, and unified modulation
 

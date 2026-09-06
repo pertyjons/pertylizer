@@ -47,7 +47,10 @@ archive/
 ├── phase-03/
 │   ├── INDEX.md
 │   └── process-history.md
-└── phase-05/
+├── phase-05/
+│   ├── INDEX.md
+│   └── slices.md
+└── phase-06/
     ├── INDEX.md
     └── slices.md
 ```
