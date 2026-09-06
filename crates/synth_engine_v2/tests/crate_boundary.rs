@@ -149,6 +149,14 @@ fn dependents_with_flags(edges: &str, flags: &[&str]) -> Vec<String> {
             // dependency on the crate sat in the manifest.
             "--target",
             "all",
+            // Plain text, whatever the environment asks for. CI sets
+            // `CARGO_TERM_COLOR=always`, under which Cargo wraps the tree glyphs
+            // and kind headers in ANSI escapes; the parser below then reads an
+            // escape-prefixed `└──` as a crate name and every dependent
+            // disappears behind it. Found when CI failed on a test that passed
+            // locally, not by reading.
+            "--color",
+            "never",
         ])
         // After the subcommand, not before it: `cargo --features X tree` is not a
         // valid invocation and fails before Cargo resolves anything, which would
