@@ -3,7 +3,7 @@
 | Field | Value |
 |---|---|
 | ID | ADR-0026 |
-| Status | Proposed |
+| Status | Accepted |
 | Phase | 6/10A/10D |
 | Created | 2026-09-06 |
 | Last reviewed | 2026-09-06 |
@@ -251,10 +251,13 @@ first sampler corpus case.
 
 ## Review
 
-Design consultation: put to the user on 2026-09-06 with the three questions above; to be
-recorded.
+Design consultation: put to the user on 2026-09-06 with the three questions above. The user
+selected Q1 option 1 (the master plan's split with a plan-side prepared table), Q2 option 1
+(a trigger destination carrying both edges) and Q3 option 1 (V1's law, forward modes only).
+Accepted 2026-09-06 with that selection; built by `P06-S005`.
 
-Independent semantic reviewer: to be recorded at acceptance.
+Independent semantic reviewer: read with `P06-S005`'s change, as ADR-0058 and ADR-0059 were
+read with theirs; recorded there.
 
 Stopping rule: a per-note allocation, a second address in a scope, a key converted in a
 kernel, a prepared sample held twice, or a rate that is not V1's ratio under twelve-tone
