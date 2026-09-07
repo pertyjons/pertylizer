@@ -597,12 +597,7 @@ fn lower_module(
             // V1 clamps the resonance it renders into `[0, 0.99]`, so the conversion is fed
             // the value V1 uses rather than the value the file stores. A saved `1.0` is valid
             // input that V1 plays at `0.99`; refusing it would refuse a filter V1 sounds.
-            let normalised =
-                v1_value(module, &declarations, "resonance", &parameter, diagnostics)?.min(0.99);
-            // `k = 2 - 2·res` is V1's damping; V2 spells the same coefficient `1/Q`. The
-            // clamp above keeps this strictly positive, so the division is safe by
-            // construction rather than by check.
-            let damping = 2.0 - 2.0 * normalised;
+            let normalised = v1_value(module, &declarations, "resonance", &parameter, diagnostics)?;
             (
                 IrNodeKind::Filter {
                     cutoff: quantity(
@@ -611,7 +606,7 @@ fn lower_module(
                         diagnostics,
                     )?,
                     resonance: quantity(
-                        Resonance::new(1.0 / damping),
+                        Resonance::new(v1_quality(normalised)),
                         parameter("resonance"),
                         diagnostics,
                     )?,
@@ -991,6 +986,20 @@ enum SavedFloat {
     Value(f32),
     /// The project carries something else, described for the diagnostic.
     Unsupported(String),
+}
+
+/// The quality factor V2's filter is given for a resonance V1 renders.
+///
+/// V1 clamps the resonance it renders into `[0, 0.99]`, so the conversion is fed the value V1
+/// uses rather than the value the file stores or a lane writes: a saved `1.0` is valid input
+/// that V1 plays at `0.99`, and refusing it would refuse a filter V1 sounds. `k = 2 - 2·res`
+/// is V1's damping; V2 spells the same coefficient `1/Q`. The clamp keeps the damping strictly
+/// positive, so the division is safe by construction rather than by check. One function for
+/// the authored value and for an automation lane's write (`P07-S002b`), so the two cannot
+/// come to disagree about what a resonance is.
+pub(super) fn v1_quality(resonance: f32) -> f32 {
+    let damping = 2.0 - 2.0 * resonance.min(0.99);
+    1.0 / damping
 }
 
 /// A saved numeric parameter.

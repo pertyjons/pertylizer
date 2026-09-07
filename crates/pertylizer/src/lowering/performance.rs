@@ -31,19 +31,57 @@
 //! release lower the gate while the second occurrence is still held, so the second note ends
 //! early and silently. Phase 6 owns voice allocation, which is what makes overlap meaningful;
 //! until then the case is refused where the user authored it rather than rendered wrongly.
+//!
+//! # What a lowered automation lane is (`P07-S002b`)
+//!
+//! V1 runs a placed pattern's lanes on every tick the placement is active, reading each lane
+//! through `AutomationLane::value_at` at the placement's pattern tick, and emits the value as
+//! a parameter event when it has moved by more than `AUTOMATION_DEDUP_THRESHOLD` since the
+//! last one it emitted for that target. An instrument lane on a module parameter — the
+//! filter's cutoff and resonance, the envelope's four — then resolves to the **first** module
+//! of that type in the instrument's graph, in `ModuleId` order, and is denormalized through
+//! that module's own descriptor before it lands as a transient override. Every one of those
+//! steps is V1's own function here rather than a copy: the tick is `pattern_tick_at`'s, the
+//! curve is `value_at`'s, the threshold is the sequencer's constant, the range is the
+//! descriptor's `denormalize`, and the module is the lowest identity of its type.
+//!
+//! Each emission lowers to one `SetParameter` override write at the tick's plan position, on
+//! the slot the control `P07-S002a` declared, in the control's own unit. The write is
+//! composed through the slot — an authored base, this override, whatever modulation is in
+//! force — under `SOUND-INV-023`, and a quantum-rate control reads it at the boundary that
+//! follows, which is the per-quantum granularity the phase states. The writes count toward
+//! the plan's compiled event share exactly as note edges do, through the same peak.
+//!
+//! V1 clears every transient override when the transport stops, and the offline renderers
+//! stop it at the song's end before rendering a tail. So the tail hears the authored values,
+//! and one further write per touched target restores the prepared base at the song's end.
+//!
+//! Two lanes writing one target at one sample are refused by name — the master plan's
+//! multiple-writer rule in its strict form, while ADR-0012 stays `Proposed` for Phase 10.
+//! Read structurally, as two lanes on one target whose active tick ranges intersect: every
+//! sample in the intersection has two absolute writers, whatever their values.
 
-use synth_core::{BipolarValue, NormalizedValue};
+use synth_core::{BipolarValue, ModuleDescriptor, ModuleType, NormalizedValue};
 use synth_engine::instrument::InstrumentId;
-use synth_engine_v2::ir::NodeId;
+use synth_engine::sequencer_engine::AUTOMATION_DEDUP_THRESHOLD;
+use synth_engine_v2::ir::{NodeId, ParameterId, parameters};
 use synth_engine_v2::offline::OfflineEvent;
-use synth_engine_v2::plan::CompiledPlan;
-use synth_engine_v2::quantities::{EventCount, KeyIdentity, NoteVelocity, SampleRate};
+use synth_engine_v2::plan::{CompiledPlan, ParameterSlot};
+use synth_engine_v2::quantities::{
+    CutoffFrequency, EventCount, KeyIdentity, NormalizedLevel, NoteVelocity, ParameterValue,
+    Resonance, SampleRate, Seconds,
+};
 use synth_engine_v2::schedule::CompiledPayload;
 use synth_engine_v2::tempo::{Bpm as V2Bpm, MusicalTick, TempoChange as V2TempoChange, TempoMap};
 use synth_engine_v2::time::{FrameCount, SampleTime};
-use synth_sequencer::{PatternId, Song, TrackId};
+use synth_sequencer::{
+    AutoInstrumentParam, AutomationLane, AutomationTarget, GlobalParam, Pattern, PatternId,
+    PatternPlacement, PlacementLoopMode, Song, Tick, TrackId, TrackParam,
+};
 
 use super::diagnostics::{Fidelity, LoweringDiagnostic, LoweringReason, ProjectSubject, Severity};
+use super::identity::ResolvedIdentities;
+use crate::patch::ModuleState;
 
 /// A song's arrangement, lowered against one compiled plan.
 #[derive(Debug)]
@@ -482,22 +520,454 @@ fn note_spans(
     Some(spans)
 }
 
-/// The most note edges this arrangement puts in any one render quantum.
+/// One lane V1 would run on this instrument, with the ticks it is active over.
+struct ActiveLane<'a> {
+    lane: &'a AutomationLane,
+    placement: &'a PatternPlacement,
+    pattern: &'a Pattern,
+    param: AutoInstrumentParam,
+    /// The first absolute tick V1 reads the lane at.
+    start: u64,
+    /// One past the last: `pattern_tick_at` resolves no tick from here on.
+    end: u64,
+}
+
+/// One value V1 emits for one target, placed in the plan but not yet on a slot.
+#[derive(Debug, Clone, Copy)]
+struct LaneWrite {
+    /// The plan position of the tick V1 emits it at.
+    position: u64,
+    param: AutoInstrumentParam,
+    /// The lane's own value, before V1's descriptor denormalizes it.
+    value: NormalizedValue,
+    /// The pattern whose lane emitted it, for a diagnostic.
+    pattern: PatternId,
+}
+
+/// The most ticks one lowering walks for its lanes, summed over every lane.
+///
+/// V1 evaluates a lane on every tick its placement is active, and this walk is V1's; but V1
+/// does it in real time over the song's own length, and a lowering does it up front. The
+/// smoke render's own bound is six hundred seconds of audio, which bounds nothing here: a
+/// tempo is any finite positive number, so a placement of few frames can hold any number of
+/// ticks. The walk is therefore bounded in ticks, and the bound is stated rather than
+/// assumed: `2^25` ticks is six hundred seconds at three hundred beats per minute for the six
+/// targets together, with a margin — three seconds or so of evaluation at the outside. An
+/// arrangement past it is refused by name before a tick is walked. An independent read
+/// found the walk unbounded.
+const MAX_AUTOMATION_TICKS: u64 = 1 << 25;
+
+/// Every lane V1 runs on this instrument's module parameters, over every placement.
+///
+/// Walked over **every** placement rather than this instrument's audible ones, because V1
+/// runs a pattern's automation whether or not its track's notes are audible — a muted host
+/// track still carries its fades — and a lane names its instrument itself, so a placement on
+/// another instrument's track can still write this one's filter. What the walk classifies:
+///
+/// - an instrument lane on one of the six module parameters, for **this** instrument, is
+///   lowered; one on `Volume` or `Pan` is instrument-level channel state Phase 8 owns and is
+///   refused;
+/// - an instrument or module lane for **another** instrument is not this render's, exactly as
+///   that instrument's notes are not, and is skipped;
+/// - a module-addressed lane for this instrument names a module positionally and denormalizes
+///   through the descriptor `apply_module_param_override` reads; it is refused for a later
+///   slice of this phase;
+/// - a track lane over the fader, pan or mute is Phase 8's; a track pitch lane is a
+///   channel-scoped pitch offset the controller layer owns; a global master-volume lane is
+///   Phase 8's. All three are refused whatever track or instrument they touch, since the
+///   lowerer sees one instrument and cannot tell whether that touch reaches it.
+///
+/// A lane with no points is not automation: `value_at` returns `None` for it and V1 emits
+/// nothing. A placement that is never active — a zero-length pattern, or a zero-length
+/// override — is skipped whatever it holds, because `pattern_tick_at` resolves no tick in it.
+/// A lane on a parameter `declared` answers `false` for — no module of its type in the patch
+/// — is V1's no-op, `apply_normalized_override` returning before it writes, and is dropped
+/// here, **before** the conflict check below: two inert lanes conflict over nothing. An
+/// independent read found them refused.
+///
+/// Returns `None` when a refusal was recorded, including two lanes writing one target over
+/// one tick.
+fn active_lanes<'a>(
+    instrument: InstrumentId,
+    song: &'a Song,
+    declared: &dyn Fn(AutoInstrumentParam) -> bool,
+    diagnostics: &mut Vec<LoweringDiagnostic>,
+) -> Option<Vec<ActiveLane<'a>>> {
+    let mut lanes = Vec::new();
+    for placement in song.arrangement() {
+        // A placement naming no pattern is refused by the note walk when it is this
+        // instrument's, and `Song::calculate_length` skips it; there is nothing to read here.
+        let Some(pattern) = song.pattern(placement.pattern_id) else {
+            continue;
+        };
+        if pattern.length.0 == 0 || placement.effective_length(pattern.length).0 == 0 {
+            continue;
+        }
+        let subject = || ProjectSubject::Pattern {
+            pattern: pattern.id,
+            name: pattern.name.clone(),
+        };
+        // The ticks `pattern_tick_at` resolves: a `Repeat` placement wraps to its end, a
+        // `Clip` placement plays the source once and is silent past it.
+        let start = placement.start.0;
+        let end = placement.end(pattern.length).0;
+        let end = match placement.loop_mode {
+            PlacementLoopMode::Repeat => end,
+            PlacementLoopMode::Clip => end.min(start.saturating_add(u64::from(pattern.length.0))),
+        };
+
+        for lane in &pattern.automation {
+            if lane.is_empty() {
+                continue;
+            }
+            let reason = match &lane.target {
+                AutomationTarget::Instrument {
+                    instrument: target,
+                    param,
+                } => {
+                    if *target != instrument {
+                        continue;
+                    }
+                    match param {
+                        AutoInstrumentParam::Volume | AutoInstrumentParam::Pan => {
+                            LoweringReason::OwnedByLaterPhase {
+                                capability: "an instrument volume or pan automation lane, which \
+                                             V1 applies to the instrument's channel",
+                                owner: "Phase 8, with the mixer model",
+                            }
+                        }
+                        lowered => {
+                            if !declared(*lowered) {
+                                continue;
+                            }
+                            lanes.push(ActiveLane {
+                                lane,
+                                placement,
+                                pattern,
+                                param: *lowered,
+                                start,
+                                end,
+                            });
+                            continue;
+                        }
+                    }
+                }
+                AutomationTarget::Module {
+                    instrument: target, ..
+                } => {
+                    if *target != instrument {
+                        continue;
+                    }
+                    LoweringReason::OwnedByLaterPhase {
+                        capability: "a module-addressed automation lane, which V1 resolves \
+                                     positionally and denormalizes through the module's own \
+                                     descriptor",
+                        owner: "Phase 7, in a later slice",
+                    }
+                }
+                AutomationTarget::Track { param, .. } => match param {
+                    TrackParam::Volume | TrackParam::Pan | TrackParam::Mute => {
+                        LoweringReason::OwnedByLaterPhase {
+                            capability: "a track automation lane over the fader, pan or mute",
+                            owner: "Phase 8, with the mixer and bus model",
+                        }
+                    }
+                    TrackParam::Pitch => LoweringReason::OwnedByLaterPhase {
+                        capability: "a track pitch lane, a channel-scoped pitch offset applied \
+                                     to every voice the track plays",
+                        owner: "Phase 7, with the controller layer",
+                    },
+                },
+                AutomationTarget::Global(GlobalParam::MasterVolume) => {
+                    LoweringReason::OwnedByLaterPhase {
+                        capability: "a master volume automation lane",
+                        owner: "Phase 8, with the mixer model",
+                    }
+                }
+            };
+            diagnostics.push(LoweringDiagnostic::refused(subject(), reason));
+            return None;
+        }
+    }
+
+    // Two writers on one target at one sample. Lanes on one target sorted by their first
+    // tick: any lane starting before its predecessor ends shares every tick from there on
+    // with it, and each such tick has two absolute writers whatever the two values are.
+    lanes.sort_by_key(|lane| (lane.start, lane.end));
+    for (index, second) in lanes.iter().enumerate() {
+        let conflicting = lanes[..index]
+            .iter()
+            .find(|first| first.param == second.param && second.start < first.end);
+        if let Some(first) = conflicting {
+            diagnostics.push(LoweringDiagnostic::refused(
+                ProjectSubject::Pattern {
+                    pattern: second.pattern.id,
+                    name: second.pattern.name.clone(),
+                },
+                LoweringReason::ConflictingWriters {
+                    target: second.param.display_name().to_owned(),
+                    first: first.pattern.id,
+                    second: second.pattern.id,
+                },
+            ));
+            return None;
+        }
+    }
+    Some(lanes)
+}
+
+/// The values V1 emits for these lanes, placed in the plan, in position order.
+///
+/// V1's own walk: every tick a placement is active, the lane's value at the placement's
+/// pattern tick, emitted when it has moved by more than the sequencer's threshold since the
+/// last emission **for that target** — across placements, because V1 keys its last value by
+/// target rather than by lane, so a second placement's first tick emits only what differs
+/// from where the first left off. The lanes on one target are disjoint in ticks here, which
+/// [`active_lanes`] established, so walking them in start order is walking the song in tick
+/// order for that target.
+///
+/// Disjoint in ticks is not disjoint in samples: at a low rate and a high tempo two ticks
+/// round to one frame, so a lane's last emission and its successor's first can land on one
+/// sample. That is two absolute writers at one sample as much as an overlap is, and it is
+/// refused here, where the positions are known — the same refusal, naming both patterns. Two
+/// emissions of **one** lane on one frame are one writer, and the later one is in force, as
+/// it is in V1's block.
+///
+/// Linear in the ticks the placements span, bounded by [`MAX_AUTOMATION_TICKS`] and refused
+/// by name past it, and run off the audio thread.
+fn placed_writes(
+    lanes: &[ActiveLane<'_>],
+    tempo: &TempoMap,
+) -> Result<Vec<LaneWrite>, Box<LoweringDiagnostic>> {
+    let ticks = lanes
+        .iter()
+        .fold(0_u64, |sum, lane| sum.saturating_add(lane.end - lane.start));
+    if ticks > MAX_AUTOMATION_TICKS {
+        return Err(Box::new(LoweringDiagnostic::refused(
+            ProjectSubject::Project,
+            LoweringReason::OwnedByLaterPhase {
+                capability: "an arrangement whose automation spans more ticks than the \
+                             bounded smoke scope walks",
+                owner: "ADR-0028, with the long-running job contract",
+            },
+        )));
+    }
+
+    let mut writes = Vec::new();
+    // Per target: the last emitted value, and the last placed write's position and lane.
+    let mut last: Vec<(AutoInstrumentParam, f32, u64, usize)> = Vec::new();
+    for (writer, lane) in lanes.iter().enumerate() {
+        for tick in lane.start..lane.end {
+            let Some(pattern_tick) = lane
+                .placement
+                .pattern_tick_at(Tick(tick), lane.pattern.length)
+            else {
+                continue;
+            };
+            let Some(value) = lane.lane.value_at(pattern_tick) else {
+                continue;
+            };
+            let previous = last.iter_mut().find(|(param, ..)| *param == lane.param);
+            let changed = previous.as_ref().is_none_or(|(_, emitted, ..)| {
+                (value.as_f32() - *emitted).abs() > AUTOMATION_DEDUP_THRESHOLD
+            });
+            if !changed {
+                continue;
+            }
+            let position = tempo
+                .position_of(MusicalTick::new(tick))
+                .map_err(|error| {
+                    Box::new(LoweringDiagnostic::refused(
+                        ProjectSubject::Pattern {
+                            pattern: lane.pattern.id,
+                            name: lane.pattern.name.clone(),
+                        },
+                        LoweringReason::UnsupportedParameterValue {
+                            value: error.to_string(),
+                        },
+                    ))
+                })?
+                .as_u64();
+            match previous {
+                Some((_, emitted, placed, by)) => {
+                    if *placed == position && *by != writer {
+                        let first = &lanes[*by];
+                        return Err(Box::new(LoweringDiagnostic::refused(
+                            ProjectSubject::Pattern {
+                                pattern: lane.pattern.id,
+                                name: lane.pattern.name.clone(),
+                            },
+                            LoweringReason::ConflictingWriters {
+                                target: lane.param.display_name().to_owned(),
+                                first: first.pattern.id,
+                                second: lane.pattern.id,
+                            },
+                        )));
+                    }
+                    *emitted = value.as_f32();
+                    *placed = position;
+                    *by = writer;
+                }
+                None => last.push((lane.param, value.as_f32(), position, writer)),
+            }
+            writes.push(LaneWrite {
+                position,
+                param: lane.param,
+                value,
+                pattern: lane.pattern.id,
+            });
+        }
+    }
+    // Stable, so two targets emitting at one position keep the order V1 walks the lanes in.
+    writes.sort_by_key(|write| write.position);
+    Ok(writes)
+}
+
+/// Where V1's instrument automation lands in one lowered graph (`P07-S002b`).
+///
+/// V1's `apply_normalized_override` finds the **first** module of the parameter's type in the
+/// instrument's graph — a `BTreeMap` keyed by `ModuleId`, so the lowest identity of that type
+/// — and denormalizes the lane's value through that module's own descriptor. Both are
+/// resolved once here, from the identities the graph was lowered through and from V1's own
+/// module factory, and read per write. A missing module is V1's no-op: the lane is inert
+/// there and lowers to nothing here.
+#[derive(Debug)]
+#[must_use]
+pub struct AutomationTargets {
+    filter: Option<(NodeId, ModuleDescriptor)>,
+    envelope: Option<(NodeId, ModuleDescriptor)>,
+}
+
+impl AutomationTargets {
+    /// Resolve the two module types V1's instrument automation addresses.
+    pub fn resolve(identities: &ResolvedIdentities) -> Self {
+        let first = |kind: ModuleType| {
+            identities
+                .pairs()
+                .filter(|(id, _)| id.module_type == kind)
+                .min_by_key(|(id, _)| *id)
+                .and_then(|(_, node)| {
+                    crate::module_factory::create_voice_module(kind)
+                        .map(|(_, declarations)| (node, declarations))
+                })
+        };
+        Self {
+            filter: first(ModuleType::Filter),
+            envelope: first(ModuleType::Envelope),
+        }
+    }
+
+    /// Whether V1 would find a module for this parameter in the lowered graph.
+    fn declares(&self, param: AutoInstrumentParam) -> bool {
+        crate::mod_grid_build::instrument_param_module(param).is_some_and(|(kind, _, _)| match kind
+        {
+            ModuleType::Filter => self.filter.is_some(),
+            ModuleType::Envelope => self.envelope.is_some(),
+            _ => false,
+        })
+    }
+
+    /// Whether V1 would find a module for this parameter, from the saved modules alone.
+    ///
+    /// The peak is counted before the graph is lowered, so it cannot ask the resolved
+    /// targets; it asks the saved patch the same question. A module of the type that later
+    /// fails to lower refuses the whole lowering, so the two answers cannot differ for a plan
+    /// that renders.
+    fn declared_in(param: AutoInstrumentParam, modules: &[ModuleState]) -> bool {
+        crate::mod_grid_build::instrument_param_module(param)
+            .is_some_and(|(kind, _, _)| modules.iter().any(|module| module.module_type == kind))
+    }
+
+    /// The write V1's emission becomes: the node, the control, and the value in its unit.
+    ///
+    /// `Ok(None)` is V1's no-op — no module of the type — and `Err` names a value the
+    /// control's unit refuses, which the descriptor's clamped range makes unreachable and
+    /// which is refused by name rather than assumed away.
+    fn override_value(
+        &self,
+        param: AutoInstrumentParam,
+        value: NormalizedValue,
+    ) -> Result<Option<(NodeId, ParameterId, ParameterValue)>, String> {
+        let Some((kind, _, key)) = crate::mod_grid_build::instrument_param_module(param) else {
+            return Ok(None);
+        };
+        let resolved = match kind {
+            ModuleType::Filter => self.filter.as_ref(),
+            ModuleType::Envelope => self.envelope.as_ref(),
+            _ => None,
+        };
+        let Some((node, declarations)) = resolved else {
+            return Ok(None);
+        };
+        // V1's own range and curve: the descriptor's `denormalize`, which clamps the lane's
+        // value into `[0, 1]` and maps it as the widget does — logarithmic for the corner,
+        // exponential for a time, linear for the rest.
+        let Some(declared) = declarations.find_parameter(key) else {
+            return Err(format!(
+                "{} is not a parameter V1's {kind:?} declares",
+                param.display_name()
+            ));
+        };
+        let denormalized = declared.denormalize(value.as_f32());
+        let (parameter, value) = match param {
+            AutoInstrumentParam::FilterCutoff => (
+                parameters::FILTER_CUTOFF,
+                CutoffFrequency::new(denormalized)
+                    .map(ParameterValue::from_cutoff)
+                    .map_err(|error| error.to_string())?,
+            ),
+            AutoInstrumentParam::FilterResonance => (
+                parameters::FILTER_RESONANCE,
+                Resonance::new(super::graph::v1_quality(denormalized))
+                    .map(ParameterValue::from_resonance)
+                    .map_err(|error| error.to_string())?,
+            ),
+            AutoInstrumentParam::Attack
+            | AutoInstrumentParam::Decay
+            | AutoInstrumentParam::Release => (
+                match param {
+                    AutoInstrumentParam::Attack => parameters::ENVELOPE_ATTACK,
+                    AutoInstrumentParam::Decay => parameters::ENVELOPE_DECAY,
+                    _ => parameters::ENVELOPE_RELEASE,
+                },
+                Seconds::new(denormalized)
+                    .map(ParameterValue::from_seconds)
+                    .map_err(|error| error.to_string())?,
+            ),
+            AutoInstrumentParam::Sustain => (
+                parameters::ENVELOPE_SUSTAIN,
+                NormalizedLevel::new(denormalized)
+                    .map(ParameterValue::from_level)
+                    .map_err(|error| error.to_string())?,
+            ),
+            AutoInstrumentParam::Volume | AutoInstrumentParam::Pan => return Ok(None),
+        };
+        Ok(Some((*node, parameter, value)))
+    }
+}
+
+/// The most events this arrangement puts in any one render quantum: note edges and the
+/// override writes its automation lanes emit, with the restoring writes at the song's end.
 ///
 /// Admission needs this **before** the plan is compiled, and the plan is needed before an
 /// event can name a note slot — so the count is taken from the timeline rather than from the
-/// events. Both come from [`note_spans`], so the number admission is told is a count of the
-/// same notes the renderer is later given.
+/// events. The notes come from [`note_spans`] and the writes from [`lane_writes`], the same
+/// two functions [`lower_performance`] reads, so the number admission is told is a count of
+/// the same events the renderer is later given. `modules` is the saved patch, which decides
+/// whether a lane has a module to land on at all.
 ///
 /// Returns `None` when the arrangement could not be read; the caller lowers anyway and the
 /// refusal surfaces there with its subject intact.
 pub fn peak_events_per_quantum(
     instrument: InstrumentId,
+    modules: &[ModuleState],
     song: &Song,
     sample_rate: SampleRate,
 ) -> Option<EventCount> {
     let mut ignored = Vec::new();
     let spans = note_spans(instrument, song, &mut ignored)?;
+    let declared = |param| AutomationTargets::declared_in(param, modules);
+    let lanes = active_lanes(instrument, song, &declared, &mut ignored)?;
     let tempo = lower_tempo(song, sample_rate, &mut ignored).ok()?;
 
     let mut frames = Vec::with_capacity(spans.len() * 2);
@@ -506,6 +976,19 @@ pub fn peak_events_per_quantum(
             frames.push(tempo.position_of(MusicalTick::new(tick)).ok()?.as_u64());
         }
     }
+    let mut written: Vec<AutoInstrumentParam> = Vec::new();
+    for write in placed_writes(&lanes, &tempo).ok()? {
+        frames.push(write.position);
+        if !written.contains(&write.param) {
+            written.push(write.param);
+        }
+    }
+    // One restoring write per touched target where the transport stops.
+    let end = tempo
+        .position_of(MusicalTick::new(song_end(song, &mut ignored)?))
+        .ok()?
+        .as_u64();
+    frames.extend(std::iter::repeat_n(end, written.len()));
     frames.sort_unstable();
 
     // The worst case over every anchor phase, counted the way admission counts it: a `Q`-frame
@@ -544,6 +1027,7 @@ pub fn lower_performance(
     song: &Song,
     plan: &CompiledPlan,
     gate: NodeId,
+    targets: &AutomationTargets,
     sample_rate: SampleRate,
 ) -> LoweredPerformance {
     let mut diagnostics = Vec::new();
@@ -646,19 +1130,16 @@ pub fn lower_performance(
         }
     }
 
-    // Ascending, as the offline renderer requires. Sorting spans by start tick does not
-    // establish it: a release is emitted beside its own note-on rather than in time order.
-    events.sort_by_key(OfflineEvent::time);
-
     // The arrangement occupies the song as V1 bounds it, not only up to its last release: a
     // trailing rest, or a section drawn past the last placement, is silence V1 renders and
     // this render would otherwise omit. The same `calculate_length` that clips a release
-    // above is what extends the frame count here.
+    // above is what extends the frame count here — and it is where V1's transport stops,
+    // which the automation below needs.
     let Some(song_end) = song_end(song, &mut diagnostics) else {
         return refused(diagnostics);
     };
-    match tempo.position_of(MusicalTick::new(song_end)) {
-        Ok(position) => last_frame = last_frame.max(position.as_u64()),
+    let end_frame = match tempo.position_of(MusicalTick::new(song_end)) {
+        Ok(position) => position.as_u64(),
         Err(error) => {
             diagnostics.push(LoweringDiagnostic::refused(
                 ProjectSubject::Project,
@@ -668,7 +1149,103 @@ pub fn lower_performance(
             ));
             return refused(diagnostics);
         }
+    };
+    last_frame = last_frame.max(end_frame);
+
+    // `P07-S002b`: the automation lanes, as override writes. Every emission V1 makes lands
+    // as one `SetParameter` on the declared control's slot, at the emission's own position;
+    // the renderer composes it through the slot and reads it at the boundary that follows.
+    let declared = |param| targets.declares(param);
+    let Some(lanes) = active_lanes(instrument, song, &declared, &mut diagnostics) else {
+        return refused(diagnostics);
+    };
+    let writes = match placed_writes(&lanes, &tempo) {
+        Ok(writes) => writes,
+        Err(diagnostic) => {
+            diagnostics.push(*diagnostic);
+            return refused(diagnostics);
+        }
+    };
+    // Each touched slot with its prepared base, for the restoring write below.
+    let mut touched: Vec<(ParameterSlot, ParameterValue)> = Vec::new();
+    for write in writes {
+        let subject = || ProjectSubject::Pattern {
+            pattern: write.pattern,
+            name: song
+                .pattern(write.pattern)
+                .map(|pattern| pattern.name.clone())
+                .unwrap_or_default(),
+        };
+        let (node, parameter, value) = match targets.override_value(write.param, write.value) {
+            // V1's no-op: no module of the type, so the lane is inert there and here.
+            Ok(None) => continue,
+            Ok(Some(resolved)) => resolved,
+            Err(value) => {
+                diagnostics.push(LoweringDiagnostic::refused(
+                    subject(),
+                    LoweringReason::UnsupportedParameterValue { value },
+                ));
+                return refused(diagnostics);
+            }
+        };
+        // Every lowered kind declares the six as controls since `P07-S002a`, so a plan that
+        // compiled addresses each; a refusal here rather than a skip, so a declaration that
+        // narrows is found rather than silenced.
+        let Some(slot) = plan.resolve_parameter(node, parameter) else {
+            diagnostics.push(LoweringDiagnostic::refused(
+                subject(),
+                LoweringReason::UnsupportedParameterValue {
+                    value: format!(
+                        "{} addresses a control the plan does not declare",
+                        write.param.display_name()
+                    ),
+                },
+            ));
+            return refused(diagnostics);
+        };
+        events.push(OfflineEvent::new(
+            SampleTime::new(write.position),
+            CompiledPayload::SetParameter { slot, value },
+        ));
+        if !touched.iter().any(|(known, _)| *known == slot) {
+            // The compiled base is the prepared value, which is the authored one.
+            let Some(base) = plan
+                .parameter_targets()
+                .get(slot.index())
+                .map(|target| target.base)
+            else {
+                diagnostics.push(LoweringDiagnostic::refused(
+                    subject(),
+                    LoweringReason::UnsupportedParameterValue {
+                        value: format!(
+                            "{} resolves to a slot the plan's target table does not hold",
+                            write.param.display_name()
+                        ),
+                    },
+                ));
+                return refused(diagnostics);
+            };
+            touched.push((slot, base));
+        }
     }
+    // V1 clears every transient override when its transport stops, and the offline
+    // renderers stop it at the song's end before the tail. The tail hears the authored
+    // values there, so it hears them here: one write of the prepared base per touched slot.
+    // Pushed after every lane write, so at an equal position the stable sort below keeps the
+    // restore last.
+    for (slot, base) in touched {
+        events.push(OfflineEvent::new(
+            SampleTime::new(end_frame),
+            CompiledPayload::SetParameter { slot, value: base },
+        ));
+    }
+
+    // Ascending, as the offline renderer requires. Sorting spans by start tick does not
+    // establish it: a release is emitted beside its own note-on rather than in time order,
+    // and the lane writes follow every note. Stable, so events at one position keep the
+    // order they were emitted in: a note's edges before the lane writes at its tick, and the
+    // restoring writes after everything.
+    events.sort_by_key(OfflineEvent::time);
 
     LoweredPerformance {
         events,

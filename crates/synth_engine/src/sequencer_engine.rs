@@ -15,9 +15,9 @@ use synth_sequencer::{
     TICKS_PER_QUARTER, Tick, TrackId, TrackParam, Velocity, track_pitch_semitones,
 };
 
-/// Minimum change threshold for automation value deduplication.
-/// Values changing less than this are considered unchanged and won't emit events.
-const AUTOMATION_DEDUP_THRESHOLD: f32 = 0.001;
+/// Minimum change for an automation value to emit an event: a slow ramp plays as steps of this
+/// size. Public so the Core V2 lowerer reads it rather than keeping a copy (`P07-S002b`).
+pub const AUTOMATION_DEDUP_THRESHOLD: f32 = 0.001;
 
 /// Dedup threshold for `TrackParam::Pitch` lanes. Pitch maps one normalized
 /// unit onto 96 semitones (±[`synth_sequencer::TRACK_PITCH_RANGE`]), so the

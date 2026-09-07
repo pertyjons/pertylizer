@@ -1981,8 +1981,10 @@ fn a_render_longer_than_the_bounded_scope_is_refused() {
 #[test]
 fn the_declared_event_peak_counts_the_lowered_timeline() {
     let song = four_note_song();
+    let (modules, _) = corpus_patch("sawtooth");
     let peak = super::performance::peak_events_per_quantum(
         instrument(),
+        &modules,
         &song,
         SampleRate::new(48_000.0).expect("a real rate"),
     )
@@ -3038,8 +3040,10 @@ fn every_persisted_song_field_has_a_disposition() {
     assert_eq!(
         fields::<synth_sequencer::Pattern>(),
         [
-            // `automation` refused in `render::project_diagnostics` over every placement, when a
-            // lane holds a point; `processors` and `note_graph` refused in
+            // `automation` lowered in `performance::active_lanes` over every placement, when a
+            // lane holds a point: an instrument lane on a module parameter becomes override
+            // writes (`P07-S002b`), every other class is refused there by name; `processors`
+            // and `note_graph` refused in
             // `performance::note_spans` on a placement V1 plays — the first expands notes
             // exactly as an ornament does, the second is its successor and is resolved through
             // the pool as V1 resolves it; `length` bounds which notes are hidden; `notes` are
@@ -3304,7 +3308,8 @@ fn every_audible_instrument_setting_is_dispositioned() {
     }
 }
 
-/// A placed pattern carrying automation is refused, because V1 applies its lanes.
+/// A placed pattern carrying automation V2 does not lower — a track lane here — is refused,
+/// because V1 applies it. The instrument lanes `P07-S002b` lowers are covered below.
 #[test]
 fn pattern_automation_is_refused_rather_than_flattened() {
     use synth_sequencer::{
@@ -4151,8 +4156,10 @@ fn the_declared_event_peak_slides_a_window_as_admission_does() {
         "the fixture assumes Q = 64"
     );
 
+    let (modules, _) = corpus_patch("sawtooth");
     let peak = super::performance::peak_events_per_quantum(
         instrument(),
+        &modules,
         &song,
         synth_engine_v2::quantities::SampleRate::new(48_000.0).expect("a real rate"),
     );
@@ -4257,4 +4264,1045 @@ fn a_zero_length_override_is_as_inactive_as_a_zero_length_pattern() {
         "a zero-length override is never active in V1, so it must render: {:?}",
         rendered.diagnostics
     );
+}
+
+// ---------------------------------------------------------------------------------------------
+// `P07-S002b`: a placed pattern's automation lanes as override writes.
+// ---------------------------------------------------------------------------------------------
+
+/// An instrument lane for the fixture instrument, from `(tick, value, curve)` points.
+fn instrument_lane(
+    param: synth_sequencer::AutoInstrumentParam,
+    points: &[(u32, f32, synth_sequencer::CurveType)],
+) -> synth_sequencer::AutomationLane {
+    use synth_sequencer::{AutomationLane, AutomationPoint, AutomationTarget, PatternTick};
+    let mut lane = AutomationLane::new(AutomationTarget::Instrument {
+        instrument: instrument(),
+        param,
+    });
+    for (tick, value, curve) in points {
+        lane.add_point(
+            AutomationPoint::new(PatternTick(*tick), synth_core::NormalizedValue::new(*value))
+                .with_curve(*curve),
+        );
+    }
+    lane
+}
+
+/// The fixture song's one placed pattern.
+fn placed_pattern(song: &synth_sequencer::Song) -> synth_sequencer::PatternId {
+    song.arrangement()
+        .first()
+        .expect("the fixture places one pattern")
+        .pattern_id
+}
+
+/// V1's own denormalization of a lane value for one instrument parameter, through the
+/// descriptor of the module type V1 resolves it on.
+fn v1_denormalized(param: synth_sequencer::AutoInstrumentParam, normalized: f32) -> f32 {
+    let (kind, _, key) =
+        crate::mod_grid_build::instrument_param_module(param).expect("a module parameter");
+    let (_, declarations) =
+        crate::module_factory::create_voice_module(kind).expect("V1 builds the module");
+    declarations
+        .find_parameter(key)
+        .expect("V1 declares the parameter")
+        .denormalize(normalized)
+}
+
+/// The `SetParameter` events among a lowering's, as `(frame, slot, value)`.
+fn parameter_writes(
+    events: &[synth_engine_v2::offline::OfflineEvent],
+) -> Vec<(u64, synth_engine_v2::plan::ParameterSlot, f32)> {
+    use synth_engine_v2::schedule::CompiledPayload;
+    events
+        .iter()
+        .filter_map(|event| match event.payload() {
+            CompiledPayload::SetParameter { slot, value } => {
+                Some((event.time().as_u64(), slot, value.as_f32()))
+            }
+            _ => None,
+        })
+        .collect()
+}
+
+/// Lower the fixture patch against `song` directly, returning the plan and the performance.
+fn lowered_performance(
+    modules: &[ModuleState],
+    connections: &[ConnectionState],
+    song: &synth_sequencer::Song,
+) -> (
+    synth_engine_v2::plan::CompiledPlan,
+    super::performance::LoweredPerformance,
+) {
+    lowered_performance_at(
+        modules,
+        connections,
+        song,
+        SampleRate::new(48_000.0).expect("a real rate"),
+    )
+}
+
+/// [`lowered_performance`] with the arrangement mapped at `rate`.
+fn lowered_performance_at(
+    modules: &[ModuleState],
+    connections: &[ConnectionState],
+    song: &synth_sequencer::Song,
+    rate: SampleRate,
+) -> (
+    synth_engine_v2::plan::CompiledPlan,
+    super::performance::LoweredPerformance,
+) {
+    use synth_engine_v2::quantities::NormalizedLevel;
+    // `None` is a refusal the performance lowering will name, and the render path declares
+    // no events for it exactly as `smoke_render` does.
+    let peak = super::performance::peak_events_per_quantum(instrument(), modules, song, rate)
+        .unwrap_or(synth_engine_v2::quantities::EventCount::NONE);
+    let lowered = super::graph::lower_voice_patch_with(
+        instrument(),
+        modules,
+        connections,
+        peak,
+        Some(NormalizedLevel::new(0.0).expect("a level")),
+    );
+    let ir = lowered.ir.expect("the fixture lowers");
+    let plan = compile(&ir, &RenderConfig::new(harness_profile()))
+        .into_plan()
+        .expect("the fixture compiles");
+    let gate = lowered
+        .identities
+        .pairs()
+        .find(|(id, _)| id.module_type == ModuleType::Envelope)
+        .map(|(_, node)| node)
+        .expect("the fixture has an envelope");
+    let targets = super::performance::AutomationTargets::resolve(&lowered.identities);
+    let performance = super::performance::lower_performance(
+        instrument(),
+        "Subtractive Voice",
+        song,
+        &plan,
+        gate,
+        &targets,
+        rate,
+    );
+    (plan, performance)
+}
+
+/// A step lane lowers to exactly the writes V1 emits — one per point, in the control's unit
+/// through V1's own descriptor — plus one restoring write of the prepared base where V1's
+/// transport stops; and the render is bit-identical to the same plan given those writes by
+/// hand.
+#[test]
+fn a_step_lane_lowers_to_v1s_emissions_and_a_restore_at_the_songs_end() {
+    use synth_engine_v2::offline::{OfflineEvent, render_offline};
+    use synth_engine_v2::schedule::CompiledPayload;
+    use synth_engine_v2::time::{PlanPosition, SampleTime};
+    use synth_sequencer::{AutoInstrumentParam, CurveType};
+
+    let (modules, connections) = corpus_patch("sawtooth");
+    let saved = saved_instrument(modules.clone(), connections.clone());
+    let plain = four_note_song();
+    let mut song = plain.clone();
+    let pattern = placed_pattern(&song);
+    song.pattern_mut(pattern)
+        .expect("the pattern resolves")
+        .add_automation_lane(instrument_lane(
+            AutoInstrumentParam::FilterCutoff,
+            &[(0, 0.2, CurveType::Step), (1920, 0.8, CurveType::Step)],
+        ));
+
+    // The lowering's own events: eight note edges, two lane writes, one restore.
+    let (plan, performance) = lowered_performance(&modules, &connections, &song);
+    assert!(!performance.refused(), "{:?}", performance.diagnostics);
+    let writes = parameter_writes(&performance.events);
+    assert_eq!(writes.len(), 3, "two emissions and a restore: {writes:?}");
+    assert_eq!(performance.events.len(), 11);
+    let slot = writes[0].1;
+    assert!(
+        writes.iter().all(|(_, s, _)| *s == slot),
+        "one target, one slot: {writes:?}"
+    );
+    // At 120 BPM and 48 kHz one tick is 25 frames: tick 1920 is frame 48 000, the song's end
+    // at tick 3840 is frame 96 000.
+    let expected = |normalized: f32| v1_denormalized(AutoInstrumentParam::FilterCutoff, normalized);
+    assert_eq!(writes[0], (0, slot, expected(0.2)));
+    assert_eq!(writes[1], (48_000, slot, expected(0.8)));
+    let base = plan.parameter_targets()[slot.index()].base.as_f32();
+    assert_eq!(base, 1200.0, "the prepared base is the authored cutoff");
+    assert_eq!(
+        writes[2],
+        (96_000, slot, base),
+        "the restore writes the base"
+    );
+    assert!(
+        expected(0.2) != base && expected(0.8) != base,
+        "the fixture's lane must move the corner away from its authored value"
+    );
+
+    // The render is exactly the plan rendered with those writes placed by hand beside the
+    // lane-less song's note edges.
+    let rendered = super::render::smoke_render(
+        &saved,
+        &song,
+        &crate::project::GlobalProjectState::default(),
+        harness_profile(),
+        FrameCount::new(4_800),
+    );
+    assert!(rendered.is_audible(), "{:?}", rendered.diagnostics);
+    assert_eq!(
+        rendered.lowered_events,
+        synth_engine_v2::quantities::EventCount::measured(11)
+    );
+    // The note edges from the same lowering — a slot names its plan, so the writes have to be
+    // placed against this plan rather than against a second compile's.
+    let notes: Vec<OfflineEvent> = performance
+        .events
+        .iter()
+        .copied()
+        .filter(|event| !matches!(event.payload(), CompiledPayload::SetParameter { .. }))
+        .collect();
+    assert_eq!(notes.len(), 8);
+    let value = |hz: f32| {
+        synth_engine_v2::quantities::ParameterValue::from_cutoff(
+            synth_engine_v2::quantities::CutoffFrequency::new(hz).expect("a corner"),
+        )
+    };
+    let mut by_hand = notes;
+    by_hand.push(OfflineEvent::new(
+        SampleTime::new(0),
+        CompiledPayload::SetParameter {
+            slot,
+            value: value(expected(0.2)),
+        },
+    ));
+    by_hand.push(OfflineEvent::new(
+        SampleTime::new(48_000),
+        CompiledPayload::SetParameter {
+            slot,
+            value: value(expected(0.8)),
+        },
+    ));
+    by_hand.push(OfflineEvent::new(
+        SampleTime::new(96_000),
+        CompiledPayload::SetParameter {
+            slot,
+            value: value(base),
+        },
+    ));
+    by_hand.sort_by_key(OfflineEvent::time);
+    let frames = FrameCount::new(performance.frames.as_u64() + 4_800);
+    let oracle =
+        render_offline(plan, frames, PlanPosition::ZERO, &by_hand).expect("the oracle renders");
+    assert_eq!(rendered.samples.len(), oracle.len());
+    assert!(
+        rendered.samples == oracle,
+        "the lowered lane must render exactly as the hand-placed writes"
+    );
+
+    // And the lane changes the sound: the control that the writes reach the filter.
+    let unautomated = super::render::smoke_render(
+        &saved,
+        &plain,
+        &crate::project::GlobalProjectState::default(),
+        harness_profile(),
+        FrameCount::new(4_800),
+    );
+    assert!(unautomated.samples != rendered.samples);
+}
+
+/// A linear lane emits V1's staircase: one write each time the value has moved by more than
+/// the sequencer's threshold, each the descriptor's denormalization of `value_at` at its tick.
+#[test]
+fn a_linear_lane_emits_v1s_staircase_through_v1s_curve() {
+    use synth_sequencer::{AutoInstrumentParam, CurveType, PatternTick};
+
+    let (modules, connections) = corpus_patch("sawtooth");
+    let mut song = four_note_song();
+    let pattern = placed_pattern(&song);
+    let lane = instrument_lane(
+        AutoInstrumentParam::FilterCutoff,
+        &[(0, 0.0, CurveType::Linear), (3840, 1.0, CurveType::Linear)],
+    );
+    song.pattern_mut(pattern)
+        .expect("the pattern resolves")
+        .add_automation_lane(lane.clone());
+
+    let (_, performance) = lowered_performance(&modules, &connections, &song);
+    assert!(!performance.refused(), "{:?}", performance.diagnostics);
+    let writes = parameter_writes(&performance.events);
+    // One in 3840 per tick moves past 0.001 every fourth tick: ticks 0, 4, ..., 3836.
+    assert_eq!(
+        writes.len(),
+        960 + 1,
+        "960 emissions and the restore: {}",
+        writes.len()
+    );
+    let (kind, _, key) =
+        crate::mod_grid_build::instrument_param_module(AutoInstrumentParam::FilterCutoff)
+            .expect("a module parameter");
+    let (_, declarations) = crate::module_factory::create_voice_module(kind).expect("builds");
+    let descriptor = declarations.find_parameter(key).expect("declared");
+    let mut last: Option<f32> = None;
+    for (frame, _, hz) in &writes[..960] {
+        assert_eq!(frame % 25, 0, "a write lands on a tick");
+        let tick = u32::try_from(frame / 25).expect("fits");
+        assert_eq!(
+            tick % 4,
+            0,
+            "V1 emits every fourth tick of this ramp, not at {tick}"
+        );
+        let at_tick = lane.value_at(PatternTick(tick)).expect("a pointed lane");
+        assert_eq!(*hz, descriptor.denormalize(at_tick.as_f32()));
+        let normalized = descriptor.normalize(*hz);
+        if let Some(previous) = last {
+            assert!(
+                (normalized - previous).abs()
+                    > synth_engine::sequencer_engine::AUTOMATION_DEDUP_THRESHOLD,
+                "an emission moves past the threshold"
+            );
+        }
+        last = Some(normalized);
+    }
+    assert_eq!(writes[960].0, 96_000, "the restore is at the song's end");
+
+    // The threshold's own boundary: a move of exactly the threshold is **not** a change in V1
+    // (`> threshold`, not `>=`), and `0.001 - 0.0` is exactly the constant in `f32`.
+    let mut song = four_note_song();
+    let pattern = placed_pattern(&song);
+    song.pattern_mut(pattern)
+        .expect("resolves")
+        .add_automation_lane(instrument_lane(
+            AutoInstrumentParam::FilterCutoff,
+            &[(0, 0.0, CurveType::Step), (1920, 0.001, CurveType::Step)],
+        ));
+    let (_, performance) = lowered_performance(&modules, &connections, &song);
+    let writes = parameter_writes(&performance.events);
+    assert_eq!(
+        writes.len(),
+        1 + 1,
+        "a move of exactly the threshold emits nothing in V1: {writes:?}"
+    );
+}
+
+/// Two lanes writing one target at one sample are refused, naming both patterns and the
+/// target; the same two lanes placed end to end lower, as do two lanes on two targets.
+#[test]
+fn two_writers_on_one_target_at_one_sample_are_refused_by_name() {
+    use synth_sequencer::{AutoInstrumentParam, CurveType, Duration, Tick};
+
+    let (modules, connections) = corpus_patch("sawtooth");
+    let saved = saved_instrument(modules, connections);
+    let cutoff = |value: f32| {
+        instrument_lane(
+            AutoInstrumentParam::FilterCutoff,
+            &[(0, value, CurveType::Step)],
+        )
+    };
+    let render = |song: &synth_sequencer::Song| {
+        super::render::smoke_render(
+            &saved,
+            song,
+            &crate::project::GlobalProjectState::default(),
+            harness_profile(),
+            FrameCount::new(4_800),
+        )
+    };
+    let conflict = |rendered: &super::render::SmokeRender| {
+        rendered.diagnostics.iter().find_map(|d| match d.reason() {
+            LoweringReason::ConflictingWriters {
+                target,
+                first,
+                second,
+            } if d.severity() == Severity::Refused => {
+                Some((target.clone(), *first, *second, d.subject().clone()))
+            }
+            _ => None,
+        })
+    };
+
+    // A second, note-free pattern with its own cutoff lane, placed on another track so the
+    // note walk has nothing to refuse first. Overlapping the first from tick 1920.
+    let mut song = four_note_song();
+    let first = placed_pattern(&song);
+    song.pattern_mut(first)
+        .expect("resolves")
+        .add_automation_lane(cutoff(0.3));
+    let second = song.create_pattern(Duration(3840));
+    song.pattern_mut(second)
+        .expect("resolves")
+        .add_automation_lane(cutoff(0.9));
+    let other_track = song.create_track("automation");
+    assert!(song.place_pattern(second, other_track, Tick(1920)));
+    let rendered = render(&song);
+    assert_eq!(
+        conflict(&rendered),
+        Some((
+            "Filter Cutoff".to_owned(),
+            first,
+            second,
+            ProjectSubject::Pattern {
+                pattern: second,
+                name: String::new(),
+            }
+        )),
+        "{:?}",
+        rendered.diagnostics
+    );
+    assert!(rendered.samples.is_empty());
+
+    // End to end — the second starts where the first ends — both lower, and the second's
+    // first tick emits because its value differs from where the first left off.
+    let mut adjacent = four_note_song();
+    adjacent
+        .pattern_mut(first)
+        .expect("resolves")
+        .add_automation_lane(cutoff(0.3));
+    let second = adjacent.create_pattern(Duration(3840));
+    adjacent
+        .pattern_mut(second)
+        .expect("resolves")
+        .add_automation_lane(cutoff(0.9));
+    let other_track = adjacent.create_track("automation");
+    assert!(adjacent.place_pattern(second, other_track, Tick(3840)));
+    let rendered = render(&adjacent);
+    assert!(rendered.is_audible(), "{:?}", rendered.diagnostics);
+    assert_eq!(
+        rendered.lowered_events,
+        synth_engine_v2::quantities::EventCount::measured(8 + 2 + 1),
+        "eight edges, one write per lane, one restore"
+    );
+
+    // A `Clip` placement drawn longer than its pattern is silent past the pattern, and its
+    // lane with it: a lane starting where the pattern ends shares no tick with it. The
+    // carrier sits on another track, where a length override is not the note walk's to
+    // refuse.
+    let mut clipped = four_note_song();
+    let carrier = clipped.create_pattern(Duration(1920));
+    clipped
+        .pattern_mut(carrier)
+        .expect("resolves")
+        .add_automation_lane(cutoff(0.3));
+    let follower = clipped.create_pattern(Duration(1920));
+    clipped
+        .pattern_mut(follower)
+        .expect("resolves")
+        .add_automation_lane(cutoff(0.9));
+    let carrier_track = clipped.create_track("clip");
+    clipped
+        .track_mut(carrier_track)
+        .expect("resolves")
+        .instrument = synth_engine::instrument::InstrumentId::new(7);
+    assert!(clipped.place_pattern(carrier, carrier_track, Tick::ZERO));
+    assert!(clipped.set_placement_length(carrier, carrier_track, Tick::ZERO, Some(Duration(3840))));
+    assert!(clipped.set_placement_loop_mode(
+        carrier,
+        carrier_track,
+        Tick::ZERO,
+        synth_sequencer::PlacementLoopMode::Clip
+    ));
+    let follower_track = clipped.create_track("follower");
+    assert!(clipped.place_pattern(follower, follower_track, Tick(1920)));
+    let rendered = render(&clipped);
+    assert!(rendered.is_audible(), "{:?}", rendered.diagnostics);
+    assert_eq!(
+        rendered.lowered_events,
+        synth_engine_v2::quantities::EventCount::measured(8 + 2 + 1),
+        "the clip's lane ends with its pattern, so the follower is its successor"
+    );
+
+    // Two targets at once are two slots, not two writers.
+    let mut two_targets = four_note_song();
+    two_targets
+        .pattern_mut(first)
+        .expect("resolves")
+        .add_automation_lane(cutoff(0.3));
+    two_targets
+        .pattern_mut(first)
+        .expect("resolves")
+        .add_automation_lane(instrument_lane(
+            AutoInstrumentParam::FilterResonance,
+            &[(0, 0.9, CurveType::Step)],
+        ));
+    let rendered = render(&two_targets);
+    assert!(rendered.is_audible(), "{:?}", rendered.diagnostics);
+    assert_eq!(
+        rendered.lowered_events,
+        synth_engine_v2::quantities::EventCount::measured(8 + 2 + 2)
+    );
+
+    // Two lanes on one target inside one pattern — the field is a list, so a file can carry
+    // them even though the editor replaces by target — share every tick.
+    let mut doubled = four_note_song();
+    doubled
+        .pattern_mut(first)
+        .expect("resolves")
+        .automation
+        .push(cutoff(0.3));
+    doubled
+        .pattern_mut(first)
+        .expect("resolves")
+        .automation
+        .push(cutoff(0.9));
+    let rendered = render(&doubled);
+    assert_eq!(
+        conflict(&rendered).map(|(target, a, b, _)| (target, a, b)),
+        Some(("Filter Cutoff".to_owned(), first, first)),
+        "{:?}",
+        rendered.diagnostics
+    );
+}
+
+/// V1 runs a lane wherever its placement is: on a muted track, and on a track routed to
+/// another instrument. A lane naming another instrument is that instrument's, and is skipped
+/// exactly as its notes are.
+#[test]
+fn a_lane_runs_where_v1_runs_it_and_another_instruments_lane_is_skipped() {
+    use synth_sequencer::{
+        AutoInstrumentParam, AutomationLane, AutomationPoint, AutomationTarget, CurveType,
+        Duration, PatternTick, Tick,
+    };
+
+    let (modules, connections) = corpus_patch("sawtooth");
+    let saved = saved_instrument(modules, connections);
+    let render = |song: &synth_sequencer::Song| {
+        super::render::smoke_render(
+            &saved,
+            song,
+            &crate::project::GlobalProjectState::default(),
+            harness_profile(),
+            FrameCount::new(4_800),
+        )
+    };
+    let plain = render(&four_note_song());
+    assert!(plain.is_audible(), "{:?}", plain.diagnostics);
+
+    // A note-free pattern carrying this instrument's cutoff lane, on a muted track routed to
+    // another instrument: V1 still runs it, so the render changes and the writes are counted.
+    let mut song = four_note_song();
+    let carrier = song.create_pattern(Duration(3840));
+    song.pattern_mut(carrier)
+        .expect("resolves")
+        .add_automation_lane(instrument_lane(
+            AutoInstrumentParam::FilterCutoff,
+            &[(0, 1.0, CurveType::Step)],
+        ));
+    let track = song.create_track("muted, elsewhere");
+    {
+        let track = song.track_mut(track).expect("resolves");
+        track.mute = true;
+        track.instrument = synth_engine::instrument::InstrumentId::new(7);
+    }
+    assert!(song.place_pattern(carrier, track, Tick::ZERO));
+    let rendered = render(&song);
+    assert!(rendered.is_audible(), "{:?}", rendered.diagnostics);
+    assert_eq!(
+        rendered.lowered_events,
+        synth_engine_v2::quantities::EventCount::measured(8 + 1 + 1)
+    );
+    assert!(
+        rendered.samples != plain.samples,
+        "a muted track's lane still writes"
+    );
+
+    // The same lane naming another instrument is not this render's.
+    let mut song = four_note_song();
+    let pattern = placed_pattern(&song);
+    let mut lane = AutomationLane::new(AutomationTarget::Instrument {
+        instrument: synth_engine::instrument::InstrumentId::new(7),
+        param: AutoInstrumentParam::FilterCutoff,
+    });
+    lane.add_point(AutomationPoint::new(
+        PatternTick(0),
+        synth_core::NormalizedValue::new(1.0),
+    ));
+    song.pattern_mut(pattern)
+        .expect("resolves")
+        .add_automation_lane(lane);
+    let rendered = render(&song);
+    assert!(
+        rendered.diagnostics == plain.diagnostics,
+        "{:?}",
+        rendered.diagnostics
+    );
+    assert_eq!(
+        rendered.lowered_events,
+        synth_engine_v2::quantities::EventCount::measured(8)
+    );
+    assert!(rendered.samples == plain.samples);
+}
+
+/// A lane on a module the patch does not hold is V1's no-op — `apply_normalized_override`
+/// returns when it finds no module of the type — so it lowers to nothing and changes nothing.
+#[test]
+fn a_lane_on_a_module_the_patch_lacks_is_v1s_no_op() {
+    use synth_sequencer::{AutoInstrumentParam, CurveType};
+
+    // The corpus patch with its filter removed and the oscillator cabled straight in.
+    let (modules, _) = corpus_patch("sawtooth");
+    let modules: Vec<ModuleState> = modules
+        .into_iter()
+        .filter(|module| module.module_type != ModuleType::Filter)
+        .collect();
+    let connection = |from: (&str, &str), to: (&str, &str)| ConnectionState {
+        from: (from.0.to_owned(), from.1.to_owned()),
+        to: (to.0.to_owned(), to.1.to_owned()),
+    };
+    let connections = vec![
+        connection(("env-1", "out"), ("amp-1", "cv")),
+        connection(("amp-1", "out"), ("out-1", "in")),
+        connection(("osc-1", "out"), ("amp-1", "in")),
+    ];
+    let saved = saved_instrument(modules.clone(), connections.clone());
+    let render = |song: &synth_sequencer::Song| {
+        super::render::smoke_render(
+            &saved,
+            song,
+            &crate::project::GlobalProjectState::default(),
+            harness_profile(),
+            FrameCount::new(4_800),
+        )
+    };
+    let plain = four_note_song();
+    let unautomated = render(&plain);
+    assert!(unautomated.is_audible(), "{:?}", unautomated.diagnostics);
+
+    let mut song = plain.clone();
+    let pattern = placed_pattern(&song);
+    song.pattern_mut(pattern)
+        .expect("resolves")
+        .add_automation_lane(instrument_lane(
+            AutoInstrumentParam::FilterCutoff,
+            &[(0, 1.0, CurveType::Step)],
+        ));
+    let rendered = render(&song);
+    assert_eq!(rendered.diagnostics, unautomated.diagnostics);
+    assert_eq!(
+        rendered.lowered_events,
+        synth_engine_v2::quantities::EventCount::measured(8),
+        "no module, no write, no restore"
+    );
+    assert!(rendered.samples == unautomated.samples);
+
+    // Two inert lanes overlapping conflict over nothing: `apply_normalized_override` returns
+    // before either writes, so neither is a writer. An independent read found them refused.
+    let mut two_inert = plain.clone();
+    // Shorter than the host and placed at its start, so the song's end does not move.
+    let carrier = two_inert.create_pattern(synth_sequencer::Duration(960));
+    two_inert
+        .pattern_mut(carrier)
+        .expect("resolves")
+        .add_automation_lane(instrument_lane(
+            AutoInstrumentParam::FilterCutoff,
+            &[(0, 0.3, CurveType::Step)],
+        ));
+    two_inert
+        .pattern_mut(pattern)
+        .expect("resolves")
+        .add_automation_lane(instrument_lane(
+            AutoInstrumentParam::FilterCutoff,
+            &[(0, 0.9, CurveType::Step)],
+        ));
+    let track = two_inert.create_track("carrier");
+    assert!(two_inert.place_pattern(carrier, track, synth_sequencer::Tick::ZERO));
+    let rendered = render(&two_inert);
+    assert_eq!(rendered.diagnostics, unautomated.diagnostics);
+    assert!(rendered.samples == unautomated.samples);
+
+    // And the peak agrees, from the saved modules alone.
+    let (_, performance) = lowered_performance(&modules, &connections, &song);
+    assert_eq!(performance.events.len(), 8);
+    let peak = super::performance::peak_events_per_quantum(
+        instrument(),
+        &modules,
+        &song,
+        SampleRate::new(48_000.0).expect("a real rate"),
+    );
+    assert_eq!(
+        peak,
+        Some(synth_engine_v2::quantities::EventCount::measured(1)),
+        "the lane counts nothing where it lands nowhere"
+    );
+}
+
+/// Every one of the six parameters reaches its control: a lane at one extreme renders
+/// differently from the unautomated fixture, with exactly one write and one restore.
+#[test]
+fn each_instrument_parameter_lane_reaches_its_control() {
+    use synth_sequencer::{AutoInstrumentParam, CurveType};
+
+    let (modules, connections) = corpus_patch("sawtooth");
+    let saved = saved_instrument(modules, connections);
+    let render = |song: &synth_sequencer::Song| {
+        super::render::smoke_render(
+            &saved,
+            song,
+            &crate::project::GlobalProjectState::default(),
+            harness_profile(),
+            FrameCount::new(48_000),
+        )
+    };
+    let plain = render(&four_note_song());
+    assert!(plain.is_audible(), "{:?}", plain.diagnostics);
+
+    for (param, value) in [
+        (AutoInstrumentParam::FilterCutoff, 1.0),
+        (AutoInstrumentParam::FilterResonance, 1.0),
+        (AutoInstrumentParam::Attack, 1.0),
+        (AutoInstrumentParam::Decay, 1.0),
+        (AutoInstrumentParam::Sustain, 0.0),
+        (AutoInstrumentParam::Release, 1.0),
+    ] {
+        let mut song = four_note_song();
+        let pattern = placed_pattern(&song);
+        song.pattern_mut(pattern)
+            .expect("resolves")
+            .add_automation_lane(instrument_lane(param, &[(0, value, CurveType::Step)]));
+        let rendered = render(&song);
+        assert!(
+            rendered.is_audible(),
+            "{param:?}: {:?}",
+            rendered.diagnostics
+        );
+        assert_eq!(
+            rendered.diagnostics, plain.diagnostics,
+            "{param:?}: a lowered lane is represented, not marked"
+        );
+        assert_eq!(
+            rendered.lowered_events,
+            synth_engine_v2::quantities::EventCount::measured(8 + 1 + 1),
+            "{param:?}"
+        );
+        assert!(
+            rendered.samples != plain.samples,
+            "{param:?} at {value} must change the render"
+        );
+    }
+}
+
+/// The lane classes V2 does not carry are refused by name, each with its owner.
+#[test]
+fn the_lane_classes_v2_does_not_carry_are_refused_by_name() {
+    use synth_sequencer::{
+        AutoInstrumentParam, AutomationLane, AutomationPoint, AutomationTarget, GlobalParam,
+        PatternTick, TrackParam,
+    };
+
+    let (modules, connections) = corpus_patch("sawtooth");
+    let saved = saved_instrument(modules, connections);
+    let refusal = |target: AutomationTarget| {
+        let mut song = four_note_song();
+        let pattern = placed_pattern(&song);
+        let mut lane = AutomationLane::new(target);
+        lane.add_point(AutomationPoint::new(
+            PatternTick(0),
+            synth_core::NormalizedValue::new(0.5),
+        ));
+        song.pattern_mut(pattern)
+            .expect("resolves")
+            .add_automation_lane(lane);
+        let rendered = super::render::smoke_render(
+            &saved,
+            &song,
+            &crate::project::GlobalProjectState::default(),
+            harness_profile(),
+            FrameCount::new(4_800),
+        );
+        assert!(rendered.samples.is_empty());
+        rendered
+            .diagnostics
+            .into_iter()
+            .find_map(|d| match (d.severity(), d.reason()) {
+                (Severity::Refused, LoweringReason::OwnedByLaterPhase { capability, owner })
+                    if *d.subject()
+                        == (ProjectSubject::Pattern {
+                            pattern,
+                            name: String::new(),
+                        }) =>
+                {
+                    Some((*capability, *owner))
+                }
+                _ => None,
+            })
+            .expect("refused on the pattern by name")
+    };
+    let this = instrument();
+    let (capability, owner) = refusal(AutomationTarget::Instrument {
+        instrument: this,
+        param: AutoInstrumentParam::Volume,
+    });
+    assert!(capability.contains("volume or pan") && owner.contains("Phase 8"));
+    let (capability, owner) = refusal(AutomationTarget::Instrument {
+        instrument: this,
+        param: AutoInstrumentParam::Pan,
+    });
+    assert!(capability.contains("volume or pan") && owner.contains("Phase 8"));
+    let (capability, owner) = refusal(AutomationTarget::Module {
+        instrument: this,
+        module_type: ModuleType::Filter,
+        instance: 1,
+        param_id: "cutoff".into(),
+    });
+    assert!(capability.contains("module-addressed") && owner.contains("Phase 7"));
+    let (capability, owner) = refusal(AutomationTarget::Track {
+        track: None,
+        param: TrackParam::Pitch,
+    });
+    assert!(capability.contains("track pitch") && owner.contains("Phase 7"));
+    let (capability, owner) = refusal(AutomationTarget::Track {
+        track: None,
+        param: TrackParam::Mute,
+    });
+    assert!(capability.contains("fader, pan or mute") && owner.contains("Phase 8"));
+    let (capability, owner) = refusal(AutomationTarget::Global(GlobalParam::MasterVolume));
+    assert!(capability.contains("master volume") && owner.contains("Phase 8"));
+}
+
+/// The declared peak counts the lane writes admission must be told about: a ramp that emits
+/// on every tick puts three writes in one 64-frame window at 25 frames a tick.
+#[test]
+fn the_declared_event_peak_counts_the_lane_writes() {
+    use synth_sequencer::{AutoInstrumentParam, CurveType};
+
+    let (modules, _) = corpus_patch("sawtooth");
+    let mut song = song_with(120.0, &[], None);
+    let pattern = placed_pattern(&song);
+    // One in 96 per tick clears the threshold every tick: writes at frames 0, 25, 50, ...
+    song.pattern_mut(pattern)
+        .expect("resolves")
+        .add_automation_lane(instrument_lane(
+            AutoInstrumentParam::FilterCutoff,
+            &[(0, 0.0, CurveType::Linear), (96, 1.0, CurveType::Linear)],
+        ));
+    let rate = SampleRate::new(48_000.0).expect("a real rate");
+    let peak = super::performance::peak_events_per_quantum(instrument(), &modules, &song, rate);
+    assert_eq!(
+        peak,
+        Some(synth_engine_v2::quantities::EventCount::measured(3)),
+        "three writes fall in one window"
+    );
+
+    // The restoring write is counted where it lands: beside a release at the song's end. One
+    // note from tick 100 to the end and one step lane: the on and the lane's first write are
+    // 2 500 frames apart, the off and the restore share frame 96 000.
+    let mut ending = song_with(120.0, &[(100, 3740)], None);
+    let pattern = placed_pattern(&ending);
+    ending
+        .pattern_mut(pattern)
+        .expect("resolves")
+        .add_automation_lane(instrument_lane(
+            AutoInstrumentParam::FilterCutoff,
+            &[(0, 0.5, CurveType::Step)],
+        ));
+    let peak = super::performance::peak_events_per_quantum(instrument(), &modules, &ending, rate);
+    assert_eq!(
+        peak,
+        Some(synth_engine_v2::quantities::EventCount::measured(2)),
+        "the release and the restore share the song's last frame"
+    );
+
+    // The same lanes with no filter to land on declare nothing.
+    let without: Vec<ModuleState> = modules
+        .into_iter()
+        .filter(|module| module.module_type != ModuleType::Filter)
+        .collect();
+    let peak = super::performance::peak_events_per_quantum(instrument(), &without, &song, rate);
+    assert_eq!(
+        peak,
+        Some(synth_engine_v2::quantities::EventCount::measured(0))
+    );
+}
+
+/// A lane lands on the first module of its type as V1 resolves it: the lowest identity, not
+/// instance one and not the last declared. Two filters named `flt-3` and `flt-2`, declared in
+/// that order, and the write reaches `flt-2`.
+#[test]
+fn a_lane_lands_on_the_lowest_module_of_its_type_as_v1_resolves_it() {
+    use synth_engine_v2::ir::parameters;
+    use synth_sequencer::{AutoInstrumentParam, CurveType};
+
+    let (modules, _) = corpus_patch("sawtooth");
+    let mut modules: Vec<ModuleState> = modules
+        .into_iter()
+        .filter(|module| module.module_type != ModuleType::Filter)
+        .collect();
+    for id in ["flt-3", "flt-2"] {
+        let mut flt = module(id, ModuleType::Filter);
+        floats(
+            &mut flt,
+            &[("cutoff", 1200.0), ("env_amt", 0.0), ("resonance", 0.3)],
+        );
+        choice(&mut flt, "type", "lowpass");
+        modules.push(flt);
+    }
+    let connection = |from: (&str, &str), to: (&str, &str)| ConnectionState {
+        from: (from.0.to_owned(), from.1.to_owned()),
+        to: (to.0.to_owned(), to.1.to_owned()),
+    };
+    let connections = vec![
+        connection(("env-1", "out"), ("amp-1", "cv")),
+        connection(("amp-1", "out"), ("out-1", "in")),
+        connection(("osc-1", "out"), ("flt-3", "in")),
+        connection(("flt-3", "out"), ("flt-2", "in")),
+        connection(("flt-2", "out"), ("amp-1", "in")),
+    ];
+    let mut song = four_note_song();
+    let pattern = placed_pattern(&song);
+    song.pattern_mut(pattern)
+        .expect("resolves")
+        .add_automation_lane(instrument_lane(
+            AutoInstrumentParam::FilterCutoff,
+            &[(0, 0.9, CurveType::Step)],
+        ));
+    let (plan, performance) = lowered_performance(&modules, &connections, &song);
+    assert!(!performance.refused(), "{:?}", performance.diagnostics);
+    let identities = ResolvedIdentities::resolve(&modules).expect("resolves");
+    let node_of = |id: &str| {
+        identities
+            .node_for(id.parse().expect("a module id"))
+            .expect("declared")
+    };
+    let lowest = plan
+        .resolve_parameter(node_of("flt-2"), parameters::FILTER_CUTOFF)
+        .expect("a control");
+    let other = plan
+        .resolve_parameter(node_of("flt-3"), parameters::FILTER_CUTOFF)
+        .expect("a control");
+    assert_ne!(lowest, other);
+    let writes = parameter_writes(&performance.events);
+    assert_eq!(writes.len(), 2);
+    assert!(
+        writes.iter().all(|(_, slot, _)| *slot == lowest),
+        "the lane writes flt-2, V1's first filter by identity: {writes:?}"
+    );
+}
+
+/// Disjoint ticks are not disjoint samples: at 8 kHz and 1000 BPM a tick is half a frame, so
+/// a lane's last emission at tick 1 and its successor's first at tick 2 both round to frame
+/// 1 — two absolute writers at one sample, refused naming both. Placed one tick later the
+/// successor lands on frame 2 and both lower. An independent read found the collision.
+#[test]
+fn two_writers_landing_on_one_sample_from_disjoint_ticks_are_refused() {
+    use synth_sequencer::{AutoInstrumentParam, CurveType, Duration, Tick};
+
+    let (modules, connections) = corpus_patch("sawtooth");
+    let rate = SampleRate::new(8_000.0).expect("a real rate");
+    let lowered = |successor_at: u64| {
+        let mut song = song_with(1000.0, &[], None);
+        let host = placed_pattern(&song);
+        // The fixture's own placement carries no lane; the two writers are short patterns
+        // on their own tracks.
+        let _ = host;
+        let first = song.create_pattern(Duration(2));
+        song.pattern_mut(first)
+            .expect("resolves")
+            .add_automation_lane(instrument_lane(
+                AutoInstrumentParam::FilterCutoff,
+                &[(0, 0.2, CurveType::Step), (1, 0.9, CurveType::Step)],
+            ));
+        let second = song.create_pattern(Duration(2));
+        song.pattern_mut(second)
+            .expect("resolves")
+            .add_automation_lane(instrument_lane(
+                AutoInstrumentParam::FilterCutoff,
+                &[(0, 0.3, CurveType::Step)],
+            ));
+        let a = song.create_track("first");
+        let b = song.create_track("second");
+        assert!(song.place_pattern(first, a, Tick::ZERO));
+        assert!(song.place_pattern(second, b, Tick(successor_at)));
+        let (_, performance) = lowered_performance_at(&modules, &connections, &song, rate);
+        (first, second, performance)
+    };
+
+    let (first, second, performance) = lowered(2);
+    assert!(
+        performance.diagnostics.iter().any(|d| matches!(
+            d.reason(),
+            LoweringReason::ConflictingWriters { target, first: a, second: b }
+                if target == "Filter Cutoff" && *a == first && *b == second
+        )),
+        "{:?}",
+        performance.diagnostics
+    );
+    assert!(performance.refused());
+
+    let (_, _, performance) = lowered(3);
+    assert!(!performance.refused(), "{:?}", performance.diagnostics);
+    let writes = parameter_writes(&performance.events);
+    let positions: Vec<u64> = writes.iter().map(|(frame, ..)| *frame).collect();
+    // Frames 0 and 1 from the first lane, 2 from the second, and the restore at the song's
+    // end — tick 3840 at half a frame a tick.
+    assert_eq!(positions, vec![0, 1, 2, 1_920], "{writes:?}");
+
+    // One lane emitting twice on one frame is one writer, and the later value is in force as
+    // it is in V1's block: ticks 1 and 2 of one lane both round to frame 1 and both lower.
+    let mut song = song_with(1000.0, &[], None);
+    let one = song.create_pattern(Duration(3));
+    song.pattern_mut(one)
+        .expect("resolves")
+        .add_automation_lane(instrument_lane(
+            AutoInstrumentParam::FilterCutoff,
+            &[
+                (0, 0.2, CurveType::Step),
+                (1, 0.9, CurveType::Step),
+                (2, 0.3, CurveType::Step),
+            ],
+        ));
+    let track = song.create_track("one");
+    assert!(song.place_pattern(one, track, Tick::ZERO));
+    let (_, performance) = lowered_performance_at(&modules, &connections, &song, rate);
+    assert!(!performance.refused(), "{:?}", performance.diagnostics);
+    let writes = parameter_writes(&performance.events);
+    let positions: Vec<u64> = writes.iter().map(|(frame, ..)| *frame).collect();
+    assert_eq!(positions, vec![0, 1, 1, 1_920], "{writes:?}");
+    let expected = v1_denormalized(AutoInstrumentParam::FilterCutoff, 0.3);
+    assert_eq!(
+        writes[2].2, expected,
+        "the later emission is the last on its frame"
+    );
+}
+
+/// The lane walk is bounded in ticks and refuses past the bound by name, before a tick is
+/// walked: a tempo is any finite positive number, so no frame bound bounds it.
+#[test]
+fn an_automation_walk_past_the_tick_bound_is_refused_by_name() {
+    use synth_sequencer::{AutoInstrumentParam, CurveType, Duration, Tick};
+
+    let (modules, connections) = corpus_patch("sawtooth");
+    let mut song = song_with(120.0, &[], None);
+    let long = song.create_pattern(Duration((1 << 25) + 1));
+    song.pattern_mut(long)
+        .expect("resolves")
+        .add_automation_lane(instrument_lane(
+            AutoInstrumentParam::FilterCutoff,
+            &[(0, 0.5, CurveType::Step)],
+        ));
+    let track = song.create_track("long");
+    assert!(song.place_pattern(long, track, Tick::ZERO));
+    let (_, performance) = lowered_performance(&modules, &connections, &song);
+    assert!(
+        performance.diagnostics.iter().any(|d| matches!(
+            d.reason(),
+            LoweringReason::OwnedByLaterPhase { capability, owner }
+                if capability.contains("more ticks") && owner.contains("ADR-0028")
+        )),
+        "{:?}",
+        performance.diagnostics
+    );
+    assert!(performance.refused());
+
+    // One tick shorter is inside the bound and lowers: one write and the restore.
+    let mut song = song_with(120.0, &[], None);
+    let bounded = song.create_pattern(Duration(1 << 25));
+    song.pattern_mut(bounded)
+        .expect("resolves")
+        .add_automation_lane(instrument_lane(
+            AutoInstrumentParam::FilterCutoff,
+            &[(0, 0.5, CurveType::Step)],
+        ));
+    let track = song.create_track("bounded");
+    assert!(song.place_pattern(bounded, track, Tick::ZERO));
+    let (_, performance) = lowered_performance(&modules, &connections, &song);
+    assert!(!performance.refused(), "{:?}", performance.diagnostics);
+    assert_eq!(parameter_writes(&performance.events).len(), 2);
 }

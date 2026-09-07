@@ -156,6 +156,21 @@ pub enum LoweringReason {
         /// Which phase owns supplying it.
         owner: &'static str,
     },
+    /// Two automation lanes write one target at one sample (`P07-S002b`).
+    ///
+    /// The master plan's multiple-writer rule in its strict form, which Phase 7 applies while
+    /// ADR-0012's conflict policy stays `Proposed` for Phase 10: two absolute writers on one
+    /// target at one sample are refused at compilation rather than ordered, summed or
+    /// last-one-wins. A refusal, not a product choice, and it fails closed. Both writers are
+    /// named, because the subject can carry only one of them.
+    ConflictingWriters {
+        /// The target both lanes write, as V1 labels it.
+        target: String,
+        /// The pattern whose lane starts first.
+        first: PatternId,
+        /// The pattern whose lane starts second — the diagnostic's subject.
+        second: PatternId,
+    },
 }
 
 /// Whether a diagnostic stopped the lowering.

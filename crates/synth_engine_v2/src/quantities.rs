@@ -907,6 +907,14 @@ impl ParameterValue {
         Self(seconds.0)
     }
 
+    /// A corner frequency as the value a control write carries. Infallible: finite by
+    /// construction. The filter's `cutoff` control is declared in hertz, and an automation
+    /// lane's write reaches it as this rather than as a [`Frequency`], which is legally
+    /// negative where a corner is not (`P07-S002b`).
+    pub const fn from_cutoff(cutoff: CutoffFrequency) -> Self {
+        Self(cutoff.0)
+    }
+
     /// This value as an amplitude. Infallible, for the same reason.
     pub const fn into_amplitude(self) -> Amplitude {
         Amplitude(self.0)

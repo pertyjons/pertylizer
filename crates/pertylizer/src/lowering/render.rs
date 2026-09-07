@@ -25,7 +25,7 @@ use synth_engine_v2::time::{FrameCount, PlanPosition};
 
 use super::diagnostics::{Fidelity, LoweringDiagnostic, LoweringReason, ProjectSubject, Severity};
 use super::graph::lower_voice_patch_with;
-use super::performance::lower_performance;
+use super::performance::{AutomationTargets, lower_performance};
 use crate::patch::InstrumentState;
 
 /// What the project as a whole asks for that V2 cannot do.
@@ -141,41 +141,11 @@ fn project_diagnostics(
         ));
     }
 
-    // Automation is checked over **every** placement, before any note filtering. V1 executes a
-    // pattern's automation whether or not that track's notes are audible, and a lane can target
-    // another track, an instrument, a module parameter or a global control — so a placement this
-    // instrument's lowering skips can still change what V1 renders. An independent review found
-    // this check sitting after the track filter, where those placements never reached it.
-    //
-    // A lane with no points is not automation: `AutomationLane::value_at` returns `None` for
-    // it, so V1's sequencer emits nothing. Only a lane that holds a point is refused; a second
-    // independent review found the check reading the lane list's length instead. A zero-length
-    // pattern is never active either — `pattern_tick_at` resolves no tick inside it — so its
-    // lanes are never read; the same review found that.
-    for placement in song.arrangement() {
-        if song.pattern(placement.pattern_id).is_some_and(|pattern| {
-            // Both lengths: a zero-length pattern yields no pattern tick however long its
-            // placement is, and a `length_override` of zero ends the placement where it
-            // starts — `pattern_tick_at` resolves nothing in either. The squash review found
-            // only the source pattern's length read here.
-            pattern.length.0 > 0
-                && placement.effective_length(pattern.length).0 > 0
-                && pattern.automation.iter().any(|lane| !lane.is_empty())
-        }) {
-            diagnostics.push(LoweringDiagnostic::refused(
-                ProjectSubject::Pattern {
-                    pattern: placement.pattern_id,
-                    name: String::new(),
-                },
-                LoweringReason::OwnedByLaterPhase {
-                    capability: "a placed pattern carrying automation, which V1 applies over \
-                                 the track's own fader and over module parameters",
-                    owner: "Phase 7, with the unified modulation model",
-                },
-            ));
-            break;
-        }
-    }
+    // A placed pattern's automation is lowered since `P07-S002b`, in `performance`: each
+    // lane V1 runs is classified there over every placement, before any note filtering —
+    // V1 executes a pattern's automation whether or not that track's notes are audible, and
+    // a lane names its own instrument — and the classes V2 does not carry are refused there
+    // by name.
 
     // The master volume and the global glide are stages V2 does not apply. They change what
     // V1 renders without stopping the lowering, so they are reported rather than refused.
@@ -441,7 +411,8 @@ pub struct SmokeRender {
     pub samples: Vec<f32>,
     /// Everything the lowering had to say about the project.
     pub diagnostics: Vec<LoweringDiagnostic>,
-    /// How many note edges the lowering produced.
+    /// How many events the lowering produced: note edges, and since `P07-S002b` the
+    /// override writes its automation lanes emit with the restoring writes at the song's end.
     ///
     /// `EventCount` rather than a `usize`, because it is a count of the same events admission
     /// partitions its capacity across, and a frame count or a sample count is the same shape.
@@ -521,8 +492,13 @@ pub fn smoke_render(
     // from the timeline. `None` means the arrangement could not be read; the lowering below
     // then produces the refusal with its subject intact, and a declared peak of zero is
     // correct for a plan that will carry no events.
-    let peak = super::performance::peak_events_per_quantum(saved.id, song, sample_rate)
-        .unwrap_or(EventCount::NONE);
+    let peak = super::performance::peak_events_per_quantum(
+        saved.id,
+        &saved.patch.modules,
+        song,
+        sample_rate,
+    )
+    .unwrap_or(EventCount::NONE);
 
     let amp_sensitivity = match synth_engine_v2::quantities::NormalizedLevel::new(
         saved.velocity_amp_sensitivity.as_f32(),
@@ -638,7 +614,18 @@ pub fn smoke_render(
         }
     };
 
-    let performance = lower_performance(saved.id, &saved.name, song, &plan, gate, sample_rate);
+    // Where V1's instrument automation lands: the first filter and the first envelope, in
+    // identity order, with the descriptors V1 denormalizes a lane through (`P07-S002b`).
+    let targets = AutomationTargets::resolve(&lowered.identities);
+    let performance = lower_performance(
+        saved.id,
+        &saved.name,
+        song,
+        &plan,
+        gate,
+        &targets,
+        sample_rate,
+    );
     // A refusal and a genuinely note-free arrangement both leave the event list empty, and
     // only the second may render. Reading the list alone let a refused arrangement — an
     // overlap, an expression, an unrepresentable position — fall through and return a
