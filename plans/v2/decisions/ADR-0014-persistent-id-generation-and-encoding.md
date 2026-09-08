@@ -6,7 +6,7 @@
 | Status        | Proposed                                                     |
 | Phase         | 0B                                                           |
 | Created       | 2026-08-13                                                   |
-| Last reviewed | 2026-08-29                                                   |
+| Last reviewed | 2026-09-08                                                   |
 | Related       | P00B-T003, P00A-T001, ADR-0008, ADR-0016, ADR-0017, ADR-0034 |
 | Supersedes    | —                                                            |
 | Superseded by | —                                                            |
@@ -20,7 +20,7 @@ saved file would carry the old encoding.
 
 The [identity inventory](../inventories/identities.md) records 31 identities and
 references crossing the project, GUI, MCP, history, serialization, import, and
-engine boundaries, after two audit passes. This record decides how a persistent
+engine boundaries; its dated audit table records the inspected source revisions. This record decides how a persistent
 identity is generated, encoded, and scoped in Project Core V2.
 
 Five properties of V1's model are load-bearing, and each is an entry in that
@@ -45,14 +45,15 @@ ledger.
   (`IDN-0021`, `IDN-0026`).
 - **Width is inconsistent.** `InstrumentId(u64)`, `PatternId(u32)`,
   `TrackId(u16)`, `ReturnBusId(u16)`, `NoteId(u64)`, and `ModuleId.instance(u16)`
-  — five widths for one kind of concept, with `u16` exhaustion an unhandled
+  — three storage widths for one kind of concept, with `u16` exhaustion an unhandled
   wrap in release builds (`LIMIT-0058`).
 
 Around these sit the ordinary problems the ledger's own checklist names: raw
-primitives where a newtype exists (`IDN-0011`..`IDN-0013`), positional
-references (`IDN-0019`..`IDN-0023`), one load-time heuristic repair
-(`IDN-0028`), and a display name used as identity at a service boundary
-(`IDN-0031`).
+primitives where a newtype exists (`IDN-0011`..`IDN-0013`), composite and
+ordered references (`IDN-0019`..`IDN-0022`), one load-time heuristic repair
+(`IDN-0028`), and display-name selection at a service and manifest boundary
+(`IDN-0031`). `IDN-0023` is a typed tracker-layout index, not a routing or
+entity identity; the inventory's 2026-09-08 pass corrects that distinction.
 
 **Outside this decision.** Parameter and port names (`IDN-0015`, `IDN-0017`,
 `IDN-0018`) are a *vocabulary declared by a node type*, not entity identities;
@@ -195,7 +196,39 @@ of the name itself belongs to ADR-0016, not to this record.
 
 ## Decision
 
-Proposed, not accepted. Thirteen clauses.
+Proposed, not accepted. Thirteen clauses. The open acceptance questions below
+qualify the duplication and merge claims; the proposed clauses do not yet form
+an implementable contract for those cases.
+
+### Open acceptance questions
+
+The [2026-09-08 identity inspection](../inventories/identities.md#source-inspection-2026-09-08)
+supplies proposed rules for every ledger row, not acceptance of this record.
+Two counterexamples remain to resolve before this proposal can be accepted:
+
+- **Duplicating inside one document.** Clause 8 describes a new document with
+  a new allocation origin and retained entity IDs. It also says "duplicate",
+  but V1's pooled-graph duplication adds a second graph inside the same
+  document (IDN-0006/0007). Under clause 7's document-scoped node IDs, copying
+  the original node IDs would alias two independently editable nodes. The
+  proposal needs a distinct in-document copy operation with fresh copied-node
+  IDs and a mapping for internal references and node-keyed metadata; its
+  external-reference retain/clear policy is still open. A falsifying example
+  duplicates a graph and edits a copied node: the original must remain a
+  distinct entity. The existing fork rule does not specify this operation.
+- **Merging retained identities across different allocation origins.** Fork
+  under clause 8, then edit an existing node differently in the two documents.
+  Their allocation origins differ but the edited node's identity is retained
+  in both. Clause 9's concatenation leaves conflicting content under one ID,
+  while clause 10 only covers shared allocation origins. The proposal needs
+  conflict/deduplication behavior for identities from every retained origin,
+  regardless of which origin currently allocates. That fork/edit/merge is the
+  falsifier; no conflict policy is selected by this inventory update.
+
+These questions block acceptance of the affected contract, not Phase 7's
+experimental work. The no-remapping claims in the options and consequences
+remain conditional on resolving them. Script seeds and reload stay with
+ADR-0008 and their first consumers; no audio-state rule changes here.
 
 ### The identity
 
@@ -207,8 +240,11 @@ Proposed, not accepted. Thirteen clauses.
 2. **An identity is inert.** Nothing may parse it, infer a type or a position
    from it, sort domain data by it, or reconstruct it from a display name. Its
    only operations are equality, hashing, and canonical serialization. This is
-   the clause `IDN-0016`, `IDN-0018`, `IDN-0023`, and `IDN-0031` all violate.
-3. **One width, everywhere.** The five current widths collapse to one. A kind
+   the proposed replacement for type-encoded entity identity in `IDN-0016`.
+   A declared key, processing-order position, layout index or convenience
+   selector is not itself an entity identity: `IDN-0018`, `IDN-0023` and
+   `IDN-0031` keep those concepts distinct from the identities they reference.
+3. **One width, everywhere.** The three current storage widths collapse to one. A kind
    that today uses `u16` gains range rather than keeping a narrower ceiling for
    compactness, and `LIMIT-0058`'s unhandled wrap ceases to exist.
 
@@ -335,7 +371,8 @@ generates, and clause 10 is the backstop if one slips through.
 
 - **Every persisted reference in the format changes.** This is the widest
   breaking change in the project format, touching `IDN-0001`..`IDN-0009`,
-  `IDN-0011`..`IDN-0013`, and `IDN-0016`..`IDN-0026`.
+  `IDN-0011`..`IDN-0013`, `IDN-0016`..`IDN-0022`, and `IDN-0024`..`IDN-0026`.
+  `IDN-0023` remains a layout index; this identity proposal does not change it.
 - Identities grow from 2–8 bytes to 16, plus their string encoding. Immaterial
   in a document; it is why the compiled plan uses compact indices instead.
 - Ordinals are not dense, so nothing may use them as array indices — which is
@@ -382,7 +419,8 @@ generates, and clause 10 is the backstop if one slips through.
 | Correct `IDN-0027`: undo restores a note under its own id at `e2a05028`                       | 0B    | Complete    |
 | Answer `IDN-0021`: can a master/return chain's module id collide with a patch's?              | 0B    | Complete    |
 | Establish the closed parameter-name set `IDN-0015` leaves open                                | 0B    | Complete    |
-| Fill the ledger's `Proposed V2 newtype/rule` column from this record                           | 0B    | Active      |
+| Fill the ledger's `Proposed V2 newtype/rule` column, keeping decisions explicitly proposed | 0B | Complete |
+| Resolve the in-document copy and retained-identity merge questions before acceptance | 0B/10A | Not started |
 | Fill the ledger's `Migration` column, which needs the conversion mapping below                 | 10A   | Not started |
 | Specify the conversion mapping per identity class, driven from the inventory                  | 10A   | Not started |
 | Round-trip fixture: delete the highest ordinal, reload, allocate, assert no reuse             | 10A   | Not started |
