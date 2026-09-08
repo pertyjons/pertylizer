@@ -75,6 +75,7 @@ use synth_engine_v2::tuning::PreparedTuning;
 
 use super::diagnostics::{LoweringDiagnostic, LoweringReason, ProjectSubject};
 use super::identity::ResolvedIdentities;
+use super::modulation::{ModulationRoute, ModulationSource, SongModulators, lower_mod_matrix};
 use crate::patch::{ConnectionState, ModuleState, ParamValue};
 
 /// The frequency a lowered oscillator starts at, before any note has played.
@@ -125,7 +126,14 @@ pub fn lower_voice_patch(
     connections: &[ConnectionState],
     events_per_quantum: EventCount,
 ) -> LoweredGraph {
-    lower_voice_patch_with(instrument, modules, connections, events_per_quantum, None)
+    lower_voice_patch_with(
+        instrument,
+        modules,
+        connections,
+        events_per_quantum,
+        None,
+        &SongModulators::default(),
+    )
 }
 
 /// [`lower_voice_patch`], with V1's voice-output velocity stage (ADR-0059).
@@ -134,12 +142,18 @@ pub fn lower_voice_patch(
 /// [`IrNodeKind::VelocityScaler`] between the voice's terminating node and the output, so a
 /// note is scaled by V1's `(1 − s) + s × v` there as V1 scales it at the voice's output.
 /// `None` lowers the patch as it is, for a caller that lowers no instrument.
+///
+/// `modulators` is what the song's Mod Grid adds to this instrument's graph (`P07-S003`):
+/// global-scope modulator nodes and their routes into the patch's modules, lowered by
+/// `modulation::lower_mod_grid` so that this function stays free of the song. The patch's own
+/// Mod Matrix is lowered here, since it is a module of the patch.
 pub fn lower_voice_patch_with(
     instrument: InstrumentId,
     modules: &[ModuleState],
     connections: &[ConnectionState],
     events_per_quantum: EventCount,
     velocity_amp_sensitivity: Option<NormalizedLevel>,
+    modulators: &SongModulators,
 ) -> LoweredGraph {
     let mut diagnostics = Vec::new();
 
@@ -254,6 +268,17 @@ pub fn lower_voice_patch_with(
         );
     }
 
+    // V1 applies exactly one Mod Matrix per voice: `Voice::from_graph` asks its `BTreeMap`
+    // for the first module of the type, which is the lowest identity, and any other matrix
+    // in the patch is stored and never walked. The same one is chosen here, by the same
+    // ordering, and the others lower to nothing — they are inert in V1, not unrepresented.
+    let applied_matrix = modules
+        .iter()
+        .filter(|module| module.module_type == ModuleType::ModMatrix)
+        .filter_map(|module| module.id.parse::<ModuleId>().ok())
+        .min();
+    let mut routes: Vec<ModulationRoute> = modulators.routes.clone();
+
     for module in modules {
         let Ok(id) = module.id.parse::<ModuleId>() else {
             continue;
@@ -261,6 +286,41 @@ pub fn lower_voice_patch_with(
         let Some(node) = identities.node_for(id) else {
             continue;
         };
+
+        // A Mod Matrix is no node: it lowers to the modulation edges its slots describe
+        // (`P07-S003`), resolved below once every module has an address.
+        if module.module_type == ModuleType::ModMatrix {
+            if Some(id) != applied_matrix {
+                continue;
+            }
+            let Some((_, declarations)) =
+                crate::module_factory::create_voice_module(module.module_type)
+            else {
+                diagnostics.push(LoweringDiagnostic::refused(
+                    ProjectSubject::Module {
+                        instrument,
+                        module: id,
+                    },
+                    LoweringReason::UnsupportedModuleType {
+                        module_type: module.module_type,
+                    },
+                ));
+                refused = true;
+                continue;
+            };
+            match lower_mod_matrix(
+                instrument,
+                id,
+                module,
+                &declarations,
+                &identities,
+                &mut diagnostics,
+            ) {
+                Some(lowered) => routes.extend(lowered),
+                None => refused = true,
+            }
+            continue;
+        }
 
         match lower_module(instrument, id, module, &patched, &mut diagnostics) {
             Some((kind, scope)) => builder = builder.node(node, kind, scope),
@@ -376,6 +436,70 @@ pub fn lower_voice_patch_with(
             diagnostics,
             identities,
         };
+    }
+
+    // The modulation edges (`SOUND-INV-027`), each from a slot or a Mod Grid target. An
+    // endpoint the patch does not hold is V1's own no-op — a dangling source reads zero and a
+    // dangling destination is applied to nothing — and each lowering drops such a route
+    // before it is made. A Mod Grid node is added only where a route reads it.
+    //
+    // No cycle can close through these edges today: the only lowered source is the LFO, and
+    // no lowered target is one of its parameters, so nothing modulated feeds a modulator. V2
+    // refuses a modulation cycle at compilation; the slice that gives the LFO a lowered
+    // target owes the refusal that names the slot.
+    //
+    // Each edge is a marked difference: V1 reads a source once per host block — the voice's
+    // matrix reads the **previous** block's first sample, the grid processes its instance and
+    // reads the **current** block's last — and V2 composes the source's first frame of the
+    // current quantum, ahead of the quantum's writes (`SOUND-INV-027`). The corpus records that as an intentional
+    // correction (`CORPUS-0003-C1`), which ADR-0049's rule maps to `UnsupportedScope` with a
+    // diagnostic naming it rather than to a silent translation; an independent read found the
+    // edge declared fully represented.
+    for route in &routes {
+        // Both lowerings settle a dangling endpoint before they make a route, so an address
+        // the table cannot resolve here is an inconsistency between the two, refused by name
+        // rather than skipped.
+        let source = match route.source {
+            ModulationSource::Module(id) => identities.node_for(id),
+            ModulationSource::Grid(node) => Some(node),
+        };
+        let (Some(source), Some(target)) = (source, identities.node_for(route.target)) else {
+            diagnostics.push(LoweringDiagnostic::refused(
+                route.subject.clone(),
+                LoweringReason::UnresolvedEndpoint {
+                    spelling: format!("{} in a modulation route", route.target),
+                },
+            ));
+            return LoweredGraph {
+                ir: None,
+                diagnostics,
+                identities,
+            };
+        };
+        diagnostics.push(LoweringDiagnostic::unrepresented(
+            route.subject.clone(),
+            LoweringReason::OwnedByLaterPhase {
+                capability: "a modulation's timing, which V1 reads once per host block — the \
+                             Mod Matrix from the source's previous block, the Mod Grid from \
+                             the current block's last sample — and V2 composes from the \
+                             current quantum's first frame (CORPUS-0003-C1)",
+                owner: "the first A/B consumer, under the corpus's intentional-correction class",
+            },
+        ));
+        builder = builder.modulate(
+            (source, PortId::FIRST),
+            (target, route.parameter),
+            route.depth,
+        );
+    }
+    for (node, kind) in &modulators.nodes {
+        let read = routes
+            .iter()
+            .any(|route| route.source == ModulationSource::Grid(*node));
+        if read {
+            // Once per plan: a global Mod Grid graph runs one instance for the whole song.
+            builder = builder.node(*node, *kind, ExecutionScope::Global);
+        }
     }
 
     // ADR-0047 clause 3 partitions identity ranges across the producers a plan declares, so a
@@ -768,6 +892,20 @@ fn lower_module(
             (IrNodeKind::Output, ExecutionScope::Global)
         }
 
+        // `P07-S003`: V1's LFO is V2's `Lfo` kind, per voice as every voice module is. Its
+        // output reaches a parameter only through a Mod Matrix slot; a cable out of it is
+        // refused in `lower_connection`.
+        ModuleType::Lfo => (
+            super::modulation::lower_lfo_module(
+                module,
+                &declarations,
+                &subject,
+                &parameter,
+                diagnostics,
+            )?,
+            ExecutionScope::Voice,
+        ),
+
         other => {
             diagnostics.push(LoweringDiagnostic::refused(
                 subject(),
@@ -821,6 +959,22 @@ fn lower_connection(
         return None;
     };
     let _ = modules;
+
+    // An LFO's bipolar signal is rectified by V1's amplifier control unless the amplifier is
+    // set bipolar, and scaled by every other V1 control input under that input's own law,
+    // none of which V2's control edge applies. The Mod Matrix path carries an LFO to a
+    // parameter under a declared law (`P07-S003`); a cable does not, yet.
+    if from_id.module_type == ModuleType::Lfo {
+        diagnostics.push(LoweringDiagnostic::refused(
+            subject(),
+            LoweringReason::OwnedByLaterPhase {
+                capability: "a cable out of an LFO, whose signal each V1 control input scales \
+                             or rectifies by its own law",
+                owner: "Phase 7",
+            },
+        ));
+        return None;
+    }
 
     let Some(from_port) = source_port(from_id.module_type, &connection.from.1) else {
         diagnostics.push(LoweringDiagnostic::refused(
@@ -880,9 +1034,7 @@ fn lower_connection(
 /// node is a back edge, and that edge is the one the user can act on. Iterative rather than
 /// recursive, because a patch's depth is the user's to choose and a stack overflow is not a
 /// diagnostic.
-fn cycle_closing_connection(
-    edges: &[(NodeId, NodeId, ConnectionState)],
-) -> Option<&ConnectionState> {
+fn cycle_closing_connection<T>(edges: &[(NodeId, NodeId, T)]) -> Option<&T> {
     #[derive(Clone, Copy, PartialEq)]
     enum Mark {
         Unseen,
@@ -909,7 +1061,7 @@ fn cycle_closing_connection(
         let mut stack: Vec<(usize, usize)> = vec![(start, 0)];
         marks[start] = Mark::OnStack;
         while let Some((node, taken)) = stack.pop() {
-            let outgoing: Vec<&(NodeId, NodeId, ConnectionState)> = edges
+            let outgoing: Vec<&(NodeId, NodeId, T)> = edges
                 .iter()
                 .filter(|(from, _, _)| *from == nodes[node])
                 .collect();
@@ -1032,7 +1184,7 @@ fn float(module: &ModuleState, key: &str) -> SavedFloat {
 /// default, and a present one is clamped into the declared range exactly as V1 clamps it
 /// before use. `None` means the value was refused and a diagnostic was recorded; it never
 /// means "absent".
-fn v1_value(
+pub(super) fn v1_value(
     module: &ModuleState,
     declarations: &ModuleDescriptor,
     key: &str,
@@ -1070,7 +1222,7 @@ fn v1_value(
 /// may store a choice as its numeric index, and V1's own descriptor path decodes that — so
 /// treating it as absent and applying a default would silently reinterpret it as a different
 /// waveform or filter type. Refusing keeps the reinterpretation from happening at all.
-fn choice(
+pub(super) fn choice(
     module: &ModuleState,
     key: &str,
     parameter: &impl Fn(&str) -> ProjectSubject,
@@ -1098,7 +1250,7 @@ fn choice(
 /// `gen_schemas` reads it — `range.default` is the index into `choices` — rather than
 /// transcribed as a literal that would go on lowering the old default after V1's moved. A
 /// descriptor that declares no such choice is refused by name: nothing says what V1 would do.
-fn choice_or_declared_default(
+pub(super) fn choice_or_declared_default(
     module: &ModuleState,
     declarations: &ModuleDescriptor,
     key: &str,
@@ -1145,7 +1297,7 @@ fn cable_end(end: &(String, String)) -> Option<(ModuleId, String)> {
 /// Unconditional, because a key the mapping never looks at is a stage V2 does not have
 /// whatever its value is, and there is no neutral value to compare it against without
 /// knowing what it means.
-fn audit_parameters(
+pub(super) fn audit_parameters(
     module: &ModuleState,
     declarations: &ModuleDescriptor,
     consumed: &[&str],
@@ -1206,7 +1358,7 @@ fn audit_parameters(
 /// absence as neutral, as an earlier revision did, reported neither.
 /// Returns `false` when the value itself was refused, so the caller can stop. Reporting a
 /// `Refused` diagnostic and then returning an IR would contradict what that severity means.
-fn require_neutral(
+pub(super) fn require_neutral(
     module: &ModuleState,
     declarations: &ModuleDescriptor,
     key: &str,
@@ -1232,7 +1384,7 @@ fn require_neutral(
 }
 
 /// Turn a refused quantity into a diagnostic that names the parameter it came from.
-fn quantity<T, E: std::fmt::Display>(
+pub(super) fn quantity<T, E: std::fmt::Display>(
     built: Result<T, E>,
     subject: ProjectSubject,
     diagnostics: &mut Vec<LoweringDiagnostic>,

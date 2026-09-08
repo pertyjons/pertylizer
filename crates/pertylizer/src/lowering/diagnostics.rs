@@ -16,7 +16,7 @@
 use synth_core::ModuleType;
 use synth_engine::ModuleId;
 use synth_engine::instrument::InstrumentId;
-use synth_sequencer::{NoteId, PatternId, ReturnBusId, TrackId};
+use synth_sequencer::{ModGraphId, ModNodeId, NoteId, PatternId, ReturnBusId, TrackId};
 
 /// The project object a diagnostic is about.
 ///
@@ -99,6 +99,24 @@ pub enum ProjectSubject {
     },
     /// The master effect chain.
     MasterChain,
+    /// One pooled Mod Grid graph, as one running instance of it (`P07-S003`).
+    ///
+    /// A track-scoped graph runs once per assigned track; the instance is what V1's builder
+    /// returns and what the diagnostic is about, so the host track is named when there is
+    /// one.
+    ModGraph {
+        /// The graph's identity in the song's pool.
+        graph: ModGraphId,
+        /// The track a track-scoped instance runs on; `None` for a global one.
+        host_track: Option<TrackId>,
+    },
+    /// One node inside one pooled Mod Grid graph.
+    ModGraphNode {
+        /// The owning graph.
+        graph: ModGraphId,
+        /// The node, by its persisted identity within the graph.
+        node: ModNodeId,
+    },
 }
 
 /// Why the lowerer produced a diagnostic.

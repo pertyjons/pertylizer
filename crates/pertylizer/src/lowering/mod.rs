@@ -39,6 +39,7 @@
 pub mod diagnostics;
 pub mod graph;
 pub mod identity;
+pub mod modulation;
 pub mod performance;
 pub mod render;
 
@@ -48,5 +49,6 @@ mod tests;
 pub use diagnostics::{Fidelity, LoweringDiagnostic, LoweringReason, ProjectSubject, Severity};
 pub use graph::{LoweredGraph, lower_voice_patch};
 pub use identity::{IdentityError, ResolvedIdentities};
+pub use modulation::{SongModulators, lower_mod_grid};
 pub use performance::{LoweredPerformance, lower_performance};
 pub use render::{SmokeRender, smoke_render};

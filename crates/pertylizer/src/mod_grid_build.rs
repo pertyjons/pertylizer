@@ -234,6 +234,7 @@ fn build_instance(
         dsp,
         injections,
         targets,
+        node_modules: node_module_ids.into_iter().collect(),
     })
 }
 

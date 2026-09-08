@@ -46,7 +46,7 @@ const MAX_UNISON_VOICES: usize = 7;
 /// per-descriptor `mod_scale` hint. (Mod-matrix scaling contract: a ±1 offset is
 /// summed in normalized space, applied through the param's range+curve, then
 /// clamped — see `docs/yams.md`.)
-const DETUNE_MOD_SEMITONES: f32 = 1.0;
+pub const DETUNE_MOD_SEMITONES: f32 = 1.0;
 
 /// Mod-matrix pitch scaling for the `frequency` target: a full-scale (`±1`)
 /// offset shifts the oscillator by ±12 semitones (one octave) — a deliberately
@@ -55,7 +55,13 @@ const DETUNE_MOD_SEMITONES: f32 = 1.0;
 /// stays narrow (±1 semitone) for fine vibrato; `frequency` is the coarse-sweep
 /// target. (Decided ±12 with the user; widen/narrow here if a different feel is
 /// wanted.)
-const FREQUENCY_MOD_SEMITONES: f32 = 12.0;
+pub const FREQUENCY_MOD_SEMITONES: f32 = 12.0;
+
+/// Mod-matrix pitch scaling for the `pitch` target: a full-scale (`±1`) offset is
+/// exactly one semitone. Named so that the V2 lowerer reads the scale from here
+/// rather than transcribing it (ADR-0007 clause 3 turns each of these scales into an
+/// edge amount).
+pub const PITCH_MOD_SEMITONES: f32 = 1.0;
 
 /// A band-limited oscillator with optional intra-voice unison.
 #[derive(Clone)]
@@ -865,7 +871,8 @@ impl PolyModule for Oscillator {
             // accumulate into the shared semitone offset applied in
             // `actual_frequency`; the per-target scale sets the musical range.
             "pitch" => {
-                self.mod_offset_pitch = Semitones::new(self.mod_offset_pitch.as_f32() + value)
+                self.mod_offset_pitch =
+                    Semitones::new(self.mod_offset_pitch.as_f32() + value * PITCH_MOD_SEMITONES)
             }
             "detune" => {
                 self.mod_offset_pitch =

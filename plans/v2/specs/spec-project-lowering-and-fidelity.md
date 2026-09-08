@@ -131,13 +131,16 @@ per-phase subset question rather than a contract.
 
    **The rule for choosing a disposition.** Anything that changes *which notes sound* is
    **refused** — the key range, the transpose, a voice-allocation setting, a sidechain source,
-   a Mod Grid graph, a Note Grid graph, a pattern's note-processor rack, a placed pattern's
-   automation on a lane class V2 does not carry, a placement length override, an enabled
-   send, a master chain. Anything that only scales or places the sound is **reported**: the
-   instrument's volume and pan, the track's fader and pan, a placement's gain, the project
-   master volume and glide, oversampling. Anything V2 carries is **represented** and not
-   marked: since `P07-S002b`, an instrument lane on the filter's cutoff or resonance or the
-   envelope's attack, decay, sustain or release lowers to override writes.
+   a Mod Grid instance on a shape V2 does not carry, a Note Grid graph, a pattern's
+   note-processor rack, a placed pattern's automation on a lane class V2 does not carry, a
+   placement length override, an enabled send, a master chain. Anything that only scales or
+   places the sound is **reported**: the instrument's volume and pan, the track's fader and
+   pan, a placement's gain, the project master volume and glide, oversampling. Anything V2
+   carries is **represented** and not marked: since `P07-S002b`, an instrument lane on the
+   filter's cutoff or resonance or the envelope's attack, decay, sustain or release lowers to
+   override writes; since `P07-S003`, a Mod Matrix slot or a Mod Grid target carrying an LFO
+   into the filter's cutoff or an oscillator's pitch lowers to a modulation edge, marked for
+   its timing.
 
    **The song's end is V1's.** `Song::calculate_length` — the later of the last placement's
    end and the last section's — is where V1's sequencer auto-stops and releases every note it
@@ -212,19 +215,67 @@ per-phase subset question rather than a contract.
    ticks and refused by name past the bound, because no frame bound bounds a tick count. The
    writes count toward the declared event peak beside the note edges, from the same walk.
 
+   **A Mod Matrix slot and a Mod Grid target lower to modulation edges** (`P07-S003`). V1
+   hands `source × amount` to the destination module's `set_mod_offset`, which scales it into
+   its own unit — the filter's cutoff by ±48 semitones, an oscillator's `frequency` by an
+   octave, its `pitch` by one semitone, its `detune` by one; ADR-0007 clause 3 makes that
+   per-target scale the edge's amount, so a slot at `0.7` into a cutoff is an edge of
+   `0.7 × 48` semitones, read from V1's own constants rather than transcribed. A row exists
+   only where V1's arithmetic for the key **is** the law V2 declares for the parameter —
+   semitone-additive on the cutoff and the three pitch keys, which V1 accumulates unclamped —
+   and every other destination is refused naming the law V1 applies that V2 does not: the
+   resonance's normalized offset mapped into a quality factor, the oscillator's linear level
+   under V2's decibel law, an LFO's rate in hertz under V2's semitone law, an LFO's depth
+   whose offset V1 clamps after each contribution where V2 clamps the sum, an envelope time
+   through its descriptor's normalized curve. The source is the LFO — V1's module lowers to
+   V2's `Lfo` kind in the voice scope, waveform, rate and depth through the descriptor and
+   the phase through V1's own typed conversion, which **wraps** a saved `1.25` to a quarter
+   period where the descriptor's clamp would make it the start — and an envelope, a
+   controller macro, an audio output and a module parameter read as a source are each refused
+   by name for their owners; so is a scripted slot, a random shape, a tempo-synced LFO and a
+   cable out of an LFO. No lowered target is an LFO's parameter, so no modulation cycle can
+   close today; the slice that gives the LFO a lowered target owes the refusal that names the
+   slot. The matrix V1 walks is the lowest identity of its type, as `Voice::from_graph` asks
+   its map; a second matrix is stored and never read. The saved strings become addresses
+   through the two parsers V1's loader calls, legacy spellings included, and the enabled flag
+   through the descriptor's own conversion. A disabled slot, a slot with no destination or no
+   source and a spelling neither parser accepts are V1's own skips and lower to nothing; so
+   does an address naming a module the patch lacks, **whatever kind or law it would otherwise
+   name**, because V1 reads zero from a dangling source and applies nothing to a dangling
+   destination — both ends are checked before either is classified. **Each edge is a marked
+   difference**: V1 reads a source once per host block — the voice's matrix reads the
+   previous block's first sample, the grid processes its instance and reads the current
+   block's last — and V2 composes the current quantum's first frame ahead of the quantum's
+   writes; the corpus records that as an intentional correction (`CORPUS-0003-C1`), so the
+   lowering is `UnsupportedScope` with a diagnostic naming the slot, as a tempo ramp is under
+   ADR-0049's rule. A **Mod Grid**
+   instance is what V1's builder returns, read through it: a global instance's hosted LFOs —
+   read back from the modules V1 built, so V1's clamps and wraps are already applied — become
+   global-scope nodes, and each module-backed target on this instrument, at the address the
+   builder interned, becomes an edge through the same table; the target is settled before its
+   source is read, so a target on another instrument is that instrument's whatever feeds it,
+   as its notes are, a target on a module the patch lacks is V1's no-op, and a target with no
+   cable, or with a cable from a port the hosted module lacks, is V1's `continue` or its
+   zero. A track-scoped instance, a track, master or channel-level
+   target, a macro, transport, MIDI CC or audio-tap source, an injection into a hosted module,
+   a cable into one, and a hosted module other than an LFO are refused by name. The corpus's
+   Mod Matrix case lowers, so three saved projects lower where `P04-R002` recorded two.
+
    **Where that stops, stated so it is a rule rather than a gap.** A stage is refused when V1
    installs it on a placement it walks and it has something to act with: a lane with a point
-   on a class V2 does not carry, a Mod Grid instance V1's own builder returns, a rack with a
-   processor, a bound graph with a node. What V1 short-circuits *before* running is neutral — a lane with no points, a
-   zero-length pattern or a zero-length placement override that `pattern_tick_at` resolves
-   no tick into, a graph with no nodes whose
-   expansion is its seeded source, a builder that returns no instance. What an installed stage
-   then **computes** is not evaluated: a rack over a pattern with no note, a Mod Grid target
-   with no cable or a zero amount, a node off the graph's spine. These are refused exactly as
-   a master effect at neutral settings is refused rather than measured, because that class has
-   no floor — every installed stage has a setting at which it does nothing — and the contract
-   would otherwise promise a neutrality analysis of V1 it does not perform. A second
-   independent read asked for three of those refinements; this paragraph is the answer.
+   on a class V2 does not carry, a Mod Grid instance V1's own builder returns on a shape V2
+   does not carry, a rack with a processor, a bound graph with a node. What V1 short-circuits
+   *before* running is neutral — a lane with no points, a zero-length pattern or a zero-length
+   placement override that `pattern_tick_at` resolves no tick into, a graph with no nodes
+   whose expansion is its seeded source, a builder that returns no instance, a Mod Matrix slot
+   V1 skips before reading it, a Mod Grid target with no cable. What an installed stage then
+   **computes** is not evaluated: a rack over a pattern with no note, a node off the graph's
+   spine. These are refused exactly as a master effect at neutral settings is refused rather
+   than measured, because that class has no floor — every installed stage has a setting at
+   which it does nothing — and the contract would otherwise promise a neutrality analysis of
+   V1 it does not perform. A second independent read asked for three of those refinements;
+   this paragraph is the answer. A zero modulation amount is not in either list: V1
+   evaluates the slot and adds zero, so it is an edge of zero depth.
 
    **And the other direction is the one that matters more.** V1 evaluates two per-note things
    on every active tick regardless of the note's own start: a note-scope graph, which it seeds
@@ -299,7 +350,7 @@ by the Sound Core render contract's own rules, which this specification does not
 | LOWER-INV-001 | `pertylizer`'s lowering tests: refusals naming an unsupported module type, an unsupported waveform, an unresolved endpoint, an unknown port, a domain mismatch, fan-in, a second output, a missing output, a note expression, an overlap, a muted instrument, a note graph, and a persisted transpose refused **by value** before the arithmetic that would panic on it |
 | LOWER-INV-002 | `Fidelity::of` takes the diagnostics and returns the verdict, so the two cannot disagree; `a_placed_note_names_no_velocity_gap_and_still_refuses_a_parity_verdict` asserts on a real lowering that what remains named is Phase 8's alone, that the verdict is therefore `UnsupportedScope`, and that it refuses a parity comparison |
 | LOWER-INV-003 | `Fidelity::admits_parity_comparison` is `Faithful` alone by construction. The discharged velocity clause: `a_placed_note_names_no_velocity_gap_and_still_refuses_a_parity_verdict` asserts that no diagnostic names the velocity composition over one note and over four, that every remaining diagnostic is Phase 8's, and that the outcome still refuses a parity verdict through them; `v1s_two_sensitivities_compose_to_the_velocity_squared` asserts the lowered product at V1's defaults as a peak ratio of a quarter, which a single scale fails at a half. Its scoping is checked by EVD-0013's harness, which compiles a V2 graph directly and never calls the lowerer |
-| LOWER-INV-004 | `crate_boundary`, measured with `cargo tree --edges normal --invert` under default features; `synth_engine_v2` has no dependency on the lowering module. For the saved-state half: `every_persisted_song_field_has_a_disposition` pins the persisted field lists of `Song`, `Pattern`, `Note`, `PatternPlacement` and `SequencerTrack` with a disposition per field; `every_persisted_project_name_is_registered` pins every persisted name under `ProjectFile`, nested types included, against `lowering/persisted_fields.txt`; `every_audible_instrument_setting_is_dispositioned` walks the fields `offline_instrument_settings` measures as audible and asserts each is refused or reported, with a neutral instrument as its control; `song_level_state_is_refused_rather_than_ignored` covers the Mod Grid graph — routed and global or assigned refused, empty or unassigned rendering — the note-processor rack on a placed pattern against one unplaced, placed only on a muted track or zero-length, or zero-length under a length override, and the rule's boundary pinned as a rack on an audible pattern with no note, the Note Grid pool against a node-less binding, a rack shadowed by a node-less binding, a binding with a node, a dangling binding and a note-scope binding on a **hidden** note, the length override and the rounded-away transpose; `a_note_expression_is_refused_rather_than_played_as_authored`, whose second half puts a lead-in ornament on a hidden note; `the_render_is_bounded_by_the_song_end_as_v1_bounds_it`, a release past the song's end and a section past the last placement; `a_cable_spelled_with_a_leading_zero_resolves_as_v1_does`; `an_absent_choice_lowers_as_the_descriptor_declares`, which reads the declared default itself and asserts sample equality against it; `the_declared_event_peak_slides_a_window_as_admission_does`, two edges across an absolute quantum boundary; `a_tempo_ramp_toward_a_later_change_is_marked_unrepresented`, against a step and a trailing ramp as controls; `a_zero_length_override_is_as_inactive_as_a_zero_length_pattern`; `instrument_note_input_is_refused_rather_than_ignored`; `track_mixer_state_is_reported_rather_than_ignored`; `pattern_automation_is_refused_rather_than_flattened`, whose first half asserts a lane with no points renders, whose middle places the automation on a **muted** track so moving the check back behind the note filter fails, and whose last half places a pointed lane on a zero-length pattern; and `project_global_state_is_read_rather_than_ignored`. **`P07-S002b`'s lowered lanes** are held by the tests `SOUND-INV-023`'s row names in the Sound Core render contract, over the same fixtures; the refused classes by `the_lane_classes_v2_does_not_carry_are_refused_by_name`, one per class with its owner. Mutation-verified in thirty-four directions: dropping either note-input refusal, the oversampling report, the sidechain refusal, the automation refusal, the Mod Grid refusal, the note-processor refusal, the pattern Note Grid refusal, the note-scope refusal, the length-override refusal, the fader report; reporting the fader per placement rather than per track; comparing the key range as a raw tuple; comparing the transpose without V1's rounding; reading the lane list's length instead of its points; reading the Mod Grid pool instead of V1's builder; scanning every pattern for a rack instead of the placements V1 plays; reading a Note Grid binding as a bare `Option` instead of through the pool; moving the note-scope check or the ornament check behind the hidden-note skip; refusing a node-less bound graph, or the rack beneath one; refusing a zero-length pattern's lanes or its rack, or its rack under a length override; stopping the register's schema walk at property keys; keying the amplifier's control check by spelling; naming a waveform default in a literal; leaving a release unclipped past the song's end; stopping the render at the last release; bucketing the event peak by absolute quantum; dropping the ramp diagnostic; and refusing a zero-length override as an override. **Both mechanisms are mutation-verified**: adding a field to `InstrumentState` produces `E0027` at the disposition site, and the persisted pin failed on first run — which is how `Pattern::processors` was found |
+| LOWER-INV-004 | `crate_boundary`, measured with `cargo tree --edges normal --invert` under default features; `synth_engine_v2` has no dependency on the lowering module. For the saved-state half: `every_persisted_song_field_has_a_disposition` pins the persisted field lists of `Song`, `Pattern`, `Note`, `PatternPlacement` and `SequencerTrack` with a disposition per field; `every_persisted_project_name_is_registered` pins every persisted name under `ProjectFile`, nested types included, against `lowering/persisted_fields.txt`; `every_audible_instrument_setting_is_dispositioned` walks the fields `offline_instrument_settings` measures as audible and asserts each is refused or reported, with a neutral instrument as its control; `song_level_state_is_refused_rather_than_ignored` covers the Mod Grid graph — routed and track-scoped and assigned refused as such, routed into a track's volume and global refused for the target, empty or unassigned rendering — the note-processor rack on a placed pattern against one unplaced, placed only on a muted track or zero-length, or zero-length under a length override, and the rule's boundary pinned as a rack on an audible pattern with no note, the Note Grid pool against a node-less binding, a rack shadowed by a node-less binding, a binding with a node, a dangling binding and a note-scope binding on a **hidden** note, the length override and the rounded-away transpose; `a_note_expression_is_refused_rather_than_played_as_authored`, whose second half puts a lead-in ornament on a hidden note; `the_render_is_bounded_by_the_song_end_as_v1_bounds_it`, a release past the song's end and a section past the last placement; `a_cable_spelled_with_a_leading_zero_resolves_as_v1_does`; `an_absent_choice_lowers_as_the_descriptor_declares`, which reads the declared default itself and asserts sample equality against it; `the_declared_event_peak_slides_a_window_as_admission_does`, two edges across an absolute quantum boundary; `a_tempo_ramp_toward_a_later_change_is_marked_unrepresented`, against a step and a trailing ramp as controls; `a_zero_length_override_is_as_inactive_as_a_zero_length_pattern`; `instrument_note_input_is_refused_rather_than_ignored`; `track_mixer_state_is_reported_rather_than_ignored`; `pattern_automation_is_refused_rather_than_flattened`, whose first half asserts a lane with no points renders, whose middle places the automation on a **muted** track so moving the check back behind the note filter fails, and whose last half places a pointed lane on a zero-length pattern; and `project_global_state_is_read_rather_than_ignored`. **`P07-S002b`'s lowered lanes** are held by the tests `SOUND-INV-023`'s row names in the Sound Core render contract, over the same fixtures; the refused classes by `the_lane_classes_v2_does_not_carry_are_refused_by_name`, one per class with its owner. **`P07-S003`'s modulation edges** are held by `the_corpus_mod_matrix_slot_lowers_to_one_edge_at_v1s_scale` (`CORPUS-0003` from its pinned bytes: one edge of `0.7 × 48` semitones from a voice-scope triangle LFO at 2 Hz into the filter's cutoff, the matrix no node, the timing the one diagnostic about either, the render differing from the slot disabled, and a zero amount rendering exactly as disabled while lowering to one edge of zero depth), `a_mod_matrix_slot_lowers_v1s_legacy_spellings_and_each_pitch_key_at_its_scale` (`lfo1` and `osc1_pitch` through V1's parsers, the three pitch keys at V1's three scales onto one frequency control, four edges compiling), `an_inert_mod_matrix_slot_lowers_to_no_edge_and_no_diagnostic` (disabled, no source, no destination, dangling either way — including a dangling envelope source, a dangling resonance destination and a macro into a dangling module — unparsable either way, an unwritten slot, and a second matrix in both directions), `the_mod_matrix_routes_v2_does_not_carry_are_refused_by_name` (five macros, the envelope in both spellings, an audio output, a parameter source, ten destinations naming their V1 law, a scripted slot, four random-shape spellings, tempo sync, and a cable out of an LFO into the amplifier), `an_lfo_lowers_with_v1s_defaults_clamps_and_wrap` (absent keys, a rate past `LFO_RANGE`, a depth past one, a phase of one period, of one and a quarter, and of minus a quarter), `a_global_mod_grid_lfo_into_a_module_target_lowers_to_a_global_node_and_edges` (a hosted LFO read back from V1's module — waveform by index, phase wrapped — as one global node feeding a module target and a module-backed instrument target at V1's scale, and the render carrying it), `the_mod_grid_shapes_v2_does_not_carry_are_refused_by_name` (track scope, four cheap sources, four targets, a hosted envelope, a module-to-module cable, an injection, a random shape; another instrument's target from an LFO and from a macro, a target on a module the patch lacks and a cable from a port the LFO lacks, each under a carried and an uncarried law, and a cable-less target inert) and `a_mod_grid_node_address_cannot_meet_a_saved_modules_or_the_scalers`. Mutation-verified in seventeen further directions: the cutoff scale dropped, the grid scale dropped, a disabled slot walked, the highest matrix applied, a zero amount skipped, a dangling target's law refused before its existence, a dangling grid target lowered as present, the timing report dropped, the LFO in the global scope, a grid node in the voice scope, a cable out of an LFO admitted, the phase clamped before the wrap, the phase not wrapped, any output admitted as a source, tempo sync admitted, a track-scoped instance lowered, and another instrument's target lowered. Mutation-verified in thirty-four directions: dropping either note-input refusal, the oversampling report, the sidechain refusal, the automation refusal, the Mod Grid refusal, the note-processor refusal, the pattern Note Grid refusal, the note-scope refusal, the length-override refusal, the fader report; reporting the fader per placement rather than per track; comparing the key range as a raw tuple; comparing the transpose without V1's rounding; reading the lane list's length instead of its points; reading the Mod Grid pool instead of V1's builder; scanning every pattern for a rack instead of the placements V1 plays; reading a Note Grid binding as a bare `Option` instead of through the pool; moving the note-scope check or the ornament check behind the hidden-note skip; refusing a node-less bound graph, or the rack beneath one; refusing a zero-length pattern's lanes or its rack, or its rack under a length override; stopping the register's schema walk at property keys; keying the amplifier's control check by spelling; naming a waveform default in a literal; leaving a release unclipped past the song's end; stopping the render at the last release; bucketing the event peak by absolute quantum; dropping the ramp diagnostic; and refusing a zero-length override as an override. **Both mechanisms are mutation-verified**: adding a field to `InstrumentState` produces `E0027` at the disposition site, and the persisted pin failed on first run — which is how `Pattern::processors` was found |
 | LOWER-INV-005 | `no_file_loading_reaches_v2`, which scans both production trees recursively and is mutation-verified against a nested module, the repository's own `project::load_file`, and V2 reading a file itself; `ResolvedIdentities` for the identity half |
 
 ## Unresolved questions

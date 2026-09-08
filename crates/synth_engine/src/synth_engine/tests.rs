@@ -687,6 +687,7 @@ fn mod_grid_track_volume_offset_accumulates() {
             dsp: crate::graph::ModuleGraph::new(),
             injections: Vec::new(),
             targets: vec![target],
+            node_modules: Vec::new(),
         }],
         ..Default::default()
     };
@@ -784,6 +785,7 @@ fn mod_grid_instrument_volume_offset_is_order_independent() {
                     smooth: 0.0,
                     dest_addr: None,
                 }],
+                node_modules: Vec::new(),
             }],
             ..Default::default()
         };
@@ -867,6 +869,7 @@ fn mod_grid_midi_cc_source_reads_live_cc_state() {
                 dsp: crate::graph::ModuleGraph::new(),
                 injections: Vec::new(),
                 targets: vec![target],
+                node_modules: Vec::new(),
             }],
             ..Default::default()
         }),

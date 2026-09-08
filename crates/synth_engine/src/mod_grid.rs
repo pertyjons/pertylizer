@@ -22,7 +22,8 @@ use synth_core::{
     SampleRate, Semitones,
 };
 use synth_sequencer::{
-    AutoInstrumentParam, AutomationTarget, CombineMode, ModGraphId, TrackId, TransportSource,
+    AutoInstrumentParam, AutomationTarget, CombineMode, ModGraphId, ModNodeId, TrackId,
+    TransportSource,
 };
 
 use crate::{InstrumentId, ModuleId};
@@ -174,6 +175,10 @@ pub struct ModGridInstance {
     pub injections: Vec<InputInjection>,
     /// The routing sinks this instance drives.
     pub targets: Vec<ResolvedTarget>,
+    /// Which hosted module each pooled `Module` node became, so a reader of this instance
+    /// can name the persisted node a [`ModSource::Dsp`] address came from. Built off the
+    /// audio thread with the rest; nothing on the audio thread reads it.
+    pub node_modules: Vec<(ModNodeId, ModuleId)>,
 }
 
 /// The full set of running mod-grid instances. Swapped wholesale when the

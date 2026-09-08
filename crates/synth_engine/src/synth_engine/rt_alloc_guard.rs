@@ -374,6 +374,7 @@ fn prepared_mod_grid_swap_and_processing_do_not_allocate() {
             dsp,
             injections: Vec::new(),
             targets: Vec::new(),
+            node_modules: Vec::new(),
         }],
         ..Default::default()
     };

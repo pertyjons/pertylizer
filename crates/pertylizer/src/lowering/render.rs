@@ -113,33 +113,11 @@ fn project_diagnostics(
     }
 
     // A Mod Grid graph is a control-rate modulator V1's offline renderer installs before the
-    // engine applies it to track and instrument controls, so it changes pitch, level, pan or a
-    // module parameter over time. V2 has no modulation at all. Refused here rather than in the
-    // arrangement walk because a **global** graph runs whether or not any placement of this
-    // instrument is audible.
-    //
-    // Whether a graph *runs* is asked of V1's own builder rather than of the pool. A graph
-    // with no routing sink, or a track-scoped graph assigned to no track, builds no instance —
-    // `build_instance` returns `None` for it — and `audio::export` and
-    // `audio::arrangement_render` install exactly what this builder returns. An earlier
-    // revision refused on the pool being non-empty, so a freshly created, still-empty graph
-    // blocked every render of a project V1 plays unchanged; an independent review found it.
-    // The builder allocates, which is fine off the audio thread, and it is the same function
-    // rather than a second copy of its routing rules for the reason the oversampling decoder
-    // is shared: a copy compiles happily after the original changes.
-    if !crate::mod_grid_build::build_mod_grid_runtime(song)
-        .instances
-        .is_empty()
-    {
-        diagnostics.push(LoweringDiagnostic::refused(
-            ProjectSubject::Project,
-            LoweringReason::OwnedByLaterPhase {
-                capability: "a Mod Grid graph, which modulates track and instrument controls \
-                             while the song plays",
-                owner: "Phase 7, with the unified modulation model",
-            },
-        ));
-    }
+    // engine applies it to track and instrument controls. Since `P07-S003` it is lowered in
+    // `modulation::lower_mod_grid`, from the instrument's side: the instances V1's own builder
+    // returns become global-scope modulator nodes and edges into this instrument's modules,
+    // and the shapes V2 does not carry are refused there by name. It is asked after the
+    // instrument's dispositions, in `smoke_render`, because its routes name the instrument.
 
     // A placed pattern's automation is lowered since `P07-S002b`, in `performance`: each
     // lane V1 runs is classified there over every placement, before any note filtering —
@@ -523,14 +501,32 @@ pub fn smoke_render(
             };
         }
     };
+    // What the song's Mod Grid adds to this instrument's graph (`P07-S003`). Asked of V1's own
+    // builder, so a graph with no routing sink or a track-scoped graph assigned to no track —
+    // for which `build_instance` returns `None`, exactly as `audio::export` and
+    // `audio::arrangement_render` see it — lowers to nothing. An earlier revision refused on
+    // the pool being non-empty, so a freshly created, still-empty graph blocked every render
+    // of a project V1 plays unchanged; an independent review found it.
+    let modulators = super::modulation::lower_mod_grid(song, saved.id, &saved.patch.modules);
+    let mut diagnostics = mixer_diagnostics;
+    diagnostics.extend(modulators.diagnostics.iter().cloned());
+    if modulators.refused {
+        return SmokeRender {
+            samples: Vec::new(),
+            diagnostics,
+            lowered_events: EventCount::NONE,
+            lowered_frames: FrameCount::new(0),
+        };
+    }
+
     let lowered = lower_voice_patch_with(
         saved.id,
         &saved.patch.modules,
         &saved.patch.connections,
         peak,
         Some(amp_sensitivity),
+        &modulators,
     );
-    let mut diagnostics = mixer_diagnostics;
     diagnostics.extend(lowered.diagnostics);
 
     let Some(ir) = lowered.ir else {

@@ -20,6 +20,11 @@ use synth_core::{
 use synth_core::{FilterMode, FilterModel, FilterParam, ModuleType, Param};
 use synth_dsp::{AcidFilter, FluidFilter, KarlsenFilter, ScreamerFilter, SvfCoeffs, SvfFilterType};
 
+/// Mod-matrix scaling for the `cutoff` target: a full-scale (`±1`) offset moves the
+/// corner by ±48 semitones (four octaves). Named so that the V2 lowerer reads the scale
+/// from here rather than transcribing it (ADR-0007 clause 3 turns it into an edge amount).
+pub const CUTOFF_MOD_SEMITONES: f32 = 48.0;
+
 /// State Variable Filter with multiple modes.
 #[derive(Clone)]
 pub struct Filter {
@@ -530,7 +535,7 @@ impl PolyModule for Filter {
             // amount + full envelope yields a usable acid-style sweep.
             "cutoff" => {
                 self.mod_offset_cutoff =
-                    Semitones::new(self.mod_offset_cutoff.as_f32() + value * 48.0)
+                    Semitones::new(self.mod_offset_cutoff.as_f32() + value * CUTOFF_MOD_SEMITONES)
             }
             "resonance" => {
                 self.mod_offset_resonance =

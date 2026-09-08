@@ -571,7 +571,7 @@ fn a_lowered_oscillator_no_longer_reports_its_pitch_as_unrepresented() {
 #[test]
 fn a_module_type_with_no_v2_counterpart_is_refused_and_named() {
     let (mut modules, connections) = corpus_patch("sine");
-    modules.push(module("lfo-1", ModuleType::Lfo));
+    modules.push(module("nse-1", ModuleType::Noise));
     let lowered = lower_voice_patch(
         instrument(),
         &modules,
@@ -585,11 +585,11 @@ fn a_module_type_with_no_v2_counterpart_is_refused_and_named() {
             d.subject()
                 == &ProjectSubject::Module {
                     instrument: instrument(),
-                    module: ModuleId::new(ModuleType::Lfo, 1),
+                    module: ModuleId::new(ModuleType::Noise, 1),
                 }
                 && *d.reason()
                     == LoweringReason::UnsupportedModuleType {
-                        module_type: ModuleType::Lfo,
+                        module_type: ModuleType::Noise,
                     }
         }),
         "an unsupported module must be named as a project object with its reason"
@@ -2322,7 +2322,7 @@ fn a_refused_lowering_does_not_fall_through_to_the_render() {
 /// The assertion is on the exact set rather than on a count, so it fails in both directions:
 /// a project that becomes eligible is as much a change to `P04-R002` as one that stops being.
 #[test]
-fn exactly_two_saved_projects_in_the_repository_lower_to_a_plan() {
+fn exactly_three_saved_projects_in_the_repository_lower_to_a_plan() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
 
     let mut eligible: Vec<String> = Vec::new();
@@ -2407,11 +2407,13 @@ fn exactly_two_saved_projects_in_the_repository_lower_to_a_plan() {
     assert_eq!(
         eligible,
         vec![
+            "mod-matrix".to_owned(),
             "subtractive-voice".to_owned(),
             "tempo-map-arrangement".to_owned()
         ],
-        "P04-R002 records two eligible saved projects where the gate asks three, and this is \
-         the measurement behind that number. A change here is a change to that obligation."
+        "P04-R002 recorded two eligible saved projects where the gate asked three, and \
+         P07-S003 made the corpus's Mod Matrix case the third; this is the measurement behind \
+         that number. A change here is a change to that record."
     );
 }
 
@@ -2705,11 +2707,12 @@ fn song_level_state_is_refused_rather_than_ignored() {
     };
 
     // A Mod Grid graph modulates track and instrument controls while the song plays. V1's
-    // offline renderer installs its runtime; V2 has no modulation at all. Whether V1 *runs* a
-    // graph is decided by its own builder: a graph with no routing sink builds no instance, and
-    // neither does a track-scoped graph assigned to no track. An independent review found the
-    // check refusing on the pool being non-empty, which blocked a project holding a freshly
-    // created, still-empty graph — one V1 plays unchanged.
+    // offline renderer installs its runtime; since `P07-S003` the shapes V2 carries lower to
+    // edges and the rest are refused by name (`the_mod_grid_shapes_v2_does_not_carry_are_refused_by_name`).
+    // Whether V1 *runs* a graph is decided by its own builder: a graph with no routing sink
+    // builds no instance, and neither does a track-scoped graph assigned to no track. An
+    // independent review found the check refusing on the pool being non-empty, which blocked
+    // a project holding a freshly created, still-empty graph — one V1 plays unchanged.
     let mut song = four_note_song();
     let track_id = song
         .arrangement()
@@ -2761,18 +2764,20 @@ fn song_level_state_is_refused_rather_than_ignored() {
         &song,
         "a track-scoped Mod Grid graph assigned to no track runs nowhere in V1",
     );
-    // Assigned, it runs, and is refused. Global scope runs unconditionally, and is refused.
+    // Assigned, it runs, and a track-scoped instance is refused as such. Global scope runs
+    // unconditionally, and its track target — settled before the macro that feeds it is
+    // read — is what names the refusal there.
     song.mod_graph_mut(graph_id)
         .expect("the graph resolves")
         .assigned_tracks
         .push(track_id);
-    refused_for(&song, "Mod Grid graph");
+    refused_for(&song, "track-scoped Mod Grid graph");
     {
         let graph = song.mod_graph_mut(graph_id).expect("the graph resolves");
         graph.assigned_tracks.clear();
         graph.scope = ModGraphScope::Global;
     }
-    refused_for(&song, "Mod Grid graph");
+    refused_for(&song, "track's volume, pan or pitch");
 
     // A note-processor rack expands the notes a pattern plays, exactly as an ornament does.
     // The per-note refusal cannot see it, because the rack lives on the pattern.
@@ -4364,6 +4369,7 @@ fn lowered_performance_at(
         connections,
         peak,
         Some(NormalizedLevel::new(0.0).expect("a level")),
+        &super::modulation::SongModulators::default(),
     );
     let ir = lowered.ir.expect("the fixture lowers");
     let plan = compile(&ir, &RenderConfig::new(harness_profile()))
@@ -5305,4 +5311,1174 @@ fn an_automation_walk_past_the_tick_bound_is_refused_by_name() {
     let (_, performance) = lowered_performance(&modules, &connections, &song);
     assert!(!performance.refused(), "{:?}", performance.diagnostics);
     assert_eq!(parameter_writes(&performance.events).len(), 2);
+}
+
+// ---------------------------------------------------------------------------
+// `P07-S003`: the Mod Matrix and the Mod Grid as modulation edges
+// ---------------------------------------------------------------------------
+
+/// The corpus project by name, loaded from the bytes the manifest pins.
+fn corpus_project(name: &str) -> crate::project::ProjectFile {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join(format!("../../corpus/v2-reference/projects/{name}.ptz"));
+    crate::project::ProjectFile::load(&path)
+        .unwrap_or_else(|e| panic!("{} must load: {e}", path.display()))
+}
+
+/// A saved LFO with the parameters given, the rest V1's defaults.
+fn lfo(id: &str, params: &[(&str, f32)]) -> ModuleState {
+    let mut lfo = module(id, ModuleType::Lfo);
+    floats(&mut lfo, params);
+    lfo
+}
+
+/// A saved Mod Matrix with the slots given as `(source, destination, amount)`, all enabled.
+fn mod_matrix(id: &str, slots: &[(&str, &str, f32)]) -> ModuleState {
+    let mut matrix = module(id, ModuleType::ModMatrix);
+    for (index, (source, destination, amount)) in slots.iter().enumerate() {
+        let number = index + 1;
+        choice(&mut matrix, &format!("slot_{number}_source"), source);
+        choice(&mut matrix, &format!("slot_{number}_dest"), destination);
+        floats(
+            &mut matrix,
+            &[
+                (&format!("slot_{number}_amount"), *amount),
+                (&format!("slot_{number}_enabled"), 1.0),
+            ],
+        );
+    }
+    matrix
+}
+
+/// The one modulation edge of a lowered graph, as `(source node, target node, parameter,
+/// unit, amount)`.
+fn edges(
+    ir: &synth_engine_v2::ir::GraphIr,
+) -> Vec<(
+    NodeId,
+    NodeId,
+    synth_engine_v2::ir::ParameterId,
+    synth_engine_v2::ir::ModulationUnit,
+    f32,
+)> {
+    ir.modulations()
+        .iter()
+        .map(|m| {
+            assert_eq!(
+                m.source().1,
+                synth_engine_v2::ir::PortId::FIRST,
+                "every lowered source is the LFO's one output"
+            );
+            (
+                m.source().0,
+                m.target().0,
+                m.target().1,
+                m.depth().unit(),
+                m.depth().amount(),
+            )
+        })
+        .collect()
+}
+
+/// `CORPUS-0003`: one slot carrying an LFO into the filter's cutoff lowers to one edge whose
+/// depth is V1's amount times V1's own cutoff scale, from an LFO node carrying the saved
+/// settings; the matrix itself is no node; and the edge reaches the filter in the render.
+#[test]
+fn the_corpus_mod_matrix_slot_lowers_to_one_edge_at_v1s_scale() {
+    use synth_engine_v2::ir::{ExecutionScope, IrNodeKind, LfoPolarity, LfoWaveform, parameters};
+    use synth_engine_v2::quantities::{Frequency, NormalizedLevel, PhaseOffset};
+
+    let project = corpus_project("mod-matrix");
+    let saved = project
+        .instruments
+        .first()
+        .expect("CORPUS-0003 declares one instrument");
+    let lowered = lower_voice_patch(
+        saved.id,
+        &saved.patch.modules,
+        &saved.patch.connections,
+        synth_engine_v2::quantities::EventCount::NONE,
+    );
+    let ir = lowered
+        .ir
+        .as_ref()
+        .unwrap_or_else(|| panic!("CORPUS-0003 must lower: {:?}", lowered.diagnostics));
+    assert!(
+        lowered
+            .diagnostics
+            .iter()
+            .all(|d| d.severity() == Severity::Unrepresented),
+        "{:?}",
+        lowered.diagnostics
+    );
+    let matrix = ModuleId::new(ModuleType::ModMatrix, 1);
+    // The one thing said about the matrix or the LFO is the edge's timing, marked as the
+    // corpus's intentional correction; nothing else about either is unrepresented.
+    let about_modulation: Vec<&LoweringDiagnostic> = lowered
+        .diagnostics
+        .iter()
+        .filter(|d| {
+            matches!(
+                d.subject(),
+                ProjectSubject::Module { module, .. } | ProjectSubject::Parameter { module, .. }
+                    if *module == matrix || module.module_type == ModuleType::Lfo
+            )
+        })
+        .collect();
+    assert_eq!(
+        about_modulation,
+        vec![&LoweringDiagnostic::unrepresented(
+            ProjectSubject::Parameter {
+                instrument: saved.id,
+                module: matrix,
+                parameter: "slot_1_dest".to_owned(),
+            },
+            LoweringReason::OwnedByLaterPhase {
+                capability: "a modulation's timing, which V1 reads once per host block — the \
+                             Mod Matrix from the source's previous block, the Mod Grid from \
+                             the current block's last sample — and V2 composes from the \
+                             current quantum's first frame (CORPUS-0003-C1)",
+                owner: "the first A/B consumer, under the corpus's intentional-correction class",
+            },
+        )],
+        "{:?}",
+        lowered.diagnostics
+    );
+
+    // The LFO node, from the saved settings: triangle at 2 Hz, full depth, no phase offset.
+    let lfo = lowered
+        .identities
+        .node_for(ModuleId::new(ModuleType::Lfo, 1))
+        .expect("the LFO resolves");
+    let node = ir
+        .nodes()
+        .iter()
+        .find(|n| n.id() == lfo)
+        .expect("the LFO is a node");
+    assert_eq!(
+        node.kind(),
+        IrNodeKind::Lfo {
+            waveform: LfoWaveform::Triangle,
+            rate: Frequency::new(2.0).expect("finite"),
+            depth: NormalizedLevel::FULL,
+            phase_offset: PhaseOffset::ZERO,
+            polarity: LfoPolarity::Bipolar,
+        }
+    );
+    assert_eq!(node.scope(), ExecutionScope::Voice);
+    // The matrix is no node: one fewer than the saved modules.
+    let matrix_node = lowered
+        .identities
+        .node_for(matrix)
+        .expect("the matrix resolves");
+    assert!(ir.nodes().iter().all(|n| n.id() != matrix_node));
+    assert_eq!(ir.nodes().len(), saved.patch.modules.len() - 1);
+
+    // The edge: `0.7 × 48` semitones into the filter's cutoff, and nothing else.
+    let filter = lowered
+        .identities
+        .node_for(ModuleId::new(ModuleType::Filter, 1))
+        .expect("the filter resolves");
+    assert_eq!(
+        edges(ir),
+        vec![(
+            lfo,
+            filter,
+            parameters::FILTER_CUTOFF,
+            synth_engine_v2::ir::ModulationUnit::Semitones,
+            0.7_f32 * synth_modules::filter::CUTOFF_MOD_SEMITONES,
+        )]
+    );
+
+    // It renders, and the edge is what changes the sound: the same project with the slot
+    // disabled renders differently, and with a zero amount renders exactly as disabled — an
+    // edge of zero depth composes the identity.
+    let render = |saved: &crate::patch::InstrumentState| {
+        super::render::smoke_render(
+            saved,
+            &project.song,
+            &project.global,
+            harness_profile(),
+            FrameCount::new(4_800),
+        )
+    };
+    let modulated = render(saved);
+    assert!(modulated.is_audible(), "{:?}", modulated.diagnostics);
+    let with = |key: &str, value: f32| {
+        let mut saved = saved.clone();
+        let matrix = saved
+            .patch
+            .modules
+            .iter_mut()
+            .find(|m| m.module_type == ModuleType::ModMatrix)
+            .expect("the matrix is saved");
+        floats(matrix, &[(key, value)]);
+        saved
+    };
+    let disabled = render(&with("slot_1_enabled", 0.0));
+    assert!(disabled.is_audible(), "{:?}", disabled.diagnostics);
+    assert!(
+        modulated.samples != disabled.samples,
+        "the slot must reach the filter"
+    );
+    let zero = render(&with("slot_1_amount", 0.0));
+    assert!(
+        zero.samples == disabled.samples,
+        "a zero amount is an edge of zero depth, which composes the identity"
+    );
+    let zero = with("slot_1_amount", 0.0);
+    let lowered = lower_voice_patch(
+        zero.id,
+        &zero.patch.modules,
+        &zero.patch.connections,
+        synth_engine_v2::quantities::EventCount::NONE,
+    );
+    let ir = lowered.ir.as_ref().expect("a zero amount lowers");
+    assert_eq!(
+        edges(ir).iter().map(|e| e.4).collect::<Vec<f32>>(),
+        vec![0.0],
+        "V1 evaluates a zero-amount slot, so it is an edge, holding its slot in the profile"
+    );
+}
+
+/// V1's legacy spellings resolve through V1's own parsers, and each of the oscillator's three
+/// pitch keys lowers at its own scale onto the one frequency control.
+#[test]
+fn a_mod_matrix_slot_lowers_v1s_legacy_spellings_and_each_pitch_key_at_its_scale() {
+    use synth_engine_v2::ir::{ModulationUnit, parameters};
+    use synth_modules::oscillator;
+
+    let (mut modules, connections) = corpus_patch("sawtooth");
+    modules.push(lfo("lfo-1", &[]));
+    modules.push(mod_matrix(
+        "mmx-1",
+        &[
+            ("lfo1", "osc1_pitch", 0.5),
+            ("lfo-1.out", "osc-1.detune", -1.0),
+            ("lfo-01.out", "osc-01.frequency", 0.25),
+            ("lfo1", "flt1_cutoff", 0.3),
+        ],
+    ));
+    let lowered = lower_voice_patch(
+        instrument(),
+        &modules,
+        &connections,
+        synth_engine_v2::quantities::EventCount::NONE,
+    );
+    let ir = lowered
+        .ir
+        .as_ref()
+        .unwrap_or_else(|| panic!("{:?}", lowered.diagnostics));
+    let node = |kind, instance| {
+        lowered
+            .identities
+            .node_for(ModuleId::new(kind, instance))
+            .expect("resolves")
+    };
+    let lfo1 = node(ModuleType::Lfo, 1);
+    let (osc, flt) = (node(ModuleType::Oscillator, 1), node(ModuleType::Filter, 1));
+    assert_eq!(
+        edges(ir),
+        vec![
+            (
+                lfo1,
+                osc,
+                parameters::SAW_FREQUENCY,
+                ModulationUnit::Semitones,
+                0.5 * oscillator::PITCH_MOD_SEMITONES
+            ),
+            (
+                lfo1,
+                osc,
+                parameters::SAW_FREQUENCY,
+                ModulationUnit::Semitones,
+                -oscillator::DETUNE_MOD_SEMITONES
+            ),
+            (
+                lfo1,
+                osc,
+                parameters::SAW_FREQUENCY,
+                ModulationUnit::Semitones,
+                0.25 * oscillator::FREQUENCY_MOD_SEMITONES
+            ),
+            (
+                lfo1,
+                flt,
+                parameters::FILTER_CUTOFF,
+                ModulationUnit::Semitones,
+                0.3 * synth_modules::filter::CUTOFF_MOD_SEMITONES
+            ),
+        ]
+    );
+    // The scales are V1's, not a transcription: the pitch key is one semitone per unit and
+    // the frequency key one octave, which is what makes the two rows above differ.
+    assert_eq!(oscillator::PITCH_MOD_SEMITONES, 1.0);
+    assert_eq!(oscillator::FREQUENCY_MOD_SEMITONES, 12.0);
+    assert_eq!(synth_modules::filter::CUTOFF_MOD_SEMITONES, 48.0);
+    // A sine oscillator declares the same frequency control, so the row does not depend on
+    // which oscillator kind the patch lowered to.
+    assert_eq!(parameters::SAW_FREQUENCY, parameters::SINE_FREQUENCY);
+
+    // And the plan compiles: four edges into the voice scope are four slots per voice.
+    let outcome = compile(ir, &RenderConfig::new(harness_profile()));
+    assert!(outcome.plan().is_ok(), "{:?}", outcome.plan().err());
+}
+
+/// What V1 skips before reading lowers to no edge and no diagnostic: a disabled slot, a slot
+/// with no destination or no source, a spelling neither parser accepts, and an address
+/// naming a module the patch does not hold. A second Mod Matrix is stored and never walked,
+/// as V1's voice never walks it.
+#[test]
+fn an_inert_mod_matrix_slot_lowers_to_no_edge_and_no_diagnostic() {
+    let (mut modules, connections) = corpus_patch("sawtooth");
+    modules.push(lfo("lfo-1", &[]));
+    let mut matrix = mod_matrix(
+        "mmx-1",
+        &[
+            ("lfo-1.out", "flt-1.cutoff", 0.7),
+            ("none", "flt-1.cutoff", 0.7),
+            ("lfo-1.out", "none", 0.7),
+            ("lfo-3.out", "flt-1.cutoff", 0.7),
+            ("lfo-1.out", "flt-2.cutoff", 0.7),
+            ("lfo-1.out", "not an address", 0.7),
+            ("also not one", "flt-1.cutoff", 0.7),
+            // A missing endpoint whose kind or law would otherwise be refused: V1 reads zero
+            // from the absent envelope and applies nothing to the absent filter.
+            ("env-9.out", "flt-1.cutoff", 0.7),
+            ("lfo-1.out", "flt-9.resonance", 0.7),
+            ("velocity", "flt-9.cutoff", 0.7),
+        ],
+    );
+    floats(&mut matrix, &[("slot_1_enabled", 0.0)]);
+    // A slot the project never wrote at all is the module's own empty routing.
+    matrix.parameters.remove("slot_11_source");
+    modules.push(matrix);
+    // The second matrix would route, and V1 never asks it.
+    modules.push(mod_matrix("mmx-2", &[("lfo-1.out", "flt-1.cutoff", 1.0)]));
+
+    let lowered = lower_voice_patch(
+        instrument(),
+        &modules,
+        &connections,
+        synth_engine_v2::quantities::EventCount::NONE,
+    );
+    let ir = lowered
+        .ir
+        .as_ref()
+        .unwrap_or_else(|| panic!("{:?}", lowered.diagnostics));
+    assert!(ir.modulations().is_empty(), "{:?}", edges(ir));
+    assert!(
+        !lowered.diagnostics.iter().any(|d| matches!(
+            d.subject(),
+            ProjectSubject::Module { module, .. } | ProjectSubject::Parameter { module, .. }
+                if module.module_type == ModuleType::ModMatrix
+        )),
+        "{:?}",
+        lowered.diagnostics
+    );
+
+    // The reverse: the lowest matrix routes, and a second one that would be refused is not
+    // read either.
+    let (mut modules, connections) = corpus_patch("sawtooth");
+    modules.push(lfo("lfo-1", &[]));
+    modules.push(mod_matrix("mmx-1", &[("lfo-1.out", "flt-1.cutoff", 0.7)]));
+    modules.push(mod_matrix("mmx-2", &[("velocity", "flt-1.cutoff", 1.0)]));
+    let lowered = lower_voice_patch(
+        instrument(),
+        &modules,
+        &connections,
+        synth_engine_v2::quantities::EventCount::NONE,
+    );
+    let ir = lowered
+        .ir
+        .as_ref()
+        .unwrap_or_else(|| panic!("{:?}", lowered.diagnostics));
+    assert_eq!(ir.modulations().len(), 1);
+}
+
+/// Every route this slice does not carry is refused naming the slot and what V1 does with
+/// it; an LFO shape or setting V2 cannot hold, and a cable out of an LFO, likewise.
+#[test]
+fn the_mod_matrix_routes_v2_does_not_carry_are_refused_by_name() {
+    let refused = |modules: Vec<ModuleState>,
+                   connections: Vec<crate::patch::ConnectionState>,
+                   subject: ProjectSubject,
+                   needle: &str| {
+        let lowered = lower_voice_patch(
+            instrument(),
+            &modules,
+            &connections,
+            synth_engine_v2::quantities::EventCount::NONE,
+        );
+        assert!(lowered.ir.is_none(), "{needle} must refuse");
+        assert!(
+            lowered.diagnostics.iter().any(|d| {
+                d.severity() == Severity::Refused
+                    && *d.subject() == subject
+                    && matches!(
+                        d.reason(),
+                        LoweringReason::OwnedByLaterPhase { capability, .. }
+                            if capability.contains(needle)
+                    )
+            }),
+            "{needle} must be refused by name on {subject:?}: {:?}",
+            lowered.diagnostics
+        );
+    };
+    let slot = |key: &str| ProjectSubject::Parameter {
+        instrument: instrument(),
+        module: ModuleId::new(ModuleType::ModMatrix, 1),
+        parameter: key.to_owned(),
+    };
+    let lfo_module = ProjectSubject::Module {
+        instrument: instrument(),
+        module: ModuleId::new(ModuleType::Lfo, 1),
+    };
+    let routed = |source: &str, destination: &str| {
+        let (mut modules, connections) = corpus_patch("sawtooth");
+        modules.push(lfo("lfo-1", &[]));
+        modules.push(mod_matrix("mmx-1", &[(source, destination, 0.5)]));
+        (modules, connections)
+    };
+
+    // Sources.
+    for source in ["velocity", "note", "aftertouch", "mod_wheel", "pitch_bend"] {
+        let (modules, connections) = routed(source, "flt-1.cutoff");
+        refused(
+            modules,
+            connections,
+            slot("slot_1_source"),
+            "controller or note macro",
+        );
+    }
+    for source in ["env-1.out", "env1"] {
+        let (modules, connections) = routed(source, "flt-1.cutoff");
+        refused(
+            modules,
+            connections,
+            slot("slot_1_source"),
+            "sourced from an envelope",
+        );
+    }
+    let (modules, connections) = routed("osc-1.out", "flt-1.cutoff");
+    refused(modules, connections, slot("slot_1_source"), "not an LFO's");
+    let (modules, connections) = routed("flt-1.cutoff", "osc-1.pitch");
+    refused(
+        modules,
+        connections,
+        slot("slot_1_source"),
+        "module parameter as its source",
+    );
+
+    // Destinations, each naming the law V1 applies.
+    for (destination, needle) in [
+        ("flt-1.resonance", "filter's resonance"),
+        ("flt1_reso", "filter's resonance"),
+        ("osc-1.level", "oscillator's level"),
+        ("amp-1.level", "amplifier's level or pan"),
+        ("amp-1.pan", "amplifier's level or pan"),
+        ("lfo-1.rate", "LFO's rate"),
+        ("lfo-1.depth", "LFO's depth"),
+        ("env-1.attack", "envelope time or level"),
+        ("env-1.sustain", "envelope time or level"),
+        ("flt-1.drive", "declares no control for"),
+    ] {
+        let (modules, connections) = routed("lfo-1.out", destination);
+        refused(modules, connections, slot("slot_1_dest"), needle);
+    }
+
+    // A scripted slot.
+    let (mut modules, connections) = routed("lfo-1.out", "flt-1.cutoff");
+    modules
+        .iter_mut()
+        .find(|m| m.module_type == ModuleType::ModMatrix)
+        .expect("the matrix")
+        .scripts
+        .insert("0".to_owned(), "out = 0.5".to_owned());
+    refused(
+        modules,
+        connections,
+        ProjectSubject::Module {
+            instrument: instrument(),
+            module: ModuleId::new(ModuleType::ModMatrix, 1),
+        },
+        "YAMS control script",
+    );
+
+    // The LFO itself.
+    for waveform in ["sample_and_hold", "smooth_random", "s&h", "random"] {
+        let (mut modules, connections) = routed("lfo-1.out", "flt-1.cutoff");
+        choice(
+            modules
+                .iter_mut()
+                .find(|m| m.module_type == ModuleType::Lfo)
+                .expect("the LFO"),
+            "waveform",
+            waveform,
+        );
+        refused(modules, connections, lfo_module.clone(), "random stream");
+    }
+    let (mut modules, connections) = routed("lfo-1.out", "flt-1.cutoff");
+    floats(
+        modules
+            .iter_mut()
+            .find(|m| m.module_type == ModuleType::Lfo)
+            .expect("the LFO"),
+        &[("tempo_sync", 1.0)],
+    );
+    refused(modules, connections, lfo_module.clone(), "tempo-synced LFO");
+
+    // A cable out of an LFO, into the one control input V2's table admits.
+    let (mut modules, mut connections) = corpus_patch("sawtooth");
+    modules.push(lfo("lfo-1", &[]));
+    connections.retain(|c| c.to.1 != "cv");
+    connections.push(crate::patch::ConnectionState {
+        from: ("lfo-1".to_owned(), "out".to_owned()),
+        to: ("amp-1".to_owned(), "cv".to_owned()),
+    });
+    refused(
+        modules,
+        connections,
+        ProjectSubject::Connection {
+            instrument: instrument(),
+            from: ("lfo-1".to_owned(), "out".to_owned()),
+            to: ("amp-1".to_owned(), "cv".to_owned()),
+        },
+        "cable out of an LFO",
+    );
+}
+
+/// A saved LFO resolves through V1's descriptor: absent keys are V1's defaults, a rate past
+/// the range is clamped as V1 clamps it, a depth past one likewise, and a phase is **wrapped**
+/// as V1's `Phase::new` wraps it — one whole period is the cycle's start, and a quarter past
+/// it is a quarter in, where a clamp would make both the start.
+#[test]
+fn an_lfo_lowers_with_v1s_defaults_clamps_and_wrap() {
+    use synth_engine_v2::ir::{IrNodeKind, LfoPolarity, LfoWaveform};
+    use synth_engine_v2::quantities::{Frequency, NormalizedLevel, PhaseOffset};
+
+    let kind_of = |params: &[(&str, f32)], waveform: Option<&str>| {
+        let (mut modules, connections) = corpus_patch("sawtooth");
+        let mut saved = lfo("lfo-1", params);
+        if let Some(waveform) = waveform {
+            choice(&mut saved, "waveform", waveform);
+        }
+        modules.push(saved);
+        let lowered = lower_voice_patch(
+            instrument(),
+            &modules,
+            &connections,
+            synth_engine_v2::quantities::EventCount::NONE,
+        );
+        let ir = lowered
+            .ir
+            .unwrap_or_else(|| panic!("{:?}", lowered.diagnostics));
+        let node = lowered
+            .identities
+            .node_for(ModuleId::new(ModuleType::Lfo, 1))
+            .expect("the LFO resolves");
+        ir.nodes()
+            .iter()
+            .find(|n| n.id() == node)
+            .expect("the LFO is a node")
+            .kind()
+    };
+    let expect = |waveform, rate: f32, depth: f32, phase: f32| IrNodeKind::Lfo {
+        waveform,
+        rate: Frequency::new(rate).expect("finite"),
+        depth: NormalizedLevel::new(depth).expect("a level"),
+        phase_offset: PhaseOffset::new(phase).expect("a phase"),
+        polarity: LfoPolarity::Bipolar,
+    };
+    assert_eq!(kind_of(&[], None), expect(LfoWaveform::Sine, 1.0, 1.0, 0.0));
+    assert_eq!(
+        kind_of(
+            &[("rate", 1000.0), ("depth", 2.0), ("phase", 0.25)],
+            Some("square")
+        ),
+        expect(
+            LfoWaveform::Square,
+            synth_core::Hertz::LFO_RANGE.max,
+            1.0,
+            0.25
+        )
+    );
+    assert_eq!(
+        kind_of(&[("phase", 1.0)], Some("sawtooth")),
+        expect(LfoWaveform::Sawtooth, 1.0, 1.0, 0.0)
+    );
+    assert_eq!(
+        kind_of(&[("phase", 1.25)], Some("triangle")),
+        expect(LfoWaveform::Triangle, 1.0, 1.0, 0.25)
+    );
+    assert_eq!(
+        kind_of(&[("phase", -0.25)], None),
+        expect(LfoWaveform::Sine, 1.0, 1.0, 0.75)
+    );
+}
+
+/// A global Mod Grid graph hosting an LFO into a module-backed target on this instrument
+/// lowers to one global-scope LFO node — read back from the module V1 built — and one edge
+/// per target at V1's scale; the render carries it.
+#[test]
+fn a_global_mod_grid_lfo_into_a_module_target_lowers_to_a_global_node_and_edges() {
+    use synth_engine_v2::ir::{
+        ExecutionScope, IrNodeKind, LfoPolarity, LfoWaveform, ModulationUnit, parameters,
+    };
+    use synth_engine_v2::quantities::{Frequency, NormalizedLevel, PhaseOffset};
+    use synth_sequencer::{
+        AutoInstrumentParam, AutomationTarget, ModConnection, ModNodeConfig, ModNodeId, ModTarget,
+        ModulationAmount, ModuleNode,
+    };
+
+    let (modules, connections) = corpus_patch("sawtooth");
+    let saved = saved_instrument(modules.clone(), connections.clone());
+    let plain = four_note_song();
+    let mut song = plain.clone();
+    let graph_id = song.create_mod_graph("wobble");
+    {
+        let graph = song.mod_graph_mut(graph_id).expect("the graph resolves");
+        graph
+            .try_insert_node(
+                ModNodeId::new(3),
+                ModNodeConfig::Module(ModuleNode {
+                    module_type: ModuleType::Lfo,
+                    params: BTreeMap::from([
+                        ("rate".to_owned(), 3.0),
+                        ("depth".to_owned(), 0.5),
+                        ("waveform".to_owned(), 1.0),
+                        ("phase".to_owned(), 1.25),
+                    ]),
+                    seed: Some(7),
+                }),
+            )
+            .expect("the LFO inserts");
+        graph
+            .try_insert_node(
+                ModNodeId::new(4),
+                ModNodeConfig::Target(ModTarget {
+                    target: AutomationTarget::Module {
+                        instrument: instrument(),
+                        module_type: ModuleType::Filter,
+                        instance: 1,
+                        param_id: "cutoff".into(),
+                    },
+                    amount: ModulationAmount::new(0.5),
+                    combine: Default::default(),
+                }),
+            )
+            .expect("the module target inserts");
+        graph
+            .try_insert_node(
+                ModNodeId::new(5),
+                ModNodeConfig::Target(ModTarget {
+                    target: AutomationTarget::Instrument {
+                        instrument: instrument(),
+                        param: AutoInstrumentParam::FilterCutoff,
+                    },
+                    amount: ModulationAmount::new(-0.25),
+                    combine: Default::default(),
+                }),
+            )
+            .expect("the instrument target inserts");
+        for target in [4, 5] {
+            graph
+                .try_connect(ModConnection::new(
+                    ModNodeId::new(3),
+                    "out",
+                    ModNodeId::new(target),
+                    "in",
+                ))
+                .expect("the cable connects");
+        }
+    }
+
+    let modulators = super::modulation::lower_mod_grid(&song, instrument(), &modules);
+    assert!(!modulators.refused, "{:?}", modulators.diagnostics);
+    assert!(
+        modulators.diagnostics.is_empty(),
+        "{:?}",
+        modulators.diagnostics
+    );
+    let lowered = super::graph::lower_voice_patch_with(
+        instrument(),
+        &modules,
+        &connections,
+        synth_engine_v2::quantities::EventCount::NONE,
+        None,
+        &modulators,
+    );
+    let ir = lowered
+        .ir
+        .as_ref()
+        .unwrap_or_else(|| panic!("{:?}", lowered.diagnostics));
+    let grid_node = super::modulation::grid_node_address(graph_id, ModNodeId::new(3))
+        .expect("the address fits");
+    let node = ir
+        .nodes()
+        .iter()
+        .find(|n| n.id() == grid_node)
+        .expect("the hosted LFO is a node");
+    // As V1 built it: the waveform index through V1's own conversion, the phase wrapped.
+    assert_eq!(
+        node.kind(),
+        IrNodeKind::Lfo {
+            waveform: LfoWaveform::Triangle,
+            rate: Frequency::new(3.0).expect("finite"),
+            depth: NormalizedLevel::new(0.5).expect("a level"),
+            phase_offset: PhaseOffset::new(0.25).expect("a phase"),
+            polarity: LfoPolarity::Bipolar,
+        }
+    );
+    assert_eq!(node.scope(), ExecutionScope::Global);
+    let filter = lowered
+        .identities
+        .node_for(ModuleId::new(ModuleType::Filter, 1))
+        .expect("the filter resolves");
+    let scale = synth_modules::filter::CUTOFF_MOD_SEMITONES;
+    assert_eq!(
+        edges(ir),
+        vec![
+            (
+                grid_node,
+                filter,
+                parameters::FILTER_CUTOFF,
+                ModulationUnit::Semitones,
+                0.5 * scale
+            ),
+            (
+                grid_node,
+                filter,
+                parameters::FILTER_CUTOFF,
+                ModulationUnit::Semitones,
+                -0.25 * scale
+            ),
+        ]
+    );
+
+    // The render carries it.
+    let global = crate::project::GlobalProjectState::default();
+    let modulated = super::render::smoke_render(
+        &saved,
+        &song,
+        &global,
+        harness_profile(),
+        FrameCount::new(4_800),
+    );
+    assert!(modulated.is_audible(), "{:?}", modulated.diagnostics);
+    let unmodulated = super::render::smoke_render(
+        &saved,
+        &plain,
+        &global,
+        harness_profile(),
+        FrameCount::new(4_800),
+    );
+    assert!(modulated.samples != unmodulated.samples);
+}
+
+/// Every Mod Grid shape this slice does not carry is refused by name; what V1 does not act
+/// on for this instrument lowers to nothing.
+#[test]
+fn the_mod_grid_shapes_v2_does_not_carry_are_refused_by_name() {
+    use synth_sequencer::{
+        AudioTapNode, AudioTapSource, AutoInstrumentParam, AutomationTarget, GlobalParam,
+        MacroNode, MidiCcNode, ModConnection, ModGraph, ModGraphScope, ModNodeConfig, ModNodeId,
+        ModTarget, ModulationAmount, ModuleNode, TrackParam, TransportNode,
+    };
+
+    let lfo_node = || {
+        ModNodeConfig::Module(ModuleNode {
+            module_type: ModuleType::Lfo,
+            params: BTreeMap::new(),
+            seed: None,
+        })
+    };
+    let cutoff = |instrument: synth_core::InstrumentId| AutomationTarget::Module {
+        instrument,
+        module_type: ModuleType::Filter,
+        instance: 1,
+        param_id: "cutoff".into(),
+    };
+    let target = |target: AutomationTarget| {
+        ModNodeConfig::Target(ModTarget {
+            target,
+            amount: ModulationAmount::new(0.5),
+            combine: Default::default(),
+        })
+    };
+    // A graph of `(node id, config)` with the cables given as `(from, port, to, port)`.
+    let song_with = |nodes: Vec<(u32, ModNodeConfig)>,
+                     cables: &[(u32, &str, u32, &str)],
+                     shape: &dyn Fn(&mut ModGraph, synth_sequencer::TrackId)| {
+        let mut song = four_note_song();
+        let track_id = placed_track(&song);
+        let graph_id = song.create_mod_graph("shape");
+        let graph = song.mod_graph_mut(graph_id).expect("the graph resolves");
+        for (id, config) in nodes {
+            graph
+                .try_insert_node(ModNodeId::new(id), config)
+                .expect("the node inserts");
+        }
+        for (from, from_port, to, to_port) in cables {
+            graph
+                .try_connect(ModConnection::new(
+                    ModNodeId::new(*from),
+                    *from_port,
+                    ModNodeId::new(*to),
+                    *to_port,
+                ))
+                .expect("the cable connects");
+        }
+        shape(graph, track_id);
+        song
+    };
+    let (patch, _) = corpus_patch("sawtooth");
+    let refused = |song: &synth_sequencer::Song, needle: &str| {
+        let modulators = super::modulation::lower_mod_grid(song, instrument(), &patch);
+        assert!(modulators.refused, "{needle} must refuse");
+        assert!(
+            modulators.diagnostics.iter().any(|d| {
+                d.severity() == Severity::Refused
+                    && matches!(
+                        d.reason(),
+                        LoweringReason::OwnedByLaterPhase { capability, .. }
+                            if capability.contains(needle)
+                    )
+            }),
+            "{needle} must be refused by name: {:?}",
+            modulators.diagnostics
+        );
+    };
+    let inert = |song: &synth_sequencer::Song, why: &str| {
+        let modulators = super::modulation::lower_mod_grid(song, instrument(), &patch);
+        assert!(
+            !modulators.refused
+                && modulators.diagnostics.is_empty()
+                && modulators.routes.is_empty(),
+            "{why}: {:?}",
+            modulators.diagnostics
+        );
+    };
+    let global = |_: &mut ModGraph, _: synth_sequencer::TrackId| {};
+
+    // Track scope, assigned: refused as such before anything in it is read.
+    refused(
+        &song_with(
+            vec![(0, lfo_node()), (1, target(cutoff(instrument())))],
+            &[(0, "out", 1, "in")],
+            &|graph, track| {
+                graph.scope = ModGraphScope::Track;
+                graph.assigned_tracks.push(track);
+            },
+        ),
+        "track-scoped Mod Grid graph",
+    );
+    // Sources V2 does not carry, each feeding a target it would otherwise lower.
+    refused(
+        &song_with(
+            vec![
+                (
+                    0,
+                    ModNodeConfig::Macro(MacroNode {
+                        name: "depth".into(),
+                        value: 0.5.into(),
+                    }),
+                ),
+                (1, target(cutoff(instrument()))),
+            ],
+            &[(0, "out", 1, "in")],
+            &global,
+        ),
+        "macro knob",
+    );
+    refused(
+        &song_with(
+            vec![
+                (0, ModNodeConfig::Transport(TransportNode::default())),
+                (1, target(cutoff(instrument()))),
+            ],
+            &[(0, "out", 1, "in")],
+            &global,
+        ),
+        "transport source",
+    );
+    refused(
+        &song_with(
+            vec![
+                (
+                    0,
+                    ModNodeConfig::AudioTap(AudioTapNode {
+                        source: AudioTapSource::Master,
+                    }),
+                ),
+                (1, target(cutoff(instrument()))),
+            ],
+            &[(0, "out", 1, "in")],
+            &global,
+        ),
+        "audio tap",
+    );
+    refused(
+        &song_with(
+            vec![
+                (0, ModNodeConfig::MidiCc(MidiCcNode::default())),
+                (1, target(cutoff(instrument()))),
+            ],
+            &[(0, "out", 1, "in")],
+            &global,
+        ),
+        "MIDI CC",
+    );
+    // Targets V2 does not carry, each fed by an LFO.
+    for (automation, needle) in [
+        (
+            AutomationTarget::Track {
+                track: None,
+                param: TrackParam::Volume,
+            },
+            // Relative to no host: dropped by V1's builder, so a resolved one is used below.
+            "",
+        ),
+        (
+            AutomationTarget::Global(GlobalParam::MasterVolume),
+            "master volume",
+        ),
+        (
+            AutomationTarget::Instrument {
+                instrument: instrument(),
+                param: AutoInstrumentParam::Volume,
+            },
+            "channel volume or pan",
+        ),
+        (
+            AutomationTarget::Module {
+                instrument: instrument(),
+                module_type: ModuleType::Filter,
+                instance: 1,
+                param_id: "resonance".into(),
+            },
+            "filter's resonance",
+        ),
+    ] {
+        let song = song_with(
+            vec![(0, lfo_node()), (1, target(automation))],
+            &[(0, "out", 1, "in")],
+            &global,
+        );
+        if needle.is_empty() {
+            inert(
+                &song,
+                "a relative track target in a global graph is dropped by V1",
+            );
+        } else {
+            refused(&song, needle);
+        }
+    }
+    refused(
+        &song_with(
+            vec![(0, lfo_node()), (1, target(cutoff(instrument())))],
+            &[(0, "out", 1, "in")],
+            &|graph, track| {
+                // An absolute track target, which a global graph does resolve.
+                let node = graph.node(ModNodeId::new(1)).cloned();
+                let _ = node;
+                graph
+                    .try_insert_node(
+                        ModNodeId::new(2),
+                        target(AutomationTarget::Track {
+                            track: Some(track),
+                            param: TrackParam::Pan,
+                        }),
+                    )
+                    .expect("the track target inserts");
+                graph
+                    .try_connect(ModConnection::new(
+                        ModNodeId::new(0),
+                        "out",
+                        ModNodeId::new(2),
+                        "in",
+                    ))
+                    .expect("the cable connects");
+            },
+        ),
+        "track's volume, pan or pitch",
+    );
+    // A hosted module other than an LFO, a cable into a hosted module, and an injection.
+    refused(
+        &song_with(
+            vec![
+                (
+                    0,
+                    ModNodeConfig::Module(ModuleNode {
+                        module_type: ModuleType::Envelope,
+                        params: BTreeMap::new(),
+                        seed: None,
+                    }),
+                ),
+                (1, target(cutoff(instrument()))),
+            ],
+            &[(0, "out", 1, "in")],
+            &global,
+        ),
+        "module other than an LFO",
+    );
+    refused(
+        &song_with(
+            vec![
+                (0, lfo_node()),
+                (2, lfo_node()),
+                (1, target(cutoff(instrument()))),
+            ],
+            &[(2, "out", 0, "rate_cv"), (0, "out", 1, "in")],
+            &global,
+        ),
+        "cable into a Mod Grid module's input",
+    );
+    refused(
+        &song_with(
+            vec![
+                (
+                    3,
+                    ModNodeConfig::Macro(MacroNode {
+                        name: "rate".into(),
+                        value: 0.5.into(),
+                    }),
+                ),
+                (0, lfo_node()),
+                (1, target(cutoff(instrument()))),
+            ],
+            &[(3, "out", 0, "rate_cv"), (0, "out", 1, "in")],
+            &global,
+        ),
+        "driving a hosted module's input",
+    );
+    // A random shape on a hosted LFO.
+    refused(
+        &song_with(
+            vec![
+                (
+                    0,
+                    ModNodeConfig::Module(ModuleNode {
+                        module_type: ModuleType::Lfo,
+                        params: BTreeMap::from([("waveform".to_owned(), 4.0)]),
+                        seed: Some(1),
+                    }),
+                ),
+                (1, target(cutoff(instrument()))),
+            ],
+            &[(0, "out", 1, "in")],
+            &global,
+        ),
+        "random stream",
+    );
+
+    // What lowers to nothing: another instrument's target — whatever feeds it, since the
+    // target is settled before the source is read — a target on a module the patch lacks,
+    // whatever its law, and a target with no cable.
+    inert(
+        &song_with(
+            vec![
+                (0, lfo_node()),
+                (1, target(cutoff(synth_core::InstrumentId::new(7)))),
+            ],
+            &[(0, "out", 1, "in")],
+            &global,
+        ),
+        "another instrument's target is that instrument's",
+    );
+    inert(
+        &song_with(
+            vec![
+                (
+                    0,
+                    ModNodeConfig::Macro(MacroNode {
+                        name: "depth".into(),
+                        value: 0.5.into(),
+                    }),
+                ),
+                (1, target(cutoff(synth_core::InstrumentId::new(7)))),
+            ],
+            &[(0, "out", 1, "in")],
+            &global,
+        ),
+        "another instrument's target fed by a macro is still that instrument's",
+    );
+    for param in ["cutoff", "resonance"] {
+        inert(
+            &song_with(
+                vec![
+                    (0, lfo_node()),
+                    (
+                        1,
+                        target(AutomationTarget::Module {
+                            instrument: instrument(),
+                            module_type: ModuleType::Filter,
+                            instance: 9,
+                            param_id: param.into(),
+                        }),
+                    ),
+                ],
+                &[(0, "out", 1, "in")],
+                &global,
+            ),
+            "a target on a module the patch lacks is V1's no-op",
+        );
+        // A cable from a port the LFO does not have reads zero in V1, whatever the law of
+        // the target it feeds.
+        inert(
+            &song_with(
+                vec![
+                    (0, lfo_node()),
+                    (
+                        1,
+                        target(AutomationTarget::Module {
+                            instrument: instrument(),
+                            module_type: ModuleType::Filter,
+                            instance: 1,
+                            param_id: param.into(),
+                        }),
+                    ),
+                ],
+                &[(0, "nope", 1, "in")],
+                &global,
+            ),
+            "a cable from a port the hosted LFO lacks is V1's zero",
+        );
+    }
+    inert(
+        &song_with(
+            vec![(0, lfo_node()), (1, target(cutoff(instrument())))],
+            &[],
+            &global,
+        ),
+        "a target with no cable is V1's continue",
+    );
+}
+
+/// The track the fixture places its pattern on.
+fn placed_track(song: &synth_sequencer::Song) -> synth_sequencer::TrackId {
+    song.arrangement()
+        .first()
+        .expect("the fixture places one pattern")
+        .track_id
+}
+
+/// The Mod Grid node address keeps clear of every saved module's and of the scaler's, and
+/// an identity that does not fit is refused rather than truncated into a collision.
+#[test]
+fn a_mod_grid_node_address_cannot_meet_a_saved_modules_or_the_scalers() {
+    use super::modulation::grid_node_address;
+    use synth_sequencer::{ModGraphId, ModNodeId};
+
+    let lowest = grid_node_address(ModGraphId::new(0), ModNodeId::new(0)).expect("fits");
+    let highest = grid_node_address(ModGraphId::new(0x7FFE), ModNodeId::new(0xFFFF)).expect("fits");
+    assert!(lowest < highest);
+    assert!(highest < super::identity::VOICE_OUTPUT_SCALER);
+    // Every saved module address keeps bit 31 clear.
+    let resolved = ResolvedIdentities::resolve(&corpus_modules()).expect("resolves");
+    for (_, node) in resolved.pairs() {
+        assert!(node < lowest, "{node} must sort below every grid address");
+    }
+    assert!(grid_node_address(ModGraphId::new(0x7FFF), ModNodeId::new(0)).is_none());
+    assert!(grid_node_address(ModGraphId::new(0), ModNodeId::new(0x1_0000)).is_none());
 }
