@@ -1601,6 +1601,7 @@ fn lower(
             }
             for instance in 0..instances {
                 parameter_targets.push(ParameterTarget {
+                    controller: spec.controller,
                     node: NodeSlot::new(node_slot.index().saturating_add(instance)),
                     control: spec.control,
                     law: spec.law,
@@ -1856,7 +1857,7 @@ fn bind_note_magnitudes(
                         None
                     }
                     // ADR-0026 clause 5: an edge, resolved through nothing.
-                    NoteMagnitude::Trigger => None,
+                    NoteMagnitude::Trigger | NoteMagnitude::Source(_) => None,
                     NoteMagnitude::Pitch => {
                         let Some(tuning) = ir.tuning_of(scope) else {
                             return Err(CompileError::ScopeWithoutTuning {

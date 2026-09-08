@@ -5742,15 +5742,6 @@ fn the_mod_matrix_routes_v2_does_not_carry_are_refused_by_name() {
     };
 
     // Sources.
-    for source in ["velocity", "note", "aftertouch", "mod_wheel", "pitch_bend"] {
-        let (modules, connections) = routed(source, "flt-1.cutoff");
-        refused(
-            modules,
-            connections,
-            slot("slot_1_source"),
-            "controller or note macro",
-        );
-    }
     for source in ["env-1.out", "env1"] {
         let (modules, connections) = routed(source, "flt-1.cutoff");
         refused(
@@ -6481,4 +6472,107 @@ fn a_mod_grid_node_address_cannot_meet_a_saved_modules_or_the_scalers() {
     }
     assert!(grid_node_address(ModGraphId::new(0x7FFF), ModNodeId::new(0)).is_none());
     assert!(grid_node_address(ModGraphId::new(0), ModNodeId::new(0x1_0000)).is_none());
+}
+
+#[test]
+fn each_mod_matrix_macro_lowers_once_at_v1s_target_scale_and_in_its_scope() {
+    use synth_core::MacroSource;
+    use synth_engine_v2::controller::{ControllerKind, NoteSource};
+    use synth_engine_v2::ir::{ExecutionScope, IrNodeKind};
+    for (source, kind, scope) in [
+        (
+            MacroSource::Velocity,
+            IrNodeKind::NoteSource {
+                kind: NoteSource::Velocity,
+            },
+            ExecutionScope::Voice,
+        ),
+        (
+            MacroSource::NoteNumber,
+            IrNodeKind::NoteSource {
+                kind: NoteSource::NoteNumber,
+            },
+            ExecutionScope::Voice,
+        ),
+        (
+            MacroSource::Aftertouch,
+            IrNodeKind::Controller {
+                kind: ControllerKind::Aftertouch,
+            },
+            ExecutionScope::InstrumentInstance,
+        ),
+        (
+            MacroSource::ModWheel,
+            IrNodeKind::Controller {
+                kind: ControllerKind::ModWheel,
+            },
+            ExecutionScope::InstrumentInstance,
+        ),
+        (
+            MacroSource::PitchBend,
+            IrNodeKind::Controller {
+                kind: ControllerKind::PitchBend,
+            },
+            ExecutionScope::InstrumentInstance,
+        ),
+        (
+            MacroSource::PolyAftertouch,
+            IrNodeKind::NoteSource {
+                kind: NoteSource::Pressure,
+            },
+            ExecutionScope::Voice,
+        ),
+    ] {
+        let (mut modules, connections) = corpus_patch("sawtooth");
+        modules.push(mod_matrix(
+            "mmx-1",
+            &[
+                (source.id(), "flt-1.cutoff", 0.5),
+                (source.id(), "osc-1.pitch", 0.25),
+            ],
+        ));
+        let lowered = lower_voice_patch(
+            instrument(),
+            &modules,
+            &connections,
+            synth_engine_v2::quantities::EventCount::NONE,
+        );
+        let ir = lowered
+            .ir
+            .as_ref()
+            .unwrap_or_else(|| panic!("{:?}", lowered.diagnostics));
+        let sources: Vec<_> = ir
+            .nodes()
+            .iter()
+            .filter(|node| node.kind() == kind)
+            .collect();
+        assert_eq!(sources.len(), 1);
+        assert_eq!(sources[0].scope(), scope);
+        assert_eq!(ir.modulations().len(), 2);
+        assert!(
+            ir.modulations()
+                .iter()
+                .all(|edge| edge.source().0 == sources[0].id())
+        );
+        assert_eq!(
+            ir.modulations()[0].depth().amount(),
+            0.5 * synth_modules::filter::CUTOFF_MOD_SEMITONES
+        );
+        assert_eq!(
+            ir.modulations()[1].depth().amount(),
+            0.25 * synth_modules::oscillator::PITCH_MOD_SEMITONES
+        );
+        assert!(
+            lowered
+                .diagnostics
+                .iter()
+                .any(|diagnostic| format!("{diagnostic:?}").contains("current voice macro state"))
+        );
+        let ids: std::collections::HashSet<_> = ir
+            .nodes()
+            .iter()
+            .map(synth_engine_v2::ir::IrNode::id)
+            .collect();
+        assert_eq!(ids.len(), ir.nodes().len());
+    }
 }

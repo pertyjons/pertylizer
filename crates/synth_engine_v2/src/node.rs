@@ -42,6 +42,8 @@ pub enum NoteMagnitude {
     /// (ADR-0026 clause 5). The expansion writes the on edge with the note-on and the off
     /// edge with the release; a sampler declares one, an envelope declares a gate instead.
     Trigger,
+    /// An occurrence's quantum-rate source, separate from sample-positioned magnitudes.
+    Source(crate::controller::NoteSource),
 }
 
 impl std::fmt::Display for NoteMagnitude {
@@ -50,6 +52,7 @@ impl std::fmt::Display for NoteMagnitude {
             Self::Pitch => f.write_str("pitch"),
             Self::Velocity => f.write_str("velocity"),
             Self::Trigger => f.write_str("trigger"),
+            Self::Source(source) => write!(f, "{source:?} source"),
         }
     }
 }
@@ -65,6 +68,8 @@ impl std::fmt::Display for NoteMagnitude {
 /// what the IR admits, which no declaration may make on its own.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ParameterUnit {
+    /// A bipolar normalized value in [-1, 1].
+    BipolarLevel,
     /// Cycles per second; any finite value, negative runs backwards.
     Hertz,
     /// A linear amplitude; any finite value, negative inverts.
@@ -253,6 +258,8 @@ impl ModulationLaw {
 /// cannot disagree.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum ParameterDefault {
+    /// A bipolar normalized value.
+    BipolarLevel(crate::controller::BipolarLevel),
     /// A frequency in hertz.
     Hertz(crate::quantities::Frequency),
     /// A linear amplitude.
@@ -272,6 +279,7 @@ impl ParameterDefault {
     #[must_use]
     pub const fn unit(self) -> ParameterUnit {
         match self {
+            Self::BipolarLevel(_) => ParameterUnit::BipolarLevel,
             Self::Hertz(_) => ParameterUnit::Hertz,
             Self::LinearAmplitude(_) => ParameterUnit::LinearAmplitude,
             Self::NormalizedLevel(_) => ParameterUnit::NormalizedLevel,
@@ -285,6 +293,7 @@ impl ParameterDefault {
     #[must_use]
     pub fn as_f32(self) -> f32 {
         match self {
+            Self::BipolarLevel(value) => value.as_f32(),
             Self::Hertz(value) => value.as_f32(),
             Self::LinearAmplitude(value) => value.as_f32(),
             Self::NormalizedLevel(value) => value.as_f32(),
@@ -298,6 +307,7 @@ impl ParameterDefault {
     /// construction, and every widening is the type's own.
     pub const fn as_parameter_value(self) -> crate::quantities::ParameterValue {
         match self {
+            Self::BipolarLevel(value) => crate::quantities::ParameterValue::from_bipolar(value),
             Self::Hertz(value) => crate::quantities::ParameterValue::from_frequency(value),
             Self::LinearAmplitude(value) => {
                 crate::quantities::ParameterValue::from_amplitude(value)
@@ -338,6 +348,8 @@ pub(crate) struct TapSpec {
 #[derive(Debug, Clone, Copy, PartialEq)]
 #[must_use]
 pub(crate) struct ControlSpec {
+    /// Whether a validated controller replacement may mask this parameter's override.
+    pub(crate) controller: bool,
     /// What a caller names.
     pub(crate) parameter: ParameterId,
     /// What discovery calls it. Unique within its kind; a test holds it to that.
@@ -369,11 +381,9 @@ pub(crate) struct ControlSpec {
     pub(crate) rate: ControlRate,
     /// Which note magnitude this control is the destination of, where it is one.
     ///
-    /// `SOUND-INV-021`'s declaration, and it lives beside the rate rather than in a second
-    /// list because the two are one statement: a magnitude has to be in force at the sample
-    /// its note's gate rises, so a destination that is not [`ControlRate::Sample`] cannot
-    /// carry one. `descriptor_destinations_are_sample_positioned` is what holds the pair
-    /// together.
+    /// Pitch, velocity and trigger destinations are sample-positioned (`SOUND-INV-021`).
+    /// A `Source` is instead the note's quantum-rate modulation source (`P07-S004`), sampled
+    /// at the next boundary. The declaration test holds each category to its own rate.
     pub(crate) magnitude: Option<NoteMagnitude>,
 }
 
@@ -764,6 +774,23 @@ fn prepare_sampler(
 /// only the label, so that renaming `"low-pass filter"` would have changed its identity.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum NodeKindId {
+    /// Mod wheel source.
+    ModWheel,
+    /// Aftertouch source.
+    Aftertouch,
+    /// Pitch bend source.
+    PitchBend,
+    /// Midi cc source.
+    MidiCc,
+    /// Note velocity source.
+    NoteVelocity,
+    /// Note number source.
+    NoteNumber,
+    /// Polyphonic pressure source.
+    PolyPressure,
+    /// Release velocity source.
+    ReleaseVelocity,
+
     /// A pass-through with a declared observation tap on its output.
     Monitor,
     /// Zeros.
@@ -906,6 +933,7 @@ pub(crate) static SAW: NodeDeclaration = NodeDeclaration {
     ports: &[AUDIO_OUT],
     controls: &[
         ControlSpec {
+            controller: false,
             parameter: parameters::SAW_FREQUENCY,
             name: "frequency",
             default: ParameterDefault::Hertz(crate::quantities::Frequency::A4),
@@ -916,6 +944,7 @@ pub(crate) static SAW: NodeDeclaration = NodeDeclaration {
             magnitude: Some(NoteMagnitude::Pitch),
         },
         ControlSpec {
+            controller: false,
             parameter: parameters::SAW_AMPLITUDE,
             name: "amplitude",
             default: ParameterDefault::LinearAmplitude(crate::quantities::Amplitude::UNITY),
@@ -964,6 +993,7 @@ pub(crate) static ENVELOPE: NodeDeclaration = NodeDeclaration {
     ports: &[CONTROL_OUT],
     controls: &[
         ControlSpec {
+            controller: false,
             parameter: parameters::ENVELOPE_GATE,
             name: "gate",
             default: ParameterDefault::Gate(crate::quantities::ParameterValue::ZERO),
@@ -974,6 +1004,7 @@ pub(crate) static ENVELOPE: NodeDeclaration = NodeDeclaration {
             magnitude: None,
         },
         ControlSpec {
+            controller: false,
             parameter: parameters::ENVELOPE_VELOCITY,
             name: "velocity",
             default: ParameterDefault::NormalizedLevel(crate::quantities::NormalizedLevel::FULL),
@@ -986,6 +1017,7 @@ pub(crate) static ENVELOPE: NodeDeclaration = NodeDeclaration {
         // ADR-0059: how much the velocity scales the level, V1's `vel_sens`. Quantum-rate,
         // authored, and read per frame by the kernel that computes `1 − s × (1 − v)`.
         ControlSpec {
+            controller: false,
             parameter: parameters::ENVELOPE_VELOCITY_SENSITIVITY,
             name: "velocity_sensitivity",
             default: ParameterDefault::NormalizedLevel(crate::quantities::NormalizedLevel::FULL),
@@ -1000,6 +1032,7 @@ pub(crate) static ENVELOPE: NodeDeclaration = NodeDeclaration {
         // sustain where it is held; each is the physical-additive law over seconds or the
         // normalized law over a level.
         ControlSpec {
+            controller: false,
             parameter: parameters::ENVELOPE_ATTACK,
             name: "attack",
             default: ParameterDefault::Seconds(Seconds::ZERO),
@@ -1010,6 +1043,7 @@ pub(crate) static ENVELOPE: NodeDeclaration = NodeDeclaration {
             magnitude: None,
         },
         ControlSpec {
+            controller: false,
             parameter: parameters::ENVELOPE_DECAY,
             name: "decay",
             default: ParameterDefault::Seconds(Seconds::ZERO),
@@ -1020,6 +1054,7 @@ pub(crate) static ENVELOPE: NodeDeclaration = NodeDeclaration {
             magnitude: None,
         },
         ControlSpec {
+            controller: false,
             parameter: parameters::ENVELOPE_SUSTAIN,
             name: "sustain",
             default: ParameterDefault::NormalizedLevel(crate::quantities::NormalizedLevel::FULL),
@@ -1030,6 +1065,7 @@ pub(crate) static ENVELOPE: NodeDeclaration = NodeDeclaration {
             magnitude: None,
         },
         ControlSpec {
+            controller: false,
             parameter: parameters::ENVELOPE_RELEASE,
             name: "release",
             default: ParameterDefault::Seconds(Seconds::ZERO),
@@ -1074,6 +1110,7 @@ pub(crate) static SINE: NodeDeclaration = NodeDeclaration {
         // note's key describes the note its gate starts, so a frequency that waited for
         // the next boundary would sound the previous note's pitch for up to a quantum.
         ControlSpec {
+            controller: false,
             parameter: parameters::SINE_FREQUENCY,
             name: "frequency",
             default: ParameterDefault::Hertz(crate::quantities::Frequency::A4),
@@ -1084,6 +1121,7 @@ pub(crate) static SINE: NodeDeclaration = NodeDeclaration {
             magnitude: Some(NoteMagnitude::Pitch),
         },
         ControlSpec {
+            controller: false,
             parameter: parameters::SINE_AMPLITUDE,
             name: "amplitude",
             default: ParameterDefault::LinearAmplitude(crate::quantities::Amplitude::UNITY),
@@ -1106,6 +1144,218 @@ pub(crate) static SINE: NodeDeclaration = NodeDeclaration {
     state_bytes: size_of::<(f64, crate::quantities::Frequency)>() as u64,
 };
 
+fn prepare_control_source(
+    node: NodeId,
+    kind: IrNodeKind,
+    _: &PrepareContext<'_>,
+) -> Result<PreparedNode, CompileError> {
+    match kind {
+        IrNodeKind::Controller { kind } => Ok(PreparedNode::Controller { kind }),
+        IrNodeKind::NoteSource { .. } => Ok(PreparedNode::NoteSource),
+        _ => Err(declared_for_another_kind(node)),
+    }
+}
+
+pub(crate) static MOD_WHEEL: NodeDeclaration = NodeDeclaration {
+    id: NodeKindId::ModWheel,
+    name: "mod wheel",
+    kernel: kernels::CONTROL_SOURCE,
+    ports: &[CONTROL_OUT],
+    controls: &[ControlSpec {
+        controller: true,
+        parameter: parameters::SOURCE_VALUE,
+        name: "value",
+        default: ParameterDefault::NormalizedLevel(NormalizedLevel::ZERO),
+        law: ModulationLaw::NormalizedAdditive,
+        smoothing: Smoothing::None,
+        control: kernels::SOURCE_VALUE,
+        rate: ControlRate::Quantum,
+        magnitude: None,
+    }],
+    in_place_safe: false,
+    note_control: None,
+    taps: &[],
+    prepare: prepare_control_source,
+    prepared_bytes: size_of::<crate::controller::ControllerKind>() as u64,
+    state_bytes: 0,
+};
+
+pub(crate) static AFTERTOUCH: NodeDeclaration = NodeDeclaration {
+    id: NodeKindId::Aftertouch,
+    name: "aftertouch",
+    kernel: kernels::CONTROL_SOURCE,
+    ports: &[CONTROL_OUT],
+    controls: &[ControlSpec {
+        controller: true,
+        parameter: parameters::SOURCE_VALUE,
+        name: "value",
+        default: ParameterDefault::NormalizedLevel(NormalizedLevel::ZERO),
+        law: ModulationLaw::NormalizedAdditive,
+        smoothing: Smoothing::None,
+        control: kernels::SOURCE_VALUE,
+        rate: ControlRate::Quantum,
+        magnitude: None,
+    }],
+    in_place_safe: false,
+    note_control: None,
+    taps: &[],
+    prepare: prepare_control_source,
+    prepared_bytes: size_of::<crate::controller::ControllerKind>() as u64,
+    state_bytes: 0,
+};
+
+pub(crate) static PITCH_BEND: NodeDeclaration = NodeDeclaration {
+    id: NodeKindId::PitchBend,
+    name: "pitch bend",
+    kernel: kernels::CONTROL_SOURCE,
+    ports: &[CONTROL_OUT],
+    controls: &[ControlSpec {
+        controller: true,
+        parameter: parameters::SOURCE_VALUE,
+        name: "value",
+        default: ParameterDefault::BipolarLevel(crate::controller::BipolarLevel::ZERO),
+        law: ModulationLaw::BipolarAdditive,
+        smoothing: Smoothing::None,
+        control: kernels::SOURCE_VALUE,
+        rate: ControlRate::Quantum,
+        magnitude: None,
+    }],
+    in_place_safe: false,
+    note_control: None,
+    taps: &[],
+    prepare: prepare_control_source,
+    prepared_bytes: size_of::<crate::controller::ControllerKind>() as u64,
+    state_bytes: 0,
+};
+
+pub(crate) static MIDI_CC: NodeDeclaration = NodeDeclaration {
+    id: NodeKindId::MidiCc,
+    name: "MIDI CC",
+    kernel: kernels::CONTROL_SOURCE,
+    ports: &[CONTROL_OUT],
+    controls: &[ControlSpec {
+        controller: true,
+        parameter: parameters::SOURCE_VALUE,
+        name: "value",
+        default: ParameterDefault::NormalizedLevel(NormalizedLevel::ZERO),
+        law: ModulationLaw::NormalizedAdditive,
+        smoothing: Smoothing::None,
+        control: kernels::SOURCE_VALUE,
+        rate: ControlRate::Quantum,
+        magnitude: None,
+    }],
+    in_place_safe: false,
+    note_control: None,
+    taps: &[],
+    prepare: prepare_control_source,
+    prepared_bytes: size_of::<crate::controller::ControllerKind>() as u64,
+    state_bytes: 0,
+};
+
+pub(crate) static NOTE_VELOCITY: NodeDeclaration = NodeDeclaration {
+    id: NodeKindId::NoteVelocity,
+    name: "note velocity",
+    kernel: kernels::CONTROL_SOURCE,
+    ports: &[CONTROL_OUT],
+    controls: &[ControlSpec {
+        controller: false,
+        parameter: parameters::SOURCE_VALUE,
+        name: "value",
+        default: ParameterDefault::NormalizedLevel(NormalizedLevel::ZERO),
+        law: ModulationLaw::NormalizedAdditive,
+        smoothing: Smoothing::None,
+        control: kernels::SOURCE_VALUE,
+        rate: ControlRate::Quantum,
+        magnitude: Some(NoteMagnitude::Source(
+            crate::controller::NoteSource::Velocity,
+        )),
+    }],
+    in_place_safe: false,
+    note_control: None,
+    taps: &[],
+    prepare: prepare_control_source,
+    prepared_bytes: 0,
+    state_bytes: 0,
+};
+
+pub(crate) static NOTE_NUMBER: NodeDeclaration = NodeDeclaration {
+    id: NodeKindId::NoteNumber,
+    name: "note number",
+    kernel: kernels::CONTROL_SOURCE,
+    ports: &[CONTROL_OUT],
+    controls: &[ControlSpec {
+        controller: false,
+        parameter: parameters::SOURCE_VALUE,
+        name: "value",
+        default: ParameterDefault::NormalizedLevel(NormalizedLevel::ZERO),
+        law: ModulationLaw::NormalizedAdditive,
+        smoothing: Smoothing::None,
+        control: kernels::SOURCE_VALUE,
+        rate: ControlRate::Quantum,
+        magnitude: Some(NoteMagnitude::Source(
+            crate::controller::NoteSource::NoteNumber,
+        )),
+    }],
+    in_place_safe: false,
+    note_control: None,
+    taps: &[],
+    prepare: prepare_control_source,
+    prepared_bytes: 0,
+    state_bytes: 0,
+};
+
+pub(crate) static POLY_PRESSURE: NodeDeclaration = NodeDeclaration {
+    id: NodeKindId::PolyPressure,
+    name: "polyphonic pressure",
+    kernel: kernels::CONTROL_SOURCE,
+    ports: &[CONTROL_OUT],
+    controls: &[ControlSpec {
+        controller: false,
+        parameter: parameters::SOURCE_VALUE,
+        name: "value",
+        default: ParameterDefault::NormalizedLevel(NormalizedLevel::ZERO),
+        law: ModulationLaw::NormalizedAdditive,
+        smoothing: Smoothing::None,
+        control: kernels::SOURCE_VALUE,
+        rate: ControlRate::Quantum,
+        magnitude: Some(NoteMagnitude::Source(
+            crate::controller::NoteSource::Pressure,
+        )),
+    }],
+    in_place_safe: false,
+    note_control: None,
+    taps: &[],
+    prepare: prepare_control_source,
+    prepared_bytes: 0,
+    state_bytes: 0,
+};
+
+pub(crate) static RELEASE_VELOCITY: NodeDeclaration = NodeDeclaration {
+    id: NodeKindId::ReleaseVelocity,
+    name: "release velocity",
+    kernel: kernels::CONTROL_SOURCE,
+    ports: &[CONTROL_OUT],
+    controls: &[ControlSpec {
+        controller: false,
+        parameter: parameters::SOURCE_VALUE,
+        name: "value",
+        default: ParameterDefault::NormalizedLevel(NormalizedLevel::ZERO),
+        law: ModulationLaw::NormalizedAdditive,
+        smoothing: Smoothing::None,
+        control: kernels::SOURCE_VALUE,
+        rate: ControlRate::Quantum,
+        magnitude: Some(NoteMagnitude::Source(
+            crate::controller::NoteSource::ReleaseVelocity,
+        )),
+    }],
+    in_place_safe: false,
+    note_control: None,
+    taps: &[],
+    prepare: prepare_control_source,
+    prepared_bytes: 0,
+    state_bytes: 0,
+};
+
 /// The low-frequency oscillator, declared once — `P07-S001`, `SOUND-INV-027`'s first
 /// modulation source.
 ///
@@ -1124,6 +1374,7 @@ pub(crate) static LFO: NodeDeclaration = NodeDeclaration {
     ports: &[CONTROL_OUT],
     controls: &[
         ControlSpec {
+            controller: false,
             parameter: parameters::LFO_RATE,
             name: "rate",
             default: ParameterDefault::Hertz(crate::quantities::Frequency::ONE),
@@ -1134,6 +1385,7 @@ pub(crate) static LFO: NodeDeclaration = NodeDeclaration {
             magnitude: None,
         },
         ControlSpec {
+            controller: false,
             parameter: parameters::LFO_DEPTH,
             name: "depth",
             default: ParameterDefault::NormalizedLevel(crate::quantities::NormalizedLevel::FULL),
@@ -1269,6 +1521,7 @@ pub(crate) static FILTER: NodeDeclaration = NodeDeclaration {
     // pair has no usable filter.
     controls: &[
         ControlSpec {
+            controller: false,
             parameter: parameters::FILTER_CUTOFF,
             name: "cutoff",
             default: ParameterDefault::Hertz(crate::quantities::Frequency::A4),
@@ -1279,6 +1532,7 @@ pub(crate) static FILTER: NodeDeclaration = NodeDeclaration {
             magnitude: None,
         },
         ControlSpec {
+            controller: false,
             parameter: parameters::FILTER_RESONANCE,
             name: "resonance",
             default: ParameterDefault::QualityFactor(Resonance::BUTTERWORTH),
@@ -1304,7 +1558,7 @@ pub(crate) static FILTER: NodeDeclaration = NodeDeclaration {
 /// the declarations are `static` rather than `const`: a `const` is materialised at each
 /// use and has no single address to compare — so a kind declared but left out here cannot
 /// be discovered, and one listed here but not resolvable cannot compile.
-static DECLARED: [&NodeDeclaration; 13] = [
+static DECLARED: [&NodeDeclaration; 21] = [
     &SILENCE,
     &CONSTANT,
     &IMPULSE,
@@ -1318,6 +1572,14 @@ static DECLARED: [&NodeDeclaration; 13] = [
     &VELOCITY_SCALER,
     &SAMPLER,
     &LFO,
+    &MOD_WHEEL,
+    &AFTERTOUCH,
+    &PITCH_BEND,
+    &MIDI_CC,
+    &NOTE_VELOCITY,
+    &NOTE_NUMBER,
+    &POLY_PRESSURE,
+    &RELEASE_VELOCITY,
 ];
 
 /// V1's voice-output velocity stage, declared once — ADR-0059. Its sensitivity is prepared;
@@ -1330,6 +1592,7 @@ pub(crate) static VELOCITY_SCALER: NodeDeclaration = NodeDeclaration {
     ports: &[AUDIO_IN, AUDIO_OUT],
     controls: &[
         ControlSpec {
+            controller: false,
             parameter: parameters::VELOCITY_SCALER_VELOCITY,
             name: "velocity",
             default: ParameterDefault::NormalizedLevel(crate::quantities::NormalizedLevel::FULL),
@@ -1340,6 +1603,7 @@ pub(crate) static VELOCITY_SCALER: NodeDeclaration = NodeDeclaration {
             magnitude: Some(NoteMagnitude::Velocity),
         },
         ControlSpec {
+            controller: false,
             parameter: parameters::VELOCITY_SCALER_SENSITIVITY,
             name: "sensitivity",
             default: ParameterDefault::NormalizedLevel(crate::quantities::NormalizedLevel::FULL),
@@ -1375,6 +1639,7 @@ pub(crate) static SAMPLER: NodeDeclaration = NodeDeclaration {
     ports: &[AUDIO_OUT],
     controls: &[
         ControlSpec {
+            controller: false,
             parameter: parameters::SAMPLER_TRIGGER,
             name: "trigger",
             default: ParameterDefault::Gate(crate::quantities::ParameterValue::ZERO),
@@ -1385,6 +1650,7 @@ pub(crate) static SAMPLER: NodeDeclaration = NodeDeclaration {
             magnitude: Some(NoteMagnitude::Trigger),
         },
         ControlSpec {
+            controller: false,
             parameter: parameters::SAMPLER_PITCH,
             name: "pitch",
             default: ParameterDefault::Hertz(crate::quantities::Frequency::ZERO),
@@ -1395,6 +1661,7 @@ pub(crate) static SAMPLER: NodeDeclaration = NodeDeclaration {
             magnitude: Some(NoteMagnitude::Pitch),
         },
         ControlSpec {
+            controller: false,
             parameter: parameters::SAMPLER_VELOCITY,
             name: "velocity",
             default: ParameterDefault::NormalizedLevel(crate::quantities::NormalizedLevel::FULL),
@@ -1405,6 +1672,7 @@ pub(crate) static SAMPLER: NodeDeclaration = NodeDeclaration {
             magnitude: Some(NoteMagnitude::Velocity),
         },
         ControlSpec {
+            controller: false,
             parameter: parameters::SAMPLER_LEVEL,
             name: "level",
             default: ParameterDefault::LinearAmplitude(crate::quantities::Amplitude::UNITY),
@@ -1415,6 +1683,7 @@ pub(crate) static SAMPLER: NodeDeclaration = NodeDeclaration {
             magnitude: None,
         },
         ControlSpec {
+            controller: false,
             parameter: parameters::SAMPLER_VELOCITY_SENSITIVITY,
             name: "velocity_sensitivity",
             default: ParameterDefault::NormalizedLevel(crate::quantities::NormalizedLevel::FULL),
@@ -1470,6 +1739,8 @@ pub struct PortDescription {
 /// One addressable parameter, as discovery presents it.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ParameterDescription {
+    /// Whether this parameter declares a controller replacement layer.
+    pub controller: bool,
     /// The identity a caller addresses it by, scoped to its node.
     pub id: ParameterId,
     /// Its name, unique within the kind.
@@ -1546,6 +1817,7 @@ pub fn catalog() -> Vec<KindDescription> {
                 .controls
                 .iter()
                 .map(|control| ParameterDescription {
+                    controller: control.controller,
                     id: control.parameter,
                     name: control.name,
                     unit: control.default.unit(),
@@ -1592,6 +1864,18 @@ pub(crate) fn declaration(kind: IrNodeKind) -> Option<&'static NodeDeclaration> 
         IrNodeKind::VelocityScaler { .. } => Some(&VELOCITY_SCALER),
         IrNodeKind::Sampler { .. } => Some(&SAMPLER),
         IrNodeKind::Filter { .. } => Some(&FILTER),
+        IrNodeKind::Controller { kind } => Some(match kind {
+            crate::controller::ControllerKind::ModWheel => &MOD_WHEEL,
+            crate::controller::ControllerKind::Aftertouch => &AFTERTOUCH,
+            crate::controller::ControllerKind::PitchBend => &PITCH_BEND,
+            crate::controller::ControllerKind::MidiCc(_) => &MIDI_CC,
+        }),
+        IrNodeKind::NoteSource { kind } => Some(match kind {
+            crate::controller::NoteSource::Velocity => &NOTE_VELOCITY,
+            crate::controller::NoteSource::NoteNumber => &NOTE_NUMBER,
+            crate::controller::NoteSource::Pressure => &POLY_PRESSURE,
+            crate::controller::NoteSource::ReleaseVelocity => &RELEASE_VELOCITY,
+        }),
         IrNodeKind::Lfo { .. } => Some(&LFO),
         // The output node has no kernel and no declaration: writing the stream's channels
         // is the renderer's boundary rather than a node's work.
@@ -1635,6 +1919,9 @@ pub(crate) fn descriptor(kind: IrNodeKind) -> Option<NodeDescriptor> {
         IrNodeKind::Gain { .. } => declared.map(NodeDeclaration::descriptor),
         IrNodeKind::VelocityScaler { .. } => declared.map(NodeDeclaration::descriptor),
         IrNodeKind::Sampler { .. } => declared.map(NodeDeclaration::descriptor),
+        IrNodeKind::Controller { .. } | IrNodeKind::NoteSource { .. } => {
+            declared.map(NodeDeclaration::descriptor)
+        }
         IrNodeKind::Lfo { .. } => declared.map(NodeDeclaration::descriptor),
     }
 }
@@ -1854,6 +2141,9 @@ pub fn prepared_payload_bytes(kind: IrNodeKind) -> u64 {
         // The output node has no kernel, so it carries no prepared data of its own.
         IrNodeKind::Output => 0,
         IrNodeKind::Envelope { .. } => return declared.map_or(0, |d| d.prepared_bytes),
+        IrNodeKind::Controller { .. } | IrNodeKind::NoteSource { .. } => {
+            return declared.map_or(0, |d| d.prepared_bytes);
+        }
         IrNodeKind::Lfo { .. } => return declared.map_or(0, |d| d.prepared_bytes),
     }) as u64
 }
@@ -1899,6 +2189,9 @@ pub fn state_payload_bytes(kind: IrNodeKind) -> u64 {
         IrNodeKind::VelocityScaler { .. } => return declared.map_or(0, |d| d.state_bytes),
         IrNodeKind::Sampler { .. } => return declared.map_or(0, |d| d.state_bytes),
         IrNodeKind::Envelope { .. } => return declared.map_or(0, |d| d.state_bytes),
+        IrNodeKind::Controller { .. } | IrNodeKind::NoteSource { .. } => {
+            return declared.map_or(0, |d| d.state_bytes);
+        }
         IrNodeKind::Lfo { .. } => return declared.map_or(0, |d| d.state_bytes),
         IrNodeKind::Output => 0,
     }) as u64
@@ -1957,6 +2250,32 @@ mod tests {
 
     fn every_kind() -> Vec<IrNodeKind> {
         vec![
+            IrNodeKind::Controller {
+                kind: crate::controller::ControllerKind::ModWheel,
+            },
+            IrNodeKind::Controller {
+                kind: crate::controller::ControllerKind::Aftertouch,
+            },
+            IrNodeKind::Controller {
+                kind: crate::controller::ControllerKind::PitchBend,
+            },
+            IrNodeKind::Controller {
+                kind: crate::controller::ControllerKind::MidiCc(
+                    crate::controller::MidiController::new(2).expect("CC"),
+                ),
+            },
+            IrNodeKind::NoteSource {
+                kind: crate::controller::NoteSource::Velocity,
+            },
+            IrNodeKind::NoteSource {
+                kind: crate::controller::NoteSource::NoteNumber,
+            },
+            IrNodeKind::NoteSource {
+                kind: crate::controller::NoteSource::Pressure,
+            },
+            IrNodeKind::NoteSource {
+                kind: crate::controller::NoteSource::ReleaseVelocity,
+            },
             IrNodeKind::Silence,
             IrNodeKind::Constant {
                 level: Amplitude::UNITY,
@@ -2025,7 +2344,11 @@ mod tests {
                 if let Some(magnitude) = spec.magnitude {
                     assert_eq!(
                         spec.rate,
-                        ControlRate::Sample,
+                        if matches!(magnitude, NoteMagnitude::Source(_)) {
+                            ControlRate::Quantum
+                        } else {
+                            ControlRate::Sample
+                        },
                         "{kind:?} declares a {magnitude} destination at quantum rate, which \
                          cannot be in force at the sample its note's gate rises"
                     );
@@ -2141,6 +2464,7 @@ mod tests {
             let mut parameter_names = std::collections::BTreeSet::new();
             for (parameter, spec) in entry.parameters.iter().zip(declared.controls) {
                 assert_eq!(parameter.id, spec.parameter, "{}", entry.name);
+                assert_eq!(parameter.controller, spec.controller);
                 assert_eq!(parameter.name, spec.name, "{}", entry.name);
                 assert_eq!(parameter.unit, spec.default.unit(), "{}", entry.name);
                 assert_eq!(parameter.default, spec.default, "{}", entry.name);
@@ -2179,7 +2503,7 @@ mod tests {
             .collect();
         assert_eq!(
             declared.len(),
-            13,
+            21,
             "every kind but the output node is declared"
         );
 
@@ -2237,6 +2561,11 @@ mod tests {
                     | (IrNodeKind::Envelope { .. }, PreparedNode::Envelope { .. })
                     | (IrNodeKind::Sampler { .. }, PreparedNode::Sampler { .. })
                     | (IrNodeKind::Lfo { .. }, PreparedNode::Lfo { .. })
+                    | (
+                        IrNodeKind::Controller { .. },
+                        PreparedNode::Controller { .. }
+                    )
+                    | (IrNodeKind::NoteSource { .. }, PreparedNode::NoteSource)
             );
             assert!(matches_kind, "{kind:?} prepared as {prepared:?}");
             // The kind resolves to the identity its declaration states.
@@ -2255,14 +2584,18 @@ mod tests {
                 IrNodeKind::Saw { .. } | IrNodeKind::Sine { .. } | IrNodeKind::Envelope { .. } => {
                     (true, true)
                 }
-                IrNodeKind::Constant { .. }
+                IrNodeKind::Controller { .. }
+                | IrNodeKind::Constant { .. }
                 | IrNodeKind::Impulse { .. }
                 | IrNodeKind::Gain { .. } => (true, false),
                 IrNodeKind::Filter { .. }
                 | IrNodeKind::VelocityScaler { .. }
                 | IrNodeKind::Sampler { .. }
                 | IrNodeKind::Lfo { .. } => (true, true),
-                IrNodeKind::Silence | IrNodeKind::Amplifier | IrNodeKind::Monitor => (false, false),
+                IrNodeKind::NoteSource { .. }
+                | IrNodeKind::Silence
+                | IrNodeKind::Amplifier
+                | IrNodeKind::Monitor => (false, false),
                 other => panic!("{other:?} is declared but this test does not know its shape"),
             };
             assert_eq!(
@@ -2374,6 +2707,7 @@ mod tests {
                     ParameterUnit::Hertz => ModulationLaw::SemitoneAdditive,
                     ParameterUnit::LinearAmplitude => ModulationLaw::DecibelAdditive,
                     ParameterUnit::NormalizedLevel => ModulationLaw::NormalizedAdditive,
+                    ParameterUnit::BipolarLevel => ModulationLaw::BipolarAdditive,
                     ParameterUnit::Gate => ModulationLaw::ThresholdedBoolean,
                     ParameterUnit::QualityFactor | ParameterUnit::Seconds => {
                         ModulationLaw::PhysicalLinearAdditive

@@ -353,6 +353,10 @@ impl NoteEdge {
 /// be used to escape the other's.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum EventPayload {
+    /// Replace a declared controller source's base layer, preserving automation beneath it.
+    Controller(crate::controller::ControllerChange),
+    /// Restore both layers of a controller source at an activation boundary.
+    RestoreController(crate::controller::ControllerRestore),
     /// Set one compiled parameter slot.
     ///
     /// The slot, not the `(node, parameter)` pair: [`CompiledPlan::resolve_parameter`]
@@ -396,6 +400,13 @@ pub enum EventPayload {
     Reset {
         /// The occurrence about to start on the instance, whose index names it.
         identity: crate::identity::NoteIdentity,
+    },
+    /// A typed source update for one live occurrence, at control rate.
+    Expression {
+        /// The occurrence; no node or voice index can replace it.
+        identity: crate::identity::NoteIdentity,
+        /// The source and validated magnitude.
+        expression: crate::controller::NoteExpression,
     },
     /// `SOUND-INV-021`'s bend: move one occurrence's pitch by an offset in cents, after its
     /// key has been resolved — the per-note expression event ADR-0047 clause 9 reserved. It

@@ -860,6 +860,10 @@ impl std::fmt::Display for Resonance {
 pub struct ParameterValue(f32);
 
 impl ParameterValue {
+    /// A validated bipolar value is finite.
+    pub const fn from_bipolar(value: crate::controller::BipolarLevel) -> Self {
+        Self(value.as_f32())
+    }
     /// Zero.
     pub const ZERO: Self = Self(0.0);
 

@@ -89,6 +89,7 @@
 pub mod admit;
 mod arena;
 pub mod compile;
+pub mod controller;
 pub mod diagnostics;
 pub mod identity;
 // Without the `simulated-ingress` feature the store has no constructor, so everything it

@@ -850,3 +850,24 @@ fn peak(samples: &[f32]) -> f32 {
         .iter()
         .fold(0.0_f32, |held, sample| held.max(sample.abs()))
 }
+
+#[test]
+fn a_controller_replacement_keeps_both_modulation_and_expression_in_force() {
+    let mut slot = SlotState::prepared(
+        ModulationLaw::SemitoneAdditive,
+        ParameterUnit::Hertz,
+        crate::node::Smoothing::None,
+        ParameterValue::new(110.0).expect("finite"),
+    );
+    let _ = slot.write_override(ParameterValue::new(220.0).expect("finite"));
+    let _ = slot.modulate(ModulationSum::new(12.0).expect("finite"));
+    let _ = slot.express(ModulationSum::new(12.0).expect("finite"));
+    assert_eq!(
+        slot.control(Some(ParameterValue::new(330.0).expect("finite")))
+            .as_f32(),
+        1320.0
+    );
+    let _ = slot.write_override(ParameterValue::new(440.0).expect("finite"));
+    assert_eq!(slot.current().as_f32(), 1320.0);
+    assert_eq!(slot.control(None).as_f32(), 1760.0);
+}

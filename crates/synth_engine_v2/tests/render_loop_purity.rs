@@ -768,6 +768,9 @@ fn every_call_the_render_loop_makes_is_inside_the_checked_region() {
         "count_clock_exhaustion",
         // Phase 2's additions: the compiled step's slots, the prepared table, and the
         // one method that moves a control. Each is a field read or an assignment.
+        // ControllerChange::slot and ControllerSlot::parameter are const field reads.
+        "slot",
+        "parameter",
         "prepared_nodes",
         "node",
         "out",

@@ -435,6 +435,33 @@ fn discovery_and_validation_describe_the_same_ports() {
 
     let sample = |id: NodeKindId| -> IrNodeKind {
         match id {
+            NodeKindId::ModWheel => IrNodeKind::Controller {
+                kind: synth_engine_v2::controller::ControllerKind::ModWheel,
+            },
+            NodeKindId::Aftertouch => IrNodeKind::Controller {
+                kind: synth_engine_v2::controller::ControllerKind::Aftertouch,
+            },
+            NodeKindId::PitchBend => IrNodeKind::Controller {
+                kind: synth_engine_v2::controller::ControllerKind::PitchBend,
+            },
+            NodeKindId::MidiCc => IrNodeKind::Controller {
+                kind: synth_engine_v2::controller::ControllerKind::MidiCc(
+                    synth_engine_v2::controller::MidiController::new(2).expect("CC"),
+                ),
+            },
+            NodeKindId::NoteVelocity => IrNodeKind::NoteSource {
+                kind: synth_engine_v2::controller::NoteSource::Velocity,
+            },
+            NodeKindId::NoteNumber => IrNodeKind::NoteSource {
+                kind: synth_engine_v2::controller::NoteSource::NoteNumber,
+            },
+            NodeKindId::PolyPressure => IrNodeKind::NoteSource {
+                kind: synth_engine_v2::controller::NoteSource::Pressure,
+            },
+            NodeKindId::ReleaseVelocity => IrNodeKind::NoteSource {
+                kind: synth_engine_v2::controller::NoteSource::ReleaseVelocity,
+            },
+
             NodeKindId::Silence => IrNodeKind::Silence,
             NodeKindId::Constant => IrNodeKind::Constant {
                 level: Amplitude::new(0.5).expect("finite"),
@@ -487,7 +514,7 @@ fn discovery_and_validation_describe_the_same_ports() {
     let entries = catalog();
     assert_eq!(
         entries.len(),
-        13,
+        21,
         "every kind but the output node is discoverable"
     );
     for entry in entries {

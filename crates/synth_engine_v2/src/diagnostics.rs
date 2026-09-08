@@ -23,6 +23,14 @@ use crate::time::{FrameCount, TimeError};
 /// Why a plan was not admitted.
 #[derive(Debug, Clone, Copy, PartialEq, Error)]
 pub enum CompileError {
+    /// An occurrence source outside voice scope would share one value across notes.
+    #[error("{node} declares a per-note source in {scope:?}, which is not a voice scope")]
+    NoteSourceOutsideVoice {
+        /// The source node.
+        node: crate::ir::NodeId,
+        /// Its declared scope.
+        scope: crate::ir::ExecutionScope,
+    },
     /// One execution scope holds two playable nodes.
     ///
     /// `SOUND-INV-021` binds a note's magnitudes by execution scope: a note sent to a node

@@ -152,6 +152,12 @@ pub const LFO: Kernel = Kernel(lfo);
 /// is computed here rather than per quantum, which is the whole point of the split.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum PreparedNode {
+    /// A declared controller source.
+    Controller {
+        kind: crate::controller::ControllerKind,
+    },
+    /// A declared per-occurrence source.
+    NoteSource,
     /// Zeros.
     Silence,
     /// One level on every sample.
@@ -513,6 +519,7 @@ impl NodeState {
             PreparedNode::VelocityScaler { .. } => Self::Scaled {
                 velocity: NoteVelocity::FULL,
             },
+            PreparedNode::Controller { .. } | PreparedNode::NoteSource => Self::Stateless,
             PreparedNode::Lfo { .. } => Self::Lfo { phase: 0.0 },
             PreparedNode::Sampler { .. } => Self::Sampler {
                 position: 0.0,
@@ -633,6 +640,7 @@ pub(crate) fn authored_value(
             VELOCITY_SCALER_SENSITIVITY => Some(ParameterValue::from_level(*sensitivity)),
             _ => None,
         },
+        PreparedNode::Controller { .. } | PreparedNode::NoteSource => Some(ParameterValue::ZERO),
         PreparedNode::Lfo { rate, depth, .. } => match control {
             LFO_RATE => Some(ParameterValue::from_frequency(*rate)),
             LFO_DEPTH => Some(ParameterValue::from_level(*depth)),
@@ -2149,3 +2157,15 @@ struct SamplerRun {
     fade_remaining: u32,
     held: bool,
 }
+
+/// Emit the centrally resolved source value. No controller or note composition in kernels.
+pub fn control_source(_: &PreparedNode, _: &mut NodeState, io: &mut NodeIo<'_>) {
+    let values = ramp_of(io.ramps, 0);
+    for (frame, sample) in io.out.iter_mut().enumerate() {
+        *sample = values.get(frame).copied().unwrap_or(0.0);
+    }
+}
+/// The source's sole quantum-rate control.
+pub const SOURCE_VALUE: ControlIndex = ControlIndex::new(0);
+/// Stateless control-source kernel.
+pub const CONTROL_SOURCE: Kernel = Kernel(control_source);

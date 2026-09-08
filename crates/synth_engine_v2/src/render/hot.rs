@@ -260,6 +260,12 @@ impl PreparedRenderer {
             // in one quantum fail the call against a capacity of four — turning the
             // documented post-swap case into a render failure.
             let foreign = match event.payload() {
+                EventPayload::RestoreController(restore) => {
+                    restore.slot.parameter().plan() != self.plan.id()
+                }
+                EventPayload::Controller(change) => {
+                    change.slot().parameter().plan() != self.plan.id()
+                }
                 EventPayload::SetParameter { slot, .. } => slot.plan() != self.plan.id(),
                 // A note edge's provenance is its **identity's table**, not a node address:
                 // `SOUND-INV-017` removes the node from the release, so there is no slot to
@@ -268,6 +274,7 @@ impl PreparedRenderer {
                 EventPayload::Note { identity, .. }
                 | EventPayload::Fade { identity, .. }
                 | EventPayload::Reset { identity }
+                | EventPayload::Expression { identity, .. }
                 | EventPayload::Bend { identity, .. } => identity.table() != self.live_notes.id(),
             };
             if foreign {
@@ -387,28 +394,98 @@ impl PreparedRenderer {
             if event.position > boundary {
                 break;
             }
-            let payload = event.payload;
-            self.apply(payload);
+            let event = *event;
+            self.apply_note_sources(event);
+            self.apply(event.payload);
             next += 1;
         }
         next
     }
 
-    /// Apply one event's **quantum-rate** effect, if it has one.
-    ///
-    /// A sample-positioned target is skipped here and collected by
-    /// [`Self::collect_timed_controls`] instead, which is what keeps ADR-0001 clause 14's
-    /// split a property of the target rather than of the payload: a gate addressed as a
-    /// parameter lands on its sample exactly as a note does.
+    /// Apply a note's source values at this boundary, using the occurrence resolved once
+    /// before the quantum passes. Sample-positioned magnitudes use the other collection.
+    fn apply_note_sources(&mut self, event: DueEvent) {
+        let (identity, slot, note, expression) = match event.payload {
+            EventPayload::Note {
+                identity,
+                edge:
+                    NoteEdge::On {
+                        slot,
+                        key,
+                        velocity,
+                    },
+            } => (identity, Some(slot), Some((key, velocity)), None),
+            EventPayload::Expression {
+                identity,
+                expression,
+            } => (identity, event.note_of, None, Some(expression)),
+            _ => return,
+        };
+        let Some(slot) = slot else {
+            return;
+        };
+        for index in 0..self.plan.note_magnitudes_of(slot).len() {
+            let Some(target) = self.plan.note_magnitudes_of(slot).get(index).copied() else {
+                break;
+            };
+            let crate::node::NoteMagnitude::Source(source) = target.magnitude else {
+                continue;
+            };
+            let value = if let Some((key, velocity)) = note {
+                self.plan.magnitude_value(&target, key, velocity)
+            } else {
+                expression
+                    .filter(|value| value.source() == source)
+                    .map(crate::controller::NoteExpression::value)
+            };
+            let Some(value) = value else {
+                continue;
+            };
+            let Some(row) = self.voice_row(target.parameter.index(), identity.index()) else {
+                continue;
+            };
+            if let Some(composed) = self.parameter_slots.get_mut(row) {
+                let _ = composed.write_override(value);
+            }
+        }
+    }
+
     fn apply(&mut self, payload: EventPayload) {
         match payload {
-            // A note has no quantum-rate effect at all. Every edge it carries is
-            // sample-positioned, so the whole payload is the other pass's — and so are a
-            // steal's fade and reset (ADR-0058).
-            EventPayload::Note { .. }
+            // Note-source effects were applied by apply_note_sources. Gate, pitch, bend,
+            // fade and reset effects belong to the sample-positioned collection.
+            EventPayload::Expression { .. }
+            | EventPayload::Note { .. }
             | EventPayload::Fade { .. }
             | EventPayload::Reset { .. }
             | EventPayload::Bend { .. } => {}
+            EventPayload::RestoreController(restore) => {
+                let slot = restore.slot.parameter();
+                let Some(target) = self.plan.parameter_targets().get(slot.index()) else {
+                    return;
+                };
+                for row in
+                    slot.index()..slot.index().saturating_add(target.instances.get() as usize)
+                {
+                    if let Some(composed) = self.parameter_slots.get_mut(row) {
+                        let _ = composed.control(restore.controller);
+                        let _ = composed.write_override(restore.override_value);
+                    }
+                }
+            }
+            EventPayload::Controller(change) => {
+                let slot = change.slot().parameter();
+                let Some(target) = self.plan.parameter_targets().get(slot.index()) else {
+                    return;
+                };
+                for row in
+                    slot.index()..slot.index().saturating_add(target.instances.get() as usize)
+                {
+                    if let Some(composed) = self.parameter_slots.get_mut(row) {
+                        let _ = composed.control(change.value());
+                    }
+                }
+            }
             EventPayload::SetParameter { slot, value } => {
                 // A slot indexes **one** plan's target table, and one from another plan
                 // was already refused and counted during resolution — before it could
@@ -520,6 +597,9 @@ impl PreparedRenderer {
                     edge: NoteEdge::On { slot, .. },
                 } => {
                     for magnitude in self.plan.note_magnitudes_of(slot) {
+                        if matches!(magnitude.magnitude, crate::node::NoteMagnitude::Source(_)) {
+                            continue;
+                        }
                         if let Some(row) =
                             self.voice_row(magnitude.parameter.index(), identity.index())
                             && let Some(node) = self.slot_node(row)
@@ -671,6 +751,9 @@ impl PreparedRenderer {
                     else {
                         break;
                     };
+                    if matches!(magnitude.magnitude, crate::node::NoteMagnitude::Source(_)) {
+                        continue;
+                    }
                     let Some(value) = self.plan.magnitude_value(&magnitude, key, velocity) else {
                         // ADR-0026 clause 2: a trigger the note's key or velocity does not
                         // select is written nothing and the note is counted as outside
@@ -1014,10 +1097,12 @@ impl PreparedRenderer {
                     }
                     None
                 }
-                EventPayload::Reset { .. } => None,
+                EventPayload::Reset { .. }
+                | EventPayload::Controller(_)
+                | EventPayload::RestoreController(_) => None,
                 // `SOUND-INV-017`: an expression event naming no live note is an orphan,
                 // refused and counted. It lands through the magnitudes, so it has no target.
-                EventPayload::Bend { identity, .. } => {
+                EventPayload::Bend { identity, .. } | EventPayload::Expression { identity, .. } => {
                     note_of = self.live_notes.note_and_key(identity).map(|(slot, _)| slot);
                     if note_of.is_none() {
                         pending.orphan_note = pending.orphan_note.saturating_add(1);
@@ -1053,9 +1138,12 @@ impl PreparedRenderer {
         match payload {
             EventPayload::Note { edge, .. } => Some(edge.value()),
             EventPayload::SetParameter { value, .. } => Some(value),
-            EventPayload::Fade { .. } | EventPayload::Reset { .. } | EventPayload::Bend { .. } => {
-                None
-            }
+            EventPayload::RestoreController(_)
+            | EventPayload::Controller(_)
+            | EventPayload::Expression { .. }
+            | EventPayload::Fade { .. }
+            | EventPayload::Reset { .. }
+            | EventPayload::Bend { .. } => None,
         }
     }
 

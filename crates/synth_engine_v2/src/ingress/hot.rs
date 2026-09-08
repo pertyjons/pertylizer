@@ -56,7 +56,28 @@ impl PerformanceIngress {
         // first so a fault below still leaves them published — a stream that ended on a
         // contract violation is exactly when someone reads them.
         diagnostics.mirror_ingress_boundary(&self.counters);
-        self.publish_pending(publication)?;
+        self.publish_pending(publication, false)?;
+        while self.expression_len > 0 {
+            let Some(event) = self
+                .delayed_expressions
+                .get(self.expression_tail)
+                .copied()
+                .flatten()
+            else {
+                break;
+            };
+            if !publication.reaches(event) {
+                break;
+            }
+            publication.charge(ProducerClass::Live, event)?;
+            if let Some(entry) = self.delayed_expressions.get_mut(self.expression_tail) {
+                *entry = None;
+            }
+            self.expression_tail = next(self.expression_tail, self.delayed_expressions.len());
+            self.expression_len = self.expression_len.saturating_sub(1);
+        }
+
+        self.publish_pending(publication, true)?;
 
         let capacity = self.entries.len();
         if capacity == 0 {
@@ -109,6 +130,7 @@ impl PerformanceIngress {
     fn publish_pending(
         &mut self,
         publication: &mut Publication<'_>,
+        releases: bool,
     ) -> Result<(), PublicationFault> {
         if self.pending_len == 0 {
             return Ok(());
@@ -171,6 +193,9 @@ impl PerformanceIngress {
                         *slot = Some(pending);
                     }
                 }
+            }
+            if !releases {
+                continue;
             }
             let Some(ends) = pending.ends else {
                 continue;

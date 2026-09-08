@@ -455,6 +455,15 @@ pub fn lower_voice_patch_with(
     // correction (`CORPUS-0003-C1`), which ADR-0049's rule maps to `UnsupportedScope` with a
     // diagnostic naming it rather than to a silent translation; an independent read found the
     // edge declared fully represented.
+    for source in synth_core::MacroSource::ALL {
+        if routes
+            .iter()
+            .any(|route| route.source == ModulationSource::Macro(source))
+        {
+            let (id, kind, scope) = super::modulation::macro_node(source);
+            builder = builder.node(id, kind, scope);
+        }
+    }
     for route in &routes {
         // Both lowerings settle a dangling endpoint before they make a route, so an address
         // the table cannot resolve here is an inconsistency between the two, refused by name
@@ -462,6 +471,7 @@ pub fn lower_voice_patch_with(
         let source = match route.source {
             ModulationSource::Module(id) => identities.node_for(id),
             ModulationSource::Grid(node) => Some(node),
+            ModulationSource::Macro(source) => Some(super::modulation::macro_node(source).0),
         };
         let (Some(source), Some(target)) = (source, identities.node_for(route.target)) else {
             diagnostics.push(LoweringDiagnostic::refused(
@@ -479,10 +489,16 @@ pub fn lower_voice_patch_with(
         diagnostics.push(LoweringDiagnostic::unrepresented(
             route.subject.clone(),
             LoweringReason::OwnedByLaterPhase {
-                capability: "a modulation's timing, which V1 reads once per host block — the \
-                             Mod Matrix from the source's previous block, the Mod Grid from \
-                             the current block's last sample — and V2 composes from the \
-                             current quantum's first frame (CORPUS-0003-C1)",
+                capability: if matches!(route.source, ModulationSource::Macro(_)) {
+                    "a controller or note macro's timing: V1 reads current voice macro state \
+                     once per host block; V2 updates the source at the first quantum boundary \
+                     at or after its event"
+                } else {
+                    "a modulation's timing, which V1 reads once per host block — the \
+                     Mod Matrix from the source's previous block, the Mod Grid from \
+                     the current block's last sample — and V2 composes from the \
+                     current quantum's first frame (CORPUS-0003-C1)"
+                },
                 owner: "the first A/B consumer, under the corpus's intentional-correction class",
             },
         ));

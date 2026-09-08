@@ -55,6 +55,8 @@ pub struct CompiledEvent {
 #[derive(Debug, Clone, Copy, PartialEq)]
 #[must_use]
 pub enum CompiledPayload {
+    /// Replace a declared controller source's base layer, preserving automation beneath it.
+    Controller(crate::controller::ControllerChange),
     /// Set one compiled parameter slot.
     SetParameter {
         /// Which compiled parameter.
@@ -84,6 +86,15 @@ pub enum CompiledPayload {
         /// ended whichever was opened last, which a test found ending the wrong voice. Two
         /// open notes with one key on one node keep the newest-first pairing they had.
         key: crate::quantities::KeyIdentity,
+    },
+    /// A typed per-note source update, paired with its live occurrence during preparation.
+    Expression {
+        /// Which played node owns the note.
+        slot: crate::plan::NoteSlot,
+        /// Its key, paired newest-first as a bend is.
+        key: crate::quantities::KeyIdentity,
+        /// The validated expression magnitude.
+        expression: crate::controller::NoteExpression,
     },
     /// Bend the newest open note on one compiled node with this key by an offset in cents —
     /// `SOUND-INV-021`'s bend, addressed as a release is, since a compiled stream carries no
@@ -799,9 +810,11 @@ impl CompiledEventScheduler {
 
 const fn payload_plan(payload: CompiledPayload) -> PlanId {
     match payload {
+        CompiledPayload::Controller(change) => change.slot().parameter().plan(),
         CompiledPayload::SetParameter { slot, .. } => slot.plan(),
         CompiledPayload::NoteOn { slot, .. }
         | CompiledPayload::NoteOff { slot, .. }
+        | CompiledPayload::Expression { slot, .. }
         | CompiledPayload::Bend { slot, .. } => slot.plan(),
     }
 }
@@ -1205,7 +1218,7 @@ pub(crate) fn stamp_all(
     let mut sounding: OpenNotes<()> = OpenNotes::new(capacity, policy);
     for (event_index, event) in events.iter().copied().enumerate() {
         match event.payload() {
-            CompiledPayload::SetParameter { .. } => {}
+            CompiledPayload::SetParameter { .. } | CompiledPayload::Controller(_) => {}
             CompiledPayload::NoteOn { slot, key, .. } => {
                 if slot.plan() != expected {
                     return Err(SchedulePrepareError::ForeignPlan {
@@ -1237,7 +1250,8 @@ pub(crate) fn stamp_all(
                     return Err(SchedulePrepareError::UnmatchedRelease { event_index });
                 }
             }
-            CompiledPayload::Bend { slot, key, .. } => {
+            CompiledPayload::Bend { slot, key, .. }
+            | CompiledPayload::Expression { slot, key, .. } => {
                 if slot.plan() != expected {
                     return Err(SchedulePrepareError::ForeignPlan {
                         event_index,
@@ -1285,6 +1299,9 @@ pub(crate) fn stamp_all(
             }
         });
         match event.payload() {
+            CompiledPayload::Controller(change) => {
+                stamped.push(stamp(event.time(), EventPayload::Controller(change)))
+            }
             CompiledPayload::SetParameter { slot, value } => {
                 stamped.push(stamp(
                     event.time(),
@@ -1444,6 +1461,31 @@ pub(crate) fn stamp_all(
                         EventPayload::Bend {
                             identity: note.tag,
                             cents,
+                        },
+                    ));
+                }
+                None if open.taken(slot, key) => {
+                    expressions_after_steal = expressions_after_steal.saturating_add(1);
+                }
+                None => {
+                    return Err(SchedulePrepareError::UnmatchedExpression { event_index });
+                }
+            },
+            CompiledPayload::Expression {
+                slot,
+                key,
+                expression,
+            } => match open.find(now, slot, key) {
+                Some(note) => {
+                    let at = event
+                        .time()
+                        .checked_add(note.delay)
+                        .map_err(|_| SchedulePrepareError::StealUnrepresentable { event_index })?;
+                    stamped.push(stamp(
+                        at,
+                        EventPayload::Expression {
+                            identity: note.tag,
+                            expression,
                         },
                     ));
                 }

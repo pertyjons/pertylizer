@@ -479,6 +479,12 @@ pub struct PerformanceIngress {
     /// One slot per identity index of the plan's partition: the start a steal deferred.
     pending: Vec<Option<PendingStart>>,
     pending_len: usize,
+    /// Expressions displaced with a pending start. These consume the same ingress capacity
+    /// as ordinary entries; a separate ring prevents a future displacement blocking them.
+    delayed_expressions: Vec<Option<crate::render::TimedEvent>>,
+    expression_head: usize,
+    expression_tail: usize,
+    expression_len: usize,
     /// Notes a steal ended whose own release is still to come and still holds a reservation:
     /// at most one per hold the producer is entitled to, so the list is exactly that long.
     stolen_with_hold: Vec<Option<NoteIdentity>>,
@@ -671,6 +677,10 @@ impl PerformanceIngress {
             stealing: plan.stealing(),
             pending: vec![None; partition],
             pending_len: 0,
+            delayed_expressions: vec![None; depth],
+            expression_head: 0,
+            expression_tail: 0,
+            expression_len: 0,
             stolen_with_hold: vec![None; hold_entitlement.get() as usize],
             stolen_transferred: vec![None; partition.saturating_mul(4)],
             stolen_next: 0,
@@ -735,14 +745,15 @@ impl PerformanceIngress {
         self.counters
     }
 
-    /// Entries waiting to be drained.
+    /// Ordinary entries and displaced expressions waiting to be drained. Deferred note
+    /// starts and releases retain their existing separate reservation accounting.
     pub const fn len(&self) -> usize {
-        self.len
+        self.len.saturating_add(self.expression_len)
     }
 
-    /// Whether nothing is waiting.
+    /// Whether both event rings are empty; deferred note reservations are separate.
     pub const fn is_empty(&self) -> bool {
-        self.len == 0
+        self.len == 0 && self.expression_len == 0
     }
 
     /// Holds this producer has outstanding.
@@ -788,6 +799,7 @@ impl PerformanceIngress {
             .len
             .saturating_add(unstarted.saturating_mul(2))
             .saturating_add(waiting_bends)
+            .saturating_add(self.expression_len)
             .saturating_add(self.holds_outstanding.get() as usize)
             .saturating_add(entries)
             .saturating_add(holds);
@@ -818,6 +830,23 @@ impl PerformanceIngress {
             });
         }
         self.push(time, EventPayload::SetParameter { slot, value }, false);
+        Ok(())
+    }
+
+    /// Offer a validated controller replacement under the existing live queue's entitlement.
+    pub(crate) fn offer_controller(
+        &mut self,
+        time: SampleTime,
+        change: crate::controller::ControllerChange,
+    ) -> Result<(), IngressRefused> {
+        self.admit(time)?;
+        if !self.room_for_entries(1, 0) {
+            self.counters.dropped_slot = self.counters.dropped_slot.saturating_add(1);
+            return Err(IngressRefused::Dropped {
+                resource: ExhaustedResource::Slot,
+            });
+        }
+        self.push(time, EventPayload::Controller(change), false);
         Ok(())
     }
 
@@ -1206,6 +1235,77 @@ impl PerformanceIngress {
             });
         }
         self.push(time, EventPayload::Bend { identity, cents }, false);
+        Ok(())
+    }
+
+    /// Offer a source update for an owned live identity, retaining every accepted update.
+    pub(crate) fn offer_expression(
+        &mut self,
+        table: &mut IdentityTable,
+        time: SampleTime,
+        identity: NoteIdentity,
+        expression: crate::controller::NoteExpression,
+    ) -> Result<(), IngressRefused> {
+        self.admit(time)?;
+        self.sweep(table, time);
+        let pending = self
+            .pending
+            .get(usize::from(identity.index()))
+            .copied()
+            .flatten()
+            .filter(|pending| pending.identity == identity);
+        if identity.table() != table.id()
+            || !self.owns(identity)
+            || table.resolve(identity) != Resolution::Live
+            || pending.is_some_and(|pending| pending.ends.is_some())
+        {
+            self.counters.orphan_expressions = self.counters.orphan_expressions.saturating_add(1);
+            return Err(IngressRefused::OrphanExpression { identity });
+        }
+        if !self.room_for_entries(1, 0) {
+            self.counters.dropped_slot = self.counters.dropped_slot.saturating_add(1);
+            return Err(IngressRefused::Dropped {
+                resource: ExhaustedResource::Slot,
+            });
+        }
+        let payload = EventPayload::Expression {
+            identity,
+            expression,
+        };
+        if pending.is_some() {
+            let fade = self
+                .stealing
+                .fade()
+                .unwrap_or(crate::time::FrameCount::ZERO);
+            let Ok(at) = time.checked_add(fade) else {
+                self.counters.beyond_horizon = self.counters.beyond_horizon.saturating_add(1);
+                return Err(IngressRefused::BeyondHorizon {
+                    time,
+                    horizon_end: time,
+                });
+            };
+            // The same capacity relation proved above covers both rings and every hold.
+            if let Some(entry) = self.delayed_expressions.get_mut(self.expression_head) {
+                *entry = Some(crate::render::TimedEvent::new(
+                    Self::envelope_for(self.epoch, at),
+                    payload,
+                ));
+                self.expression_head = if self.expression_head + 1 == self.delayed_expressions.len()
+                {
+                    0
+                } else {
+                    self.expression_head + 1
+                };
+                self.expression_len = self.expression_len.saturating_add(1);
+                self.last_accepted = Some(time);
+                return Ok(());
+            }
+            self.counters.dropped_slot = self.counters.dropped_slot.saturating_add(1);
+            return Err(IngressRefused::Dropped {
+                resource: ExhaustedResource::Slot,
+            });
+        }
+        self.push(time, payload, false);
         Ok(())
     }
 

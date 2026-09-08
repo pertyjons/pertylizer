@@ -994,6 +994,21 @@ session/transport stores do not belong here.
 |---|---|---|---|
 | Performance-event ingress queue — note, controller, expression and panic input | `performance_ingress_capacity` | **Live bounded queue** | Present. The one live renderer-ingress store Phase 3 has. A hardware MIDI or audio adapter adds no row by existing: Phase 9 owns those adapters, and each new store needs its own admitting ground and its own row before it may drop |
 
+`P07-S004` uses this existing performance store for `ControllerChange` and `NoteExpression`;
+it creates no producer class and borrows no share. Each is one compiled or live event,
+respectively, admitted by the compiled sliding-window bound or the live queue relation.
+The live store's ordinary ring, expressions displaced with a stolen note, deferred starts
+(two entries each), pending bends and outstanding release reservations together cannot exceed
+`performance_ingress_capacity`. Its auxiliary expression ring has that same fixed extent and
+shares that one entitlement; it is not another producer or an additional admitted capacity.
+An expression consumes one slot and no release hold, and exhaustion is refused and counted as
+`Dropped { Slot }` before acceptance. Displaced source updates are not coalesced. Publication
+charges them to the live share and preserves their order before a same-position release;
+publication failure remains terminal. Controller and source parameter slots and source bindings
+are charged through the existing declared node, parameter and note-destination byte counts.
+A controller catch-up restores both replacement layers in one event, so the session relation
+remains one event per address plus its existing boundary release.
+
 **The scheduled-event window is a prepared sizing relation, not an overload policy.** Phase 3's publication
 arbiter materializes compiled events only for the imminent render call. A profile therefore validates
 `max_scheduled_events_in_flight >= compiled_event_share * max_quanta_per_callback` with checked arithmetic, where

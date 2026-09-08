@@ -162,6 +162,16 @@ impl std::fmt::Display for IrObject {
 /// still valid audio and which no listening test would catch.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum IrNodeKind {
+    /// A controller held at quantum rate, available as a modulation source.
+    Controller {
+        /// Which controller the source represents.
+        kind: crate::controller::ControllerKind,
+    },
+    /// An occurrence's source, sampled at the first boundary at or after its event.
+    NoteSource {
+        /// Which note attribute the source represents.
+        kind: crate::controller::NoteSource,
+    },
     /// Zeros.
     Silence,
     /// A constant level on every sample.
@@ -515,6 +525,8 @@ impl IrNodeKind {
 /// [`crate::plan::ControlRate`] is where that is compiled, and the renderer reads
 /// it there rather than inferring it from the payload a caller chose.
 pub mod parameters {
+    /// A controller or note source's value.
+    pub const SOURCE_VALUE: ParameterId = ParameterId::new(0);
     use super::ParameterId;
 
     /// A sine's frequency in hertz.
@@ -1450,7 +1462,9 @@ impl GraphIr {
                         summary.pitch_destinations = summary.pitch_destinations.saturating_add(1);
                     }
                     Some(
-                        crate::node::NoteMagnitude::Velocity | crate::node::NoteMagnitude::Trigger,
+                        crate::node::NoteMagnitude::Velocity
+                        | crate::node::NoteMagnitude::Trigger
+                        | crate::node::NoteMagnitude::Source(_),
                     ) => {
                         summary.magnitudes = summary.magnitudes.saturating_add(1);
                     }

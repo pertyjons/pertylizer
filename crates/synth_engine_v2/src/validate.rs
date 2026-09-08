@@ -432,6 +432,16 @@ pub(crate) fn validate(ir: &GraphIr, stream: ChannelLayout) -> Result<Validated,
         }
     }
 
+    for node in ir.nodes() {
+        if matches!(node.kind(), crate::ir::IrNodeKind::NoteSource { .. })
+            && node.scope() != crate::ir::ExecutionScope::Voice
+        {
+            return Err(CompileError::NoteSourceOutsideVoice {
+                node: node.id(),
+                scope: node.scope(),
+            });
+        }
+    }
     modulations(ir, &index)?;
     fan_in(ir)?;
     let order = topological_order(&index)?;

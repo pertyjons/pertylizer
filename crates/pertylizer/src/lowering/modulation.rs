@@ -30,7 +30,7 @@
 //! level is a normalized amplitude that V2 declares in decibels; the envelope's times are
 //! offset through a normalized curve over their descriptor range. An envelope as a *source*
 //! is refused because `SOUND-INV-027`'s source rule excludes a kind with an input port, and
-//! the slice that lifts that rule owns it. A controller macro is `P07-S004`'s, and a scripted
+//! the slice that lifts that rule owns it. Controller and note macros lower since `P07-S004`; a scripted
 //! slot is `P07-S005`'s.
 //!
 //! # What is inert in V1 and lowers to nothing
@@ -49,8 +49,8 @@ use synth_core::{
 use synth_engine::ModuleId;
 use synth_engine::instrument::InstrumentId;
 use synth_engine_v2::ir::{
-    IrNodeKind, LfoPolarity, LfoWaveform, ModulationDepth, ModulationUnit, NodeId, ParameterId,
-    parameters,
+    ExecutionScope, IrNodeKind, LfoPolarity, LfoWaveform, ModulationDepth, ModulationUnit, NodeId,
+    ParameterId, parameters,
 };
 use synth_engine_v2::quantities::{Frequency, NormalizedLevel, PhaseOffset};
 use synth_sequencer::{AutoInstrumentParam, AutomationTarget, CombineMode, ModGraphId, ModNodeId};
@@ -66,6 +66,8 @@ pub(super) enum ModulationSource {
     Module(ModuleId),
     /// A node the Mod Grid lowering adds to the plan, at its address.
     Grid(NodeId),
+    /// One of V1's named note/controller macros.
+    Macro(synth_core::MacroSource),
 }
 
 /// One modulation edge before its endpoints are addressed.
@@ -546,18 +548,7 @@ pub(super) fn lower_mod_matrix(
 
         let slot_subject = parameter(&source_key);
         let source = match source {
-            SrcAddr::Macro(_) => {
-                diagnostics.push(LoweringDiagnostic::refused(
-                    slot_subject,
-                    LoweringReason::OwnedByLaterPhase {
-                        capability: "a Mod Matrix slot sourced from a controller or note macro \
-                                     — velocity, note number, aftertouch, mod wheel, pitch \
-                                     bend or polyphonic pressure",
-                        owner: "P07-S004, with controllers and per-note expression as sources",
-                    },
-                ));
-                return None;
-            }
+            SrcAddr::Macro(source) => ModulationSource::Macro(source),
             SrcAddr::Module {
                 module_type,
                 instance,
@@ -941,4 +932,57 @@ fn hosted_lfo(
         subject,
         diagnostics,
     )
+}
+
+/// Reserved beside the voice scaler, outside saved-module and Mod Grid address ranges.
+pub(super) const fn macro_node(
+    source: synth_core::MacroSource,
+) -> (NodeId, IrNodeKind, ExecutionScope) {
+    use synth_core::MacroSource;
+    use synth_engine_v2::controller::{ControllerKind, NoteSource};
+    let (tag, kind, scope) = match source {
+        MacroSource::Velocity => (
+            1,
+            IrNodeKind::NoteSource {
+                kind: NoteSource::Velocity,
+            },
+            ExecutionScope::Voice,
+        ),
+        MacroSource::NoteNumber => (
+            2,
+            IrNodeKind::NoteSource {
+                kind: NoteSource::NoteNumber,
+            },
+            ExecutionScope::Voice,
+        ),
+        MacroSource::Aftertouch => (
+            3,
+            IrNodeKind::Controller {
+                kind: ControllerKind::Aftertouch,
+            },
+            ExecutionScope::InstrumentInstance,
+        ),
+        MacroSource::ModWheel => (
+            4,
+            IrNodeKind::Controller {
+                kind: ControllerKind::ModWheel,
+            },
+            ExecutionScope::InstrumentInstance,
+        ),
+        MacroSource::PitchBend => (
+            5,
+            IrNodeKind::Controller {
+                kind: ControllerKind::PitchBend,
+            },
+            ExecutionScope::InstrumentInstance,
+        ),
+        MacroSource::PolyAftertouch => (
+            6,
+            IrNodeKind::NoteSource {
+                kind: NoteSource::Pressure,
+            },
+            ExecutionScope::Voice,
+        ),
+    };
+    (NodeId::new(0xFFFF_0000 | tag), kind, scope)
 }

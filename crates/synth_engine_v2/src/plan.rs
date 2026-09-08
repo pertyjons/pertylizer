@@ -692,6 +692,8 @@ pub struct TapAddress {
 #[derive(Debug, Clone, Copy, PartialEq)]
 #[must_use]
 pub struct ParameterTarget {
+    /// Whether the declaration admits a controller replacement layer.
+    pub controller: bool,
     /// Which node instance.
     pub node: NodeSlot,
     /// Which of its controls.
@@ -792,7 +794,7 @@ impl SampleSlot {
 pub struct NoteMagnitudeTarget {
     /// Which node instance.
     pub node: NodeSlot,
-    /// Which of its controls, always at [`ControlRate::Sample`].
+    /// Which of its controls: sample-positioned magnitudes or a quantum-rate note source.
     pub control: ControlIndex,
     /// The parameter slot of that control, through which the write is composed.
     ///
@@ -1123,6 +1125,16 @@ impl CompiledPlan {
         &self.ops
     }
 
+    /// Resolve a runtime instance to its shared prepared record during host preparation.
+    pub(crate) fn prepared_for_node(&self, node: NodeSlot) -> Option<&PreparedNode> {
+        self.ops.iter().find_map(|op| match op {
+            PlanOp::Node(step) if step.node() == node => {
+                self.prepared_nodes.get(step.prepared().index())
+            }
+            _ => None,
+        })
+    }
+
     /// How many distinct buffers the plan needs.
     ///
     /// A **count**, not a size: since ADR-0041 the buffers differ in width, so the
@@ -1307,6 +1319,18 @@ impl CompiledPlan {
         velocity: crate::quantities::NoteVelocity,
     ) -> Option<crate::quantities::ParameterValue> {
         match magnitude.magnitude {
+            NoteMagnitude::Source(source) => Some(match source {
+                crate::controller::NoteSource::Velocity => {
+                    crate::quantities::ParameterValue::from_note_velocity(velocity)
+                }
+                crate::controller::NoteSource::NoteNumber => {
+                    crate::quantities::ParameterValue::saturating(f32::from(key.as_u8()) / 127.0)
+                }
+                crate::controller::NoteSource::Pressure
+                | crate::controller::NoteSource::ReleaseVelocity => {
+                    crate::quantities::ParameterValue::ZERO
+                }
+            }),
             NoteMagnitude::Velocity => Some(crate::quantities::ParameterValue::from_note_velocity(
                 velocity,
             )),

@@ -415,6 +415,8 @@ macro_rules! catalog {
 }
 
 catalog! {
+    IrNodeKind::Controller { kind: synth_engine_v2::controller::ControllerKind::ModWheel } => IrNodeKind::Controller { .. },
+    IrNodeKind::NoteSource { kind: synth_engine_v2::controller::NoteSource::Pressure } => IrNodeKind::NoteSource { .. },
     IrNodeKind::Silence => IrNodeKind::Silence,
     constant(0.5) => IrNodeKind::Constant { .. },
     IrNodeKind::Sine {

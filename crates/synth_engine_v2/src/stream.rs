@@ -706,6 +706,7 @@ impl StreamControl {
         // `(node, control)` rather than by slot. Two prepared parameters aliasing one gate
         // would otherwise disagree — one forced low, a later one restoring what it read —
         // and whichever published last would win.
+        let mut controllers = vec![None; self.plan.parameter_targets().len()];
         let gate_rows = self.gate_rows();
         // Note-ons still unpaired at the anchor, per note slot. Kept apart from
         // `before_anchor`, which the suffix decrements as it omits crossing releases: reusing
@@ -721,6 +722,13 @@ impl StreamControl {
                     // to a parameter target is clause 7's catch-up batch, which this slice
                     // does not build.
                     match event.payload() {
+                        CompiledPayload::Controller(change) => {
+                            if let Some(entry) =
+                                controllers.get_mut(change.slot().parameter().index())
+                            {
+                                *entry = change.value();
+                            }
+                        }
                         CompiledPayload::SetParameter { slot, value } => {
                             if let Some(entry) = values.get_mut(slot.index()) {
                                 *entry = Some(value);
@@ -729,7 +737,7 @@ impl StreamControl {
                         // A bend in the history moves a note the boundary release ends; the
                         // catch-up restores the destination's override, never a note's own
                         // layer, so there is nothing of it to carry.
-                        CompiledPayload::Bend { .. } => {}
+                        CompiledPayload::Bend { .. } | CompiledPayload::Expression { .. } => {}
                         CompiledPayload::NoteOn {
                             slot,
                             key,
@@ -887,11 +895,12 @@ impl StreamControl {
                     // Neither side has a note-on for it. That is a malformed list rather
                     // than a seek, and stamping refuses it by name.
                 }
-                CompiledPayload::SetParameter { .. } => {}
+                CompiledPayload::SetParameter { .. } | CompiledPayload::Controller(_) => {}
                 // A bend of a note the suffix opened is stamped there; one whose note-on
                 // precedes the anchor moves a note the boundary release ended, and is
                 // omitted and counted, as its release would be.
-                CompiledPayload::Bend { slot, key, .. } => {
+                CompiledPayload::Bend { slot, key, .. }
+                | CompiledPayload::Expression { slot, key, .. } => {
                     let now = event.position().as_u64();
                     if in_suffix.find(now, slot, key).is_none()
                         && !in_suffix.taken(slot, key)
@@ -993,7 +1002,7 @@ impl StreamControl {
                 }
             }
         }
-        let catch_up = self.catch_up(request.at, &values);
+        let catch_up = self.catch_up(request.at, &values, &controllers);
 
         let stamped = crate::schedule::stamp_all(&mut minter, &self.plan, self.epoch, &placed)
             .map_err(|error| ActivationBuildError::Stamp(rebase(error, &sources)))?;
@@ -1181,6 +1190,7 @@ impl StreamControl {
         &self,
         at: SampleTime,
         values: &[Option<crate::quantities::ParameterValue>],
+        controllers: &[Option<crate::quantities::ParameterValue>],
     ) -> Vec<crate::render::TimedEvent> {
         // One row per **addressable** parameter: a group's rows are its voice instances, and
         // the renderer fans the restored write out over them (`P06-S001`), so the batch is
@@ -1193,17 +1203,36 @@ impl StreamControl {
             let Some(target) = targets.get(index) else {
                 continue;
             };
-            let value = values.get(index).copied().flatten().unwrap_or(target.base);
+            let value = if matches!(
+                self.plan.prepared_for_node(target.node),
+                Some(crate::node::kernels::PreparedNode::NoteSource)
+            ) {
+                // An activation ends occurrences; their source state is not resumed.
+                target.base
+            } else {
+                values.get(index).copied().flatten().unwrap_or(target.base)
+            };
             batch.push(crate::render::TimedEvent::new(
                 crate::render::EventEnvelope::new(
                     self.epoch,
                     at,
                     crate::time::TimeSource::Compiled,
                 ),
-                crate::render::EventPayload::SetParameter {
-                    slot: address.slot,
-                    value,
-                },
+                self.plan.resolve_controller(address.node).map_or(
+                    crate::render::EventPayload::SetParameter {
+                        slot: address.slot,
+                        value,
+                    },
+                    |slot| {
+                        crate::render::EventPayload::RestoreController(
+                            crate::controller::ControllerRestore {
+                                slot,
+                                override_value: value,
+                                controller: controllers.get(index).copied().flatten(),
+                            },
+                        )
+                    },
+                ),
             ));
         }
         batch
@@ -1289,7 +1318,10 @@ impl StreamControl {
                     CompiledPayload::NoteOff { slot, key } => {
                         let _ = before.close(position.as_u64(), slot, key);
                     }
-                    CompiledPayload::SetParameter { .. } | CompiledPayload::Bend { .. } => {}
+                    CompiledPayload::Controller(_)
+                    | CompiledPayload::SetParameter { .. }
+                    | CompiledPayload::Bend { .. }
+                    | CompiledPayload::Expression { .. } => {}
                 }
                 continue;
             }
@@ -1343,7 +1375,10 @@ impl StreamControl {
                         }
                     }
                 }
-                CompiledPayload::SetParameter { .. } | CompiledPayload::Bend { .. } => {
+                CompiledPayload::Controller(_)
+                | CompiledPayload::SetParameter { .. }
+                | CompiledPayload::Bend { .. }
+                | CompiledPayload::Expression { .. } => {
                     positions.push(position);
                 }
             }
@@ -1467,6 +1502,29 @@ impl StreamControl {
     ) -> Result<(), crate::ingress::IngressRefused> {
         self.latch_store(store)?;
         store.offer_parameter(time, slot, value)
+    }
+
+    /// Offer a validated controller write through this stream's one ingress store.
+    pub fn offer_controller(
+        &mut self,
+        store: &mut crate::ingress::PerformanceIngress,
+        time: SampleTime,
+        change: crate::controller::ControllerChange,
+    ) -> Result<(), crate::ingress::IngressRefused> {
+        self.latch_store(store)?;
+        store.offer_controller(time, change)
+    }
+
+    /// Offer per-note pressure or release velocity through this stream's identity owner.
+    pub fn offer_expression(
+        &mut self,
+        store: &mut crate::ingress::PerformanceIngress,
+        time: SampleTime,
+        identity: NoteIdentity,
+        expression: crate::controller::NoteExpression,
+    ) -> Result<(), crate::ingress::IngressRefused> {
+        self.latch_store(store)?;
+        store.offer_expression(&mut self.minter, time, identity, expression)
     }
 
     /// Offer a per-note bend through this stream's minter (`SOUND-INV-021`).

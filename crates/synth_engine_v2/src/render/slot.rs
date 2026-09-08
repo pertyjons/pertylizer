@@ -53,6 +53,8 @@ pub(crate) struct SlotState {
     /// `SetParameter`, a note's gate or magnitude, and `SOUND-INV-018`'s catch-up all
     /// write here, and only here: none of them is a modulator.
     override_value: Option<ParameterValue>,
+    /// The declared controller replacement, masking the override until explicitly cleared.
+    controller: Option<ParameterValue>,
     /// The modulation sum `m`, in the law's units; the law's identity until a modulator
     /// writes it.
     modulation: ModulationSum,
@@ -85,6 +87,7 @@ impl SlotState {
             seed_next: false,
             base,
             override_value: None,
+            controller: None,
             modulation: law.identity(),
             expression: law.identity(),
             pending: law.identity(),
@@ -104,6 +107,12 @@ impl SlotState {
     /// automated pitch still bends under.
     pub(crate) fn write_override(&mut self, value: ParameterValue) -> ParameterValue {
         self.override_value = Some(value);
+        self.retarget()
+    }
+
+    /// Set or clear the declared controller replacement without changing the override.
+    pub(crate) fn control(&mut self, value: Option<ParameterValue>) -> ParameterValue {
+        self.controller = value;
         self.retarget()
     }
 
@@ -233,9 +242,9 @@ impl SlotState {
         self.retarget()
     }
 
-    /// The layers composed: the override where present, else the base; the law; the clamp.
+    /// The layers composed: controller, else override, else base; the law; the clamp.
     pub(crate) fn resolved(&self) -> ParameterValue {
-        let base = self.override_value.unwrap_or(self.base);
+        let base = self.controller.or(self.override_value).unwrap_or(self.base);
         let composed = self
             .law
             .resolve(base, self.law.combine(self.modulation, self.expression));
@@ -256,6 +265,7 @@ impl ParameterUnit {
     pub(crate) fn hold_to_domain(self, value: f32) -> f32 {
         match self {
             Self::NormalizedLevel => value.clamp(0.0, 1.0),
+            Self::BipolarLevel => value.clamp(-1.0, 1.0),
             // A duration cannot be negative; a corner or a quality with no usable filter is
             // the kernel's to hold, since the bound is the stream's rate rather than the
             // type's.
