@@ -293,7 +293,7 @@ pub enum InputBinding {
 /// at admission; the render loop calls through the pointer and never learns what kind of
 /// node it just ran. Adding a node kind adds a kernel and a registry entry, and adds
 /// nothing here and nothing to the loop.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 #[must_use]
 pub struct NodeStep {
     kernel: Kernel,
@@ -307,6 +307,13 @@ pub struct NodeStep {
     /// where the count comes from — the node's own output port, resolved at admission,
     /// rather than the stream's layout or the width of the region divided by the quantum.
     out_layout: ChannelLayout,
+    io: Box<StepInputs>,
+    in_place_safe: bool,
+}
+
+/// Immutable after admission; sized for every YAMS source without widening each plan operation.
+#[derive(Debug, Clone, PartialEq)]
+struct StepInputs {
     inputs: [Option<BufferSlot>; MAX_INPUTS],
     /// What each input resolves to, decided here rather than per quantum.
     bindings: [InputBinding; MAX_INPUTS],
@@ -314,15 +321,17 @@ pub struct NodeStep {
     /// input `n - 1`. `u8::MAX` ends the list.
     ///
     /// Ascending because the borrows are handed out by walking the arena forwards and
-    /// splitting each region off in turn, which is what makes one mutable and two shared
-    /// borrows of one allocation safe without `unsafe`. Sorting three entries per node
-    /// per quantum is not expensive; doing it at all is a decision the compiler already
-    /// had the answer to.
+    /// splitting each region off in turn, which permits one mutable and up to 32 shared
+    /// borrows without `unsafe`. Admission sorts the entries once for the hot walk.
     order: [u8; MAX_INPUTS + 1],
-    in_place_safe: bool,
 }
 
 impl NodeStep {
+    /// Immutable input bindings allocated once for this scheduled step.
+    pub const fn input_bytes() -> u64 {
+        size_of::<StepInputs>() as u64
+    }
+
     /// A step.
     ///
     /// Admission builds these. It is public so that a harness can build one too — a step
@@ -344,9 +353,11 @@ impl NodeStep {
             prepared,
             out,
             out_layout,
-            inputs,
-            bindings: [InputBinding::Unpatched; MAX_INPUTS],
-            order: [u8::MAX; MAX_INPUTS + 1],
+            io: Box::new(StepInputs {
+                inputs,
+                bindings: [InputBinding::Unpatched; MAX_INPUTS],
+                order: [u8::MAX; MAX_INPUTS + 1],
+            }),
             in_place_safe,
         };
         // Ordered by slot index until the arena has run. Lowering's slots are virtual and
@@ -364,24 +375,24 @@ impl NodeStep {
     /// a higher slot index can sit lower in the arena, and the binding walks the
     /// allocation forwards.
     fn resolve(&mut self, regions: &[BufferRegion]) {
-        self.bindings = [InputBinding::Unpatched; MAX_INPUTS];
+        self.io.bindings = [InputBinding::Unpatched; MAX_INPUTS];
         for index in 0..MAX_INPUTS {
-            let Some(Some(slot)) = self.inputs.get(index).copied() else {
+            let Some(Some(slot)) = self.io.inputs.get(index).copied() else {
                 continue;
             };
             let binding = if slot == self.out {
                 InputBinding::InPlace
             } else {
                 let mirrored = (0..index).find(|earlier| {
-                    self.inputs.get(*earlier).copied().flatten() == Some(slot)
-                        && matches!(self.bindings.get(*earlier), Some(InputBinding::Distinct))
+                    self.io.inputs.get(*earlier).copied().flatten() == Some(slot)
+                        && matches!(self.io.bindings.get(*earlier), Some(InputBinding::Distinct))
                 });
                 match mirrored {
                     Some(earlier) => InputBinding::Mirrors(earlier as u8),
                     None => InputBinding::Distinct,
                 }
             };
-            if let Some(entry) = self.bindings.get_mut(index) {
+            if let Some(entry) = self.io.bindings.get_mut(index) {
                 *entry = binding;
             }
         }
@@ -419,29 +430,29 @@ impl NodeStep {
         };
         push(position_of(self.out), 0, &mut order, &mut count);
         for index in 0..MAX_INPUTS {
-            if !matches!(self.bindings.get(index), Some(InputBinding::Distinct)) {
+            if !matches!(self.io.bindings.get(index), Some(InputBinding::Distinct)) {
                 continue;
             }
-            let Some(Some(slot)) = self.inputs.get(index).copied() else {
+            let Some(Some(slot)) = self.io.inputs.get(index).copied() else {
                 continue;
             };
             push(position_of(slot), index as u8 + 1, &mut order, &mut count);
         }
 
-        self.order = [u8::MAX; MAX_INPUTS + 1];
-        for (entry, (_, role)) in self.order.iter_mut().zip(order.iter()) {
+        self.io.order = [u8::MAX; MAX_INPUTS + 1];
+        for (entry, (_, role)) in self.io.order.iter_mut().zip(order.iter()) {
             *entry = *role;
         }
     }
 
     /// What each input resolved to.
     pub const fn bindings(&self) -> &[InputBinding; MAX_INPUTS] {
-        &self.bindings
+        &self.io.bindings
     }
 
     /// The regions to borrow, in ascending slot order.
     pub const fn order(&self) -> &[u8; MAX_INPUTS + 1] {
-        &self.order
+        &self.io.order
     }
 
     /// The kernel this step calls.
@@ -471,7 +482,7 @@ impl NodeStep {
 
     /// The buffers it reads, in port order.
     pub const fn inputs(&self) -> &[Option<BufferSlot>; MAX_INPUTS] {
-        &self.inputs
+        &self.io.inputs
     }
 
     /// Whether the arena may give it its first input's slot.
@@ -495,7 +506,7 @@ impl NodeStep {
         regions: &[BufferRegion],
     ) {
         self.out = out;
-        self.inputs = inputs;
+        self.io.inputs = inputs;
         // Resolved again rather than carried over: reuse is exactly what turns two
         // distinct slots into one, so a classification computed before the arena ran
         // would call an input distinct when it has just become the output's own. The
@@ -513,9 +524,9 @@ impl PartialEq for NodeStep {
             // and two steps that differ in it hand their kernel a different arrangement
             // of the same region.
             && self.out_layout == other.out_layout
-            && self.inputs == other.inputs
-            && self.bindings == other.bindings
-            && self.order == other.order
+            && self.io.inputs == other.io.inputs
+            && self.io.bindings == other.io.bindings
+            && self.io.order == other.io.order
             && self.in_place_safe == other.in_place_safe
     }
 }
@@ -526,7 +537,7 @@ impl PartialEq for NodeStep {
 /// boundary, and — since `P07-S001` — the composition of one modulation edge into one
 /// parameter row. The Phase 1 shape had one variant per node kind, which is what ADR-0004
 /// clause 2 rejects: a node addition was a new arm inside the quantum loop.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum PlanOp {
     /// Run one prepared node kernel.
     Node(NodeStep),
@@ -918,6 +929,7 @@ pub struct CompiledPlan {
     /// ADR-0041 clause 2: the plan records the position, because slot width is `c * Q`
     /// and multiplying an index by the quantum no longer describes anything.
     regions: Vec<BufferRegion>,
+    prepared_scripts: Vec<crate::script::PreparedScript>,
     prepared_nodes: Vec<PreparedNode>,
     parameter_targets: Vec<ParameterTarget>,
     parameter_addresses: Vec<ParameterAddress>,
@@ -992,6 +1004,23 @@ pub struct CompiledPlan {
 }
 
 impl CompiledPlan {
+    pub(crate) fn install_scripts(&mut self, scripts: Vec<crate::script::PreparedScript>) {
+        self.prepared_scripts = scripts.into_boxed_slice().into_vec();
+    }
+    pub fn prepared_scripts(&self) -> &[crate::script::PreparedScript] {
+        &self.prepared_scripts
+    }
+
+    #[cfg(test)]
+    pub(crate) fn script_bytes_held(&self) -> usize {
+        self.prepared_scripts.capacity() * size_of::<crate::script::PreparedScript>()
+            + self
+                .prepared_scripts
+                .iter()
+                .map(crate::script::PreparedScript::dynamic_bytes_held)
+                .sum::<usize>()
+    }
+
     /// Assemble a plan. Called by admission and by nothing else.
     #[allow(
         clippy::too_many_arguments,
@@ -1032,6 +1061,7 @@ impl CompiledPlan {
             id,
             ops,
             regions,
+            prepared_scripts: Vec::new(),
             prepared_nodes,
             parameter_targets,
             parameter_addresses,

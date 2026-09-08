@@ -68,6 +68,8 @@ impl std::fmt::Display for NoteMagnitude {
 /// what the IR admits, which no declaration may make on its own.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ParameterUnit {
+    /// A YAMS scalar knob, linear in its authored finite range.
+    ScriptScalar(crate::script::ScriptRange),
     /// A bipolar normalized value in [-1, 1].
     BipolarLevel,
     /// Cycles per second; any finite value, negative runs backwards.
@@ -258,6 +260,8 @@ impl ModulationLaw {
 /// cannot disagree.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum ParameterDefault {
+    /// A YAMS knob default validated against its authored range.
+    ScriptScalar(crate::script::ScriptDefault),
     /// A bipolar normalized value.
     BipolarLevel(crate::controller::BipolarLevel),
     /// A frequency in hertz.
@@ -279,6 +283,7 @@ impl ParameterDefault {
     #[must_use]
     pub const fn unit(self) -> ParameterUnit {
         match self {
+            Self::ScriptScalar(value) => ParameterUnit::ScriptScalar(value.range()),
             Self::BipolarLevel(_) => ParameterUnit::BipolarLevel,
             Self::Hertz(_) => ParameterUnit::Hertz,
             Self::LinearAmplitude(_) => ParameterUnit::LinearAmplitude,
@@ -293,6 +298,7 @@ impl ParameterDefault {
     #[must_use]
     pub fn as_f32(self) -> f32 {
         match self {
+            Self::ScriptScalar(value) => value.value().as_f32(),
             Self::BipolarLevel(value) => value.as_f32(),
             Self::Hertz(value) => value.as_f32(),
             Self::LinearAmplitude(value) => value.as_f32(),
@@ -307,6 +313,7 @@ impl ParameterDefault {
     /// construction, and every widening is the type's own.
     pub const fn as_parameter_value(self) -> crate::quantities::ParameterValue {
         match self {
+            Self::ScriptScalar(value) => value.value(),
             Self::BipolarLevel(value) => crate::quantities::ParameterValue::from_bipolar(value),
             Self::Hertz(value) => crate::quantities::ParameterValue::from_frequency(value),
             Self::LinearAmplitude(value) => {
@@ -774,6 +781,8 @@ fn prepare_sampler(
 /// only the label, so that renaming `"low-pass filter"` would have changed its identity.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum NodeKindId {
+    /// A control-rate YAMS program with a program-specific interface.
+    Script,
     /// Mod wheel source.
     ModWheel,
     /// Aftertouch source.
@@ -888,24 +897,7 @@ impl NodeDeclaration {
     /// per scheduled record.
     #[must_use]
     pub(crate) fn slot_bytes(&self) -> u64 {
-        let writable = self
-            .controls
-            .iter()
-            .filter(|control| control.law.admits_writes());
-        writable.fold(0_u64, |total, control| {
-            let buffer = match control.rate {
-                ControlRate::Quantum => crate::render::slot::RAMP_BUFFER_BYTES,
-                ControlRate::Sample => 0,
-            };
-            // The slot, its buffer offset, its buffer, and the one-byte mark that says
-            // whether a modulation edge lands on it (`SOUND-INV-027`), which decides
-            // where in the quantum the slot advances.
-            total
-                .saturating_add(size_of::<crate::render::slot::SlotState>() as u64)
-                .saturating_add(size_of::<usize>() as u64)
-                .saturating_add(size_of::<bool>() as u64)
-                .saturating_add(buffer)
-        })
+        control_slot_bytes(self.controls)
     }
 
     /// The descriptor admission reads, derived rather than restated.
@@ -1551,6 +1543,57 @@ pub(crate) static FILTER: NodeDeclaration = NodeDeclaration {
     state_bytes: size_of::<(f32, f32, f32, f32, [f32; 3])>() as u64,
 };
 
+/// Generic template; the installed program supplies its concrete ports and controls.
+static SCRIPT: NodeDeclaration = NodeDeclaration {
+    id: NodeKindId::Script,
+    name: "script",
+    kernel: kernels::SCRIPT,
+    ports: &[CONTROL_OUT],
+    controls: &[],
+    in_place_safe: false,
+    note_control: None,
+    taps: &[],
+    prepare: prepare_script,
+    prepared_bytes: size_of::<(crate::script::ScriptSlot, crate::script::ScriptSeed, f32)>() as u64,
+    state_bytes: size_of::<(
+        synth_core::script::RegisterFile,
+        crate::script::ScriptSeed,
+        bool,
+        crate::script::ScriptVoiceId,
+    )>() as u64,
+};
+
+fn prepare_script(
+    node: NodeId,
+    kind: IrNodeKind,
+    ctx: &PrepareContext<'_>,
+) -> Result<PreparedNode, CompileError> {
+    let IrNodeKind::Script { program: reference } = kind else {
+        return Err(declared_for_another_kind(node));
+    };
+    let fault = |fault| CompileError::Script { node, fault };
+    let program = ctx
+        .ir
+        .script_program(reference)
+        .ok_or_else(|| fault(crate::script::ScriptFault::Missing))?;
+    if program.node() != node {
+        return Err(fault(crate::script::ScriptFault::WrongNode {
+            actual: program.node(),
+        }));
+    }
+    if program.rate() != ctx.rate {
+        return Err(fault(crate::script::ScriptFault::RateMismatch {
+            compiled: program.rate(),
+            stream: ctx.rate,
+        }));
+    }
+    Ok(PreparedNode::Script {
+        program: crate::script::ScriptSlot::new(reference.index()),
+        seed: program.seed(),
+        rate: ctx.rate.as_f32() / f32::from(crate::time::QUANTUM_FRAMES as u16),
+    })
+}
+
 /// Every declaration, for the surfaces that walk kinds rather than resolve one.
 ///
 /// Discovery reads this; `declaration` resolves a kind to one of these. A test holds the
@@ -1558,7 +1601,8 @@ pub(crate) static FILTER: NodeDeclaration = NodeDeclaration {
 /// the declarations are `static` rather than `const`: a `const` is materialised at each
 /// use and has no single address to compare — so a kind declared but left out here cannot
 /// be discovered, and one listed here but not resolvable cannot compile.
-static DECLARED: [&NodeDeclaration; 21] = [
+static DECLARED: [&NodeDeclaration; 22] = [
+    &SCRIPT,
     &SILENCE,
     &CONSTANT,
     &IMPULSE,
@@ -1877,6 +1921,7 @@ pub(crate) fn declaration(kind: IrNodeKind) -> Option<&'static NodeDeclaration> 
             crate::controller::NoteSource::ReleaseVelocity => &RELEASE_VELOCITY,
         }),
         IrNodeKind::Lfo { .. } => Some(&LFO),
+        IrNodeKind::Script { .. } => Some(&SCRIPT),
         // The output node has no kernel and no declaration: writing the stream's channels
         // is the renderer's boundary rather than a node's work.
         IrNodeKind::Output => None,
@@ -1923,6 +1968,7 @@ pub(crate) fn descriptor(kind: IrNodeKind) -> Option<NodeDescriptor> {
             declared.map(NodeDeclaration::descriptor)
         }
         IrNodeKind::Lfo { .. } => declared.map(NodeDeclaration::descriptor),
+        IrNodeKind::Script { .. } => declared.map(NodeDeclaration::descriptor),
     }
 }
 
@@ -1977,6 +2023,26 @@ pub(crate) fn accumulate_descriptor() -> NodeDescriptor {
         in_place_safe: false,
         note_control: None,
     }
+}
+
+pub(crate) fn control_slot_bytes(controls: &[ControlSpec]) -> u64 {
+    let writable = controls
+        .iter()
+        .filter(|control| control.law.admits_writes());
+    writable.fold(0_u64, |total, control| {
+        let buffer = match control.rate {
+            ControlRate::Quantum => crate::render::slot::RAMP_BUFFER_BYTES,
+            ControlRate::Sample => 0,
+        };
+        // The slot, its buffer offset, its buffer, and the one-byte mark that says
+        // whether a modulation edge lands on it (`SOUND-INV-027`), which decides
+        // where in the quantum the slot advances.
+        total
+            .saturating_add(size_of::<crate::render::slot::SlotState>() as u64)
+            .saturating_add(size_of::<usize>() as u64)
+            .saturating_add(size_of::<bool>() as u64)
+            .saturating_add(buffer)
+    })
 }
 
 /// Build the prepared data for one node, against the stream it will render into.
@@ -2145,6 +2211,7 @@ pub fn prepared_payload_bytes(kind: IrNodeKind) -> u64 {
             return declared.map_or(0, |d| d.prepared_bytes);
         }
         IrNodeKind::Lfo { .. } => return declared.map_or(0, |d| d.prepared_bytes),
+        IrNodeKind::Script { .. } => return declared.map_or(0, |d| d.prepared_bytes),
     }) as u64
 }
 
@@ -2193,6 +2260,7 @@ pub fn state_payload_bytes(kind: IrNodeKind) -> u64 {
             return declared.map_or(0, |d| d.state_bytes);
         }
         IrNodeKind::Lfo { .. } => return declared.map_or(0, |d| d.state_bytes),
+        IrNodeKind::Script { .. } => return declared.map_or(0, |d| d.state_bytes),
         IrNodeKind::Output => 0,
     }) as u64
 }
@@ -2250,6 +2318,9 @@ mod tests {
 
     fn every_kind() -> Vec<IrNodeKind> {
         vec![
+            IrNodeKind::Script {
+                program: crate::script::ScriptRef::new(0),
+            },
             IrNodeKind::Controller {
                 kind: crate::controller::ControllerKind::ModWheel,
             },
@@ -2503,7 +2574,7 @@ mod tests {
             .collect();
         assert_eq!(
             declared.len(),
-            21,
+            DECLARED.len(),
             "every kind but the output node is declared"
         );
 
@@ -2531,7 +2602,21 @@ mod tests {
             let rate = SampleRate::new(48_000.0).expect("a real rate");
             // The sampler prepares against a plan's sample table (ADR-0026), so every kind
             // is prepared against an IR holding one sample and a one-zone map naming it.
-            let ir = sampler_fixture();
+            let ir = if matches!(kind, IrNodeKind::Script { .. }) {
+                let program = crate::script::ScriptIdentity::new(
+                    NodeId::new(0),
+                    crate::script::ScriptStateId::new(1),
+                    crate::script::ProjectSeed::new(2),
+                )
+                .compile_control("out = 1", rate, &[])
+                .expect("program");
+                crate::ir::GraphIr::builder()
+                    .script(program, crate::ir::ExecutionScope::Global)
+                    .build()
+                    .expect("IR")
+            } else {
+                sampler_fixture()
+            };
             let slots = [Some(crate::plan::SampleSlot::new(
                 crate::plan::PlanId::FILL,
                 0,
@@ -2546,6 +2631,7 @@ mod tests {
             let matches_kind = matches!(
                 (kind, &prepared),
                 (IrNodeKind::Silence, PreparedNode::Silence)
+                    | (IrNodeKind::Script { .. }, PreparedNode::Script { .. })
                     | (IrNodeKind::Constant { .. }, PreparedNode::Constant { .. })
                     | (IrNodeKind::Impulse { .. }, PreparedNode::Impulse { .. })
                     | (IrNodeKind::Sine { .. }, PreparedNode::Sine { .. })
@@ -2591,6 +2677,7 @@ mod tests {
                 IrNodeKind::Filter { .. }
                 | IrNodeKind::VelocityScaler { .. }
                 | IrNodeKind::Sampler { .. }
+                | IrNodeKind::Script { .. }
                 | IrNodeKind::Lfo { .. } => (true, true),
                 IrNodeKind::NoteSource { .. }
                 | IrNodeKind::Silence
@@ -2704,6 +2791,7 @@ mod tests {
         for declared in DECLARED {
             for spec in declared.controls {
                 let expected = match spec.default.unit() {
+                    ParameterUnit::ScriptScalar(_) => ModulationLaw::PhysicalLinearAdditive,
                     ParameterUnit::Hertz => ModulationLaw::SemitoneAdditive,
                     ParameterUnit::LinearAmplitude => ModulationLaw::DecibelAdditive,
                     ParameterUnit::NormalizedLevel => ModulationLaw::NormalizedAdditive,

@@ -73,6 +73,7 @@ fn run(
         controls,
         ramps: &ramps,
         samples: &[],
+        scripts: crate::script::ScriptResources::default(),
     };
     lfo(prepared, state, &mut io);
     out
@@ -168,6 +169,7 @@ fn the_rate_is_read_per_frame_from_the_ramps() {
         controls: &[],
         ramps: &ramps,
         samples: &[],
+        scripts: crate::script::ScriptResources::default(),
     };
     lfo(&prepared, &mut state, &mut io);
     assert!(
@@ -317,7 +319,21 @@ fn a_modulated_row_advances_once_per_quantum_after_its_composition() {
 /// A pitched voice with a voice-scope LFO on its frequency, two compiled voices, stealing
 /// the oldest with V1's fade.
 fn stealing_voice_with_lfo() -> CompiledPlan {
-    let ir = GraphIr::builder()
+    stealing_voice_from(GraphIr::builder().node(
+        LFO,
+        IrNodeKind::Lfo {
+            waveform: LfoWaveform::Sine,
+            rate: Frequency::new(5.0).expect("finite"),
+            depth: NormalizedLevel::FULL,
+            phase_offset: PhaseOffset::ZERO,
+            polarity: LfoPolarity::Bipolar,
+        },
+        ExecutionScope::Voice,
+    ))
+}
+
+fn stealing_voice_from(builder: crate::ir::GraphIrBuilder) -> CompiledPlan {
+    let ir = builder
         .node(
             SOURCE,
             IrNodeKind::Sine {
@@ -338,17 +354,6 @@ fn stealing_voice_with_lfo() -> CompiledPlan {
             ExecutionScope::Voice,
         )
         .node(AMPLIFIER, IrNodeKind::Amplifier, ExecutionScope::Voice)
-        .node(
-            LFO,
-            IrNodeKind::Lfo {
-                waveform: LfoWaveform::Sine,
-                rate: Frequency::new(5.0).expect("finite"),
-                depth: NormalizedLevel::FULL,
-                phase_offset: PhaseOffset::ZERO,
-                polarity: LfoPolarity::Bipolar,
-            },
-            ExecutionScope::Voice,
-        )
         .node(OUTPUT, IrNodeKind::Output, ExecutionScope::Global)
         .connect(
             (SOURCE, PortId::FIRST),
@@ -388,7 +393,32 @@ fn stealing_voice_with_lfo() -> CompiledPlan {
         })
         .build()
         .expect("a readable plan");
-    admit(&ir)
+    let outcome = compile(&ir, &RenderConfig::new(profile()));
+    let reported = match outcome
+        .report()
+        .row(crate::report::ResourceField::MutableStateBytes)
+        .expect("row")
+        .requested()
+    {
+        crate::report::ResourceAmount::Bytes(bytes) => bytes.get(),
+        other => panic!("mutable bytes: {other:?}"),
+    };
+    let plan = admit(&ir);
+    assert_eq!(
+        plan.script_bytes_held() as u64,
+        ir.script_bytes(),
+        "immutable script allocation matches its charge"
+    );
+    let (_, renderer) = StreamControl::open(plan.clone(), ORIGIN).expect("stream");
+    assert_eq!(
+        renderer.slot_bytes_held() as u64
+            + renderer.ramp_table_bytes_held() as u64
+            + u64::from(renderer.prepared_record_count().get())
+                * crate::node::state_bytes_per_node(),
+        reported,
+        "snapshots and per-voice slots are charged exactly"
+    );
+    plan
 }
 
 fn note_on(plan: &CompiledPlan, key: u8, at: u64) -> PlanEvent {
@@ -449,6 +479,53 @@ fn lfo_phases(renderer: &PreparedRenderer) -> Vec<f64> {
             _ => None,
         })
         .collect()
+}
+
+#[test]
+fn a_control_script_defers_a_steal_reset_to_the_next_quantum_for_only_that_voice() {
+    use crate::script::{ProjectSeed, ScriptIdentity, ScriptStateId};
+    let program = ScriptIdentity::new(LFO, ScriptStateId::new(1), ProjectSeed::new(2))
+        .compile_control(
+            "param a = 0\nparam b = 0\nparam c = 0\nparam d = 0\nparam fifth = 0\nout = rand(0, 1) + accum(0.125) + a + b + c + d + fifth",
+            SampleRate::new(RATE).expect("rate"),
+            &[],
+        )
+        .expect("program");
+    let plan = stealing_voice_from(GraphIr::builder().script(program, ExecutionScope::Voice));
+    let q = Q as u64;
+    let held = [note_on(&plan, 60, 0), note_on(&plan, 67, q)];
+    let stolen = [held[0], held[1], note_on(&plan, 72, 4 * q + 5)];
+    let states = |events: &[PlanEvent], quanta| {
+        render_through(&plan, events, quanta)
+            .0
+            .node_states()
+            .iter()
+            .filter_map(|state| {
+                if let NodeState::Script {
+                    registers,
+                    seed,
+                    reset_pending,
+                    voice,
+                } = state
+                {
+                    Some((*registers, *seed, *reset_pending, *voice))
+                } else {
+                    None
+                }
+            })
+            .collect::<Vec<_>>()
+    };
+    let pending = states(&stolen, 8);
+    let control = states(&held, 8);
+    assert_eq!(pending.len(), 2);
+    assert_ne!(pending[0].1, pending[1].1, "voice seeds are distinct");
+    assert!(pending[0].2, "reset at 6Q+5 waits for the next boundary");
+    assert_eq!(pending[0].0, control[0].0, "no partial-quantum evaluation");
+    assert_eq!(pending[1], control[1], "the other voice is untouched");
+    let reset = states(&stolen, 9);
+    let fresh = states(&held, 2);
+    assert_eq!(reset[0], fresh[0], "one evaluation from the original seed");
+    assert_eq!(reset[1], states(&held, 9)[1], "the other voice continues");
 }
 
 #[test]

@@ -37,7 +37,18 @@ use crate::time::{PlanPosition, QuantumOffset};
 /// A bound rather than a guess: the binding below hands out one mutable and up to this
 /// many shared borrows of one arena, and doing that without aliasing needs a fixed
 /// number of them. Raising it is a deliberate change to the kernel signature.
-pub const MAX_INPUTS: usize = 2;
+pub const MAX_INPUTS: usize = synth_core::script::MAX_SOURCES;
+
+/// Fill the first two input bindings for native nodes.
+pub(crate) const fn pair_inputs(
+    first: Option<crate::plan::BufferSlot>,
+    second: Option<crate::plan::BufferSlot>,
+) -> [Option<crate::plan::BufferSlot>; MAX_INPUTS] {
+    let mut inputs = [None; MAX_INPUTS];
+    inputs[0] = first;
+    inputs[1] = second;
+    inputs
+}
 
 /// The one kernel signature.
 ///
@@ -144,6 +155,12 @@ pub const SAMPLER: Kernel = Kernel(sampler);
 pub const MONITOR: Kernel = Kernel(monitor);
 /// The low-frequency oscillator's kernel (`SOUND-INV-027`).
 pub const LFO: Kernel = Kernel(lfo);
+/// The bounded, prepared YAMS VM.
+pub const SCRIPT: Kernel = Kernel(script);
+
+pub fn script(prepared: &PreparedNode, state: &mut NodeState, io: &mut NodeIo<'_>) {
+    crate::script::hot::run(prepared, state, io);
+}
 
 /// A node's immutable prepared data.
 ///
@@ -152,6 +169,12 @@ pub const LFO: Kernel = Kernel(lfo);
 /// is computed here rather than per quantum, which is the whole point of the split.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum PreparedNode {
+    /// Immutable VM code, identity seed and evaluation rate.
+    Script {
+        program: crate::script::ScriptSlot,
+        seed: crate::script::ScriptSeed,
+        rate: f32,
+    },
     /// A declared controller source.
     Controller {
         kind: crate::controller::ControllerKind,
@@ -334,6 +357,13 @@ pub enum PreparedNode {
 /// states over one prepared node.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum NodeState {
+    /// Each instance owns its VM registers and deterministic reset seed.
+    Script {
+        registers: synth_core::script::RegisterFile,
+        seed: crate::script::ScriptSeed,
+        reset_pending: bool,
+        voice: crate::script::ScriptVoiceId,
+    },
     /// A node that keeps nothing between quanta.
     Stateless,
     /// A velocity scaler's note velocity, held between quanta (ADR-0059).
@@ -481,8 +511,17 @@ pub enum Playback {
 impl NodeState {
     /// The state a prepared node starts in.
     #[must_use]
-    pub const fn initial(prepared: &PreparedNode) -> Self {
+    pub fn initial(prepared: &PreparedNode) -> Self {
         match prepared {
+            PreparedNode::Script { seed, .. } => Self::Script {
+                registers: synth_core::script::RegisterFile::new(
+                    0,
+                    seed.for_voice(crate::script::ScriptVoiceId::ZERO).as_u64(),
+                ),
+                seed: seed.for_voice(crate::script::ScriptVoiceId::ZERO),
+                reset_pending: false,
+                voice: crate::script::ScriptVoiceId::ZERO,
+            },
             PreparedNode::Sine { frequency, .. } => Self::Sine {
                 phase: 0.0,
                 frequency: *frequency,
@@ -577,7 +616,11 @@ impl NodeState {
                 SAMPLER_VELOCITY => ParameterValue::new(velocity.as_f32()).ok(),
                 _ => None,
             },
-            Self::Filter { .. } | Self::Sum { .. } | Self::Lfo { .. } | Self::Stateless => None,
+            Self::Filter { .. }
+            | Self::Sum { .. }
+            | Self::Lfo { .. }
+            | Self::Script { .. }
+            | Self::Stateless => None,
         }
     }
 }
@@ -660,7 +703,8 @@ pub(crate) fn authored_value(
         | PreparedNode::Impulse { .. }
         | PreparedNode::Gain { .. }
         | PreparedNode::Amplifier
-        | PreparedNode::Copy => None,
+        | PreparedNode::Copy
+        | PreparedNode::Script { .. } => None,
     }
 }
 
@@ -824,6 +868,8 @@ pub struct NodeIo<'a> {
     /// The plan's prepared samples, indexed by a prepared record's [`SampleSlot`]
     /// (ADR-0026). Read through one index; the frames sit behind an `Arc` the plan holds.
     pub samples: &'a [PreparedSample],
+    /// Prepared numeric script bindings and parameter layers.
+    pub scripts: crate::script::ScriptResources<'a>,
 }
 
 /// The per-frame values of a node's `index`-th quantum-rate control, from its ramps.
@@ -896,7 +942,7 @@ pub fn bind<'a>(
     position: Option<PlanPosition>,
     controls: &'a [TimedControl],
     ramps: &'a [f32],
-    samples: &'a [PreparedSample],
+    resources: NodeResources<'a>,
 ) -> Option<NodeIo<'a>> {
     let mut out: Option<&'a mut [f32]> = None;
     let mut inputs = [InputBuffer::Unpatched; MAX_INPUTS];
@@ -904,7 +950,7 @@ pub fn bind<'a>(
     let mut consumed = 0_usize;
 
     // The roles in ascending offset order, worked out at admission. Walking them forwards
-    // and splitting each region off in turn is what lets one mutable and up to two shared
+    // and splitting each region off in turn is what lets one mutable and up to 32 shared
     // borrows of one allocation coexist without `unsafe` — and there is nothing to decide
     // here, because the compiler already decided it.
     for role in *step.order() {
@@ -958,7 +1004,8 @@ pub fn bind<'a>(
         position,
         controls,
         ramps,
-        samples,
+        samples: resources.samples,
+        scripts: resources.scripts,
     })
 }
 
@@ -1741,7 +1788,7 @@ const SUBNORMAL_GUARD: f32 = 1e-30;
 
 /// One audio input scaled, sample by sample, by one control input.
 pub fn amplifier(_prepared: &PreparedNode, _state: &mut NodeState, io: &mut NodeIo<'_>) {
-    let [audio, control] = io.inputs;
+    let [audio, control, ..] = io.inputs;
     let InputBuffer::Patched(control) = control else {
         // A control input is never the in-place one — the arena merges the first input
         // only — so this is the unpatched case, and an amplifier with nothing driving it
@@ -2169,3 +2216,10 @@ pub fn control_source(_: &PreparedNode, _: &mut NodeState, io: &mut NodeIo<'_>) 
 pub const SOURCE_VALUE: ControlIndex = ControlIndex::new(0);
 /// Stateless control-source kernel.
 pub const CONTROL_SOURCE: Kernel = Kernel(control_source);
+
+/// Immutable resources borrowed by every kernel invocation.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct NodeResources<'a> {
+    pub samples: &'a [PreparedSample],
+    pub scripts: crate::script::ScriptResources<'a>,
+}

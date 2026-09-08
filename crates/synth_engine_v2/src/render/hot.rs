@@ -1191,6 +1191,9 @@ impl PreparedRenderer {
     /// where this quantum's events begin in the scratch, which the collection that follows
     /// walks from the same place.
     fn render_prepass(&mut self, cursor: usize) {
+        for (values, slot) in self.script_values.iter_mut().zip(&self.parameter_slots) {
+            values.automated = slot.automated();
+        }
         for row in 0..self.parameter_slots.len() {
             if self.modulated.get(row).copied().unwrap_or(false) {
                 continue;
@@ -1310,7 +1313,13 @@ impl PreparedRenderer {
                         plan_start,
                         gates,
                         ramps,
-                        self.plan.prepared_samples(),
+                        kernels::NodeResources {
+                            samples: self.plan.prepared_samples(),
+                            scripts: crate::script::ScriptResources {
+                                programs: self.plan.prepared_scripts(),
+                                parameters: &self.script_values,
+                            },
+                        },
                     ) else {
                         continue;
                     };
@@ -1371,6 +1380,9 @@ impl PreparedRenderer {
             }
         }
 
+        for (values, slot) in self.script_values.iter_mut().zip(&self.parameter_slots) {
+            values.previous = slot.resolved();
+        }
         self.carry_frames += quantum;
         self.clock = self
             .clock

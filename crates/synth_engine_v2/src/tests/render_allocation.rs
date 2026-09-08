@@ -342,3 +342,89 @@ fn a_complete_publication_pass_allocates_nothing() {
          by index"
     );
 }
+
+#[test]
+fn yams_control_allocates_nothing_at_the_profiles_voice_and_block_maximum() {
+    use crate::script::{ProjectSeed, ScriptIdentity, ScriptStateId};
+    let profile = HostProfile::harness(
+        SampleRate::new(48_000.0).expect("rate"),
+        FrameCount::new(BLOCK as u64),
+        ChannelLayout::Mono,
+    )
+    .expect("profile");
+    let voices = profile
+        .limits()
+        .voices()
+        .maximum_voices_per_instrument()
+        .get();
+    let mut identity = ScriptIdentity::new(SOURCE, ScriptStateId::new(7), ProjectSeed::new(9));
+    let program = identity
+        .compile_control(
+            "param step = 0.125 [0, 1]\nout = rand(0, 1) + accum(step)",
+            profile.capabilities().sample_rate(),
+            &[],
+        )
+        .expect("program");
+    let ir = GraphIr::builder()
+        .script(program, ExecutionScope::Voice)
+        .node(
+            NodeId::new(10),
+            IrNodeKind::Constant {
+                level: Amplitude::UNITY,
+            },
+            ExecutionScope::Voice,
+        )
+        .node(
+            NodeId::new(11),
+            IrNodeKind::Amplifier,
+            ExecutionScope::Voice,
+        )
+        .node(OUTPUT, IrNodeKind::Output, ExecutionScope::Global)
+        .connect(
+            (NodeId::new(10), PortId::FIRST),
+            (NodeId::new(11), PortId::FIRST),
+            SignalDomain::Audio,
+        )
+        .connect(
+            (SOURCE, PortId::FIRST),
+            (NodeId::new(11), crate::node::AMPLIFIER_CONTROL),
+            SignalDomain::Control,
+        )
+        .connect(
+            (NodeId::new(11), PortId::FIRST),
+            (OUTPUT, PortId::FIRST),
+            SignalDomain::Audio,
+        )
+        .declaring(crate::ir::PlanDeclarations {
+            note_producers: vec![crate::ir::NoteProducerDeclaration {
+                compiled: true,
+                simultaneous_notes: crate::quantities::HeldNoteCount::measured(voices),
+                simultaneous_holds: crate::quantities::EventCount::NONE,
+            }],
+            ..crate::ir::PlanDeclarations::default()
+        })
+        .build()
+        .expect("IR");
+    let plan = compile(&ir, &RenderConfig::new(profile))
+        .into_plan()
+        .expect("admission");
+    assert_eq!(plan.voice_instances().get(), voices);
+    let (_control, mut renderer) = StreamControl::open(
+        plan,
+        StreamAnchor::new(SampleTime::ZERO, PlanPosition::ZERO),
+    )
+    .expect("stream");
+    let mut samples = vec![0.0; BLOCK];
+    let allocations = count_allocs(|| {
+        for _ in 0..3 {
+            renderer
+                .render(
+                    AudioBlockMut::new(&mut samples, BLOCK, ChannelLayout::Mono).expect("block"),
+                    TimedEvents::EMPTY,
+                )
+                .expect("render");
+        }
+    });
+    assert_eq!(allocations, 0);
+    assert!(samples.iter().any(|value| *value > 0.0));
+}

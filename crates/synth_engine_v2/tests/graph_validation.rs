@@ -414,7 +414,27 @@ macro_rules! catalog {
     };
 }
 
+fn script_kind() -> IrNodeKind {
+    use synth_engine_v2::script::{ProjectSeed, ScriptIdentity, ScriptStateId};
+    let mut identity =
+        ScriptIdentity::new(NodeId::new(999), ScriptStateId::new(1), ProjectSeed::new(1));
+    let program = identity
+        .compile_control(
+            "out = 0",
+            synth_engine_v2::quantities::SampleRate::new(48000.0).expect("rate"),
+            &[],
+        )
+        .expect("program");
+    GraphIr::builder()
+        .script(program, ExecutionScope::Global)
+        .build()
+        .expect("IR")
+        .nodes()[0]
+        .kind()
+}
+
 catalog! {
+    script_kind() => IrNodeKind::Script { .. },
     IrNodeKind::Controller { kind: synth_engine_v2::controller::ControllerKind::ModWheel } => IrNodeKind::Controller { .. },
     IrNodeKind::NoteSource { kind: synth_engine_v2::controller::NoteSource::Pressure } => IrNodeKind::NoteSource { .. },
     IrNodeKind::Silence => IrNodeKind::Silence,

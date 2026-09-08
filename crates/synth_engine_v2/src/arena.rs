@@ -165,7 +165,7 @@ impl FreeList {
 ///
 /// Read off the step rather than off the node kind: a step names its slots, and that is
 /// all liveness needs. It is why adding a node kind changes nothing in this file.
-fn accesses(op: PlanOp) -> (Vec<usize>, Option<usize>) {
+fn accesses(op: &PlanOp) -> (Vec<usize>, Option<usize>) {
     match op {
         PlanOp::Node(step) => (
             step.inputs()
@@ -190,7 +190,7 @@ fn accesses(op: PlanOp) -> (Vec<usize>, Option<usize>) {
 /// while a copy exists to produce a second buffer and writing it over its own input
 /// would leave one buffer where the plan needs two. The registry holds that answer, and
 /// lowering copied it into the step.
-const fn in_place_safe(op: PlanOp) -> bool {
+const fn in_place_safe(op: &PlanOp) -> bool {
     match op {
         PlanOp::Node(step) => step.in_place_safe(),
         PlanOp::Output { .. } | PlanOp::Modulate(_) => false,
@@ -259,7 +259,7 @@ pub(crate) fn assign(
     // overlap rule.
     let mut chain_of: Vec<usize> = (0..virtual_count).collect();
     for (index, op) in ops.iter().enumerate() {
-        let (reads, writes) = accesses(*op);
+        let (reads, writes) = accesses(op);
         let (Some(out), Some(source)) = (writes, reads.first().copied()) else {
             continue;
         };
@@ -272,7 +272,7 @@ pub(crate) fn assign(
         // cannot write a stereo output over a mono input's region, and the compiler
         // allocates separately where the widths differ.
         let same_width = widths.get(source).copied() == widths.get(out).copied();
-        if in_place_safe(*op) && input_ends_here && same_width {
+        if in_place_safe(op) && input_ends_here && same_width {
             let target = chain_of.get(source).copied().unwrap_or(source);
             if let Some(entry) = chain_of.get_mut(out) {
                 *entry = target;
@@ -431,7 +431,7 @@ fn root_of(chain_of: &[usize], mut slot: usize) -> usize {
 fn live_ranges(ops: &[PlanOp], virtual_count: usize) -> Vec<(usize, usize)> {
     let mut ranges = vec![(usize::MAX, 0_usize); virtual_count];
     for (index, op) in ops.iter().enumerate() {
-        let (reads, writes) = accesses(*op);
+        let (reads, writes) = accesses(op);
         if let Some(out) = writes
             && let Some(range) = ranges.get_mut(out)
         {

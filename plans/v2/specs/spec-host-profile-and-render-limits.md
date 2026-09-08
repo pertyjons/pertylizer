@@ -242,19 +242,21 @@ open owner is a starting point recorded honestly, not a rule invented here.
    against a quantity a plan states — and two cannot. It also
    moves `max_events_per_quantum` out of the checked set: a plan no longer requests the cap directly, and cannot
    exceed it without exceeding a share first, because the shares sum to at most the cap.
-   Once that contract is enabled, **seventeen** of fifty fields do not take this refusal, in seven groups: the three
+   Once that contract is enabled, **sixteen** of fifty fields do not take this refusal, in seven groups: the three
    queried capabilities, which describe what a plan is *prepared against*; `accepted_sample_rates`; the three sizing
-   fields, which bound nothing; the six capacities a plan does not request — `forward_event_horizon`, the three
-   queue depths, the script host slots per voice, and `max_concurrent_retiring_voices`, which is derived so that it
+   fields, which bound nothing; the five capacities a plan does not request — `forward_event_horizon`, the three
+   queue depths and `max_concurrent_retiring_voices`, which is derived so that it
    cannot bind; the advisory `predicted_quantum_cost_ratio`, whose excess produces a warning; `max_events_per_quantum`
    for the reason above; and the **live** and **release** shares, which bound a runtime queue rather than a plan and
    are enforced at publication instead of at admission. The authored-runtime and internal shares were in this group
    until `PlanDeclarations` gained the declarations that let a plan state what they bound; a share reported against
    itself cannot be exceeded, which is why the group is now two rather than four.
-   The other **thirty-three** each have a refusal case. `mod_matrix_slots_per_voice` joined them with `P07-S001`
+   The other **thirty-four** each have a refusal case. `mod_matrix_slots_per_voice` joined them with `P07-S001`
    (`SOUND-INV-027`): a modulation edge into a voice-scope parameter is one slot per voice, and the count is
-   admitted. `script_host_slots_per_voice` moves in when a script declares per-voice slot *usage*; until then its
-   row reports the profile's own value.
+   admitted. `script_host_slots_per_voice` joins them in `P07-S005`: each installed voice-scope
+   script is one host slot per voice. Program instruction, source, state, local, stack and array
+   counts come from the compiled program; caller declarations cannot understate them. The work
+   aggregate multiplies each Control evaluation by its scope's admitted instance count.
 
    **That does not discharge `LIMIT-0004`'s disposition, and an earlier revision claimed it did "in substance".** The
    ledger requires a *job* outside the range to be refused with a job admission error naming the requested rate and the

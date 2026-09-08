@@ -728,6 +728,11 @@ fn refusal_cases(host: &HostProfile) -> Vec<(ResourceField, GraphIr, HostProfile
         ),
         (ResourceField::BufferScratchBytes, sine, memory(big, big, 1)),
         (
+            ResourceField::ScriptHostSlotsPerVoice,
+            script_hosts_over_limit(host),
+            *host,
+        ),
+        (
             ResourceField::MaxInstructionsPerProgram,
             declares.clone(),
             script([1, 32, 16, 16, 64, 16, 256, 4]),
@@ -810,14 +815,14 @@ fn every_limit_a_plan_can_exceed_has_a_refusal_case() {
         covered, checked,
         "the refusal cases and the admission-checked set have diverged"
     );
-    // Thirty-three: `authored_runtime_event_share` and `internal_event_share` joined when
+    // Thirty-four: P07-S005 adds actual script host usage; `authored_runtime_event_share` and `internal_event_share` joined when
     // `PlanDeclarations` gained the two declarations that let a plan state what those
     // shares bound. Before that each share was reported against itself and no plan could
     // exceed it, which is why `HOST-INV-007`'s conformance row could not be satisfied for
     // them. `session_event_share` and `release_hold_capacity` joined in the two slices
     // before that, each for the same kind of reason, and `mod_matrix_slots_per_voice`
     // joined with `P07-S001`, when a modulation edge became a slot a plan can spend.
-    assert_eq!(checked.len(), 33, "the admission-checked set changed size");
+    assert_eq!(checked.len(), 34, "the admission-checked set changed size");
 }
 
 #[test]
@@ -1958,4 +1963,28 @@ fn admission_stays_linear_in_the_node_count() {
         "admitting {NODES} nodes took {elapsed:?}, past the {CEILING:?} ceiling — the report's \
          per-scope figures are scanning per node again"
     );
+}
+
+fn script_hosts_over_limit(host: &HostProfile) -> GraphIr {
+    use synth_engine_v2::script::{ProjectSeed, ScriptIdentity, ScriptStateId};
+    let mut builder = GraphIr::builder()
+        .node(NodeId::new(90), IrNodeKind::Silence, ExecutionScope::Global)
+        .node(NodeId::new(91), IrNodeKind::Output, ExecutionScope::Global)
+        .connect(
+            (NodeId::new(90), PortId::FIRST),
+            (NodeId::new(91), PortId::FIRST),
+            SignalDomain::Audio,
+        );
+    for index in 0..=host.limits().script().script_host_slots_per_voice().get() {
+        let mut identity = ScriptIdentity::new(
+            NodeId::new(1000 + index),
+            ScriptStateId::new(1),
+            ProjectSeed::new(1),
+        );
+        let program = identity
+            .compile_control("out = 0", host.capabilities().sample_rate(), &[])
+            .expect("program");
+        builder = builder.script(program, ExecutionScope::Voice);
+    }
+    builder.build().expect("IR")
 }

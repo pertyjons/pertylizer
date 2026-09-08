@@ -185,7 +185,7 @@ pub struct NoteOutputs {
 /// Per-voice mutable state for a running script: persistent state cells plus the
 /// PRNG stream. Cloned/owned per voice; never shared (the `CompiledScript` is
 /// the shared, immutable half).
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct RegisterFile {
     state: [f32; MAX_STATE],
     prng_seed: u64,
@@ -512,10 +512,13 @@ impl CompiledScript {
                     let pos = stack.pop();
                     let last = len.saturating_sub(1);
                     // Clamp pos into 0..=last; floor → lower index, fract → blend.
-                    let p = if pos.is_nan() {
+                    let upper = f32::from(last);
+                    let p = if pos.is_nan() || pos < 0.0 {
                         0.0
+                    } else if pos > upper {
+                        upper
                     } else {
-                        pos.clamp(0.0, f32::from(last))
+                        pos
                     };
                     let frac = p - p.floor();
                     let i0 = p.floor() as u16; // in 0..=last (p is clamped)

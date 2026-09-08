@@ -46,6 +46,7 @@ fn run_with(
         controls,
         ramps: &ramps,
         samples: &[],
+        scripts: crate::script::ScriptResources::default(),
     };
     kernel(prepared, state, &mut io);
     out
@@ -453,6 +454,7 @@ fn the_widening_writes_every_channel_of_every_frame() {
             controls: &[],
             ramps: &[],
             samples: &[],
+            scripts: crate::script::ScriptResources::default(),
         };
         copy(
             &PreparedNode::Copy,

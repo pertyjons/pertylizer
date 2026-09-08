@@ -453,7 +453,7 @@ fn amplifier_interleaved_split(
     _state: &mut InterState,
     io: &mut NodeIo<'_>,
 ) {
-    let [InputBuffer::Patched(left), InputBuffer::Patched(right)] = io.inputs else {
+    let [InputBuffer::Patched(left), InputBuffer::Patched(right), ..] = io.inputs else {
         io.out.fill(0.0);
         return;
     };
@@ -703,6 +703,7 @@ impl Planar {
                 controls: &[],
                 ramps: sine_ramp(),
                 samples: &[],
+                scripts: synth_engine_v2::script::ScriptResources::default(),
             },
         );
         call_filter(
@@ -711,11 +712,12 @@ impl Planar {
             &mut NodeIo {
                 out: one(&mut self.arena, self.left),
                 channels: synth_engine_v2::quantities::ChannelLayout::Mono,
-                inputs: [InputBuffer::InPlace, InputBuffer::Unpatched],
+                inputs: padded([InputBuffer::InPlace, InputBuffer::Unpatched]),
                 position: None,
                 controls: &[],
                 ramps: &[],
                 samples: &[],
+                scripts: synth_engine_v2::script::ScriptResources::default(),
             },
         );
         call_envelope(
@@ -729,6 +731,7 @@ impl Planar {
                 controls: &self.pending_gate,
                 ramps: &[],
                 samples: &[],
+                scripts: synth_engine_v2::script::ScriptResources::default(),
             },
         );
         let (out, control) = two(&mut self.arena, self.left, self.control_left);
@@ -738,11 +741,12 @@ impl Planar {
             &mut NodeIo {
                 out,
                 channels: synth_engine_v2::quantities::ChannelLayout::Mono,
-                inputs: [InputBuffer::InPlace, InputBuffer::Patched(control)],
+                inputs: padded([InputBuffer::InPlace, InputBuffer::Patched(control)]),
                 position: None,
                 controls: &[],
                 ramps: &[],
                 samples: &[],
+                scripts: synth_engine_v2::script::ScriptResources::default(),
             },
         );
         // The widening, into the slot the envelope has finished with.
@@ -753,11 +757,12 @@ impl Planar {
             &mut NodeIo {
                 out,
                 channels: synth_engine_v2::quantities::ChannelLayout::Mono,
-                inputs: [InputBuffer::Patched(source), InputBuffer::Unpatched],
+                inputs: padded([InputBuffer::Patched(source), InputBuffer::Unpatched]),
                 position: None,
                 controls: &[],
                 ramps: &[],
                 samples: &[],
+                scripts: synth_engine_v2::script::ScriptResources::default(),
             },
         );
         // The queued gate edge is consumed by this quantum and by no later one, which is
@@ -778,6 +783,7 @@ impl Planar {
                 controls: &[],
                 ramps: sine_ramp(),
                 samples: &[],
+                scripts: synth_engine_v2::script::ScriptResources::default(),
             },
         );
         let (out, source) = two(&mut self.arena, self.right, self.left);
@@ -787,11 +793,12 @@ impl Planar {
             &mut NodeIo {
                 out,
                 channels: synth_engine_v2::quantities::ChannelLayout::Mono,
-                inputs: [InputBuffer::Patched(source), InputBuffer::Unpatched],
+                inputs: padded([InputBuffer::Patched(source), InputBuffer::Unpatched]),
                 position: None,
                 controls: &[],
                 ramps: &[],
                 samples: &[],
+                scripts: synth_engine_v2::script::ScriptResources::default(),
             },
         );
         call_filter(
@@ -800,11 +807,12 @@ impl Planar {
             &mut NodeIo {
                 out: one(&mut self.arena, self.left),
                 channels: synth_engine_v2::quantities::ChannelLayout::Mono,
-                inputs: [InputBuffer::InPlace, InputBuffer::Unpatched],
+                inputs: padded([InputBuffer::InPlace, InputBuffer::Unpatched]),
                 position: None,
                 controls: &[],
                 ramps: &[],
                 samples: &[],
+                scripts: synth_engine_v2::script::ScriptResources::default(),
             },
         );
         call_filter(
@@ -813,11 +821,12 @@ impl Planar {
             &mut NodeIo {
                 out: one(&mut self.arena, self.right),
                 channels: synth_engine_v2::quantities::ChannelLayout::Mono,
-                inputs: [InputBuffer::InPlace, InputBuffer::Unpatched],
+                inputs: padded([InputBuffer::InPlace, InputBuffer::Unpatched]),
                 position: None,
                 controls: &[],
                 ramps: &[],
                 samples: &[],
+                scripts: synth_engine_v2::script::ScriptResources::default(),
             },
         );
         call_envelope(
@@ -831,6 +840,7 @@ impl Planar {
                 controls: &self.pending_gate,
                 ramps: &[],
                 samples: &[],
+                scripts: synth_engine_v2::script::ScriptResources::default(),
             },
         );
         let (out, control) = two(&mut self.arena, self.left, self.control_left);
@@ -840,11 +850,12 @@ impl Planar {
             &mut NodeIo {
                 out,
                 channels: synth_engine_v2::quantities::ChannelLayout::Mono,
-                inputs: [InputBuffer::InPlace, InputBuffer::Patched(control)],
+                inputs: padded([InputBuffer::InPlace, InputBuffer::Patched(control)]),
                 position: None,
                 controls: &[],
                 ramps: &[],
                 samples: &[],
+                scripts: synth_engine_v2::script::ScriptResources::default(),
             },
         );
         let (out, control) = two(&mut self.arena, self.right, self.control_left);
@@ -854,11 +865,12 @@ impl Planar {
             &mut NodeIo {
                 out,
                 channels: synth_engine_v2::quantities::ChannelLayout::Mono,
-                inputs: [InputBuffer::InPlace, InputBuffer::Patched(control)],
+                inputs: padded([InputBuffer::InPlace, InputBuffer::Patched(control)]),
                 position: None,
                 controls: &[],
                 ramps: &[],
                 samples: &[],
+                scripts: synth_engine_v2::script::ScriptResources::default(),
             },
         );
         self.write_carry();
@@ -885,6 +897,7 @@ impl Planar {
                 controls: &[],
                 ramps: sine_ramp(),
                 samples: &[],
+                scripts: synth_engine_v2::script::ScriptResources::default(),
             },
         );
         let (out, source) = two(&mut self.arena, self.right, self.left);
@@ -894,11 +907,12 @@ impl Planar {
             &mut NodeIo {
                 out,
                 channels: synth_engine_v2::quantities::ChannelLayout::Mono,
-                inputs: [InputBuffer::Patched(source), InputBuffer::Unpatched],
+                inputs: padded([InputBuffer::Patched(source), InputBuffer::Unpatched]),
                 position: None,
                 controls: &[],
                 ramps: &[],
                 samples: &[],
+                scripts: synth_engine_v2::script::ScriptResources::default(),
             },
         );
         call_filter(
@@ -907,11 +921,12 @@ impl Planar {
             &mut NodeIo {
                 out: one(&mut self.arena, self.left),
                 channels: synth_engine_v2::quantities::ChannelLayout::Mono,
-                inputs: [InputBuffer::InPlace, InputBuffer::Unpatched],
+                inputs: padded([InputBuffer::InPlace, InputBuffer::Unpatched]),
                 position: None,
                 controls: &[],
                 ramps: &[],
                 samples: &[],
+                scripts: synth_engine_v2::script::ScriptResources::default(),
             },
         );
         call_filter(
@@ -920,11 +935,12 @@ impl Planar {
             &mut NodeIo {
                 out: one(&mut self.arena, self.right),
                 channels: synth_engine_v2::quantities::ChannelLayout::Mono,
-                inputs: [InputBuffer::InPlace, InputBuffer::Unpatched],
+                inputs: padded([InputBuffer::InPlace, InputBuffer::Unpatched]),
                 position: None,
                 controls: &[],
                 ramps: &[],
                 samples: &[],
+                scripts: synth_engine_v2::script::ScriptResources::default(),
             },
         );
         call_envelope(
@@ -938,6 +954,7 @@ impl Planar {
                 controls: &self.pending_gate,
                 ramps: &[],
                 samples: &[],
+                scripts: synth_engine_v2::script::ScriptResources::default(),
             },
         );
         let (out, control) = two(&mut self.arena, self.left, self.control_left);
@@ -947,11 +964,12 @@ impl Planar {
             &mut NodeIo {
                 out,
                 channels: synth_engine_v2::quantities::ChannelLayout::Mono,
-                inputs: [InputBuffer::InPlace, InputBuffer::Patched(control)],
+                inputs: padded([InputBuffer::InPlace, InputBuffer::Patched(control)]),
                 position: None,
                 controls: &[],
                 ramps: &[],
                 samples: &[],
+                scripts: synth_engine_v2::script::ScriptResources::default(),
             },
         );
         call_envelope(
@@ -965,6 +983,7 @@ impl Planar {
                 controls: &self.pending_gate,
                 ramps: &[],
                 samples: &[],
+                scripts: synth_engine_v2::script::ScriptResources::default(),
             },
         );
         let (out, control) = two(&mut self.arena, self.right, self.control_right);
@@ -974,11 +993,12 @@ impl Planar {
             &mut NodeIo {
                 out,
                 channels: synth_engine_v2::quantities::ChannelLayout::Mono,
-                inputs: [InputBuffer::InPlace, InputBuffer::Patched(control)],
+                inputs: padded([InputBuffer::InPlace, InputBuffer::Patched(control)]),
                 position: None,
                 controls: &[],
                 ramps: &[],
                 samples: &[],
+                scripts: synth_engine_v2::script::ScriptResources::default(),
             },
         );
         self.write_carry();
@@ -1152,6 +1172,7 @@ impl Interleaved {
                 controls: &[],
                 ramps: sine_ramp(),
                 samples: &[],
+                scripts: synth_engine_v2::script::ScriptResources::default(),
             },
         );
         call_filter(
@@ -1160,11 +1181,12 @@ impl Interleaved {
             &mut NodeIo {
                 out: one(&mut self.arena, self.mono),
                 channels: synth_engine_v2::quantities::ChannelLayout::Mono,
-                inputs: [InputBuffer::InPlace, InputBuffer::Unpatched],
+                inputs: padded([InputBuffer::InPlace, InputBuffer::Unpatched]),
                 position: None,
                 controls: &[],
                 ramps: &[],
                 samples: &[],
+                scripts: synth_engine_v2::script::ScriptResources::default(),
             },
         );
         call_envelope(
@@ -1178,6 +1200,7 @@ impl Interleaved {
                 controls: &self.pending_gate,
                 ramps: &[],
                 samples: &[],
+                scripts: synth_engine_v2::script::ScriptResources::default(),
             },
         );
         let (out, control) = two(&mut self.arena, self.mono, self.control_left);
@@ -1187,11 +1210,12 @@ impl Interleaved {
             &mut NodeIo {
                 out,
                 channels: synth_engine_v2::quantities::ChannelLayout::Mono,
-                inputs: [InputBuffer::InPlace, InputBuffer::Patched(control)],
+                inputs: padded([InputBuffer::InPlace, InputBuffer::Patched(control)]),
                 position: None,
                 controls: &[],
                 ramps: &[],
                 samples: &[],
+                scripts: synth_engine_v2::script::ScriptResources::default(),
             },
         );
         let (out, source) = two(&mut self.arena, self.stereo, self.mono);
@@ -1201,11 +1225,12 @@ impl Interleaved {
             &mut NodeIo {
                 out,
                 channels: synth_engine_v2::quantities::ChannelLayout::Stereo,
-                inputs: [InputBuffer::Patched(source), InputBuffer::Unpatched],
+                inputs: padded([InputBuffer::Patched(source), InputBuffer::Unpatched]),
                 position: None,
                 controls: &[],
                 ramps: &[],
                 samples: &[],
+                scripts: synth_engine_v2::script::ScriptResources::default(),
             },
         );
         self.write_carry();
@@ -1227,6 +1252,7 @@ impl Interleaved {
                 controls: &[],
                 ramps: sine_ramp(),
                 samples: &[],
+                scripts: synth_engine_v2::script::ScriptResources::default(),
             },
         );
         let (out, source) = two(&mut self.arena, self.stereo, self.mono);
@@ -1236,11 +1262,12 @@ impl Interleaved {
             &mut NodeIo {
                 out,
                 channels: synth_engine_v2::quantities::ChannelLayout::Stereo,
-                inputs: [InputBuffer::Patched(source), InputBuffer::Unpatched],
+                inputs: padded([InputBuffer::Patched(source), InputBuffer::Unpatched]),
                 position: None,
                 controls: &[],
                 ramps: &[],
                 samples: &[],
+                scripts: synth_engine_v2::script::ScriptResources::default(),
             },
         );
         filter_interleaved(
@@ -1249,11 +1276,12 @@ impl Interleaved {
             &mut NodeIo {
                 out: one(&mut self.arena, self.stereo),
                 channels: synth_engine_v2::quantities::ChannelLayout::Stereo,
-                inputs: [InputBuffer::InPlace, InputBuffer::Unpatched],
+                inputs: padded([InputBuffer::InPlace, InputBuffer::Unpatched]),
                 position: None,
                 controls: &[],
                 ramps: &[],
                 samples: &[],
+                scripts: synth_engine_v2::script::ScriptResources::default(),
             },
         );
         call_envelope(
@@ -1267,6 +1295,7 @@ impl Interleaved {
                 controls: &self.pending_gate,
                 ramps: &[],
                 samples: &[],
+                scripts: synth_engine_v2::script::ScriptResources::default(),
             },
         );
         let (out, control) = two(&mut self.arena, self.stereo, self.control_left);
@@ -1276,11 +1305,12 @@ impl Interleaved {
             &mut NodeIo {
                 out,
                 channels: synth_engine_v2::quantities::ChannelLayout::Stereo,
-                inputs: [InputBuffer::InPlace, InputBuffer::Patched(control)],
+                inputs: padded([InputBuffer::InPlace, InputBuffer::Patched(control)]),
                 position: None,
                 controls: &[],
                 ramps: &[],
                 samples: &[],
+                scripts: synth_engine_v2::script::ScriptResources::default(),
             },
         );
         self.write_carry();
@@ -1302,6 +1332,7 @@ impl Interleaved {
                 controls: &[],
                 ramps: sine_ramp(),
                 samples: &[],
+                scripts: synth_engine_v2::script::ScriptResources::default(),
             },
         );
         let (out, source) = two(&mut self.arena, self.stereo, self.mono);
@@ -1311,11 +1342,12 @@ impl Interleaved {
             &mut NodeIo {
                 out,
                 channels: synth_engine_v2::quantities::ChannelLayout::Stereo,
-                inputs: [InputBuffer::Patched(source), InputBuffer::Unpatched],
+                inputs: padded([InputBuffer::Patched(source), InputBuffer::Unpatched]),
                 position: None,
                 controls: &[],
                 ramps: &[],
                 samples: &[],
+                scripts: synth_engine_v2::script::ScriptResources::default(),
             },
         );
         filter_interleaved_split(
@@ -1324,11 +1356,12 @@ impl Interleaved {
             &mut NodeIo {
                 out: one(&mut self.arena, self.stereo),
                 channels: synth_engine_v2::quantities::ChannelLayout::Stereo,
-                inputs: [InputBuffer::InPlace, InputBuffer::Unpatched],
+                inputs: padded([InputBuffer::InPlace, InputBuffer::Unpatched]),
                 position: None,
                 controls: &[],
                 ramps: &[],
                 samples: &[],
+                scripts: synth_engine_v2::script::ScriptResources::default(),
             },
         );
         call_envelope(
@@ -1342,6 +1375,7 @@ impl Interleaved {
                 controls: &self.pending_gate,
                 ramps: &[],
                 samples: &[],
+                scripts: synth_engine_v2::script::ScriptResources::default(),
             },
         );
         call_envelope(
@@ -1355,6 +1389,7 @@ impl Interleaved {
                 controls: &self.pending_gate,
                 ramps: &[],
                 samples: &[],
+                scripts: synth_engine_v2::script::ScriptResources::default(),
             },
         );
         let (out, left, right) = three(
@@ -1369,11 +1404,12 @@ impl Interleaved {
             &mut NodeIo {
                 out,
                 channels: synth_engine_v2::quantities::ChannelLayout::Stereo,
-                inputs: [InputBuffer::Patched(left), InputBuffer::Patched(right)],
+                inputs: padded([InputBuffer::Patched(left), InputBuffer::Patched(right)]),
                 position: None,
                 controls: &[],
                 ramps: &[],
                 samples: &[],
+                scripts: synth_engine_v2::script::ScriptResources::default(),
             },
         );
         self.write_carry();
@@ -1416,7 +1452,7 @@ impl Steps {
                 .ops()
                 .iter()
                 .filter_map(|op| match op {
-                    PlanOp::Node(step) => Some(*step),
+                    PlanOp::Node(step) => Some(step.clone()),
                     PlanOp::Output { .. } | PlanOp::Modulate(_) => None,
                 })
                 .collect(),
@@ -1445,7 +1481,7 @@ impl Steps {
                 None,
                 &[],
                 sine_ramp(),
-                &[],
+                synth_engine_v2::node::kernels::NodeResources::default(),
             );
             black_box(&io);
         }
@@ -1495,7 +1531,7 @@ fn assert_shape_a_is_the_compiled_plan(plan: &CompiledPlan) {
          its own, and the compiler produced {buffers}"
     );
     // Kind, written slot, and the binding of each input — in schedule order.
-    let expected: [(&str, usize, [Option<&str>; MAX_INPUTS]); 5] = [
+    let expected: [(&str, usize, [Option<&str>; 2]); 5] = [
         ("Sine", 0, [None, None]),
         ("Filter", 0, [Some("InPlace"), None]),
         ("Envelope", 1, [None, None]),
@@ -1947,4 +1983,8 @@ fn main() {
         "carry_indexed_vs_chunked_paired_percent,{:.2}",
         paired_ratio(3, 1)
     );
+}
+
+fn padded<const N: usize>(items: [InputBuffer<'_>; N]) -> [InputBuffer<'_>; MAX_INPUTS] {
+    std::array::from_fn(|index| items.get(index).copied().unwrap_or(InputBuffer::Unpatched))
 }

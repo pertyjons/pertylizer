@@ -803,6 +803,7 @@ fn the_kernel_alone_plays_from_the_on_edge() {
         controls: &controls,
         ramps: &ramps,
         samples: &samples,
+        scripts: crate::script::ScriptResources::default(),
     };
     sampler(&prepared, &mut state, &mut io);
     // The velocity control is decoded and applied: at sensitivity one the scale is `v`.

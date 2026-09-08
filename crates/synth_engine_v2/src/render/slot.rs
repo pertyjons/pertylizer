@@ -68,6 +68,13 @@ pub(crate) struct SlotState {
 }
 
 impl SlotState {
+    pub(crate) const fn base(&self) -> ParameterValue {
+        self.base
+    }
+    pub(crate) fn automated(&self) -> ParameterValue {
+        self.override_value.unwrap_or(self.base)
+    }
+
     /// A slot at rest: base in place, no override, the law's identity as its sum, and the
     /// segment standing on the base with nothing remaining.
     pub(crate) fn prepared(
@@ -264,6 +271,7 @@ impl ParameterUnit {
     /// exactly that reason.
     pub(crate) fn hold_to_domain(self, value: f32) -> f32 {
         match self {
+            Self::ScriptScalar(range) => value.max(range.minimum()).min(range.maximum()),
             Self::NormalizedLevel => value.clamp(0.0, 1.0),
             Self::BipolarLevel => value.clamp(-1.0, 1.0),
             // A duration cannot be negative; a corner or a quality with no usable filter is

@@ -329,8 +329,8 @@ fn prepared_data_is_shared_and_state_is_per_instance() {
             .iter()
             .all(|t| t.instances.get() == 4)
     );
-    // The prepared row does not grow with voices; the mutable row does, and preparation
-    // holds exactly what it charges.
+    // Prepared DSP data stays shared; each scheduled instance owns its immutable
+    // input bindings and mutable state, and the report charges those separately.
     let one = compile(&voice(1), &RenderConfig::new(profile()));
     let requested = |outcome: &crate::compile::CompileOutcome, field| match outcome
         .report()
@@ -343,13 +343,13 @@ fn prepared_data_is_shared_and_state_is_per_instance() {
     let prepared_one = requested(&one, ResourceField::PreparedImmutableBytes);
     let prepared_four = requested(&outcome, ResourceField::PreparedImmutableBytes);
     let node_records_one = 3_u64;
-    // Four inserted sum steps add their own prepared records and nothing else.
+    // Four sum steps add prepared records; every added instance adds its bindings.
     assert_eq!(
         prepared_four - prepared_one,
-        4 * crate::node::prepared_bytes_per_node(),
-        "prepared memory grew by more than the sum's own records"
+        4 * crate::node::prepared_bytes_per_node()
+            + (node_records as u64 - node_records_one) * crate::plan::NodeStep::input_bytes(),
+        "prepared memory differs from shared DSP records plus per-step input bindings"
     );
-    let _ = node_records_one;
     let mutable_one = requested(&one, ResourceField::MutableStateBytes);
     let mutable_four = requested(&outcome, ResourceField::MutableStateBytes);
     assert!(

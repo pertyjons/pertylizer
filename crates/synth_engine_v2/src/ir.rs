@@ -162,6 +162,8 @@ impl std::fmt::Display for IrObject {
 /// still valid audio and which no listening test would catch.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum IrNodeKind {
+    /// An off-thread compiled control program with its own declared interface.
+    Script { program: crate::script::ScriptRef },
     /// A controller held at quantum rate, available as a modulation source.
     Controller {
         /// Which controller the source represents.
@@ -952,6 +954,14 @@ impl Default for PlanDeclarations {
 /// An IR that could not be assembled.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
 pub enum IrError {
+    #[error("{node} script resource does not belong to its authored node")]
+    ScriptResource { node: NodeId },
+    #[error("{node} script source at {span:?}: {reason}")]
+    ScriptBinding {
+        node: NodeId,
+        span: synth_script::span::Span,
+        reason: crate::script::ScriptBindingFault,
+    },
     /// Two nodes claim one identity.
     #[error("{id} is declared twice")]
     DuplicateNode {
@@ -1106,6 +1116,8 @@ pub struct GraphIr {
     maps: Vec<SampleMap>,
     /// The modulation edges, in the order they were connected (`SOUND-INV-027`).
     modulations: Vec<IrModulation>,
+    scripts: Vec<crate::script::ScriptProgram>,
+    prepass_nodes: std::collections::BTreeMap<NodeId, ModulationId>,
 }
 
 /// The tuning one execution scope resolves its keys through.
@@ -1144,6 +1156,41 @@ impl ScopeTuning {
 }
 
 impl GraphIr {
+    fn slot_bytes(&self, kind: IrNodeKind) -> u64 {
+        self.descriptor(kind).map_or(0, |descriptor| {
+            let mut bytes = crate::node::control_slot_bytes(&descriptor.controls);
+            if !self.scripts.is_empty() {
+                bytes = bytes.saturating_add(
+                    (descriptor
+                        .controls
+                        .iter()
+                        .filter(|c| c.law.admits_writes())
+                        .count() as u64)
+                        .saturating_mul(size_of::<crate::script::ParameterLayers>() as u64),
+                );
+            }
+            bytes
+        })
+    }
+    pub(crate) fn script_bytes(&self) -> u64 {
+        self.scripts.iter().fold(0u64, |total, program| {
+            total.saturating_add(program.prepared_bytes())
+        })
+    }
+    pub(crate) fn voice_script_slots(&self) -> (SlotCount, IrObject) {
+        let mut count = 0u32;
+        let mut object = IrObject::Plan;
+        for node in &self.nodes {
+            if node.scope() == ExecutionScope::Voice
+                && matches!(node.kind(), IrNodeKind::Script { .. })
+            {
+                count = count.saturating_add(1);
+                object = IrObject::Node(node.id());
+            }
+        }
+        (SlotCount::measured(count), object)
+    }
+
     /// An empty plan.
     ///
     /// Not a degenerate case to be rejected: the Phase 1 exit gate requires an
@@ -1162,9 +1209,43 @@ impl GraphIr {
             samples: Vec::new(),
             maps: Vec::new(),
             modulations: Vec::new(),
+            scripts: Vec::new(),
             next_edge: 0,
             next_modulation: 0,
         }
+    }
+
+    /// Script resources referenced by this graph's script nodes.
+    pub fn scripts(&self) -> &[crate::script::ScriptProgram] {
+        &self.scripts
+    }
+
+    pub(crate) fn script_program(
+        &self,
+        reference: crate::script::ScriptRef,
+    ) -> Option<&crate::script::ScriptProgram> {
+        self.scripts.get(reference.index())
+    }
+
+    pub(crate) fn descriptor(&self, kind: IrNodeKind) -> Option<crate::node::NodeDescriptor> {
+        match kind {
+            IrNodeKind::Script { program } => self
+                .script_program(program)
+                .map(crate::script::ScriptProgram::descriptor),
+            _ => crate::node::descriptor(kind),
+        }
+    }
+
+    /// The interface of one installed node, including program-specific script parameters.
+    pub fn ports_of(
+        &self,
+        kind: IrNodeKind,
+        stream: crate::quantities::ChannelLayout,
+    ) -> Vec<crate::validate::PortSpec> {
+        if matches!(kind, IrNodeKind::Script { .. }) {
+            return self.descriptor(kind).map_or_else(Vec::new, |d| d.ports);
+        }
+        crate::node::ports(kind, stream)
     }
 
     /// The modulation edges, in the order they were connected.
@@ -1172,13 +1253,16 @@ impl GraphIr {
         &self.modulations
     }
 
-    /// Whether `node` is read by a modulation edge, and so is a modulator the renderer
-    /// evaluates before the quantum's positioned writes are placed (`SOUND-INV-027`).
+    /// A modulation edge whose dependency closure contains this node.
+    #[must_use]
+    pub(crate) fn prepass_modulation(&self, node: NodeId) -> Option<ModulationId> {
+        self.prepass_nodes.get(&node).copied()
+    }
+
+    /// Whether this node belongs to a modulation source's transitive cable dependencies.
     #[must_use]
     pub fn is_modulation_source(&self, node: NodeId) -> bool {
-        self.modulations
-            .iter()
-            .any(|modulation| modulation.source().0 == node)
+        self.prepass_nodes.contains_key(&node)
     }
 
     /// The scope a node runs in, where the plan declares the node.
@@ -1221,13 +1305,11 @@ impl GraphIr {
             let Some(declared) = self.node(*node) else {
                 return total;
             };
-            let sample_positioned =
-                crate::node::descriptor(declared.kind()).is_some_and(|descriptor| {
-                    descriptor.controls.iter().any(|spec| {
-                        spec.parameter == *parameter
-                            && spec.rate == crate::plan::ControlRate::Sample
-                    })
-                });
+            let sample_positioned = self.descriptor(declared.kind()).is_some_and(|descriptor| {
+                descriptor.controls.iter().any(|spec| {
+                    spec.parameter == *parameter && spec.rate == crate::plan::ControlRate::Sample
+                })
+            });
             if !sample_positioned {
                 return total;
             }
@@ -1308,10 +1390,16 @@ impl GraphIr {
     /// one record of the widest variant. The **contributor** is therefore the node that
     /// sets that width, not one that carries more records than the others.
     pub fn prepared_bytes(&self, inserted: u64) -> (PreparedBytes, IrObject) {
-        self.aggregate_bytes(
+        let (records, owner) = self.aggregate_bytes(
             crate::node::prepared_bytes_per_node(),
             crate::node::prepared_payload_bytes,
             inserted,
+        );
+        let inputs = u64::from(self.state_records(inserted).get())
+            .saturating_mul(crate::plan::NodeStep::input_bytes());
+        (
+            PreparedBytes::measured(records.get().saturating_add(inputs)),
+            owner,
         )
     }
 
@@ -1446,7 +1534,7 @@ impl GraphIr {
                     summaries.len() - 1
                 }
             };
-            let Some(descriptor) = crate::node::descriptor(node.kind()) else {
+            let Some(descriptor) = self.descriptor(node.kind()) else {
                 continue;
             };
             let Some(summary) = summaries.get_mut(index) else {
@@ -1488,10 +1576,7 @@ impl GraphIr {
         // what the renderer allocates one of per voice instance (`P06-S001`).
         let (_, dominant) = self.aggregate_bytes(
             crate::node::state_bytes_per_node(),
-            |kind| {
-                crate::node::state_payload_bytes(kind)
-                    .saturating_add(crate::node::slot_payload_bytes(kind))
-            },
+            |kind| crate::node::state_payload_bytes(kind).saturating_add(self.slot_bytes(kind)),
             inserted,
         );
         let records = u64::from(self.state_records(inserted).get());
@@ -1499,7 +1584,7 @@ impl GraphIr {
         // The slots and buffers of a voice-scope node exist once per instance: voice-local
         // parameter state, one row per instance of each control.
         let slots = self.nodes.iter().fold(0_u64, |total, node| {
-            let per_instance = crate::node::slot_payload_bytes(node.kind());
+            let per_instance = self.slot_bytes(node.kind());
             let instances = if node.scope() == ExecutionScope::Voice {
                 voices
             } else {
@@ -1544,7 +1629,7 @@ impl GraphIr {
     pub fn sample_positioned_fan_out(&self) -> VoiceCount {
         let fans_out = self.nodes.iter().any(|node| {
             node.scope() == ExecutionScope::Voice
-                && crate::node::descriptor(node.kind()).is_some_and(|descriptor| {
+                && self.descriptor(node.kind()).is_some_and(|descriptor| {
                     descriptor.controls.iter().any(|spec| {
                         spec.rate == crate::plan::ControlRate::Sample && spec.law.admits_writes()
                     })
@@ -1571,8 +1656,7 @@ impl GraphIr {
             .nodes
             .iter()
             .filter(|node| {
-                node.scope() == ExecutionScope::Voice
-                    && crate::node::descriptor(node.kind()).is_some()
+                node.scope() == ExecutionScope::Voice && self.descriptor(node.kind()).is_some()
             })
             .count();
         let sums = crate::compile::voice_sum_sources(self).len();
@@ -1645,7 +1729,7 @@ impl GraphIr {
     fn aggregate_bytes(
         &self,
         per_node: u64,
-        payload: fn(IrNodeKind) -> u64,
+        payload: impl Fn(IrNodeKind) -> u64,
         inserted: u64,
     ) -> (PreparedBytes, IrObject) {
         let records = u64::from(self.scheduled_records(inserted).get());
@@ -1764,11 +1848,32 @@ pub struct GraphIrBuilder {
     samples: Vec<PreparedSample>,
     maps: Vec<SampleMap>,
     modulations: Vec<IrModulation>,
+    scripts: Vec<crate::script::ScriptProgram>,
     next_edge: u32,
     next_modulation: u32,
 }
 
 impl GraphIrBuilder {
+    /// Install an immutable script and its signal dependency edges.
+    pub fn script(mut self, program: crate::script::ScriptProgram, scope: ExecutionScope) -> Self {
+        let reference = crate::script::ScriptRef::new(self.scripts.len());
+        let id = program.node();
+        self.nodes.push(IrNode::new(
+            id,
+            IrNodeKind::Script { program: reference },
+            scope,
+        ));
+        for (port, (source, source_port)) in program.signals().enumerate() {
+            self = self.connect(
+                (source, source_port),
+                (id, PortId::new(u16::try_from(port).unwrap_or(u16::MAX))),
+                SignalDomain::Control,
+            );
+        }
+        self.scripts.push(program);
+        self
+    }
+
     /// Add a node.
     pub fn node(mut self, id: NodeId, kind: IrNodeKind, scope: ExecutionScope) -> Self {
         self.nodes.push(IrNode::new(id, kind, scope));
@@ -1844,12 +1949,65 @@ impl GraphIrBuilder {
     /// earlier one and every edge against every node, which is quadratic in a plan the
     /// profile admits. Hashing here is free of consequence — nothing in this function
     /// runs on the audio thread — and the map is dropped before the IR is returned.
-    pub fn build(self) -> Result<GraphIr, IrError> {
+    pub fn build(mut self) -> Result<GraphIr, IrError> {
+        let voices = self
+            .declarations
+            .note_producers
+            .iter()
+            .fold(0u32, |count, producer| {
+                count.saturating_add(producer.simultaneous_notes.get())
+            })
+            .max(1);
+        for program in &self.scripts {
+            let instances = self
+                .nodes
+                .iter()
+                .find(|node| node.id() == program.node())
+                .map_or(1, |node| {
+                    if node.scope() == ExecutionScope::Voice {
+                        voices
+                    } else {
+                        1
+                    }
+                });
+            self.declarations
+                .programs
+                .retain(|declared| declared.id() != program.work().id());
+            self.declarations.programs.push(program.work_for(instances));
+        }
         let mut kinds: std::collections::HashMap<NodeId, IrNodeKind> =
             std::collections::HashMap::with_capacity(self.nodes.len());
         for node in &self.nodes {
             if kinds.insert(node.id(), node.kind()).is_some() {
                 return Err(IrError::DuplicateNode { id: node.id() });
+            }
+        }
+        for node in &self.nodes {
+            if let IrNodeKind::Script { program } = node.kind()
+                && !self
+                    .scripts
+                    .get(program.index())
+                    .is_some_and(|program| program.node() == node.id())
+            {
+                return Err(IrError::ScriptResource { node: node.id() });
+            }
+        }
+        for program in &self.scripts {
+            for (input, span) in program.inputs.iter().zip(&program.spans) {
+                if let crate::script::ProgramInput::External(
+                    crate::script::ScriptSource::Signal { node, .. }
+                    | crate::script::ScriptSource::Parameter { node, .. },
+                ) = input
+                    && !kinds.contains_key(node)
+                {
+                    return Err(IrError::ScriptBinding {
+                        node: program.node(),
+                        span: *span,
+                        reason: crate::script::ScriptBindingFault::MissingNode {
+                            source_node: *node,
+                        },
+                    });
+                }
             }
         }
         for edge in &self.edges {
@@ -1937,7 +2095,28 @@ impl GraphIrBuilder {
                 });
             }
         }
+        let mut incoming: std::collections::HashMap<NodeId, Vec<NodeId>> =
+            std::collections::HashMap::new();
+        for edge in &self.edges {
+            incoming.entry(edge.to().0).or_default().push(edge.from().0);
+        }
+        let mut pending: Vec<_> = self
+            .modulations
+            .iter()
+            .rev()
+            .map(|edge| (edge.source().0, edge.id()))
+            .collect();
+        let mut prepass_nodes = std::collections::BTreeMap::new();
+        while let Some((node, modulation)) = pending.pop() {
+            if let std::collections::btree_map::Entry::Vacant(entry) = prepass_nodes.entry(node) {
+                entry.insert(modulation);
+                if let Some(sources) = incoming.get(&node) {
+                    pending.extend(sources.iter().map(|source| (*source, modulation)));
+                }
+            }
+        }
         Ok(GraphIr {
+            prepass_nodes,
             nodes: self.nodes,
             edges: self.edges,
             declarations: self.declarations,
@@ -1945,6 +2124,7 @@ impl GraphIrBuilder {
             samples: self.samples,
             maps: self.maps,
             modulations: self.modulations,
+            scripts: self.scripts,
         })
     }
 }

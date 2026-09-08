@@ -23,6 +23,18 @@ use crate::time::{FrameCount, TimeError};
 /// Why a plan was not admitted.
 #[derive(Debug, Clone, Copy, PartialEq, Error)]
 pub enum CompileError {
+    #[error("{node} script source at {span:?}: {reason}")]
+    ScriptBinding {
+        node: crate::ir::NodeId,
+        span: synth_script::span::Span,
+        reason: crate::script::ScriptBindingFault,
+    },
+    /// An installed script cannot run under this plan.
+    #[error("{node}: {fault}")]
+    Script {
+        node: crate::ir::NodeId,
+        fault: crate::script::ScriptFault,
+    },
     /// An occurrence source outside voice scope would share one value across notes.
     #[error("{node} declares a per-note source in {scope:?}, which is not a voice scope")]
     NoteSourceOutsideVoice {

@@ -31,11 +31,13 @@ simulated-ingress = []
 workspace = true
 
 # The Phase 1 work list fixes this dependency surface: `synth_core` for existing
-# domain newtypes, selected DSP kernels, and nothing else. No GUI, MCP, OSC,
+# domain newtypes and selected DSP kernels. P07-S005 adds the existing off-thread
+# YAMS compiler required by Phase 7. No GUI, MCP, OSC,
 # CPAL, filesystem, or project-loading dependency may appear here — a test in
 # `tests/crate_boundary.rs` reads this manifest and fails if one does.
 [dependencies]
 synth_core = { path = "../synth_core" }
+synth_script = { path = "../synth_script" }
 thiserror = { workspace = true }
 
 # Test-only. The Phase 1 work list fixes this crate's `[dependencies]` surface, and

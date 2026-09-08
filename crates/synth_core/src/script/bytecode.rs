@@ -198,7 +198,13 @@ pub fn safe_clamp(v: f32, lo: f32, hi: f32) -> f32 {
     let lo = if lo.is_nan() { f32::NEG_INFINITY } else { lo };
     let hi = if hi.is_nan() { f32::INFINITY } else { hi };
     let (lo, hi) = if lo <= hi { (lo, hi) } else { (hi, lo) };
-    v.clamp(lo, hi)
+    if v < lo {
+        lo
+    } else if v > hi {
+        hi
+    } else {
+        v
+    }
 }
 
 /// One bytecode instruction. Operand-stack conventions are noted per variant;

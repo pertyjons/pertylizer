@@ -136,7 +136,9 @@ pub(crate) fn compile_with(
         profile,
         arena_upper_bound(ir, profile),
         inserted_records_upper_bound(ir, profile),
-        ir.tuning_bytes().saturating_add(ir.sample_bytes()),
+        ir.tuning_bytes()
+            .saturating_add(ir.sample_bytes())
+            .saturating_add(ir.script_bytes()),
     )
     .with_estimated_arena();
 
@@ -177,7 +179,9 @@ pub(crate) fn compile_with(
         profile,
         lowered.arena_samples() as u64,
         lowered.inserted as u64,
-        ir.tuning_bytes().saturating_add(ir.sample_bytes()),
+        ir.tuning_bytes()
+            .saturating_add(ir.sample_bytes())
+            .saturating_add(ir.script_bytes()),
     );
 
     // The field scan runs **whatever else is wrong**, because it is also what collects
@@ -192,7 +196,21 @@ pub(crate) fn compile_with(
 
     let plan = match refusal {
         Some(error) => Err(error),
-        None => Ok(lowered.into_plan(profile, ir.declarations())),
+        None => {
+            let mut plan = lowered.into_plan(profile, ir.declarations());
+            match ir
+                .scripts()
+                .iter()
+                .map(|program| program.prepare(ir, &plan))
+                .collect::<Result<Vec<_>, _>>()
+            {
+                Ok(scripts) => {
+                    plan.install_scripts(scripts);
+                    Ok(plan)
+                }
+                Err(error) => Err(error),
+            }
+        }
     };
 
     CompileOutcome {
@@ -804,15 +822,13 @@ fn build_rows(
     // Over the controls that **admit a write**: `SOUND-INV-023`'s not-modulatable control
     // compiles to no target, so the batch has no row for it and the charge must not either.
     let catch_up = ir.nodes().iter().fold(0_u64, |total, node| {
-        total.saturating_add(
-            crate::node::descriptor(node.kind()).map_or(0, |descriptor| {
-                descriptor
-                    .controls
-                    .iter()
-                    .filter(|control| control.law.admits_writes())
-                    .count()
-            }) as u64,
-        )
+        total.saturating_add(ir.descriptor(node.kind()).map_or(0, |descriptor| {
+            descriptor
+                .controls
+                .iter()
+                .filter(|control| control.law.admits_writes())
+                .count()
+        }) as u64)
     });
     // Plus **one** for ADR-0050 clause 5's boundary mass release, which ADR-0046 clause 6
     // charges to the same share as a single bounded operation rather than as one event per
@@ -988,9 +1004,9 @@ fn push_script_rows(rows: &mut Vec<ResourceRow>, ir: &GraphIr, profile: &HostPro
         emits_at,
     ));
     // `SOUND-INV-027`: a modulation edge into a voice-scope parameter is one Mod Matrix
-    // slot per voice, and the count is admitted against the profile's. The script host
-    // slots stay reported against themselves until a script declares usage; the floor
-    // between the two is validated at profile construction rather than here, as
+    // slot per voice. Installed voice-scope programs consume actual script host slots.
+    // Both counts are admitted; the floor between their capacities is validated at
+    // profile construction rather than here, as
     // `HOST-INV-017` wants the relation declared once.
     let (voice_slots, voice_slots_at) = ir.voice_modulation_slots();
     rows.push(ResourceRow::new(
@@ -999,11 +1015,12 @@ fn push_script_rows(rows: &mut Vec<ResourceRow>, ir: &GraphIr, profile: &HostPro
         ResourceAmount::Slots(script.mod_matrix_slots_per_voice()),
         voice_slots_at,
     ));
+    let (script_slots, script_slots_at) = ir.voice_script_slots();
     rows.push(ResourceRow::new(
         ResourceField::ScriptHostSlotsPerVoice,
+        ResourceAmount::Slots(script_slots),
         ResourceAmount::Slots(script.script_host_slots_per_voice()),
-        ResourceAmount::Slots(script.script_host_slots_per_voice()),
-        IrObject::Plan,
+        script_slots_at,
     ));
 }
 
@@ -1421,7 +1438,7 @@ fn lower(
         let Some(kind) = kinds.get(id).copied() else {
             continue;
         };
-        let Some(descriptor) = node::descriptor(kind) else {
+        let Some(descriptor) = ir.descriptor(kind) else {
             lower_output(
                 ir, profile, validated, warnings, &mut state, &slots, &source_of, *id,
             );
@@ -1519,8 +1536,12 @@ fn lower(
                         None => {
                             let copy = node::copy_descriptor();
                             let copy_prepared = state.prepare(node::prepare_copy());
-                            let (first_sum, region) =
-                                state.schedule(&copy, copy_prepared, [Some(out), None], out_layout);
+                            let (first_sum, region) = state.schedule(
+                                &copy,
+                                copy_prepared,
+                                crate::node::kernels::pair_inputs(Some(out), None),
+                                out_layout,
+                            );
                             state.inserted += 1;
                             instance_groups.push(first_sum);
                             sum_groups.push(first_sum);
@@ -1532,7 +1553,7 @@ fn lower(
                             let _ = state.schedule_into(
                                 &accumulate,
                                 accumulate_prepared,
-                                [Some(out), Some(region)],
+                                crate::node::kernels::pair_inputs(Some(out), Some(region)),
                                 out_layout,
                                 region,
                             );
@@ -1843,7 +1864,7 @@ fn bind_note_magnitudes(
                 continue;
             }
             let (Some(descriptor), Some(slot)) =
-                (node::descriptor(node.kind()), node_slots.get(&node.id()))
+                (ir.descriptor(node.kind()), node_slots.get(&node.id()))
             else {
                 continue;
             };
@@ -1958,7 +1979,12 @@ fn lower_output(
         Some(widening) => {
             let copy = node::copy_descriptor();
             let prepared = state.prepare(node::prepare_copy());
-            let (_, out) = state.schedule(&copy, prepared, [Some(source), None], layout);
+            let (_, out) = state.schedule(
+                &copy,
+                prepared,
+                crate::node::kernels::pair_inputs(Some(source), None),
+                layout,
+            );
             state.inserted += 1;
             // Clause 9's third requirement. The schedule and the buffer count carry the
             // conversion; without this a reader of the outcome would have to infer from

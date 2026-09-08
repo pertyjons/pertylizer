@@ -587,12 +587,22 @@ fn the_reported_tuning_charge_is_what_the_plan_holds() {
     // is exactly one table plus one reference.
     let reached = prepared_bytes(&voice(ExecutionScope::Voice, true));
     let unreached = prepared_bytes(&voice(ExecutionScope::Global, true));
+    let step_bindings = |scope| {
+        plan(&voice(scope, true))
+            .ops()
+            .iter()
+            .filter(|op| matches!(op, synth_engine_v2::plan::PlanOp::Node(_)))
+            .count() as u64
+            * synth_engine_v2::plan::NodeStep::input_bytes()
+    };
     let expected = PreparedTuning::prepared_bytes()
-        + std::mem::size_of::<synth_engine_v2::plan::TuningSlot>() as u64;
+        + std::mem::size_of::<synth_engine_v2::plan::TuningSlot>() as u64
+        + step_bindings(ExecutionScope::Voice)
+        - step_bindings(ExecutionScope::Global);
     assert_eq!(
         reached - unreached,
         expected,
-        "one reachable pitch destination costs one table and one reference"
+        "one reachable pitch destination costs one table and one reference, plus the added voice steps' bindings"
     );
 
     let plan = plan(&voice(ExecutionScope::Voice, true));

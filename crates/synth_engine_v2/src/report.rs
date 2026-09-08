@@ -325,7 +325,7 @@ impl ResourceField {
     ///
     /// `HOST-INV-007` binds the limits a plan can exceed, and its conformance row asks
     /// for one refusal case per such limit — so this predicate has to be exactly the
-    /// set those cases can be written for. Thirty-two fields qualify. The eighteen
+    /// set those cases can be written for. Thirty-four fields qualify. The sixteen
     /// that do not take that refusal fall into seven groups, each excluded for its own
     /// reason:
     ///
@@ -338,8 +338,7 @@ impl ResourceField {
     ///   `analyzer_fft_size`. They bound nothing, so asking which behaviour they take
     ///   is a category error.
     /// - **The capacities a plan does not request**: `forward_event_horizon`, the three
-    ///   queue depths, the two per-voice slot counts whose relation construction
-    ///   validates, and `max_concurrent_retiring_voices`, which is derived so that it
+    ///   queue depths, and `max_concurrent_retiring_voices`, which is derived so that it
     ///   cannot bind. Their rows report the profile's own value, so exceeding is not
     ///   reachable.
     /// - **The advisory cost budget.** `predicted_quantum_cost_ratio` may be exceeded,
@@ -369,7 +368,7 @@ impl ResourceField {
     /// `HOST-INV-007`'s conformance row unsatisfiable: six of the remaining fields
     /// compare a value against itself, and no plan can be built that exceeds one.
     ///
-    /// Eighteen fields are excluded and thirty-two qualify.
+    /// Sixteen fields are excluded and thirty-four qualify; P07-S005 admits actual script host usage.
     #[must_use]
     pub const fn is_admission_checked(self) -> bool {
         !matches!(
@@ -385,7 +384,6 @@ impl ResourceField {
                 | Self::EventEgressCapacity
                 | Self::TelemetryRingFrames
                 | Self::AnalyzerFftSize
-                | Self::ScriptHostSlotsPerVoice
                 | Self::PredictedQuantumCostRatio
                 | Self::MaxEventsPerQuantum
                 | Self::LiveEventShare

@@ -194,7 +194,7 @@ impl<'a> Index<'a> {
         let mut ports = Vec::with_capacity(ir.nodes().len());
         for (slot, node) in ir.nodes().iter().enumerate() {
             position.insert(node.id(), slot);
-            ports.push(crate::node::ports(node.kind(), stream));
+            ports.push(ir.ports_of(node.kind(), stream));
         }
         let mut outgoing = vec![Vec::new(); ir.nodes().len()];
         for (index, edge) in ir.edges().iter().enumerate() {
@@ -347,6 +347,9 @@ pub(crate) fn validate(ir: &GraphIr, stream: ChannelLayout) -> Result<Validated,
         }
     }
 
+    for program in ir.scripts() {
+        program.validate_bindings(ir, stream)?;
+    }
     let index = Index::build(ir, stream);
     let mut conversions = Vec::new();
 
@@ -456,7 +459,7 @@ pub(crate) fn validate(ir: &GraphIr, stream: ChannelLayout) -> Result<Validated,
 
 /// How far from the plan's root a scope runs: the master plan's hierarchy, global outermost
 /// and voice innermost. A modulation may broadcast outward-to-inward and not the reverse.
-const fn scope_depth(scope: ExecutionScope) -> u8 {
+pub(crate) const fn scope_depth(scope: ExecutionScope) -> u8 {
     match scope {
         ExecutionScope::Global => 0,
         ExecutionScope::Bus => 1,
@@ -506,16 +509,14 @@ fn modulations(ir: &GraphIr, index: &Index<'_>) -> Result<(), CompileError> {
         // neither consume a buffer the main walk writes nor a control those writes place.
         let ahead = ir
             .node(source_node)
-            .and_then(|node| crate::node::descriptor(node.kind()));
+            .and_then(|node| ir.descriptor(node.kind()));
         let runs_ahead = ahead.as_ref().is_some_and(|descriptor| {
-            descriptor
-                .ports
+            descriptor.ports.iter().all(|port| {
+                port.direction() == PortDirection::Output || port.domain() == SignalDomain::Control
+            }) && descriptor
+                .controls
                 .iter()
-                .all(|port| port.direction() == PortDirection::Output)
-                && descriptor
-                    .controls
-                    .iter()
-                    .all(|spec| spec.rate == crate::plan::ControlRate::Quantum)
+                .all(|spec| spec.rate == crate::plan::ControlRate::Quantum)
         });
         if !runs_ahead {
             return Err(CompileError::ModulationSourceNotAhead {
@@ -538,7 +539,7 @@ fn modulations(ir: &GraphIr, index: &Index<'_>) -> Result<(), CompileError> {
         }
         let Some(spec) = ir
             .node(target_node)
-            .and_then(|node| crate::node::descriptor(node.kind()))
+            .and_then(|node| ir.descriptor(node.kind()))
             .and_then(|descriptor| {
                 descriptor
                     .controls
@@ -585,6 +586,40 @@ fn modulations(ir: &GraphIr, index: &Index<'_>) -> Result<(), CompileError> {
             });
         }
     }
+    for node in ir
+        .nodes()
+        .iter()
+        .filter(|node| ir.is_modulation_source(node.id()))
+    {
+        let ahead = ir.descriptor(node.kind()).is_some_and(|descriptor| {
+            descriptor.ports.iter().all(|port| {
+                port.direction() == PortDirection::Output || port.domain() == SignalDomain::Control
+            }) && descriptor
+                .controls
+                .iter()
+                .all(|spec| spec.rate == crate::plan::ControlRate::Quantum)
+        });
+        let outside = node.scope() == ExecutionScope::Voice
+            && ir.edges().iter().any(|edge| {
+                edge.from().0 == node.id()
+                    && ir.scope_of(edge.to().0) != Some(ExecutionScope::Voice)
+            });
+        if let Some(modulation) = ir.prepass_modulation(node.id()) {
+            if !ahead {
+                return Err(CompileError::ModulationSourceNotAhead {
+                    modulation,
+                    node: node.id(),
+                });
+            }
+            if outside {
+                return Err(CompileError::ModulationSourceReadOutsideScope {
+                    modulation,
+                    node: node.id(),
+                });
+            }
+        }
+    }
+
     Ok(())
 }
 
@@ -707,6 +742,19 @@ fn topological_order(index: &Index<'_>) -> Result<Vec<NodeId>, CompileError> {
                     };
                     match marks.get(successor_slot).copied().unwrap_or(Mark::Done) {
                         Mark::OnStack => {
+                            if let Some(start) =
+                                stack.iter().position(|(at, _)| *at == successor_slot)
+                            {
+                                let cycle: Vec<_> = stack[start..]
+                                    .iter()
+                                    .filter_map(|(at, _)| {
+                                        ir.nodes().get(*at).map(crate::ir::IrNode::id)
+                                    })
+                                    .collect();
+                                if let Some(error) = crate::script::cycle_diagnostic(ir, &cycle) {
+                                    return Err(error);
+                                }
+                            }
                             let nodes =
                                 NodeCount::measured(u32::try_from(stack.len()).unwrap_or(u32::MAX));
                             return Err(match dependency {

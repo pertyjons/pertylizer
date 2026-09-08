@@ -327,7 +327,8 @@ fn a_widened_signal_is_copied_by_a_scheduled_kernel() {
 fn a_declared_kind_appears_in_the_registry_only_by_deferring_to_its_declaration() {
     // The variant as it is spelled in a pattern — fieldless kinds have no `{ .. }` — and
     // the declaration constant it forwards to.
-    const DECLARED: [(&str, &str); 13] = [
+    const DECLARED: [(&str, &str); 14] = [
+        ("Script { .. }", "SCRIPT"),
         ("Lfo { .. }", "LFO"),
         ("Saw { .. }", "SAW"),
         ("VelocityScaler { .. }", "VELOCITY_SCALER"),
@@ -435,6 +436,31 @@ fn discovery_and_validation_describe_the_same_ports() {
 
     let sample = |id: NodeKindId| -> IrNodeKind {
         match id {
+            NodeKindId::Script => {
+                let mut identity = synth_engine_v2::script::ScriptIdentity::new(
+                    NodeId::new(999),
+                    synth_engine_v2::script::ScriptStateId::new(1),
+                    synth_engine_v2::script::ProjectSeed::new(1),
+                );
+                let program = identity
+                    .compile_control(
+                        "out = 0",
+                        synth_engine_v2::quantities::SampleRate::new(48000.0).expect("rate"),
+                        &[],
+                    )
+                    .expect("program");
+                GraphIr::builder()
+                    .script(
+                        program,
+                        synth_engine_v2::ir::ExecutionScope::InstrumentInstance,
+                    )
+                    .build()
+                    .expect("IR")
+                    .nodes()
+                    .first()
+                    .expect("node")
+                    .kind()
+            }
             NodeKindId::ModWheel => IrNodeKind::Controller {
                 kind: synth_engine_v2::controller::ControllerKind::ModWheel,
             },
@@ -514,7 +540,7 @@ fn discovery_and_validation_describe_the_same_ports() {
     let entries = catalog();
     assert_eq!(
         entries.len(),
-        21,
+        22,
         "every kind but the output node is discoverable"
     );
     for entry in entries {

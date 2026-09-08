@@ -289,6 +289,7 @@ impl Hand {
                 controls: &[held_gate()],
                 ramps: &[],
                 samples: &[],
+                scripts: synth_engine_v2::script::ScriptResources::default(),
             },
         );
     }
@@ -313,6 +314,7 @@ impl Hand {
                 controls: &[],
                 ramps: sine_ramp(),
                 samples: &[],
+                scripts: synth_engine_v2::script::ScriptResources::default(),
             },
         );
         filter(
@@ -321,11 +323,12 @@ impl Hand {
             &mut NodeIo {
                 out: &mut self.audio,
                 channels: synth_engine_v2::quantities::ChannelLayout::Mono,
-                inputs: [InputBuffer::InPlace, InputBuffer::Unpatched],
+                inputs: padded([InputBuffer::InPlace, InputBuffer::Unpatched]),
                 position: None,
                 controls: &[],
                 ramps: &[],
                 samples: &[],
+                scripts: synth_engine_v2::script::ScriptResources::default(),
             },
         );
         envelope(
@@ -339,6 +342,7 @@ impl Hand {
                 controls: &[],
                 ramps: &[],
                 samples: &[],
+                scripts: synth_engine_v2::script::ScriptResources::default(),
             },
         );
         amplifier(
@@ -347,11 +351,12 @@ impl Hand {
             &mut NodeIo {
                 out: &mut self.audio,
                 channels: synth_engine_v2::quantities::ChannelLayout::Mono,
-                inputs: [InputBuffer::InPlace, InputBuffer::Patched(&self.control)],
+                inputs: padded([InputBuffer::InPlace, InputBuffer::Patched(&self.control)]),
                 position: None,
                 controls: &[],
                 ramps: &[],
                 samples: &[],
+                scripts: synth_engine_v2::script::ScriptResources::default(),
             },
         );
         // The plan's last operation, which the renderer performs and which a hand-written
@@ -392,7 +397,7 @@ impl Table {
             .ops()
             .iter()
             .filter_map(|op| match op {
-                PlanOp::Node(step) => Some(*step),
+                PlanOp::Node(step) => Some(step.clone()),
                 PlanOp::Output { .. } | PlanOp::Modulate(_) => None,
             })
             .collect();
@@ -468,6 +473,7 @@ impl Table {
                         controls: &[held_gate()],
                         ramps: &[],
                         samples: &[],
+                        scripts: synth_engine_v2::script::ScriptResources::default(),
                     },
                 );
             }
@@ -499,7 +505,7 @@ impl Table {
                 None,
                 &[],
                 sine_ramp(),
-                &[],
+                synth_engine_v2::node::kernels::NodeResources::default(),
             );
             black_box(&io);
         }
@@ -526,7 +532,7 @@ impl Table {
                 None,
                 &[],
                 sine_ramp(),
-                &[],
+                synth_engine_v2::node::kernels::NodeResources::default(),
             ) else {
                 continue;
             };
@@ -574,7 +580,7 @@ impl Table {
                 None,
                 &[],
                 sine_ramp(),
-                &[],
+                synth_engine_v2::node::kernels::NodeResources::default(),
             ) else {
                 continue;
             };
@@ -603,7 +609,7 @@ impl Table {
                 None,
                 &[],
                 sine_ramp(),
-                &[],
+                synth_engine_v2::node::kernels::NodeResources::default(),
             ) else {
                 continue;
             };
@@ -986,4 +992,8 @@ fn main() {
     println!("binding_paired_nanoseconds,{binding:.2}");
     println!("walk_share_of_direct_percent,{walk:.2}");
     println!("direct_vs_fused_percent,{node_boundaries:.2}");
+}
+
+fn padded<const N: usize>(items: [InputBuffer<'_>; N]) -> [InputBuffer<'_>; MAX_INPUTS] {
+    std::array::from_fn(|index| items.get(index).copied().unwrap_or(InputBuffer::Unpatched))
 }

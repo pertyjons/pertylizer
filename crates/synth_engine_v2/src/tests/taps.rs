@@ -59,7 +59,7 @@ fn a_tap_exists_only_through_a_declaration_and_names_the_node_and_port() {
             .ops()
             .iter()
             .find_map(|op| match op {
-                crate::plan::PlanOp::Node(step) if step.node() == tap.node => Some(*step),
+                crate::plan::PlanOp::Node(step) if step.node() == tap.node => Some(step),
                 _ => None,
             })
             .expect("every instance is scheduled");
@@ -92,7 +92,7 @@ fn a_tap_exists_only_through_a_declaration_and_names_the_node_and_port() {
         .ops()
         .iter()
         .filter_map(|op| match op {
-            crate::plan::PlanOp::Node(step) if step.node() == tap.node => Some(*step),
+            crate::plan::PlanOp::Node(step) if step.node() == tap.node => Some(step),
             _ => None,
         })
         .next()
@@ -152,6 +152,7 @@ fn the_monitor_kernel_passes_its_input_through_in_every_input_state() {
             controls: &[],
             ramps: &[],
             samples: &[],
+            scripts: crate::script::ScriptResources::default(),
         };
         monitor(&PreparedNode::Copy, &mut NodeState::Stateless, &mut io);
         out

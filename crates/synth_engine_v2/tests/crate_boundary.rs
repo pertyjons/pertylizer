@@ -553,7 +553,14 @@ fn the_experimental_crate_reaches_nothing_the_work_list_forbids() {
     // newtypes, selected DSP kernels or module implementations, and no GUI, MCP, OSC,
     // CPAL, filesystem, or project-loading dependency. `thiserror` is the repository's
     // mandated error-derive crate.
-    let allowed = ["synth_core", "synth_dsp", "synth_modules", "thiserror"];
+    // P07-S005 adds the off-thread compiler named by Phase 7; its closure is system-library-free.
+    let allowed = [
+        "synth_core",
+        "synth_dsp",
+        "synth_modules",
+        "synth_script",
+        "thiserror",
+    ];
     for name in &dependencies {
         assert!(
             allowed.contains(&name.as_str()),

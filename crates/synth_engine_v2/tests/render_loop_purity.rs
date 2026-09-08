@@ -44,7 +44,7 @@ use std::path::{Path, PathBuf};
 /// more: it is the only file in the region that **writes back** into a producer's own
 /// storage while the call runs, so an allocation there would be one the producing half
 /// never sees.
-const REGION: [&str; 8] = [
+const REGION: [&str; 12] = [
     "src/render/hot.rs",
     "src/render/slot.rs",
     "src/observe/hot.rs",
@@ -53,6 +53,10 @@ const REGION: [&str; 8] = [
     "src/identity/hot.rs",
     "src/ingress/hot.rs",
     "src/node/kernels.rs",
+    "src/script/hot.rs",
+    "../synth_core/src/script/eval.rs",
+    "../synth_core/src/script/bytecode.rs",
+    "../synth_core/src/hash.rs",
 ];
 
 fn read_region_file(relative: &str) -> String {
@@ -60,11 +64,102 @@ fn read_region_file(relative: &str) -> String {
     std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("cannot read {}: {e}", path.display()))
 }
 
+/// The lint permits one terminal test module, never an arbitrary unscanned suffix.
+fn production_before_terminal_tests(source: &str) -> &str {
+    let Some((production, suffix)) = source.split_once("#[cfg(test)]") else {
+        return source;
+    };
+    let tests = strip_comments(suffix);
+    let body = tests
+        .trim()
+        .strip_prefix("mod tests {")
+        .expect("one test module");
+    let mut depth = 1_u32;
+    for (at, character) in body.char_indices() {
+        match character {
+            '{' => depth += 1,
+            '}' => depth -= 1,
+            _ => {}
+        }
+        if depth == 0 {
+            assert!(
+                body[at + 1..].trim().is_empty(),
+                "production after test module"
+            );
+            return production;
+        }
+    }
+    panic!("unclosed test module");
+}
+
+#[test]
+fn test_module_exclusion_cannot_hide_a_production_suffix() {
+    let source = "fn before() {}\n#[cfg(test)]\nmod tests { fn test() {} }";
+    assert_eq!(production_before_terminal_tests(source), "fn before() {}\n");
+    assert!(
+        std::panic::catch_unwind(|| {
+            production_before_terminal_tests(&format!(
+                "{source}\nfn hidden() {{ std::fs::read(\"x\"); }}"
+            ));
+        })
+        .is_err()
+    );
+}
+
+fn scanned_vm_import(file: &str, item: &str, imported: &str) -> bool {
+    SCANNED_VM_IMPORTS
+        .iter()
+        .any(|(importer, name, prefix, _)| {
+            // Only the two explicit import shapes are accepted; nested paths and aliases
+            // cannot borrow a waiver merely by sharing the final function name.
+            *importer == file
+                && *name == imported
+                && item.strip_prefix(prefix).is_some_and(|rest| {
+                    rest == imported
+                        || rest
+                            .strip_prefix('{')
+                            .and_then(|r| r.strip_suffix('}'))
+                            .is_some_and(|members| {
+                                members.split(',').map(str::trim).any(|m| m == imported)
+                                    && !members.contains("::")
+                                    && !members.contains('{')
+                                    && !members.contains(" as ")
+                            })
+                })
+        })
+}
+
+#[test]
+fn a_vm_import_waiver_requires_the_scanned_origin() {
+    let file = "../synth_core/src/script/eval.rs";
+    assert!(scanned_vm_import(
+        file,
+        "crate::hash::{splitmix64, splitmix64_unit}",
+        "splitmix64"
+    ));
+    for import in [
+        "crate::other::splitmix64",
+        "crate::other::{splitmix64}",
+        "crate::hash::{other::splitmix64}",
+        "crate::hash::{other as splitmix64}",
+    ] {
+        assert!(!scanned_vm_import(file, import, "splitmix64"), "{import}");
+    }
+}
+
 /// Every file in the region, as (name, source).
 fn region_sources() -> Vec<(&'static str, String)> {
     REGION
         .iter()
-        .map(|relative| (*relative, read_region_file(relative)))
+        .map(|relative| {
+            let source = read_region_file(relative);
+            let source = if relative.starts_with("../synth_core/") {
+                production_before_terminal_tests(&source).to_owned()
+            } else {
+                source
+            };
+            (*relative, source)
+        })
         .collect()
 }
 
@@ -122,6 +217,18 @@ fn the_render_loop_takes_no_lock_and_performs_no_io_or_logging() {
         for (line_number, line) in code_lines(&source) {
             for (needle, why) in forbidden {
                 if line.contains(needle) {
+                    // Match the File type token, not the suffix of the VM's RegisterFile.
+                    if needle == "File::"
+                        && !line.match_indices(needle).any(|(at, _)| {
+                            at == 0
+                                || !line[..at]
+                                    .chars()
+                                    .next_back()
+                                    .is_some_and(|c| c.is_alphanumeric() || c == '_')
+                        })
+                    {
+                        continue;
+                    }
                     found.push(format!(
                         "{file}:{line_number} contains `{needle}` ({why}): {line}"
                     ));
@@ -165,6 +272,15 @@ fn the_render_loop_contains_no_allocating_construct() {
         for (line_number, line) in code_lines(&source) {
             for needle in forbidden {
                 if line.contains(needle) {
+                    // The VM's Stack is a fixed [f32; MAX_STACK], checked before indexing.
+                    // These receivers are never growable collections; the allocation test
+                    // also arms before the VM's first evaluation.
+                    if file == "../synth_core/src/script/eval.rs"
+                        && needle == ".push("
+                        && (line.contains("stack.push(") || line.starts_with("s.push("))
+                    {
+                        continue;
+                    }
                     found.push(format!("{file}:{line_number} contains `{needle}`: {line}"));
                 }
             }
@@ -406,7 +522,7 @@ fn every_call_the_render_loop_makes_is_inside_the_checked_region() {
     // module compiles its modulation seam for tests only, until Phase 7 gives it a caller.
     let syntax = [
         "if", "while", "for", "match", "return", "loop", "else", "fn", "let", "move", "pub",
-        "derive", "cfg",
+        "derive", "cfg", "allow",
     ];
 
     // `std` on slices, `Option`, iterators and primitives: bounds-checked accessors,
@@ -415,6 +531,30 @@ fn every_call_the_render_loop_makes_is_inside_the_checked_region() {
     // loop indexes without panicking, and `sort_unstable_by_key` is the non-allocating
     // sort where `sort_by_key` would allocate.
     let std_calls = [
+        // VM scalar math and bounded iterator traversal; no allocator or fallible index.
+        "any",
+        "rev",
+        "wrapping_add",
+        "wrapping_mul",
+        "is_nan",
+        "ceil",
+        "trunc",
+        "sqrt",
+        "exp",
+        "ln",
+        "cos",
+        "atan",
+        "atan2",
+        "tanh",
+        // Immutable script table/range accessors and identity mixing through the scanned
+        // splitmix64. lerp is synth_core's arithmetic interpolation on f32; f is the
+        // VM binop's closed inline arithmetic closure, called only from run's opcode arms.
+        "prepared_scripts",
+        "minimum",
+        "maximum",
+        "for_voice",
+        "lerp",
+        "f",
         "get",
         "get_mut",
         // `Result::is_ok` and `Result::is_err`: a discriminant read on a value the caller
@@ -943,6 +1083,9 @@ fn the_render_loop_imports_no_free_function() {
                 if last.is_empty() || last == "self" || last == "super" || last == "crate" {
                     continue;
                 }
+                if scanned_vm_import(file, rest, last) {
+                    continue;
+                }
                 // A glob is worse than a lowercase name: it brings in whatever the other
                 // module has, including free functions whose names collide with the
                 // accessors the call scan allows. A **region module** is the exception,
@@ -996,7 +1139,7 @@ fn the_render_loop_imports_no_free_function() {
 /// them. Adding a name here without adding its file to [`REGION`] would be the whole
 /// check going quietly hollow, and
 /// [`the_region_modules_are_all_scanned`] is what stops that.
-const REGION_MODULES: [&str; 1] = ["kernels"];
+const REGION_MODULES: [&str; 4] = ["kernels", "hot", "bytecode", "hash"];
 
 #[test]
 fn the_region_modules_are_all_scanned() {
@@ -1409,4 +1552,41 @@ fn the_render_loop_dispatches_every_node_through_one_site() {
          registry did not add:\n  {}",
         named_kernels.join("\n  ")
     );
+}
+
+// The existing VM imports these functions from these exact source files. Their bodies
+// participate in all the same scans; an external helper cannot inherit a name waiver.
+const SCANNED_VM_IMPORTS: [(&str, &str, &str, &str); 4] = [
+    (
+        "../synth_core/src/script/eval.rs",
+        "splitmix64",
+        "crate::hash::",
+        "../synth_core/src/hash.rs",
+    ),
+    (
+        "../synth_core/src/script/eval.rs",
+        "splitmix64_unit",
+        "crate::hash::",
+        "../synth_core/src/hash.rs",
+    ),
+    (
+        "../synth_core/src/script/eval.rs",
+        "finite_or_zero",
+        "crate::script::bytecode::",
+        "../synth_core/src/script/bytecode.rs",
+    ),
+    (
+        "../synth_core/src/script/eval.rs",
+        "safe_div",
+        "crate::script::bytecode::",
+        "../synth_core/src/script/bytecode.rs",
+    ),
+];
+#[test]
+fn the_vm_imports_have_scanned_definitions() {
+    for (importer, name, _, definition) in SCANNED_VM_IMPORTS {
+        assert!(REGION.contains(&importer));
+        assert!(REGION.contains(&definition));
+        assert!(read_region_file(definition).contains(&format!("fn {name}(")));
+    }
 }

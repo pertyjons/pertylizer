@@ -611,6 +611,7 @@ pub struct PreparedRenderer {
     /// composed through the slot at the same index before it reaches node state or a
     /// kernel's control run.
     parameter_slots: Vec<slot::SlotState>,
+    script_values: Vec<crate::script::ParameterLayers>,
     /// `SOUND-INV-024`'s control buffers: one quantum of values per quantum-rate slot,
     /// written by the slot's advance before the schedule walk and read per frame by the
     /// kernel. Sample-positioned slots have none; their writes land as timed controls.
@@ -730,6 +731,29 @@ impl PreparedRenderer {
                 )
             {
                 *state = NodeState::initial(prepared);
+                if let (
+                    crate::node::kernels::PreparedNode::Script { seed: initial, .. },
+                    NodeState::Script {
+                        registers,
+                        seed,
+                        voice,
+                        ..
+                    },
+                ) = (prepared, state)
+                {
+                    let ordinal = plan
+                        .instance_groups()
+                        .iter()
+                        .filter_map(|first| step.node().index().checked_sub(first.index()))
+                        .filter(|offset| *offset < plan.voice_instances().get() as usize)
+                        .min()
+                        .unwrap_or(0);
+                    *voice = crate::script::ScriptVoiceId::new(
+                        u32::try_from(ordinal).unwrap_or(u32::MAX),
+                    );
+                    *seed = initial.for_voice(*voice);
+                    registers.reset(0, seed.as_u64());
+                }
             }
         }
         // One slot per target row, from the row itself, for the same reason.
@@ -858,6 +882,19 @@ impl PreparedRenderer {
             live_notes,
             input_carry: vec![0.0; carry_frames_capacity.saturating_mul(channels)],
             node_states,
+            script_values: parameter_slots
+                .iter()
+                .take(if plan.prepared_scripts().is_empty() {
+                    0
+                } else {
+                    parameter_slots.len()
+                })
+                .map(|slot| crate::script::ParameterLayers {
+                    base: slot.base(),
+                    automated: slot.automated(),
+                    previous: slot.resolved(),
+                })
+                .collect(),
             parameter_slots,
             ramp_buffers,
             ramp_offsets,
@@ -950,6 +987,11 @@ impl PreparedRenderer {
             .saturating_add(self.ramp_buffers.len().saturating_mul(size_of::<f32>()))
             .saturating_add(self.ramp_offsets.len().saturating_mul(size_of::<usize>()))
             .saturating_add(self.modulated.len().saturating_mul(size_of::<bool>()))
+            .saturating_add(
+                self.script_values
+                    .len()
+                    .saturating_mul(size_of::<crate::script::ParameterLayers>()),
+            )
     }
 
     /// One tap's samples as the last rendered quantum left them: the region the tapped
