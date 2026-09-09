@@ -650,12 +650,15 @@ impl ResourceRow {
 pub enum LatencyContributor {
     /// The render quantum's carry buffers.
     RenderQuantumCarry,
+    /// The longest audio path reaching the output, including scheduled compensation.
+    AudioPath,
 }
 
 impl std::fmt::Display for LatencyContributor {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::RenderQuantumCarry => f.write_str("render quantum carry"),
+            Self::AudioPath => f.write_str("audio path"),
         }
     }
 }
@@ -665,9 +668,25 @@ impl std::fmt::Display for LatencyContributor {
 #[must_use]
 pub struct LatencyAccounting {
     contributors: Vec<(LatencyContributor, FrameCount)>,
+    paths: Option<crate::latency::PathLatencies>,
 }
 
 impl LatencyAccounting {
+    /// Per-node signal arrival bounds and per-cable compensation.
+    /// `None` means analysis was unavailable (a structural or arithmetic refusal).
+    pub const fn paths(&self) -> Option<&crate::latency::PathLatencies> {
+        self.paths.as_ref()
+    }
+
+    pub(crate) fn with_paths(mut self, paths: crate::latency::PathLatencies) -> Self {
+        if paths.output() != FrameCount::ZERO {
+            self.contributors
+                .push((LatencyContributor::AudioPath, paths.output()));
+        }
+        self.paths = Some(paths);
+        self
+    }
+
     /// Record a contributor.
     pub fn with(mut self, contributor: LatencyContributor, frames: FrameCount) -> Self {
         self.contributors.push((contributor, frames));

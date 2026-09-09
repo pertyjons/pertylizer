@@ -173,6 +173,8 @@ pub const HARD_CLAMP: Kernel = Kernel(hard_clamp);
 pub const DISTORTION: Kernel = Kernel(distortion);
 /// V1's delay insert, mono mode (`SOUND-INV-033`).
 pub const DELAY: Kernel = Kernel(delay);
+/// A declared latency, and the compiler's compensation step (`SOUND-INV-035`).
+pub const LATENCY: Kernel = Kernel(latency);
 /// The low-frequency oscillator's kernel (`SOUND-INV-027`).
 pub const LFO: Kernel = Kernel(lfo);
 /// The bounded, prepared YAMS VM.
@@ -402,6 +404,13 @@ pub enum PreparedNode {
         /// history the renderer hands the kernel holds two of these.
         line: usize,
     },
+    /// A declared latency (`SOUND-INV-035`): the frames its line holds, which is what its
+    /// output lags its input by. Also the compiler's compensation step, prepared with the
+    /// cable's skew.
+    Latency {
+        /// The line's length in frames; zero is a pass-through.
+        frames: usize,
+    },
     /// A two-pole low-pass, as the four coefficients its integrators read.
     ///
     /// The corner frequency and the quality factor are **gone** by this point: they were
@@ -531,6 +540,13 @@ pub enum NodeState {
         tone: f32,
         /// The coefficient in force, that tone's.
         coef: f32,
+    },
+    /// A declared latency's write index (`SOUND-INV-035`); the line is the history.
+    Latency {
+        /// The frame the next input is written at, and the oldest frame is read from.
+        write: usize,
+        /// Frames written since the last logical reset, bounded by the line length.
+        valid: usize,
     },
     /// An LFO's place in its period, in `[0, 1)` (`SOUND-INV-027`). Its rate and depth are
     /// quantum-rate slots and are read from the ramps, so nothing else is kept.
@@ -736,6 +752,7 @@ impl NodeState {
                 tone: tone.as_f32(),
                 coef: delay_high_cut_coefficient(tone.as_f32(), *rate),
             },
+            PreparedNode::Latency { .. } => Self::Latency { write: 0, valid: 0 },
             PreparedNode::Trim { .. } | PreparedNode::SoftClip | PreparedNode::HardClamp => {
                 Self::Stateless
             }
@@ -837,6 +854,7 @@ impl NodeState {
             | Self::Script { .. }
             | Self::Distortion { .. }
             | Self::Delay { .. }
+            | Self::Latency { .. }
             | Self::Stateless => None,
         }
     }
@@ -851,6 +869,7 @@ impl NodeState {
 pub fn history_frames(prepared: &PreparedNode) -> usize {
     match prepared {
         PreparedNode::Delay { line, .. } => *line,
+        PreparedNode::Latency { frames } => *frames,
         _ => 0,
     }
 }
@@ -986,7 +1005,7 @@ pub(crate) fn authored_value(
             DELAY_TONE => Some(ParameterValue::from_level(*tone)),
             _ => None,
         },
-        PreparedNode::SoftClip | PreparedNode::HardClamp => None,
+        PreparedNode::SoftClip | PreparedNode::HardClamp | PreparedNode::Latency { .. } => None,
         PreparedNode::Controller { .. } | PreparedNode::NoteSource => Some(ParameterValue::ZERO),
         PreparedNode::Lfo { rate, depth, .. } => match control {
             LFO_RATE => Some(ParameterValue::from_frequency(*rate)),
@@ -2876,6 +2895,69 @@ pub fn velocity_scaler(_prepared: &PreparedNode, state: &mut NodeState, io: &mut
         }
     }
     *velocity = held;
+}
+
+/// A declared latency as a node, and the compiler's compensation step (`SOUND-INV-035`):
+/// each output frame is the line's oldest frame and the input frame takes its place, so the
+/// output lags the input by exactly the line's length, at the output's width. The line is
+/// the history the renderer keeps for the step; a line of zero frames is the identity.
+/// In-place safe: a frame is read from the line and from its own input before either is
+/// written. A sample-positioned reset — a stolen voice's, where the node runs in the voice
+/// scope — resets the index and valid-frame count in constant time. Old samples are
+/// replaced during normal processing and cannot be read before the line fills again.
+pub fn latency(prepared: &PreparedNode, state: &mut NodeState, io: &mut NodeIo<'_>) {
+    let PreparedNode::Latency { frames: len } = prepared else {
+        return;
+    };
+    let NodeState::Latency { write, valid } = state else {
+        return;
+    };
+    let len = *len;
+    let source = io.inputs[0];
+    if len == 0 {
+        for index in 0..io.out.len() {
+            let input = stage_input(source, io.out, index);
+            if let Some(sample) = io.out.get_mut(index) {
+                *sample = input;
+            }
+        }
+        return;
+    }
+    let channels = io.channels.channels().max(1);
+    let frames = io.out.len() / channels;
+    let mut position = *write;
+    let mut due = 0_usize;
+    for frame in 0..frames {
+        while let Some(control) = io.controls.get(due) {
+            if control.offset.as_usize() != frame {
+                break;
+            }
+            due += 1;
+            if matches!(control.control, ControlIndex::RESET) {
+                *valid = 0;
+                position = 0;
+            }
+        }
+        let kept = position * channels;
+        for channel in 0..channels {
+            let index = frame * channels + channel;
+            let input = stage_input(source, io.out, index);
+            let delayed = match io.history.get_mut(kept + channel) {
+                Some(slot) => {
+                    let oldest = if *valid == len { *slot } else { 0.0 };
+                    *slot = input;
+                    oldest
+                }
+                None => 0.0,
+            };
+            if let Some(sample) = io.out.get_mut(index) {
+                *sample = delayed;
+            }
+        }
+        *valid = valid.saturating_add(1).min(len);
+        position = (position + 1) % len;
+    }
+    *write = position;
 }
 
 /// One buffer copied into another.

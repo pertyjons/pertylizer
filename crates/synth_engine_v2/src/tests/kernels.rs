@@ -749,3 +749,79 @@ fn a_sawtooth_at_a_negative_frequency_stays_bounded() {
         "the phase wraps in both directions, so it cannot walk out of range"
     );
 }
+
+#[test]
+fn a_latency_reset_invalidates_history_without_clearing_the_line() {
+    use crate::node::kernels::{ControlIndex, latency};
+    let prepared = PreparedNode::Latency { frames: 1_000_000 };
+    let mut state = NodeState::Latency {
+        write: 500,
+        valid: 1_000_000,
+    };
+    let mut history = vec![7.0; 1_000_000];
+    let mut out = [1.0, 2.0];
+    let mut inputs = [InputBuffer::Unpatched; MAX_INPUTS];
+    inputs[0] = InputBuffer::InPlace;
+    let controls = [TimedControl {
+        offset: QuantumOffset::ZERO,
+        control: ControlIndex::RESET,
+        value: ParameterValue::ZERO,
+    }];
+    let allocations = crate::render_allocation::count_allocs(|| {
+        latency(
+            &prepared,
+            &mut state,
+            &mut NodeIo {
+                out: &mut out,
+                channels: crate::quantities::ChannelLayout::Mono,
+                inputs,
+                position: None,
+                controls: &controls,
+                ramps: &[],
+                history: &mut history,
+                samples: &[],
+                scripts: crate::script::ScriptResources::default(),
+            },
+        )
+    });
+    assert_eq!(allocations, 0, "a positioned reset allocates nothing");
+    assert_eq!(out, [0.0, 0.0]);
+    assert_eq!(history[..2], [1.0, 2.0]);
+    assert!(
+        history[2..].iter().all(|sample| *sample == 7.0),
+        "reset must not traverse the line"
+    );
+    assert!(matches!(state, NodeState::Latency { write: 2, valid: 2 }));
+}
+
+#[test]
+fn a_latency_keeps_stereo_order_in_place_and_resets_at_the_positioned_sample() {
+    use crate::node::kernels::{ControlIndex, latency};
+    let prepared = PreparedNode::Latency { frames: 2 };
+    let mut state = NodeState::Latency { write: 0, valid: 2 };
+    let mut history = [1.0, 2.0, 3.0, 4.0];
+    let mut out = [11.0, 12.0, 13.0, 14.0, 15.0, 16.0, 17.0, 18.0];
+    let mut inputs = [InputBuffer::Unpatched; MAX_INPUTS];
+    inputs[0] = InputBuffer::InPlace;
+    let controls = [TimedControl {
+        offset: QuantumOffset::new(1).expect("offset"),
+        control: ControlIndex::RESET,
+        value: ParameterValue::ZERO,
+    }];
+    latency(
+        &prepared,
+        &mut state,
+        &mut NodeIo {
+            out: &mut out,
+            channels: crate::quantities::ChannelLayout::Stereo,
+            inputs,
+            position: None,
+            controls: &controls,
+            ramps: &[],
+            history: &mut history,
+            samples: &[],
+            scripts: crate::script::ScriptResources::default(),
+        },
+    );
+    assert_eq!(out, [1.0, 2.0, 0.0, 0.0, 0.0, 0.0, 13.0, 14.0]);
+}

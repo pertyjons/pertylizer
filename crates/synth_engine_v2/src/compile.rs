@@ -139,7 +139,7 @@ pub(crate) fn compile_with(
     // The report a refused plan carries, over the arena size that can be known before an
     // assignment exists. Advisory findings are collected from it on both refusal paths,
     // so a report showing an overrun is never returned with no warning to match.
-    let preflight = build_report(
+    let mut preflight = build_report(
         ir,
         profile,
         arena_upper_bound(ir, profile),
@@ -147,6 +147,8 @@ pub(crate) fn compile_with(
         ir.tuning_bytes()
             .saturating_add(ir.sample_bytes())
             .saturating_add(ir.script_bytes()),
+        None,
+        0,
     )
     .with_estimated_arena();
 
@@ -166,6 +168,43 @@ pub(crate) fn compile_with(
         }
     };
 
+    let paths = match crate::latency::analyze(
+        ir,
+        validated.order(),
+        profile.capabilities().sample_rate(),
+        ir.declarations().compensation,
+    ) {
+        Ok(paths) => paths,
+        Err(error) => {
+            first_refusal(&preflight, &mut warnings, RefuseUpTo::Arena);
+            return CompileOutcome {
+                report: preflight,
+                warnings,
+                plan: Err(error),
+            };
+        }
+    };
+    // Rebuild the preflight with the analysis's inserted records and history. These
+    // rows precede the arena, so omitting compensation can choose the wrong first
+    // refusal (mutable state instead of an earlier immutable-data overrun).
+    let inserted = u64::from(paths.compensation_records().get());
+    preflight = build_report(
+        ir,
+        profile,
+        arena_upper_bound(ir, profile).saturating_add(
+            inserted
+                .saturating_mul(profile.capabilities().channel_layout().channels() as u64)
+                .saturating_mul(u64::from(QUANTUM_FRAMES)),
+        ),
+        inserted_records_upper_bound(ir, profile).saturating_add(inserted),
+        ir.tuning_bytes()
+            .saturating_add(ir.sample_bytes())
+            .saturating_add(ir.script_bytes()),
+        Some(&paths),
+        paths.compensation_history().get(),
+    )
+    .with_estimated_arena();
+
     // Then the limits that do not depend on the arena, so an oversized graph is refused
     // before anything is lowered. Only fields *before* the arena row can be decided
     // here: a later field must not be reported ahead of a scratch overrun the exact
@@ -182,7 +221,7 @@ pub(crate) fn compile_with(
     warnings.retain(|warning| matches!(warning, CompileWarning::AudioScriptWork { .. }));
     warnings.extend_from_slice(validated.warnings());
 
-    let lowered = lower(ir, profile, &validated, &mut warnings, policy);
+    let lowered = lower(ir, profile, &validated, &mut warnings, policy, &paths);
     let report = build_report(
         ir,
         profile,
@@ -191,6 +230,8 @@ pub(crate) fn compile_with(
         ir.tuning_bytes()
             .saturating_add(ir.sample_bytes())
             .saturating_add(ir.script_bytes()),
+        Some(&paths),
+        lowered.compensation_history,
     );
 
     // The field scan runs **whatever else is wrong**, because it is also what collects
@@ -206,7 +247,7 @@ pub(crate) fn compile_with(
     let plan = match refusal {
         Some(error) => Err(error),
         None => {
-            let mut plan = lowered.into_plan(profile, ir.declarations());
+            let mut plan = lowered.into_plan(profile, ir.declarations(), paths);
             match ir
                 .scripts()
                 .iter()
@@ -295,17 +336,27 @@ fn build_report(
     arena_samples: u64,
     inserted_records: u64,
     tuning_bytes: u64,
+    paths: Option<&crate::latency::PathLatencies>,
+    compensation_history: u64,
 ) -> ResourceReport {
+    let mut latency = LatencyAccounting::default()
+        .with(LatencyContributor::RenderQuantumCarry, FrameCount::QUANTUM);
+    if let Some(paths) = paths {
+        latency = latency.with_paths(paths.clone());
+    }
     let (script_work, script_contributor) = ir.script_instructions_per_quantum();
     ResourceReport::new(
-        build_rows(ir, profile, arena_samples, inserted_records, tuning_bytes),
-        LatencyAccounting::default().with(
-            // ADR-0001 clause 7 requires this to be a *named* contributor: a latency
-            // that is implicit is a latency nobody compensates, and its own risk
-            // control is that it must appear in the report ADR-0022 consumes.
-            LatencyContributor::RenderQuantumCarry,
-            FrameCount::QUANTUM,
+        build_rows(
+            ir,
+            profile,
+            arena_samples,
+            inserted_records,
+            tuning_bytes
+                .saturating_add(paths.map_or(0, crate::latency::PathLatencies::prepared_bytes)),
+            compensation_history,
+            paths,
         ),
+        latency,
         ReportedQuantities::new(
             script_work,
             script_contributor,
@@ -573,6 +624,8 @@ fn build_rows(
     arena_samples: u64,
     inserted_records: u64,
     tuning_bytes: u64,
+    compensation_history: u64,
+    paths: Option<&crate::latency::PathLatencies>,
 ) -> Vec<ResourceRow> {
     let capabilities = profile.capabilities();
     let limits = profile.limits();
@@ -593,6 +646,8 @@ fn build_rows(
     };
     let (mutable_bytes, mutable_contributor) =
         ir.mutable_bytes(inserted_records, capabilities.sample_rate());
+    let mutable_bytes =
+        PreparedBytes::measured(mutable_bytes.get().saturating_add(compensation_history));
     let (peak_fan_out, fan_out_contributor) = ir.peak_fan_out();
     // The same count the prepared and mutable rows are over: a node with a kernel, plus
     // whatever the compiler inserted. The renderer allocates one state — and one control
@@ -609,7 +664,15 @@ fn build_rows(
         &declared_note_ranges,
         ir.max_writes_per_note()
             .fanned_out(ir.sample_positioned_fan_out())
-            .widest(ir.steal_expansion()),
+            .widest(crate::quantities::WritesPerNote::at_least(
+                ir.steal_expansion()
+                    .get()
+                    .saturating_add(if ir.declarations().stealing.steals() {
+                        paths.map_or(0, crate::latency::PathLatencies::voice_groups)
+                    } else {
+                        0
+                    }),
+            )),
         ir.modulated_sample_positioned_rows(),
         ir.voice_instances(),
     );
@@ -1187,7 +1250,7 @@ fn push_script_rows(rows: &mut Vec<ResourceRow>, ir: &GraphIr, profile: &HostPro
 /// at `maximum_block_size + Q` frames, and clause 6 primes the output one. The arena is
 /// its **extent** in samples — ADR-0041 clause 13 — rather than a buffer count times the
 /// quantum, because since that record its regions differ in width.
-fn scratch_bytes(
+pub(crate) fn scratch_bytes(
     profile: &HostProfile,
     arena_samples: u64,
     scheduled_records: RecordCount,
@@ -1278,6 +1341,7 @@ struct Lowered {
     regions: Vec<crate::plan::BufferRegion>,
     /// Records the compiler added beyond the authored nodes, for the exact report.
     inserted: usize,
+    compensation_history: u64,
     /// The first node that could not be prepared for this stream, if any.
     ///
     /// Carried out rather than returned early, because a refusal owes a report and the
@@ -1320,7 +1384,12 @@ impl Lowered {
     }
 
     /// Attach the capacities admission copied in.
-    fn into_plan(self, profile: &HostProfile, declarations: &PlanDeclarations) -> CompiledPlan {
+    fn into_plan(
+        self,
+        profile: &HostProfile,
+        declarations: &PlanDeclarations,
+        paths: crate::latency::PathLatencies,
+    ) -> CompiledPlan {
         let capabilities = profile.capabilities();
         // A producer's position in the declaration **is** its `ProducerId`, so the ranges are
         // carried in declaration order and nothing else has to agree on a numbering.
@@ -1371,7 +1440,7 @@ impl Lowered {
             authored_sources,
             compiled_note_producer,
             profile.limits().events().forward_event_horizon(),
-            FrameCount::QUANTUM,
+            paths,
             declarations.stealing,
             self.instance_groups,
             self.sum_groups,
@@ -1485,6 +1554,7 @@ fn lower(
     validated: &Validated,
     warnings: &mut Vec<CompileWarning>,
     policy: ArenaPolicy,
+    paths: &crate::latency::PathLatencies,
 ) -> Lowered {
     let plan_id = issue_plan_id();
     let rate = profile.capabilities().sample_rate();
@@ -1497,6 +1567,13 @@ fn lower(
         states: 0,
     };
     let mut fault = None;
+    let mut compensation_history = 0_u64;
+    let compensation: HashMap<_, _> = paths
+        .edges()
+        .iter()
+        .filter(|edge| edge.compensation() != FrameCount::ZERO)
+        .map(|edge| (edge.edge(), edge.compensation()))
+        .collect();
     let mut parameter_targets = Vec::new();
     let mut parameter_addresses = Vec::new();
     let mut taps: Vec<crate::plan::TapTarget> = Vec::new();
@@ -1702,6 +1779,72 @@ fn lower(
             .find(|port| port.direction() == crate::validate::PortDirection::Output)
             .map_or(ChannelLayout::Mono, |port| port.layout());
 
+        // Resolve every source/widening first, then schedule each compensation cable's
+        // instances contiguously. These groups own reset state just like authored voice
+        // nodes; compensation after a voice sum is shared and receives no steal reset.
+        let mut aligned: HashMap<crate::ir::EdgeId, Vec<BufferSlot>> = HashMap::new();
+        for port in descriptor
+            .ports
+            .iter()
+            .filter(|port| port.direction() == crate::validate::PortDirection::Input)
+        {
+            for (edge, from) in edges_into
+                .get(&(*id, port.id()))
+                .map_or(&[][..], Vec::as_slice)
+            {
+                let Some(frames) = compensation.get(edge) else {
+                    continue;
+                };
+                let mut sources = Vec::with_capacity(instances);
+                for instance in 0..instances {
+                    let source = match voice_slots.get(from) {
+                        Some(per_instance) if in_voice => per_instance.get(instance).copied(),
+                        _ => slots.get(from).copied(),
+                    };
+                    if let Some(source) = source {
+                        sources.push(match converted.get(edge) {
+                            Some(conversion) => {
+                                state.widen(source, port.layout(), *edge, *conversion, warnings)
+                            }
+                            None => source,
+                        });
+                    }
+                }
+                let len = match frames.as_usize() {
+                    Some(len) => len,
+                    None => {
+                        fault = fault.or(Some(CompileError::LatencyUnrepresentable {
+                            node: *id,
+                            frames: *frames,
+                        }));
+                        0
+                    }
+                };
+                let mut buffers = Vec::with_capacity(instances);
+                for source in sources {
+                    let prepared = state.prepare(PreparedNode::Latency { frames: len });
+                    let (slot, buffer) = state.schedule(
+                        &node::latency_descriptor(),
+                        prepared,
+                        crate::node::kernels::pair_inputs(Some(source), None),
+                        port.layout(),
+                    );
+                    if in_voice && buffers.is_empty() {
+                        instance_groups.push(slot);
+                    }
+                    buffers.push(buffer);
+                    state.inserted += 1;
+                    compensation_history = compensation_history.saturating_add(
+                        frames
+                            .as_u64()
+                            .saturating_mul(port.layout().channels() as u64)
+                            .saturating_mul(size_of::<f32>() as u64),
+                    );
+                }
+                aligned.insert(*edge, buffers);
+            }
+        }
+
         // Every instance's inputs are resolved — and any widening scheduled — **before** the
         // first instance step, and every accumulate after the last, so the instance steps
         // occupy contiguous state slots: a parameter target and an instance group address
@@ -1728,6 +1871,14 @@ fn lower(
                     .map_or(&[][..], Vec::as_slice);
                 let mut resolved: Vec<BufferSlot> = Vec::with_capacity(arrivals.len());
                 for (edge, from) in arrivals {
+                    if let Some(buffer) = aligned
+                        .get(edge)
+                        .and_then(|buffers| buffers.get(instance))
+                        .copied()
+                    {
+                        resolved.push(buffer);
+                        continue;
+                    }
                     let buffer = match voice_slots.get(from) {
                         // Only a consumer inside the scope reads a voice-scope source
                         // per instance; one outside it reads what the scope's outside
@@ -2180,6 +2331,7 @@ fn lower(
         ops: state.ops,
         regions: assignment.regions,
         inserted: state.inserted,
+        compensation_history,
         fault,
         prepared_nodes: state.prepared_nodes,
         node_timings: state.node_timings,

@@ -337,6 +337,7 @@ fn two_channels() -> GraphIr {
 /// A plan declaring one of everything the profile bounds, so a lowered limit bites.
 fn declared() -> PlanDeclarations {
     PlanDeclarations {
+        compensation: synth_engine_v2::latency::CompensationPolicy::default(),
         // One compiled producer, holding two notes and no obligations — compiled releases
         // use plan entitlements, so a compiled source declaring a hold is refused outright.
         note_producers: vec![NoteProducerDeclaration {

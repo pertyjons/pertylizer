@@ -1136,7 +1136,7 @@ pub struct CompiledPlan {
     authored_sources: Vec<crate::ir::AuthoredSourceDeclaration>,
     compiled_note_producer: Option<crate::identity::ProducerId>,
     forward_event_horizon: FrameCount,
-    added_latency: FrameCount,
+    path_latencies: crate::latency::PathLatencies,
     /// ADR-0058: what a note-on does when its producer holds every admitted index.
     stealing: crate::ir::StealingPolicy,
     /// The first step of every group of `N` instance steps — each voice-scope node's and
@@ -1203,7 +1203,7 @@ impl CompiledPlan {
         authored_sources: Vec<crate::ir::AuthoredSourceDeclaration>,
         compiled_note_producer: Option<crate::identity::ProducerId>,
         forward_event_horizon: FrameCount,
-        added_latency: FrameCount,
+        path_latencies: crate::latency::PathLatencies,
         stealing: crate::ir::StealingPolicy,
         instance_groups: Vec<NodeSlot>,
         sum_groups: Vec<NodeSlot>,
@@ -1238,7 +1238,7 @@ impl CompiledPlan {
             authored_sources,
             compiled_note_producer,
             forward_event_horizon,
-            added_latency,
+            path_latencies,
             stealing,
             instance_groups,
             sum_groups,
@@ -1715,13 +1715,26 @@ impl CompiledPlan {
         self.forward_event_horizon
     }
 
-    /// The latency this plan adds, which is ADR-0001 clause 7's constant `Q`.
+    /// Per-node path bounds and per-cable skew and compensation (`SOUND-INV-035`).
+    pub const fn path_latencies(&self) -> &crate::latency::PathLatencies {
+        &self.path_latencies
+    }
+
+    /// The offline presentation removes only the quantum carry. Graph delays remain
+    /// audible, independently of alignment policy; positioned controls keep processing time.
+    pub const fn offline_trim(&self) -> FrameCount {
+        FrameCount::QUANTUM
+    }
+
+    /// The maximum latency this plan adds: quantum carry plus the longest output path.
+    /// Under `Decline`, path bounds can differ, so this is not an offline trim quantity.
     ///
     /// Charged unconditionally, including to a host whose callbacks are always whole
     /// multiples of the quantum and which would not otherwise need it — because a
     /// latency that varies with the caller's block pattern cannot be declared once
     /// or compensated statically.
     pub const fn added_latency(&self) -> FrameCount {
-        self.added_latency
+        // Compilation refuses overflow before constructing the plan.
+        FrameCount::new(FrameCount::QUANTUM.as_u64() + self.path_latencies.output().as_u64())
     }
 }

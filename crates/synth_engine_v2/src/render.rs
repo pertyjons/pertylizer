@@ -1144,7 +1144,7 @@ impl PreparedRenderer {
         &self.diagnostics
     }
 
-    /// The latency this stream adds, which is a constant `Q` frames.
+    /// The latency this stream adds: the fixed quantum carry plus the plan's audio path.
     pub fn added_latency(&self) -> FrameCount {
         self.plan.added_latency()
     }

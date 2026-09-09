@@ -452,6 +452,17 @@ pub enum IrNodeKind {
         /// The feedback high cut, `0` at a 200 Hz corner through `1` at 20 kHz.
         tone: NormalizedLevel,
     },
+    /// A declared latency and nothing else (`P08-S005`, `SOUND-INV-035`): its output at frame
+    /// `n` is its input at frame `n − frames`, and it declares exactly `frames` as the latency
+    /// every path through it carries — the shape every lookahead kind has, reduced to the
+    /// delay alone, and the kernel the compiler schedules to compensate a path. Audio in and
+    /// out at the port's layout, a history of `frames` at the output's width, and a
+    /// sample-positioned reset logically empties the line; zero frames is a pass-through. No cap of its
+    /// own: the line is charged to `mutable_state_bytes`, which refuses what does not fit.
+    Latency {
+        /// The frames the output lags the input by, in plan time.
+        frames: FrameCount,
+    },
     /// A one-zone sampler on the prepared map/zone contract (ADR-0026).
     ///
     /// The map it consumes is one of the plan's, named by reference for the reason a node
@@ -1016,6 +1027,8 @@ pub struct NoteProducerDeclaration {
 #[derive(Debug, Clone, PartialEq)]
 #[must_use]
 pub struct PlanDeclarations {
+    /// Internal cable alignment policy; independent of host/offline presentation.
+    pub compensation: crate::latency::CompensationPolicy,
     /// Every source that can start a note, and what each may hold at once.
     ///
     /// ADR-0046 partitions hold entitlements "at plan admission" across "every admitted
@@ -1126,6 +1139,7 @@ pub struct InternalProducerDeclaration {
 impl Default for PlanDeclarations {
     fn default() -> Self {
         Self {
+            compensation: crate::latency::CompensationPolicy::default(),
             // Empty rather than one nominal producer: a plan that declares nothing starts no
             // notes, and inventing a producer here would give admission something to
             // partition that the plan never asked for.

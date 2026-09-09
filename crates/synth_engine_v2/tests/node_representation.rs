@@ -327,7 +327,7 @@ fn a_widened_signal_is_copied_by_a_scheduled_kernel() {
 fn a_declared_kind_appears_in_the_registry_only_by_deferring_to_its_declaration() {
     // The variant as it is spelled in a pattern — fieldless kinds have no `{ .. }` — and
     // the declaration constant it forwards to.
-    const DECLARED: [(&str, &str); 26] = [
+    const DECLARED: [(&str, &str); 27] = [
         ("Script { .. }", "SCRIPT"),
         ("AudioScript { .. }", "AUDIO_SCRIPT"),
         ("NoteScript { .. }", "NOTE_SCRIPT"),
@@ -344,6 +344,7 @@ fn a_declared_kind_appears_in_the_registry_only_by_deferring_to_its_declaration(
         ("HardClamp", "HARD_CLAMP"),
         ("Distortion { .. }", "DISTORTION"),
         ("Delay { .. }", "DELAY"),
+        ("Latency { .. }", "LATENCY"),
         ("Sampler { .. }", "SAMPLER"),
         ("Envelope { .. }", "ENVELOPE"),
         ("Sine { .. }", "SINE"),
@@ -562,6 +563,9 @@ fn discovery_and_validation_describe_the_same_ports() {
                 mix: synth_engine_v2::quantities::NormalizedLevel::ZERO,
                 tone: synth_engine_v2::quantities::NormalizedLevel::FULL,
             },
+            NodeKindId::Latency => IrNodeKind::Latency {
+                frames: FrameCount::new(7),
+            },
             NodeKindId::Sampler => IrNodeKind::Sampler {
                 map: synth_engine_v2::sample::SampleMapRef::new(0),
                 level: Amplitude::UNITY,
@@ -595,7 +599,7 @@ fn discovery_and_validation_describe_the_same_ports() {
     let entries = catalog();
     assert_eq!(
         entries.len(),
-        34,
+        35,
         "every kind but the output node is discoverable"
     );
     for entry in entries {

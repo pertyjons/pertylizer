@@ -1571,9 +1571,9 @@ in order; a partition that renders other bits.
 fields, owed by Phase 5 to their first reader: a **latency**, a **tail** and a
 **history**, each a function of the kind's authored values and the stream's rate, in
 frames of plan time and independent of the host's block. The latency is the lookahead
-the kind imposes on every path through it; no declared kind imposes one, and the
-declaration test holds every kind to zero until `P08-S005` sums latency along paths and
-compensates it. The tail is how long the kind's output outlasts its audio input — the
+the kind imposes on every path through it; `SOUND-INV-035` adds the first nonzero
+declaration and compiles path compensation. Every other current kind declares zero.
+The tail is how long the kind's output outlasts its audio input — the
 frames after the input falls silent within which the kind's own rule says its output
 has decayed below −60 dB of what it was — and it is `Some(0)` for a kind whose output
 is a function of its input frame or which has no audio input, `Some` of the kind's rule
@@ -1638,7 +1638,7 @@ the declared tail at any of the five named points; a written feedback or time th
 lets past V1's domain; a mutable-bytes figure that differs from the renderer's slab and
 index; a stolen voice that erases an instrument-scope delay's line; a chain whose
 reversed order renders the same bits; a partition that renders other bits; a kind
-declaring a latency; a kind that keeps signal declaring `Some(0)`.
+other than the latency kind declaring a latency; a kind that keeps signal declaring `Some(0)`.
 
 ### SOUND-INV-034 — Sends, buses and the bus graph
 
@@ -1703,6 +1703,67 @@ buses whose render is not V1's laws applied in order, or whose bits move under
 a partition; a master that is not exactly the sum of the dry path and the wet
 path; two channels on one source whose sends read each other.
 
+### SOUND-INV-035 — Path latency and compensation
+
+`P08-S005`. `PlanDeclarations::compensation` declares internal graph alignment:
+`Compensate` (the default) or `Decline`. One analysis walks the validated dependency
+order. At each node it takes the latest incoming signal-path latency, computes each
+cable's difference from that maximum and, under `Compensate`, schedules a delay on
+each earlier cable before the consuming kernel. Audio, control and gate cables
+participate, including the amplifier's envelope input; event routes and modulation
+bindings do not. A modulation source's transitive cable dependencies must declare
+zero path latency or compilation refuses the node by name. Unpatched inputs retain
+their existing silence behavior and do not create a synthetic path to align.
+
+The authored `Latency { frames }` is mono in and out and declares those frames as
+latency, tail and history. Its kernel also handles inserted compensation at the
+consuming port's width. Zero frames is a pass-through. A line stores exactly its
+frame count times its channel count; after preparation or reset it returns zero
+until that many new frames have been written. Reset changes only its cursor and
+valid-frame count, so its work is independent of line length. Old storage is replaced
+by ordinary sample processing, never cleared at reset. Every inserted voice-local
+line has its own contiguous instance group and reset destination, charged to reset
+scratch. A line consuming a voice sum outside voice scope remains shared and keeps
+its history when an individual voice is stolen.
+
+Diagnostics expose each authored node's declared timing through `node_timings`, and
+identity-ordered node path bounds and cable skew/compensation through `path_latencies`
+and the resource report's latency accounting. Bounds include upstream compensation;
+under `Decline` they propagate both earliest and latest arrivals, including a spread
+inherited through an earlier merge. A cable's `skew` is the difference between its
+latest arrival and the latest arrival at its destination, before that cable's own
+compensation. It is not a claim that its source contains only one arrival time.
+`compensation` is the delay actually scheduled on that cable. Checked sums refuse
+overflow by node. A history slab exceeding the platform's allocation range is
+refused even under the largest profile budget. A structural or arithmetic refusal
+reports path analysis as
+unavailable rather than as zero. Disconnected nodes have their own bounds but do not
+contribute to the output path.
+
+`added_latency` and the resource report's total are `Q + maximum output path` under
+both policies. Under `Decline`, this is a maximum rather than a single uniform delay.
+The existing tail summary remains the longest individually stated authored-node tail,
+or unknown; it neither adds the compensated path nor claims a composed route-tail
+bound. Inserted records, history and reset scratch are charged with the scheduled
+operations, and path diagnostic tables are charged as immutable plan data.
+
+Graph alignment does not choose host timeline correction. The provisional offline
+presentation remains the existing one: `offline_trim()` is `Q`, independently of
+graph policy, and graph delays remain in the returned samples. Parameter events and
+modulation keep processing-time semantics: a gain write at processing frame `T`
+after a latency of `L` affects source content from `T - L`. It is not shifted to keep
+that source content's authored time. A future offline trim of graph latency or a live
+host correction must choose its control-timeline semantics explicitly at its first
+consumer; this slice does not settle Phase 9's host compensation ownership.
+
+Falsifiers: unequal impulse paths failing to meet at the latest sample under
+`Compensate`; `Decline` hiding an inherited spread; a series of latencies not summing;
+a control cable reaching its multiplier before the audio it controls; partitioned
+renders with different bits; a stolen instance reading its previous history or
+resetting another instance; reset touching unwritten history storage; a memory or
+reset-scratch charge below the allocation; overflow accepted as an exact latency;
+a zero-latency plan producing different samples.
+
 ## Conformance tests
 
 | Invariants | Named checks |
@@ -1733,8 +1794,9 @@ path; two channels on one source whose sends read each other.
 | Node arithmetic and preparation | `voice_nodes`, internal kernel tests |
 | SOUND-INV-031 | **Built by `P08-S001`.** `tests/mix_channel.rs`: `a_channel_scales_each_side_by_the_fader_and_v1s_pan_law_bit_for_bit` and `a_channel_at_unity_and_centre_is_v1s_centre_coefficient_and_not_neutral` compare every rendered frame's bits against an oracle formed from `synth_core::Gain::from_pan` as `mix_channel_busses` forms it; `a_plan_with_no_channel_widens_a_mono_source_as_before` holds the no-channel shape and `layout_baseline` its digests; `two_sources_through_one_sum_render_the_sum_of_each_alone_exactly`, `a_sum_above_full_scale_is_preserved_in_float` and `a_summed_port_adds_its_cables_in_ascending_source_identity` hold the sum exact, unclamped and identity-ordered (three cables whose float sum depends on the order, connected both ways); `a_mute_silences_the_channel_from_the_sample_it_lands_on_and_releases_from_its_own` places the mute and its release mid-quantum; `a_fader_write_an_edge_and_a_script_compose_in_the_one_slot_under_the_decibel_law` holds an override, a held LFO edge and a script edge to `SOUND-INV-023`'s order with the write-alone render as its control; `a_channel_count_over_the_profile_is_refused_by_name_and_counted_from_the_plan` reads the report's row and the minted identities, and `admission`'s table case refuses two channels under a profile of one; `fan_in_into_a_port_that_does_not_declare_it_is_still_refused`; `a_channelled_render_is_the_same_bits_under_every_host_partition` over whole, 256, 64 and irregular blocks; `graph_validation`'s `a_stereo_output_into_a_narrower_port_is_refused_as_a_layout_mismatch` is the refusal `SOUND-INV-014` could not construct before. The lowerer's half is in `pertylizer`'s lowering tests: `the_instruments_strip_lowers_onto_its_mix_channel`, `the_instruments_fader_and_pan_reach_the_render_under_v1s_laws` (half the fader is half the peak; hard left renders exactly nothing on the right and V1's coefficient ratio on the left), `a_muted_instrument_lowers_to_a_muted_channel_and_renders_silence` and `a_saved_volume_outside_v1s_mixer_range_is_refused_and_one_inside_it_lowers`, which reads `Gain::MIXER_RANGE`. Mutations run and caught are listed in the slice's commit |
 | SOUND-INV-032 | **Built by `P08-S002`.** `tests/mix_stages.rs`: `a_balance_scales_each_side_by_the_level_and_v1s_balance_law_bit_for_bit` on a triple searched for so that the two multiplication orders round apart, `a_balance_at_unity_and_centre_is_neutral_where_the_channel_is_not` with the channel as its control, `a_balance_mute_silences_from_its_sample_writes_positive_zero_and_releases_from_its_own` on a negative source so a multiplicative mute's negative zero fails by bits, `a_trim_scales_every_sample_by_its_level_and_a_write_moves_it_at_the_next_boundary`, `a_soft_clip_passes_the_knee_unchanged_and_shapes_above_it_by_v1s_law_bit_for_bit` over twelve inputs either side of the knee against V1's function spelled term for term, `a_hard_clamp_holds_full_scale_and_passes_bits_within_it`, `a_stereo_stage_in_the_voice_scope_is_summed_per_voice_verbatim` (two instances of a balance sum to exactly twice one, the sides distinct), and `a_staged_render_composes_v1s_laws_in_order_and_is_the_same_bits_under_every_partition` (a sine past both knees through balance, clipper, trim and clamp equals the four laws applied in order to the sine alone, bit for bit, under whole, 256, 64 and irregular blocks). `mix_channel`'s `a_channel_and_a_sum_admit_exactly_two_channels_on_every_port` holds all six stages to two channels, and `a_channel_in_the_voice_scope_is_refused_by_name` keeps the two kinds that run once out of the voice scope. The lowerer's half is in `pertylizer`'s `lowering::tests::phase8`. Mutations run and caught are listed in the slice's commit |
-| SOUND-INV-033 | **Built by `P08-S003`.** `tests/inserts.rs`: `a_distortion_shapes_each_sample_by_v1s_law_bit_for_bit` and `a_delay_reads_writes_and_blends_by_v1s_law_bit_for_bit` against V1's laws spelled term for term (three parameter sets each, one with a fractional delay), and in `pertylizer`'s `lowering::tests::phase8` `v2s_delay_and_distortion_are_v1s_modules_bit_for_bit` against `synth_modules`' own `Delay` and `Distortion` run over the same widened input; `a_delay_decays_below_60_db_within_its_declared_tail` at the five named points; `a_written_feedback_and_time_are_held_to_v1s_own_domain`; `an_instrument_scope_delays_line_survives_a_stolen_voice`; `an_insert_chain_is_the_same_bits_under_every_partition_and_its_order_is_audible`; `declared_timing_is_visible_per_node_and_the_plans_tail_is_the_longest_stated_one` (a filter makes the plan's tail `None`). In-crate: `insert_tests::a_delays_history_is_charged_as_the_renderer_allocates_it` and `a_voice_scope_delay_keeps_one_line_per_instance` hold the report to the slab and index; `node` tests hold every kind's latency to zero and its tail to stated or `None`; `render_loop_purity` scans both kernels and `rem_euclid` is justified there. The lowerer's half is held by eight tests over `CORPUS-0005` in `phase8.rs`. |
+| SOUND-INV-033 | **Built by `P08-S003`.** `tests/inserts.rs`: `a_distortion_shapes_each_sample_by_v1s_law_bit_for_bit` and `a_delay_reads_writes_and_blends_by_v1s_law_bit_for_bit` against V1's laws spelled term for term (three parameter sets each, one with a fractional delay), and in `pertylizer`'s `lowering::tests::phase8` `v2s_delay_and_distortion_are_v1s_modules_bit_for_bit` against `synth_modules`' own `Delay` and `Distortion` run over the same widened input; `a_delay_decays_below_60_db_within_its_declared_tail` at the five named points; `a_written_feedback_and_time_are_held_to_v1s_own_domain`; `an_instrument_scope_delays_line_survives_a_stolen_voice`; `an_insert_chain_is_the_same_bits_under_every_partition_and_its_order_is_audible`; `declared_timing_is_visible_per_node_and_the_plans_tail_is_the_longest_stated_one` (a filter makes the plan's tail `None`). In-crate: `insert_tests::a_delays_history_is_charged_as_the_renderer_allocates_it` and `a_voice_scope_delay_keeps_one_line_per_instance` hold the report to the slab and index; `node` tests hold every kind except `Latency` to zero latency and each tail to stated or `None`; `render_loop_purity` scans both kernels and `rem_euclid` is justified there. The lowerer's half is held by eight tests over `CORPUS-0005` in `phase8.rs`. |
 | SOUND-INV-034 | **Built by `P08-S004`.** `tests/sends.rs`: `a_post_fader_send_forms_v1s_gain_in_v1s_order_bit_for_bit` on the sample an independent consultation named, where the two product orders round apart, with the other order asserted to differ; `a_pre_fader_send_is_the_signal_times_the_level_and_its_mute_silences_it_from_its_sample`; `the_master_holds_dry_plus_wet_exactly_and_each_alone_changes_the_render` (the master is the float sum of the two renders alone, bit for bit; a muted return and a send at zero are the same absence); `a_bus_send_taps_the_clipped_output_and_a_chain_renders_v1s_laws_in_order` (three buses, V1's laws applied in order to the source alone, the clipper past its knee, and the same bits under whole, 256, 64 and irregular partitions); `two_buses_sending_into_each_other_are_refused_naming_a_closing_cable`; `the_mixer_scopes_are_held_to_their_shape_by_name` (ten refusals, each by its variant); `admission_counts_buses_and_the_busiest_channels_sends_from_the_plan` (the rows, the records and the identities); `seventeen_sends_on_one_channel_are_refused_by_name_where_v1_dropped_the_seventeenth`; `two_channels_on_one_source_keep_independent_sends` (the first exit bullet's send clause, with the intervention shown to move the other route). `admission`'s table refuses two buses under a profile of one and two sends under a profile of one, from a real mixer graph. The lowerer's half is `pertylizer`'s `lowering::tests::buses`, named in the lowering specification's `LOWER-INV-004` row. Mutations run and caught are listed in the slice's commit |
+| SOUND-INV-035 | **Built by `P08-S005`.** `tests/path_latency.rs` holds aligned and declined impulses, serial and disconnected paths, host partitions, zero-latency audio, history accounting and overflow/refusal. `voice_tests::a_delayed_voice_aligns_its_envelope_and_keeps_other_instances_independent`, `a_steal_resets_authored_and_inserted_latency_histories_for_only_the_taken_instance` and `inserted_latency_state_and_reset_scratch_are_charged_as_allocated` cover voice ownership and admission. `kernel_tests::a_latency_reset_invalidates_history_without_clearing_the_line` and `a_latency_keeps_stereo_order_in_place_and_resets_at_the_positioned_sample` cover logical reset and channel order; `render_loop_purity` covers the kernel. |
 | SOUND-INV-030 | `authored::tests` holds seeded traces, capture and local automation, release accounting, whole-source refusal, terminal silence and first/subsequent allocation bounds. EVD-0020 owns qualification and capacity selection. |
 | SOUND-INV-029 | `tests/audio_scripts.rs` holds sample cadence across callbacks, stereo routing and unwritten-channel silence, the audio evaluation clock and first-sample marker, local automation, source-level cycle/scope refusals, and the independently counted maximum-polyphony work warning. `modulation_tests::an_audio_script_resets_at_the_taken_voices_exact_sample` holds an off-boundary reset against exact evaluation counts in both voices. `render_allocation::yams_audio_allocates_nothing_at_the_profiles_voice_and_block_maximum` arms before the first render of a stereo program at both configured maxima. |
 | SOUND-INV-028 | `tests/scripts.rs` holds stateful cadence, local automation and previous-value feedback under one-frame and irregular partitions; stable keys under reorder/remove/rename; source-level missing, cycle and scope refusals; graph dependencies ahead of native modulation; explicit base and automated layers; seed repeatability across recompile and declaration order. `modulation_tests` checks per-voice reset timing, state isolation and allocated bytes against the admission charge. `render_allocation` checks first and subsequent Control renders at the configured block and voice maximum. `admission` includes actual script-host usage in the refusal set; `render_loop_purity` includes the transitive VM sources. |

@@ -1581,3 +1581,216 @@ fn each_note_lands_on_its_own_instance_and_the_rest_stay_at_rest() {
         "the gates did not land on the two instances the identities name"
     );
 }
+
+/// The oscillator is delayed, so the amplifier's envelope cable must be delayed too.
+fn delayed_voice(notes: u32, frames: u64, stealing: StealingPolicy) -> GraphIr {
+    const LATENCY: NodeId = NodeId::new(90);
+    let base = voice_with(notes, stealing);
+    let mut builder = GraphIr::builder()
+        .declaring(base.declarations().clone())
+        .tuning(
+            ExecutionScope::Voice,
+            crate::tuning::PreparedTuning::equal_temperament().expect("tuning"),
+        );
+    for node in base.nodes() {
+        builder = builder.node(node.id(), node.kind(), node.scope());
+    }
+    builder = builder.node(
+        LATENCY,
+        IrNodeKind::Latency {
+            frames: FrameCount::new(frames),
+        },
+        ExecutionScope::Voice,
+    );
+    for edge in base.edges() {
+        if edge.from().0 == OSCILLATOR && edge.to().0 == AMPLIFIER {
+            builder = builder
+                .connect(edge.from(), (LATENCY, PortId::FIRST), edge.domain())
+                .connect((LATENCY, PortId::FIRST), edge.to(), edge.domain());
+        } else {
+            builder = builder.connect(edge.from(), edge.to(), edge.domain());
+        }
+    }
+    builder.build().expect("delayed voice")
+}
+
+#[test]
+fn a_delayed_voice_aligns_its_envelope_and_keeps_other_instances_independent() {
+    let plain = admit(&voice(2));
+    let delayed = admit(&delayed_voice(2, 137, StealingPolicy::None));
+    let plain_notes = [note(&plain, 60, 7, 400), note(&plain, 67, 137, 400)];
+    let delayed_notes = [note(&delayed, 60, 7, 400), note(&delayed, 67, 137, 400)];
+    let reference = render(&plain, &plain_notes, 24);
+    let actual = render(&delayed, &delayed_notes, 24);
+    assert!(reference.iter().any(|sample| sample.abs() > 0.1));
+    assert!(actual[..137].iter().all(|sample| *sample == 0.0));
+    assert_eq!(&actual[137..], &reference[..reference.len() - 137]);
+}
+
+#[test]
+fn a_steal_resets_authored_and_inserted_latency_histories_for_only_the_taken_instance() {
+    let policy = StealingPolicy::Oldest {
+        fade: FrameCount::new(FADE),
+    };
+    let plan = admit(&delayed_voice(2, 257, policy));
+    // Three original voice kinds, the authored line, the inserted envelope line, and sum.
+    assert_eq!(plan.instance_groups().len(), 6);
+    assert_eq!(plan.steal_expansion().get(), 6);
+    let first = note(&plan, 60, 0, 4000);
+    let survivor = note(&plan, 67, 64, 4000);
+    let replacement = note(&plan, 72, 1000, 2000);
+    let both = render(&plan, &[first, survivor.clone(), replacement], 48);
+    let only_survivor = render(&plan, &[survivor], 48);
+    // Once the fade finishes, both lines of the taken instance are logically empty for
+    // 257 frames. The other instance must continue to sound, sample-identically.
+    let empty = (64 + 1000 + FADE) as usize..(64 + 1000 + FADE + 257) as usize;
+    assert!(
+        only_survivor[empty.clone()]
+            .iter()
+            .any(|sample| sample.abs() > 0.1)
+    );
+    assert_eq!(&both[empty.clone()], &only_survivor[empty]);
+}
+
+#[test]
+fn inserted_latency_state_and_reset_scratch_are_charged_as_allocated() {
+    let ir = delayed_voice(
+        2,
+        257,
+        StealingPolicy::Oldest {
+            fade: FrameCount::new(FADE),
+        },
+    );
+    let outcome = compile(&ir, &RenderConfig::new(profile()));
+    let plan = outcome.plan().expect("admitted").clone();
+    let (_, renderer) = StreamControl::open(plan.clone(), ORIGIN).expect("stream");
+    let requested = |field| match outcome.report().row(field).expect("row").requested() {
+        ResourceAmount::Bytes(bytes) => bytes.get(),
+        other => panic!("unexpected amount: {other:?}"),
+    };
+    assert_eq!(
+        requested(ResourceField::MutableStateBytes),
+        renderer.slot_bytes_held() as u64
+            + renderer.ramp_table_bytes_held() as u64
+            + renderer.history_bytes_held() as u64
+            + u64::from(renderer.prepared_record_count().get())
+                * crate::node::state_bytes_per_node()
+    );
+    // The compiler charges the same expansion the renderer prepares from instance groups.
+    let ranges: Vec<_> = ir
+        .declarations()
+        .note_producers
+        .iter()
+        .map(|p| p.simultaneous_notes)
+        .collect();
+    let expected = crate::compile::scratch_bytes(
+        &profile(),
+        plan.arena_samples() as u64,
+        renderer.prepared_record_count(),
+        &ranges,
+        ir.max_writes_per_note()
+            .fanned_out(ir.sample_positioned_fan_out())
+            .widest(plan.steal_expansion()),
+        ir.modulated_sample_positioned_rows(),
+        ir.voice_instances(),
+    );
+    assert_eq!(requested(ResourceField::BufferScratchBytes), expected.get());
+}
+
+#[test]
+fn compensation_after_a_voice_sum_retains_its_history_across_a_steal() {
+    const SILENT: NodeId = NodeId::new(90);
+    const LATENCY: NodeId = NodeId::new(91);
+    const MIX: NodeId = NodeId::new(92);
+    let build = |compensation| {
+        let base = voice_with(
+            1,
+            StealingPolicy::Oldest {
+                fade: FrameCount::new(FADE),
+            },
+        );
+        let mut builder = GraphIr::builder()
+            .declaring(PlanDeclarations {
+                compensation,
+                ..base.declarations().clone()
+            })
+            .tuning(
+                ExecutionScope::Voice,
+                crate::tuning::PreparedTuning::equal_temperament().expect("tuning"),
+            );
+        for node in base.nodes() {
+            builder = builder.node(node.id(), node.kind(), node.scope());
+        }
+        for edge in base.edges() {
+            if edge.to().0 != OUTPUT {
+                builder = builder.connect(edge.from(), edge.to(), edge.domain());
+            }
+        }
+        builder = builder
+            .node(SILENT, IrNodeKind::Silence, ExecutionScope::Global)
+            .node(
+                LATENCY,
+                IrNodeKind::Latency {
+                    frames: FrameCount::new(257),
+                },
+                ExecutionScope::Global,
+            )
+            .node(MIX, IrNodeKind::Mix, ExecutionScope::Global);
+        for (from, to) in [
+            (SILENT, LATENCY),
+            (LATENCY, MIX),
+            (AMPLIFIER, MIX),
+            (MIX, OUTPUT),
+        ] {
+            builder = builder.connect(
+                (from, PortId::FIRST),
+                (to, PortId::FIRST),
+                SignalDomain::Audio,
+            );
+        }
+        let ir = builder.build().expect("shared compensation");
+        let host = HostProfile::harness(
+            profile().capabilities().sample_rate(),
+            FrameCount::new(BLOCK as u64),
+            ChannelLayout::Stereo,
+        )
+        .expect("stereo host");
+        compile(&ir, &RenderConfig::new(host))
+            .into_plan()
+            .expect("admits")
+    };
+    let aligned = build(crate::latency::CompensationPolicy::Compensate);
+    let declined = build(crate::latency::CompensationPolicy::Decline);
+    assert_eq!(
+        aligned.instance_groups().len(),
+        declined.instance_groups().len()
+    );
+    let render_notes = |plan: &CompiledPlan| {
+        let slot = plan.resolve_note(ENVELOPE).expect("envelope");
+        let events = [0, 1000].map(|frame| {
+            crate::offline::OfflineEvent::new(
+                SampleTime::new(frame),
+                CompiledPayload::NoteOn {
+                    slot,
+                    key: KeyIdentity::new(60).expect("key"),
+                    velocity: NoteVelocity::FULL,
+                },
+            )
+        });
+        crate::offline::render_offline(
+            plan.clone(),
+            FrameCount::new(2048),
+            PlanPosition::ZERO,
+            &events,
+        )
+        .expect("renders")
+    };
+    let reference = render_notes(&declined);
+    let actual = render_notes(&aligned);
+    assert!(
+        reference[2000..2200]
+            .iter()
+            .any(|sample| sample.abs() > 0.1)
+    );
+    assert_eq!(&actual[257 * 2..], &reference[..reference.len() - 257 * 2]);
+}

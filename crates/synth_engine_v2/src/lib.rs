@@ -92,6 +92,7 @@ pub mod compile;
 pub mod controller;
 pub mod diagnostics;
 pub mod identity;
+pub mod latency;
 pub mod script;
 // Without the `simulated-ingress` feature the store has no constructor, so everything it
 // owns is unreachable — which is exactly what ADR-0053 clause 5's boundary is for. The code

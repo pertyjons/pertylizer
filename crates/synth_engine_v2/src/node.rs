@@ -873,6 +873,36 @@ pub(crate) fn delay_line_frames(rate: SampleRate) -> usize {
     (kernels::MAX_DELAY_SECONDS * rate.as_f32()) as usize
 }
 
+/// Prepare a latency: its frames as the line's length, in this platform's index type
+/// (`SOUND-INV-035`).
+fn prepare_latency(
+    node: NodeId,
+    kind: IrNodeKind,
+    _: &PrepareContext<'_>,
+) -> Result<PreparedNode, CompileError> {
+    let IrNodeKind::Latency { frames } = kind else {
+        return Err(declared_for_another_kind(node));
+    };
+    let Some(frames) = frames.as_usize() else {
+        return Err(CompileError::LatencyUnrepresentable { node, frames });
+    };
+    Ok(PreparedNode::Latency { frames })
+}
+
+/// A latency's timing (`SOUND-INV-035`): the authored frames as its latency — the lookahead
+/// every path through it carries — as its tail, since its output outlasts its input by
+/// exactly that, and as its history, the line the renderer keeps for it.
+fn timing_latency(kind: IrNodeKind, _: SampleRate) -> NodeTiming {
+    let IrNodeKind::Latency { frames } = kind else {
+        return NodeTiming::UNDECLARED;
+    };
+    NodeTiming {
+        latency: frames,
+        tail: Some(frames),
+        history: frames,
+    }
+}
+
 /// A distortion's timing (`SOUND-INV-033`): no latency, no history, and a tail of the
 /// frames its tone filter takes to decay by 60 dB at the authored tone — the one state it
 /// keeps, a one-pole whose coefficient is `e^(−2π f / rate)` for `f = 200 + tone² × 15000`.
@@ -1144,6 +1174,9 @@ pub enum NodeKindId {
     Distortion,
     /// V1's delay insert, mono mode, the first kind with a tail (`P08-S003`, `SOUND-INV-033`).
     Delay,
+    /// A declared latency and nothing else, the first kind with one (`P08-S005`,
+    /// `SOUND-INV-035`).
+    Latency,
     /// An amplifier driven by a control input.
     Amplifier,
     /// A low-pass filter.
@@ -2110,7 +2143,7 @@ fn prepare_script_program(
 /// the declarations are `static` rather than `const`: a `const` is materialised at each
 /// use and has no single address to compare — so a kind declared but left out here cannot
 /// be discovered, and one listed here but not resolvable cannot compile.
-static DECLARED: [&NodeDeclaration; 34] = [
+static DECLARED: [&NodeDeclaration; 35] = [
     &SCRIPT,
     &AUDIO_SCRIPT,
     &NOTE_SCRIPT,
@@ -2135,6 +2168,7 @@ static DECLARED: [&NodeDeclaration; 34] = [
     &HARD_CLAMP,
     &DISTORTION,
     &DELAY,
+    &LATENCY,
     &SAMPLER,
     &LFO,
     &MOD_WHEEL,
@@ -2695,6 +2729,34 @@ pub(crate) static DELAY: NodeDeclaration = NodeDeclaration {
     state_bytes: size_of::<(usize, [f32; 2], f32, f32)>() as u64,
 };
 
+/// The same latency kernel for a compiler-inserted line at the consuming port's width.
+pub(crate) fn latency_descriptor() -> NodeDescriptor {
+    LATENCY.descriptor()
+}
+
+/// A declared latency and nothing else, declared once — `P08-S005`, `SOUND-INV-035`.
+///
+/// Audio in and audio out at the port's layout, no control, the frames prepared as the line's
+/// length and the write index kept. The first kind that declares a **latency**:
+/// [`timing_latency`] states the authored frames as its latency, its tail and its history,
+/// and the compiler's path sum reads them. In-place safe: a frame is read from the line and
+/// from its own input before either is written. The byte attributions name the kernel's
+/// layouts: the line length, and the write index and valid-frame count.
+pub(crate) static LATENCY: NodeDeclaration = NodeDeclaration {
+    id: NodeKindId::Latency,
+    name: "latency",
+    kernel: kernels::LATENCY,
+    ports: &[AUDIO_IN, AUDIO_OUT],
+    controls: &[],
+    in_place_safe: true,
+    note_control: None,
+    taps: &[],
+    prepare: prepare_latency,
+    timing: timing_latency,
+    prepared_bytes: size_of::<usize>() as u64,
+    state_bytes: size_of::<(usize, usize)>() as u64,
+};
+
 /// The one-zone sampler, declared once — ADR-0026, `P06-S005`.
 ///
 /// Three sample-positioned note destinations and no `note_control`: the **trigger** takes
@@ -2949,6 +3011,7 @@ pub(crate) fn declaration(kind: IrNodeKind) -> Option<&'static NodeDeclaration> 
         IrNodeKind::HardClamp => Some(&HARD_CLAMP),
         IrNodeKind::Distortion { .. } => Some(&DISTORTION),
         IrNodeKind::Delay { .. } => Some(&DELAY),
+        IrNodeKind::Latency { .. } => Some(&LATENCY),
         IrNodeKind::Sampler { .. } => Some(&SAMPLER),
         IrNodeKind::Filter { .. } => Some(&FILTER),
         IrNodeKind::Controller { kind } => Some(match kind {
@@ -3018,6 +3081,7 @@ pub(crate) fn descriptor(kind: IrNodeKind) -> Option<NodeDescriptor> {
         IrNodeKind::HardClamp => declared.map(NodeDeclaration::descriptor),
         IrNodeKind::Distortion { .. } => declared.map(NodeDeclaration::descriptor),
         IrNodeKind::Delay { .. } => declared.map(NodeDeclaration::descriptor),
+        IrNodeKind::Latency { .. } => declared.map(NodeDeclaration::descriptor),
         IrNodeKind::Sampler { .. } => declared.map(NodeDeclaration::descriptor),
         IrNodeKind::Controller { .. } | IrNodeKind::NoteSource { .. } => {
             declared.map(NodeDeclaration::descriptor)
@@ -3269,6 +3333,7 @@ pub fn prepared_payload_bytes(kind: IrNodeKind) -> u64 {
         IrNodeKind::HardClamp => return declared.map_or(0, |d| d.prepared_bytes),
         IrNodeKind::Distortion { .. } => return declared.map_or(0, |d| d.prepared_bytes),
         IrNodeKind::Delay { .. } => return declared.map_or(0, |d| d.prepared_bytes),
+        IrNodeKind::Latency { .. } => return declared.map_or(0, |d| d.prepared_bytes),
         IrNodeKind::Sampler { .. } => return declared.map_or(0, |d| d.prepared_bytes),
         IrNodeKind::Filter { .. } => return declared.map_or(0, |d| d.prepared_bytes),
         // The output node has no kernel, so it carries no prepared data of its own.
@@ -3366,6 +3431,7 @@ pub fn state_payload_bytes(kind: IrNodeKind) -> u64 {
         IrNodeKind::HardClamp => return declared.map_or(0, |d| d.state_bytes),
         IrNodeKind::Distortion { .. } => return declared.map_or(0, |d| d.state_bytes),
         IrNodeKind::Delay { .. } => return declared.map_or(0, |d| d.state_bytes),
+        IrNodeKind::Latency { .. } => return declared.map_or(0, |d| d.state_bytes),
         IrNodeKind::Sampler { .. } => return declared.map_or(0, |d| d.state_bytes),
         IrNodeKind::Envelope { .. } => return declared.map_or(0, |d| d.state_bytes),
         IrNodeKind::Controller { .. } | IrNodeKind::NoteSource { .. } => {
@@ -3412,15 +3478,19 @@ mod tests {
     }
 
     /// Every kind this phase has, so a scan over them is a scan over all of them.
-    /// `SOUND-INV-033`: no declared kind imposes a latency until `P08-S005` sums and
-    /// compensates one, and each kind's tail is stated or honestly unstated — `Some(0)` for
-    /// a per-frame kind or a source, `None` for the kinds that keep signal without a rule.
+    /// `SOUND-INV-033` and `SOUND-INV-035`: the latency kind alone imposes a latency, exactly
+    /// its authored frames, and each kind's tail is stated or honestly unstated — `Some(0)`
+    /// for a per-frame kind or a source, `None` for the kinds that keep signal without a rule.
     #[test]
-    fn no_declared_kind_declares_latency_until_p08_s005_compensates_it() {
+    fn only_the_latency_kind_declares_a_latency_and_it_is_its_authored_frames() {
         let rate = SampleRate::new(48_000.0).expect("a rate");
         for kind in every_kind() {
             let timing = timing_of(kind, rate);
-            assert_eq!(timing.latency, FrameCount::ZERO, "{kind:?}");
+            let expected_latency = match kind {
+                IrNodeKind::Latency { frames } => frames,
+                _ => FrameCount::ZERO,
+            };
+            assert_eq!(timing.latency, expected_latency, "{kind:?}");
             let expected_tail = match kind {
                 IrNodeKind::Filter { .. }
                 | IrNodeKind::Envelope { .. }
@@ -3431,12 +3501,24 @@ mod tests {
                 IrNodeKind::Distortion { .. } | IrNodeKind::Delay { .. } => {
                     Some(timing.tail.expect("stated"))
                 }
+                IrNodeKind::Latency { frames } => Some(frames),
                 _ => Some(FrameCount::ZERO),
             };
             assert_eq!(timing.tail, expected_tail, "{kind:?}");
-            let keeps_history = matches!(kind, IrNodeKind::Delay { .. });
+            let keeps_history =
+                matches!(kind, IrNodeKind::Delay { .. } | IrNodeKind::Latency { .. });
             assert_eq!(timing.history > FrameCount::ZERO, keeps_history, "{kind:?}");
         }
+        assert_eq!(
+            timing_of(
+                IrNodeKind::Latency {
+                    frames: FrameCount::ZERO
+                },
+                rate
+            ),
+            NodeTiming::STATELESS,
+            "a latency of no frames is a pass-through and declares nothing"
+        );
     }
 
     #[test]
@@ -3560,6 +3642,9 @@ mod tests {
                 feedback: crate::quantities::DelayFeedback::ZERO,
                 mix: NormalizedLevel::ZERO,
                 tone: NormalizedLevel::FULL,
+            },
+            IrNodeKind::Latency {
+                frames: FrameCount::new(7),
             },
             IrNodeKind::Amplifier,
             IrNodeKind::Monitor,
@@ -3860,6 +3945,7 @@ mod tests {
                         PreparedNode::Distortion { .. }
                     )
                     | (IrNodeKind::Delay { .. }, PreparedNode::Delay { .. })
+                    | (IrNodeKind::Latency { .. }, PreparedNode::Latency { .. })
                     | (IrNodeKind::Amplifier, PreparedNode::Amplifier)
                     | (IrNodeKind::Monitor, PreparedNode::Copy)
                     | (IrNodeKind::Filter { .. }, PreparedNode::Filter { .. })
@@ -3906,7 +3992,8 @@ mod tests {
                 | IrNodeKind::NoteScript { .. }
                 | IrNodeKind::Lfo { .. }
                 | IrNodeKind::Distortion { .. }
-                | IrNodeKind::Delay { .. } => (true, true),
+                | IrNodeKind::Delay { .. }
+                | IrNodeKind::Latency { .. } => (true, true),
                 IrNodeKind::NoteSource { .. }
                 | IrNodeKind::Silence
                 | IrNodeKind::Amplifier
@@ -3944,6 +4031,7 @@ mod tests {
                         | IrNodeKind::HardClamp
                         | IrNodeKind::Distortion { .. }
                         | IrNodeKind::Delay { .. }
+                        | IrNodeKind::Latency { .. }
                         | IrNodeKind::Filter { .. }
                 ),
                 "{kind:?}"

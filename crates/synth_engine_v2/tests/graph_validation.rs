@@ -488,6 +488,7 @@ catalog! {
         mix: synth_engine_v2::quantities::NormalizedLevel::ZERO,
         tone: synth_engine_v2::quantities::NormalizedLevel::FULL,
     } => IrNodeKind::Delay { .. },
+    IrNodeKind::Latency { frames: FrameCount::new(7) } => IrNodeKind::Latency { .. },
     IrNodeKind::Sampler {
         map: synth_engine_v2::sample::SampleMapRef::new(0),
         level: level(1.0),

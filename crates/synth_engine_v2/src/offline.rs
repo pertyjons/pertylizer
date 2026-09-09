@@ -130,7 +130,12 @@ pub fn render_offline_reporting(
         .as_usize()
         .unwrap_or(QUANTUM_FRAMES as usize)
         .max(1);
-    let priming = QUANTUM_FRAMES as usize;
+    let priming = plan
+        .offline_trim()
+        .as_usize()
+        .ok_or(OfflineError::FramesUnrepresentable {
+            frames: plan.offline_trim().as_u64(),
+        })?;
 
     // Both halves of the stream, from the one constructor that pairs them. An offline
     // render drives both itself, which is what an offline render is: there is no audio

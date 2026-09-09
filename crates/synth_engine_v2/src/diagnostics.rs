@@ -35,6 +35,28 @@ pub enum CompileError {
         node: crate::ir::NodeId,
         fault: crate::script::ScriptFault,
     },
+    /// Modulation pre-pass timing cannot silently acquire a signal delay.
+    #[error("modulation dependency {node} declares nonzero path latency")]
+    ModulationLatencyUnsupported { node: crate::ir::NodeId },
+    /// The history slab exceeds the platform's allocation range even if a profile allows it.
+    #[error(
+        "plan history requires at least {bytes} bytes, exceeding this platform's allocation range"
+    )]
+    HistoryStorageUnrepresentable {
+        bytes: crate::quantities::PreparedBytes,
+    },
+    /// An audio path, including the quantum carry, cannot be represented.
+    #[error("audio path latency overflows at {node}")]
+    PathLatencyOverflow { node: crate::ir::NodeId },
+    /// A latency whose frames do not fit this platform's index type (`SOUND-INV-035`): the
+    /// line could not be indexed, so the kind is refused by name rather than truncated.
+    #[error("{node} declares a latency of {frames} frames, which this platform cannot index")]
+    LatencyUnrepresentable {
+        /// The node.
+        node: crate::ir::NodeId,
+        /// The frames it declares.
+        frames: crate::time::FrameCount,
+    },
     /// A mix channel or a sum in the voice scope (`P08-S001`). Both run once, outside it:
     /// a channel is per instrument, and the voice sum's seed copies a mono source
     /// (`SOUND-INV-025`), so a stereo per-instance output would not be summed as it is
