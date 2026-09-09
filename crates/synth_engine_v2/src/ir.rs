@@ -164,6 +164,8 @@ impl std::fmt::Display for IrObject {
 pub enum IrNodeKind {
     /// An off-thread compiled control program with its own declared interface.
     Script { program: crate::script::ScriptRef },
+    /// A per-sample program with an explicitly shaped audio output.
+    AudioScript { program: crate::script::ScriptRef },
     /// A controller held at quantum rate, available as a modulation source.
     Controller {
         /// Which controller the source represents.
@@ -1182,7 +1184,10 @@ impl GraphIr {
         let mut object = IrObject::Plan;
         for node in &self.nodes {
             if node.scope() == ExecutionScope::Voice
-                && matches!(node.kind(), IrNodeKind::Script { .. })
+                && matches!(
+                    node.kind(),
+                    IrNodeKind::Script { .. } | IrNodeKind::AudioScript { .. }
+                )
             {
                 count = count.saturating_add(1);
                 object = IrObject::Node(node.id());
@@ -1229,7 +1234,7 @@ impl GraphIr {
 
     pub(crate) fn descriptor(&self, kind: IrNodeKind) -> Option<crate::node::NodeDescriptor> {
         match kind {
-            IrNodeKind::Script { program } => self
+            IrNodeKind::Script { program } | IrNodeKind::AudioScript { program } => self
                 .script_program(program)
                 .map(crate::script::ScriptProgram::descriptor),
             _ => crate::node::descriptor(kind),
@@ -1242,7 +1247,10 @@ impl GraphIr {
         kind: IrNodeKind,
         stream: crate::quantities::ChannelLayout,
     ) -> Vec<crate::validate::PortSpec> {
-        if matches!(kind, IrNodeKind::Script { .. }) {
+        if matches!(
+            kind,
+            IrNodeKind::Script { .. } | IrNodeKind::AudioScript { .. }
+        ) {
             return self.descriptor(kind).map_or_else(Vec::new, |d| d.ports);
         }
         crate::node::ports(kind, stream)
@@ -1860,14 +1868,19 @@ impl GraphIrBuilder {
         let id = program.node();
         self.nodes.push(IrNode::new(
             id,
-            IrNodeKind::Script { program: reference },
+            match program.domain() {
+                crate::script::ScriptDomain::Control => IrNodeKind::Script { program: reference },
+                crate::script::ScriptDomain::Audio(_) => {
+                    IrNodeKind::AudioScript { program: reference }
+                }
+            },
             scope,
         ));
-        for (port, (source, source_port)) in program.signals().enumerate() {
+        for (port, (source, source_port, domain, _)) in program.signals().enumerate() {
             self = self.connect(
                 (source, source_port),
                 (id, PortId::new(u16::try_from(port).unwrap_or(u16::MAX))),
-                SignalDomain::Control,
+                domain,
             );
         }
         self.scripts.push(program);
@@ -1983,11 +1996,21 @@ impl GraphIrBuilder {
             }
         }
         for node in &self.nodes {
-            if let IrNodeKind::Script { program } = node.kind()
-                && !self
-                    .scripts
-                    .get(program.index())
-                    .is_some_and(|program| program.node() == node.id())
+            if let IrNodeKind::Script { program } | IrNodeKind::AudioScript { program } =
+                node.kind()
+                && !self.scripts.get(program.index()).is_some_and(|program| {
+                    program.node() == node.id()
+                        && matches!(
+                            (node.kind(), program.domain()),
+                            (
+                                IrNodeKind::Script { .. },
+                                crate::script::ScriptDomain::Control
+                            ) | (
+                                IrNodeKind::AudioScript { .. },
+                                crate::script::ScriptDomain::Audio(_)
+                            )
+                        )
+                })
             {
                 return Err(IrError::ScriptResource { node: node.id() });
             }
@@ -1996,6 +2019,7 @@ impl GraphIrBuilder {
             for (input, span) in program.inputs.iter().zip(&program.spans) {
                 if let crate::script::ProgramInput::External(
                     crate::script::ScriptSource::Signal { node, .. }
+                    | crate::script::ScriptSource::AudioSignal { node, .. }
                     | crate::script::ScriptSource::Parameter { node, .. },
                 ) = input
                     && !kinds.contains_key(node)

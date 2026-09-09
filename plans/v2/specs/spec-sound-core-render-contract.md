@@ -18,12 +18,12 @@ specification constrains implementation.
 
 This specification is the current executable contract for the experimental
 Sound Core renderer, compiler, plan, runtime state, and internal arena through
-Phase 7's Control-domain scripts, including scheduling, polyphony and modulation.
+Phase 7's Control- and Audio-domain scripts, including scheduling, polyphony and modulation.
 
 ## Non-goals
 
 Project lowering has its own specification. This specification does not yet define
-Audio- or Note-domain scripts, the live host, state-preserving reload, or the final
+Note-domain scripts, the live host, state-preserving reload, or the final
 node catalog. Those follow in [`ROADMAP.md`](../ROADMAP.md).
 
 It does not define which layouts exist beyond `Mono` and `Stereo`, the summing
@@ -1314,6 +1314,42 @@ only resources admitted by the immutable plan and performs no allocation,
 blocking lock, I/O, logging, graph discovery, or capacity growth. Resource
 excess is a preparation refusal rather than runtime truncation.
 
+### SOUND-INV-029 — Audio YAMS
+
+An Audio script is a distinct node kind and evaluates immutable bytecode once per
+sample in the ordinary graph schedule. Its output has an explicit mono or stereo
+layout. Bare `out` duplicates to both stereo channels; explicit channel outputs
+leave unwritten channels silent. A right output in a mono declaration is refused.
+Audio source bindings declare the source layout and channel, checked before
+admission; numeric buffer indices are the only source addresses at runtime.
+
+An audio source is read at each sample. Control signal bindings hold their first
+quantum sample; Base, Automated and PreviousResolved retain SOUND-INV-028's
+quantum snapshots. Local knobs read their central parameter ramp per sample.
+`sr` is the stream rate and `cr` is the fixed quantum rate; VM time integration and
+compiler-folded coefficients use the audio sample rate. `first_sample` is one only
+on the first evaluation of newly prepared or explicitly reset state. Voices run
+including idle intervals. An explicit voice reset restarts only that voice at the
+reset's exact sample, with the same identity-derived seed.
+
+The compiler reports raw bytecode dispatches multiplied by the actual admitted
+instances and Q. Separately, an advisory counts one VM work unit per dispatch plus
+three candidate comparisons per ScaleSnap table element. It multiplies this by Q
+and the profile's maximum voices per instrument for voice-scope programs, even if
+the current graph requests fewer. Shared scopes use one instance. A warning is
+emitted above the profile's maximum instructions per program: the workload of one
+maximum-sized straight-line Control program per quantum. This threshold is a
+static authoring advisory, not a CPU-time model or an admission ceiling; expensive
+transcendentals are not assigned an unevidenced nanosecond price.
+
+Falsifiers: a stateful counter must match its per-sample oracle under whole,
+one-frame and irregular callbacks; left/right must match distinct input oracles;
+a reset at a nonzero quantum offset must restart exactly there and preserve the
+other voice; the allocation guard must observe zero allocations on the first and
+subsequent renders at configured maximum block and voice count. Removing Q or the
+maximum-voice multiplier, or ignoring ScaleSnap's bounded inner loop, must change
+the independently counted advisory. Any failed assertion blocks acceptance.
+
 ## Conformance tests
 
 | Invariants | Named checks |
@@ -1343,6 +1379,7 @@ excess is a preparation refusal rather than runtime truncation.
 | SOUND-INV-019 | `tempo.rs`: a beat's exact frame at a constant tempo; a step holding the old tempo up to its change; a half-frame position rounding away from zero rather than truncating; a position being the stored prefix plus its own offset, and independent of what was asked before it; a tick past exact integer range refused rather than answered; and the ramp's own nine — an equal-endpoint ramp equal to a step bit for bit, falsified by the ramp recomputing the shared linear term; a ramp lasting its beats times the mean of its two periods, asserted as the corpus fixture's exact 48 000 frames and explicitly not V1's 44 361, falsified by the quadratic term's sign and by treating every change as a ramp; positions non-decreasing across steep ramps in both directions over adjacent ticks in four sampled windows, falsified by that same sign; a tempo whose period overflows refused at construction, and a 6000-to-`1e100` BPM ramp reporting a real tempo one tick before its end, falsified separately by dropping the period check and by either rejected interpolation form; chained ramps each reaching the next declared tempo with a continuous junction, falsified by pointing a ramp at the last one; a trailing ramp behaving as a step, falsified by giving it a degenerate destination; and the reported tempo being the reciprocal of the interpolated period rather than a straight line between two tempo numbers, falsified by reporting the declared tempo. The standing source scan covers the five functions the law reaches **and is closed under calls**: every call those bodies make must be to one of the five or to a named arithmetic or accessor method, and no allowlisted name may itself be a function this module defines — so a transcendental can hide neither in an unfollowed helper nor behind an allowlisted name, both mutation-verified. It strips comments and attributes but not a line holding a quote, and that exemption is checked directly, since the module's own source cannot exercise it |
 | Node arithmetic and preparation | `voice_nodes`, internal kernel tests |
 
+| SOUND-INV-029 | `tests/audio_scripts.rs` holds sample cadence across callbacks, stereo routing and unwritten-channel silence, the audio evaluation clock and first-sample marker, local automation, source-level cycle/scope refusals, and the independently counted maximum-polyphony work warning. `modulation_tests::an_audio_script_resets_at_the_taken_voices_exact_sample` holds an off-boundary reset against exact evaluation counts in both voices. `render_allocation::yams_audio_allocates_nothing_at_the_profiles_voice_and_block_maximum` arms before the first render of a stereo program at both configured maxima. |
 | SOUND-INV-028 | `tests/scripts.rs` holds stateful cadence, local automation and previous-value feedback under one-frame and irregular partitions; stable keys under reorder/remove/rename; source-level missing, cycle and scope refusals; graph dependencies ahead of native modulation; explicit base and automated layers; seed repeatability across recompile and declaration order. `modulation_tests` checks per-voice reset timing, state isolation and allocated bytes against the admission charge. `render_allocation` checks first and subsequent Control renders at the configured block and voice maximum. `admission` includes actual script-host usage in the refusal set; `render_loop_purity` includes the transitive VM sources. |
 
 ## Unresolved questions

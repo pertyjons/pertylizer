@@ -127,6 +127,14 @@ pub(crate) fn compile_with(
 ) -> CompileOutcome {
     let profile = config.host_profile();
     let mut warnings = Vec::new();
+    for program in ir.scripts() {
+        if let Some(scope) = ir.scope_of(program.node())
+            && let Some(estimate) = program.audio_cost(scope, profile)
+            && estimate.per_quantum > estimate.warning_threshold
+        {
+            warnings.push(CompileWarning::AudioScriptWork { estimate });
+        }
+    }
 
     // The report a refused plan carries, over the arena size that can be known before an
     // assignment exists. Advisory findings are collected from it on both refusal paths,
@@ -170,7 +178,8 @@ pub(crate) fn compile_with(
         };
     }
 
-    warnings.clear();
+    // Resource rows are recomputed after lowering; the static program workload is unchanged.
+    warnings.retain(|warning| matches!(warning, CompileWarning::AudioScriptWork { .. }));
     warnings.extend_from_slice(validated.warnings());
 
     let lowered = lower(ir, profile, &validated, &mut warnings, policy);

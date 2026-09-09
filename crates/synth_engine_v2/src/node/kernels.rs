@@ -157,6 +157,12 @@ pub const MONITOR: Kernel = Kernel(monitor);
 pub const LFO: Kernel = Kernel(lfo);
 /// The bounded, prepared YAMS VM.
 pub const SCRIPT: Kernel = Kernel(script);
+/// The per-sample YAMS domain.
+pub const AUDIO_SCRIPT: Kernel = Kernel(audio_script);
+
+pub fn audio_script(prepared: &PreparedNode, state: &mut NodeState, io: &mut NodeIo<'_>) {
+    crate::script::hot::audio(prepared, state, io);
+}
 
 pub fn script(prepared: &PreparedNode, state: &mut NodeState, io: &mut NodeIo<'_>) {
     crate::script::hot::run(prepared, state, io);
@@ -363,6 +369,7 @@ pub enum NodeState {
         seed: crate::script::ScriptSeed,
         reset_pending: bool,
         voice: crate::script::ScriptVoiceId,
+        first_sample: bool,
     },
     /// A node that keeps nothing between quanta.
     Stateless,
@@ -521,6 +528,7 @@ impl NodeState {
                 seed: seed.for_voice(crate::script::ScriptVoiceId::ZERO),
                 reset_pending: false,
                 voice: crate::script::ScriptVoiceId::ZERO,
+                first_sample: true,
             },
             PreparedNode::Sine { frequency, .. } => Self::Sine {
                 phase: 0.0,

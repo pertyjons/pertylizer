@@ -428,3 +428,62 @@ fn yams_control_allocates_nothing_at_the_profiles_voice_and_block_maximum() {
     assert_eq!(allocations, 0);
     assert!(samples.iter().any(|value| *value > 0.0));
 }
+
+#[test]
+fn yams_audio_allocates_nothing_at_the_profiles_voice_and_block_maximum() {
+    use crate::script::{ProjectSeed, ScriptIdentity, ScriptStateId};
+    let profile = HostProfile::harness(
+        SampleRate::new(48_000.0).expect("rate"),
+        FrameCount::new(BLOCK as u64),
+        ChannelLayout::Stereo,
+    )
+    .expect("profile");
+    let voices = profile
+        .limits()
+        .voices()
+        .maximum_voices_per_instrument()
+        .get();
+    let program = ScriptIdentity::new(SOURCE, ScriptStateId::new(7), ProjectSeed::new(9)).compile_audio(
+        "param step = 0.125 [0, 1]\narr scale = [0, 2, 4, 5, 7, 9, 11]\nout.left = scale_snap(rand(0, 12), scale)\nout.right = tanh(accum(step))",
+        profile.capabilities().sample_rate(), ChannelLayout::Stereo, &[]).expect("program");
+    let ir = GraphIr::builder()
+        .script(program, ExecutionScope::Voice)
+        .node(OUTPUT, IrNodeKind::Output, ExecutionScope::Global)
+        .connect(
+            (SOURCE, PortId::FIRST),
+            (OUTPUT, PortId::FIRST),
+            SignalDomain::Audio,
+        )
+        .declaring(crate::ir::PlanDeclarations {
+            note_producers: vec![crate::ir::NoteProducerDeclaration {
+                compiled: true,
+                simultaneous_notes: crate::quantities::HeldNoteCount::measured(voices),
+                simultaneous_holds: crate::quantities::EventCount::NONE,
+            }],
+            ..crate::ir::PlanDeclarations::default()
+        })
+        .build()
+        .expect("IR");
+    let plan = compile(&ir, &RenderConfig::new(profile))
+        .into_plan()
+        .expect("admission");
+    assert_eq!(plan.voice_instances().get(), voices);
+    let (_control, mut renderer) = StreamControl::open(
+        plan,
+        StreamAnchor::new(SampleTime::ZERO, PlanPosition::ZERO),
+    )
+    .expect("stream");
+    let mut samples = vec![0.0; BLOCK * 2];
+    let allocations = count_allocs(|| {
+        for _ in 0..3 {
+            renderer
+                .render(
+                    AudioBlockMut::new(&mut samples, BLOCK, ChannelLayout::Stereo).expect("block"),
+                    TimedEvents::EMPTY,
+                )
+                .expect("render");
+        }
+    });
+    assert_eq!(allocations, 0);
+    assert!(samples.iter().any(|value| *value > 0.0));
+}

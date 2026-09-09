@@ -506,6 +506,7 @@ fn a_control_script_defers_a_steal_reset_to_the_next_quantum_for_only_that_voice
                     seed,
                     reset_pending,
                     voice,
+                    ..
                 } = state
                 {
                     Some((*registers, *seed, *reset_pending, *voice))
@@ -618,4 +619,107 @@ fn a_modulated_voice_plan_renders_the_same_bits_offline_and_through_the_schedule
         .collect();
     assert_eq!(through_bits, offline_bits);
     assert!(through.iter().any(|s| s.abs() > 0.1), "audible");
+}
+
+#[test]
+fn an_audio_script_resets_at_the_taken_voices_exact_sample() {
+    use crate::script::{ProjectSeed, ScriptIdentity, ScriptStateId};
+    let program = ScriptIdentity::new(SOURCE, ScriptStateId::new(1), ProjectSeed::new(2))
+        .compile_audio(
+            "out = accum(0.125)",
+            SampleRate::new(RATE).expect("rate"),
+            ChannelLayout::Mono,
+            &[],
+        )
+        .expect("program");
+    let ir = GraphIr::builder()
+        .script(program, ExecutionScope::Voice)
+        .node(
+            ENVELOPE,
+            IrNodeKind::Envelope {
+                attack: Seconds::ZERO,
+                decay: Seconds::ZERO,
+                sustain: NormalizedLevel::FULL,
+                release: Seconds::ZERO,
+                velocity_sensitivity: NormalizedLevel::FULL,
+            },
+            ExecutionScope::Voice,
+        )
+        .node(AMPLIFIER, IrNodeKind::Amplifier, ExecutionScope::Voice)
+        .node(OUTPUT, IrNodeKind::Output, ExecutionScope::Global)
+        .connect(
+            (SOURCE, PortId::FIRST),
+            (AMPLIFIER, PortId::FIRST),
+            SignalDomain::Audio,
+        )
+        .connect(
+            (ENVELOPE, PortId::FIRST),
+            (AMPLIFIER, AMPLIFIER_CONTROL),
+            SignalDomain::Control,
+        )
+        .connect(
+            (AMPLIFIER, PortId::FIRST),
+            (OUTPUT, PortId::FIRST),
+            SignalDomain::Audio,
+        )
+        .declaring(crate::ir::PlanDeclarations {
+            note_producers: vec![crate::ir::NoteProducerDeclaration {
+                compiled: true,
+                simultaneous_notes: HeldNoteCount::measured(2),
+                simultaneous_holds: EventCount::NONE,
+            }],
+            held_notes: HeldNoteCount::measured(2),
+            stealing: StealingPolicy::Oldest {
+                fade: FrameCount::new(128),
+            },
+            ..crate::ir::PlanDeclarations::default()
+        })
+        .build()
+        .expect("IR");
+    let plan = admit(&ir);
+    let q = Q as u64;
+    let held = [note_on(&plan, 60, 0), note_on(&plan, 67, q)];
+    let taken = [held[0], held[1], note_on(&plan, 72, 4 * q + 5)];
+    let states = |events: &[PlanEvent]| {
+        render_through(&plan, events, 8)
+            .0
+            .node_states()
+            .iter()
+            .filter_map(|state| {
+                if let NodeState::Script {
+                    registers, seed, ..
+                } = state
+                {
+                    Some((*registers, *seed))
+                } else {
+                    None
+                }
+            })
+            .collect::<Vec<_>>()
+    };
+    let code = synth_script::compile::compile(
+        "out = accum(0.125)",
+        &synth_script::compile::CompileOptions::default(),
+    )
+    .0
+    .expect("oracle program")
+    .script;
+    for (events, evaluations) in [(&held[..], [448, 448]), (&taken[..], [59, 448])] {
+        let states = states(events);
+        assert_eq!(states.len(), 2);
+        for ((actual, seed), count) in states.into_iter().zip(evaluations) {
+            let mut expected = synth_core::script::RegisterFile::new(0, seed.as_u64());
+            for _ in 0..count {
+                let _ = code.eval(
+                    &[],
+                    &mut expected,
+                    &synth_core::script::EvalContext::audio(RATE),
+                );
+            }
+            assert_eq!(
+                actual, expected,
+                "the reset at 6Q+5 leaves 59 evaluations; the other voice keeps all 448"
+            );
+        }
+    }
 }

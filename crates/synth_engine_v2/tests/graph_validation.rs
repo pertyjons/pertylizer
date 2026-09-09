@@ -414,17 +414,16 @@ macro_rules! catalog {
     };
 }
 
-fn script_kind() -> IrNodeKind {
+fn script_kind(audio: bool) -> IrNodeKind {
     use synth_engine_v2::script::{ProjectSeed, ScriptIdentity, ScriptStateId};
     let mut identity =
         ScriptIdentity::new(NodeId::new(999), ScriptStateId::new(1), ProjectSeed::new(1));
-    let program = identity
-        .compile_control(
-            "out = 0",
-            synth_engine_v2::quantities::SampleRate::new(48000.0).expect("rate"),
-            &[],
-        )
-        .expect("program");
+    let program = if audio {
+        identity.compile_audio("out = 0", common::rate(48_000.0), ChannelLayout::Mono, &[])
+    } else {
+        identity.compile_control("out = 0", common::rate(48_000.0), &[])
+    }
+    .expect("program");
     GraphIr::builder()
         .script(program, ExecutionScope::Global)
         .build()
@@ -434,7 +433,8 @@ fn script_kind() -> IrNodeKind {
 }
 
 catalog! {
-    script_kind() => IrNodeKind::Script { .. },
+    script_kind(false) => IrNodeKind::Script { .. },
+    script_kind(true) => IrNodeKind::AudioScript { .. },
     IrNodeKind::Controller { kind: synth_engine_v2::controller::ControllerKind::ModWheel } => IrNodeKind::Controller { .. },
     IrNodeKind::NoteSource { kind: synth_engine_v2::controller::NoteSource::Pressure } => IrNodeKind::NoteSource { .. },
     IrNodeKind::Silence => IrNodeKind::Silence,

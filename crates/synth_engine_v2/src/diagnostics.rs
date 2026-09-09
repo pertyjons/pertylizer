@@ -737,6 +737,10 @@ pub enum PreparationFault {
 /// Something worth saying about a plan that was nevertheless admitted.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum CompileWarning {
+    /// Audio-rate work at maximum configured polyphony exceeds the static advisory threshold.
+    AudioScriptWork {
+        estimate: crate::script::AudioScriptCost,
+    },
     /// The compiler inserted an implicit conversion on an edge.
     ///
     /// ADR-0002 clause 7 requires a conversion to appear in the schedule, in the
@@ -781,6 +785,16 @@ pub enum CompileWarning {
 impl std::fmt::Display for CompileWarning {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            Self::AudioScriptWork { estimate } => write!(
+                f,
+                "{} audio script: {} VM work units/evaluation x {} frames x {} voices = {} units/quantum (advisory threshold {}); this is not a CPU-time estimate",
+                estimate.node,
+                estimate.per_evaluation.get(),
+                crate::time::QUANTUM_FRAMES,
+                estimate.voices.get(),
+                estimate.per_quantum.get(),
+                estimate.warning_threshold.get()
+            ),
             Self::ConversionInserted { edge, conversion } => {
                 write!(f, "{edge} carries an inserted {conversion}")
             }

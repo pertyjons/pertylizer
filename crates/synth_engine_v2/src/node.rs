@@ -783,6 +783,8 @@ fn prepare_sampler(
 pub enum NodeKindId {
     /// A control-rate YAMS program with a program-specific interface.
     Script,
+    /// A per-sample YAMS program with a program-specific interface.
+    AudioScript,
     /// Mod wheel source.
     ModWheel,
     /// Aftertouch source.
@@ -1560,6 +1562,27 @@ static SCRIPT: NodeDeclaration = NodeDeclaration {
         crate::script::ScriptSeed,
         bool,
         crate::script::ScriptVoiceId,
+        bool,
+    )>() as u64,
+};
+
+static AUDIO_SCRIPT: NodeDeclaration = NodeDeclaration {
+    id: NodeKindId::AudioScript,
+    name: "audio_script",
+    kernel: kernels::AUDIO_SCRIPT,
+    ports: &[AUDIO_OUT],
+    controls: &[],
+    in_place_safe: false,
+    note_control: None,
+    taps: &[],
+    prepare: prepare_audioscript,
+    prepared_bytes: size_of::<(crate::script::ScriptSlot, crate::script::ScriptSeed, f32)>() as u64,
+    state_bytes: size_of::<(
+        synth_core::script::RegisterFile,
+        crate::script::ScriptSeed,
+        bool,
+        crate::script::ScriptVoiceId,
+        bool,
     )>() as u64,
 };
 
@@ -1571,6 +1594,25 @@ fn prepare_script(
     let IrNodeKind::Script { program: reference } = kind else {
         return Err(declared_for_another_kind(node));
     };
+    prepare_script_program(node, reference, ctx)
+}
+
+fn prepare_audioscript(
+    node: NodeId,
+    kind: IrNodeKind,
+    ctx: &PrepareContext<'_>,
+) -> Result<PreparedNode, CompileError> {
+    let IrNodeKind::AudioScript { program: reference } = kind else {
+        return Err(declared_for_another_kind(node));
+    };
+    prepare_script_program(node, reference, ctx)
+}
+
+fn prepare_script_program(
+    node: NodeId,
+    reference: crate::script::ScriptRef,
+    ctx: &PrepareContext<'_>,
+) -> Result<PreparedNode, CompileError> {
     let fault = |fault| CompileError::Script { node, fault };
     let program = ctx
         .ir
@@ -1590,7 +1632,7 @@ fn prepare_script(
     Ok(PreparedNode::Script {
         program: crate::script::ScriptSlot::new(reference.index()),
         seed: program.seed(),
-        rate: ctx.rate.as_f32() / f32::from(crate::time::QUANTUM_FRAMES as u16),
+        rate: program.domain().evaluation_rate(ctx.rate),
     })
 }
 
@@ -1601,8 +1643,9 @@ fn prepare_script(
 /// the declarations are `static` rather than `const`: a `const` is materialised at each
 /// use and has no single address to compare — so a kind declared but left out here cannot
 /// be discovered, and one listed here but not resolvable cannot compile.
-static DECLARED: [&NodeDeclaration; 22] = [
+static DECLARED: [&NodeDeclaration; 23] = [
     &SCRIPT,
+    &AUDIO_SCRIPT,
     &SILENCE,
     &CONSTANT,
     &IMPULSE,
@@ -1922,6 +1965,7 @@ pub(crate) fn declaration(kind: IrNodeKind) -> Option<&'static NodeDeclaration> 
         }),
         IrNodeKind::Lfo { .. } => Some(&LFO),
         IrNodeKind::Script { .. } => Some(&SCRIPT),
+        IrNodeKind::AudioScript { .. } => Some(&AUDIO_SCRIPT),
         // The output node has no kernel and no declaration: writing the stream's channels
         // is the renderer's boundary rather than a node's work.
         IrNodeKind::Output => None,
@@ -1969,6 +2013,7 @@ pub(crate) fn descriptor(kind: IrNodeKind) -> Option<NodeDescriptor> {
         }
         IrNodeKind::Lfo { .. } => declared.map(NodeDeclaration::descriptor),
         IrNodeKind::Script { .. } => declared.map(NodeDeclaration::descriptor),
+        IrNodeKind::AudioScript { .. } => declared.map(NodeDeclaration::descriptor),
     }
 }
 
@@ -2212,6 +2257,7 @@ pub fn prepared_payload_bytes(kind: IrNodeKind) -> u64 {
         }
         IrNodeKind::Lfo { .. } => return declared.map_or(0, |d| d.prepared_bytes),
         IrNodeKind::Script { .. } => return declared.map_or(0, |d| d.prepared_bytes),
+        IrNodeKind::AudioScript { .. } => return declared.map_or(0, |d| d.prepared_bytes),
     }) as u64
 }
 
@@ -2261,6 +2307,7 @@ pub fn state_payload_bytes(kind: IrNodeKind) -> u64 {
         }
         IrNodeKind::Lfo { .. } => return declared.map_or(0, |d| d.state_bytes),
         IrNodeKind::Script { .. } => return declared.map_or(0, |d| d.state_bytes),
+        IrNodeKind::AudioScript { .. } => return declared.map_or(0, |d| d.state_bytes),
         IrNodeKind::Output => 0,
     }) as u64
 }
@@ -2319,6 +2366,9 @@ mod tests {
     fn every_kind() -> Vec<IrNodeKind> {
         vec![
             IrNodeKind::Script {
+                program: crate::script::ScriptRef::new(0),
+            },
+            IrNodeKind::AudioScript {
                 program: crate::script::ScriptRef::new(0),
             },
             IrNodeKind::Controller {
@@ -2602,13 +2652,21 @@ mod tests {
             let rate = SampleRate::new(48_000.0).expect("a real rate");
             // The sampler prepares against a plan's sample table (ADR-0026), so every kind
             // is prepared against an IR holding one sample and a one-zone map naming it.
-            let ir = if matches!(kind, IrNodeKind::Script { .. }) {
-                let program = crate::script::ScriptIdentity::new(
+            let ir = if matches!(
+                kind,
+                IrNodeKind::Script { .. } | IrNodeKind::AudioScript { .. }
+            ) {
+                let mut identity = crate::script::ScriptIdentity::new(
                     NodeId::new(0),
                     crate::script::ScriptStateId::new(1),
                     crate::script::ProjectSeed::new(2),
-                )
-                .compile_control("out = 1", rate, &[])
+                );
+                let program = match kind {
+                    IrNodeKind::AudioScript { .. } => {
+                        identity.compile_audio("out = 1", rate, ChannelLayout::Mono, &[])
+                    }
+                    _ => identity.compile_control("out = 1", rate, &[]),
+                }
                 .expect("program");
                 crate::ir::GraphIr::builder()
                     .script(program, crate::ir::ExecutionScope::Global)
@@ -2631,7 +2689,10 @@ mod tests {
             let matches_kind = matches!(
                 (kind, &prepared),
                 (IrNodeKind::Silence, PreparedNode::Silence)
-                    | (IrNodeKind::Script { .. }, PreparedNode::Script { .. })
+                    | (
+                        IrNodeKind::Script { .. } | IrNodeKind::AudioScript { .. },
+                        PreparedNode::Script { .. }
+                    )
                     | (IrNodeKind::Constant { .. }, PreparedNode::Constant { .. })
                     | (IrNodeKind::Impulse { .. }, PreparedNode::Impulse { .. })
                     | (IrNodeKind::Sine { .. }, PreparedNode::Sine { .. })
@@ -2678,6 +2739,7 @@ mod tests {
                 | IrNodeKind::VelocityScaler { .. }
                 | IrNodeKind::Sampler { .. }
                 | IrNodeKind::Script { .. }
+                | IrNodeKind::AudioScript { .. }
                 | IrNodeKind::Lfo { .. } => (true, true),
                 IrNodeKind::NoteSource { .. }
                 | IrNodeKind::Silence
