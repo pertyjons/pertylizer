@@ -152,3 +152,5 @@ mod sampler_tests;
 #[cfg(test)]
 #[path = "tests/modulation.rs"]
 mod modulation_tests;
+
+pub mod authored;

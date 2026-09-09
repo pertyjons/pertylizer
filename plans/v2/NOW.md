@@ -110,8 +110,9 @@ no modulator kind exists, and nothing consumes randomness. The compiled timeline
 `SetParameter` override writes at plan positions under the compiled share, which is the
 mechanism an automation lane lowers onto. The lowerer refuses a placed pattern carrying
 automation and a Mod Grid instance V1's own builder returns, and reports a saved YAMS script
-as unrepresented, each naming this phase; the note-processor rack and Note Grid graphs are
-refused under a Phase 6 label that phase never claimed. The profile carries the phase's
+as unrepresented, each naming this phase; the note-processor rack and Note Grid graphs
+at entry were refused under a Phase 6 label that phase never claimed; S007 assigns
+them to the explicit Phase 10A work item below. The profile carries the phase's
 capacities unchanged from V1 — the script limits, `max_mod_graph_nodes` and the two per-voice
 slot counts — reported against themselves until a plan declares usage
 (`spec-host-profile-and-render-limits`). What V1 has is inventoried: the per-module Mod Matrix
@@ -126,9 +127,15 @@ slot counts — reported against themselves until a plan declares usage
 | P07-S003 — the Mod Matrix and the Mod Grid as edges | **Merged** 2026-09-08 (`7eda9406`); one independent read (codex, `gpt-6-astra`), five defects repaired, a focused reread found two more, repaired | V1's per-module Mod Matrix slots and the global Mod Grid instances V1's own builder returns lower into modulation edges under `SOUND-INV-027`, each V1 per-target scale becoming the edge's depth (ADR-0007's accepted cost): the LFO is the one source, lowered to V2's `Lfo` kind (voice scope from a patch, global scope from the grid), and the targets whose V1 law is V2's — the filter's cutoff and the oscillator's three pitch keys — are carried; the resonance, an LFO's rate or depth, a level, an envelope time, an envelope or macro source, a scripted slot, a random shape, a tempo-synced LFO, a cable out of an LFO, a track-scoped instance and the grid's cheap sources and track, master and channel targets are refused by name. Each edge is marked unrepresented for its timing (`CORPUS-0003-C1`). What V1 skips before reading lowers to nothing. The corpus's Mod Matrix case lowers, so three saved projects lower where `P04-R002` recorded two. Stated in the lowering specification under `LOWER-INV-004` |
 | P07-S004 — controllers and per-note expression as sources | **Merged** 2026-09-09; independently reviewed | Declared controllers and occurrence-scoped source updates use the existing event capacities and parameter pipeline; all six V1 matrix macros lower to these sources. Contract and conformance: [`SOUND-INV-023`](specs/spec-sound-core-render-contract.md#invariants) |
 | P07-S005 — YAMS Control as a node kind | **Merged** 2026-09-09 (`852fef1c`); full repository gate and independent review | Accepts ADR-0008's identity and seed half, and inherits `P06-R001`: a render is deterministic for a fixed seed as `tests/determinism.rs` holds it for a fixed stream, and the slice states where the seed enters. Compile source off-thread with the existing `synth_script` compiler into immutable program data with an interface schema, stable local parameter keys, source and destination declarations, a state layout and a cost estimate; a `Script` kind whose sources are bound to slots — runtime code resolves no name — whose local `param` knobs are ordinary declared controls, so a lane automates one through the same pipeline as a native parameter, and whose output is a typed control signal that never writes a stored parameter; one bounded evaluation per quantum charged to the profile's script limits times polyphony; a missing, cyclic or scope-invalid binding refused with a source-level diagnostic; a time-varying program sample-identical under partitions; removing or renaming a script parameter orphans its lane with a diagnostic rather than retargeting it |
-| P07-S006 — YAMS Audio | **Built** 2026-09-09; full repository gate and independent review; merge pending | The per-sample domain as a kind: bounded and allocation-free at the maximum configured block size and voice count, with the cost warning published for an expensive program multiplied by maximum polyphony |
-| P07-S007 — YAMS Note and the authored-runtime producer | Not started | The event-transformation domain, which is the first authored-runtime producer: measured under ADR-0054 clause 2 and its share reselected or retained before a consumer can enable it. The note-processor rack and the Note Grid graphs the lowerer refuses today are this domain's first consumers; whether they lower in this phase is decided at this slice |
-| P07-S008 — one combine order, and determinism for a fixed seed | Not started | The exit's evidence: one target driven by a Mod Matrix edge, a Mod Grid edge and a script through the one slot, held to the documented order by an oracle; and the seed clause `P06-R001` carried from Phase 6, held on every path once `P07-S005` gives a node a seed |
+| P07-S006 — YAMS Audio | **Merged** 2026-09-09 (`d871d70d`); full repository gate and independent review | The per-sample domain as a kind: bounded and allocation-free at the maximum configured block size and voice count, with the cost warning published for an expensive program multiplied by maximum polyphony |
+| P07-S007 — YAMS Note and the authored-runtime producer | **Qualified** 2026-09-09; EVD-0020 retains 48 authored events/Q and 24 total inputs; qualification review (agy, `gemini-3.8-flash-high`) found no defects | The event-transformation domain, which is the first authored-runtime producer: measured under ADR-0054 clause 2 and its share reselected or retained before a consumer can enable it. The note-processor rack and the Note Grid graphs the lowerer refuses today are this domain's first consumers; whether they lower in this phase is decided at this slice |
+| P07-S008 — one combine order, and determinism for a fixed seed | **Selected** 2026-09-09 | The exit's evidence: one target driven by a Mod Matrix edge, a Mod Grid edge and a script through the one slot, held to the documented order by an oracle; and the seed clause `P06-R001` carried from Phase 6, held on every path once `P07-S005` gives a node a seed |
+
+ADR-0060 owns the bounded Note source and its exclusive stream ownership.
+
+| ID | Residual | Pull-forward rule |
+|---|---|---|
+| P07-R001 | Saved Note Grid graphs and note-processor racks remain refused. The finite standalone authored stream's previous-quantum inputs and explicit cuts are not a saved-rack fidelity claim. | Phase 10A's canonical note-processing work item owns the model and lowering. Before any saved Note Grid/rack consumer, define its ordering, timing, identity, source bounds and fidelity dispositions, then test its saved inputs through the lowerer. Phase 10A cannot exit with this refusal unassigned. |
 
 Inherited before it builds: `P06-R001` (a fixed project seed, `P07-S005`) and `P05-R001` (a
 lowered level's smoothing policy, binding the first slice that modulates or automates a V2
@@ -189,9 +196,9 @@ that modulates or automates a V2 amplitude or maps V1's amplifier level; and Pha
 block only their named consumers. `P04-R004` binds the first shared render surface, which is
 Phase 10B's.
 
-Two streams are active: Phase 7, with `P07-S006` selected, and Phase 0B, with `P00B-T003`
-as its selected slice.
+Two streams are active: Phase 7, with `P07-S008` selected now that `P07-S007` is merged
+and qualified, and Phase 0B, with `P00B-T003` as its selected slice.
 
-Next action: **verify and squash-merge `P07-S006`**, then select `P07-S007` (Note YAMS).
-Continue through `P07-S008` and the Phase 7 exit review under the user's
-2026-09-09 instruction. Reload remains owned by Phase 9.
+Next action: **implement `P07-S008` (one combine order, and determinism for a fixed seed)**
+and draft the Phase 7 exit review under the user's 2026-09-09 instruction. Reload remains
+owned by Phase 9.

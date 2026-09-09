@@ -577,7 +577,8 @@ storage assigned to compiled signal lifetimes.
     building of candidates; the audio-thread half owns the clock, the carries, node
     state, the **live-note registry** and adoption. That split is what lets a
     candidate be built while the stream renders, without a lock the real-time rules
-    forbid.
+    forbid. SOUND-INV-030 adds an exclusive authored owner that takes both fresh
+    halves onto one render thread and exposes no concurrent control or activation.
 19. **SOUND-INV-019 — Tempo conversion law.** The tempo map converts a musical
     position into a `PlanPosition` and never into an engine time. Its law uses only
     the four IEEE-754 arithmetic operations, comparison, and rounding, per
@@ -1350,6 +1351,94 @@ subsequent renders at configured maximum block and voice count. Removing Q or th
 maximum-voice multiplier, or ignoring ScaleSnap's bounded inner loop, must change
 the independently counted advisory. Any failed assertion blocks acceptance.
 
+### SOUND-INV-030 — Note YAMS and its authored source
+
+ADR-0060 governs this source. A Note script is a stateless one-note transformation with an Event output. Its
+ordinary graph step captures numeric Control bindings and local resolved ramp
+heads during quantum q for invocations in q+1. This is semantic node state,
+independent of arena reuse and observation taps. At preparation, constants and
+local defaults initialize their sources; external parameter reads initialize
+from the target's prepared base; connected signals initialize to zero. The VM
+runs once per due input, before the next quantum's shared publication seals.
+No event timestamp is delayed to compensate for this explicit Q input latency.
+Base, Automated and PreviousResolved bindings select the same named parameter
+layers as other scripts, captured during q. Local knobs retain stable parameter
+identities and use the central pipeline. Note bindings reject per-sample audio,
+missing sources, cycles and invalid scope with source diagnostics.
+
+The initial consumer is `AuthoredNoteStream`: one shared Global or
+InstrumentInstance Note script, one non-compiled authored producer, one note
+target and no stealing. It exclusively owns both fresh stream halves, its tempo
+map and the only arbiter after preparation. There is no concurrent control half,
+runtime offer, activation, seek, live ingress, second Note source or compiled
+note stream. It explicitly receives an admitted compiled stream containing only
+SetParameter and Controller writes. The ordinary scheduler prepares those writes
+and drains them under Compiled into the same window as the authored source.
+A plain stream refuses a plan containing a Note script.
+
+The complete immutable raw input list is admitted before playback. Each input
+has a stable authored occurrence ID, absolute musical start, separate
+pattern-relative ScriptTick, key, velocity, optional finite duration and a
+mandatory later cut. ScriptTick and ScriptDuration have the explicit initial
+u16 tick domain, exactly representable as f32. `None` becomes the language's -1
+until-cut sentinel. A cut is attached to its occurrence, never a list or voice
+index. Duplicate IDs, unordered starts, non-forward cuts, invalid target or
+unsupported producers refuse the complete source before playback.
+
+For N inputs in total, admission requires N at most the producer's identity
+range, distinct destination gate instances and hold entitlement, and 2N at most
+both destination_occupancy and
+retained_future. Pending reservations transfer to materialized obligations:
+pending inputs plus actual held releases never exceed N. Same-batch on/off
+charges both events to AuthoredRuntime and takes no hold. A later release takes
+one hold on start and redeems it under Release. Processing follows event time,
+with releases before starts at a tie; an index is never freed at a future time
+before an earlier start is minted. Every possible finite output end tick is
+checked against the tempo map and anchor before playback, including monotonicity
+of rounded positions. The map has at most 32 segments. The source owns fixed
+occurrence records and records pending, held, future and reservation peaks;
+publication records the actual per-class destination peaks. The program's
+reported maximum evaluations per quantum is destination_occupancy / 2, which
+covers N even when all inputs coincide. This conservative finite-source bound
+is not an unbounded song-streaming contract.
+
+Each invocation resets registers using project, NodeId, ScriptStateId, shared
+instance zero and AuthoredOccurrenceId. No seed includes plan order/revision,
+identity-table ID or the voice eventually assigned to its output. Negative
+velocity explicitly drops the note; finite pitch rounds/clamps to 0..127,
+velocity to 0..1, written duration to the declared maximum, and gate to 0..1.
+Non-negative written duration is rounded to an integer tick and clamped first;
+that integer is multiplied by gate and rounded again to the effective integer
+duration. For example, 2.5 ticks with gate 0.5 becomes 3 then 2 ticks. Negative duration holds
+until the mandatory cut; every finite release is also bounded by that cut.
+Zero effective duration suppresses a zero-length note. The shared VM retains
+its existing finite-store rule (non-finite arithmetic becomes zero at StoreOut).
+A non-finite result escaping that VM boundary is a terminal producer defect.
+
+The source stamps exact engine time as `TimeSource::Authored`, which is not
+ingress and has no hardware horizon. A late authored event, late compiled write
+in this owner's window, over-declaration, identity failure or publication failure
+ends the stream: silence the complete host callback, invalidate carries, set
+needs_reprepare and retain the named producer/fault. The authored-source counter
+counts every source terminal; publication_faults increments only when publication
+itself failed. Any renderer refusal after producer state advances is also terminal,
+so it cannot retry a partly consumed source. Later calls remain silent
+and refuse. Runtime capacity never trims playback or increments a Live drop.
+
+The real source remains unavailable to ordinary consumers until EVD-0020 records
+its committed subject, retained artifacts and ADR-0054 share selection. Tests may
+exercise that exact private implementation while qualification is pending.
+Saved Note Grid graphs and note-processor racks remain explicitly refused:
+P07-R001 assigns their canonical note-processing model and lowering to Phase 10A.
+No V1 saved-rack fidelity or script hot replacement is claimed by this source.
+
+Falsifiers are bit-identical generated traces and audio under whole, Q-sized,
+one-frame and irregular callbacks; exact local/signal capture and release-class
+oracles; zero allocator activity on first and subsequent maximum-source renders;
+whole-source pre-playback refusal at N+1; and whole-callback terminal silence
+for forged late, invalid and overfull producers. A missed cut, changed seed,
+callback-dependent invocation or violated sum blocks acceptance.
+
 ## Conformance tests
 
 | Invariants | Named checks |
@@ -1378,7 +1467,7 @@ the independently counted advisory. Any failed assertion blocks acceptance.
 | SOUND-INV-027 | **Built by `P07-S001`.** `tests/modulation.rs` holds the edge on rendered bits against an oracle of two renders without an edge — the LFO's own frames read through an amplifier over a constant, and the sine alone driven by a positioned write at every boundary carrying the value the slot composes from that frame: `an_lfo_on_the_frequency_is_the_sine_driven_by_the_composed_value_at_each_boundary` (with its zero-depth and no-edge controls), `two_edges_into_one_parameter_sum_in_the_laws_units`, `an_override_written_under_an_edge_keeps_the_modulation_in_force`, `an_edge_into_a_quantum_rate_parameter_retargets_its_segment_at_the_boundary`, `a_modulated_render_is_the_same_bits_under_every_host_partition` (four partitions), `a_source_modulating_another_sources_rate_is_composed_before_that_source_runs` (the pre-pass order, and +12 semitones on a source's rate held to that source at twice its rate), `a_voice_scope_source_is_instantiated_per_voice_and_an_outer_one_is_shared` (two source steps reading two buffers against one step read twice, and two voices held to twice one), `the_pre_pass_holds_the_sources_and_every_composition_ahead_of_the_main_walk`, `a_plan_without_an_edge_has_no_pre_pass`, `the_charges_derive_alike_from_the_ir_and_the_plan_and_cover_what_is_held`, `edges_into_a_voice_parameter_are_admitted_as_slots_per_voice`, and one refusal test per rule: the unit, the unknown parameter, the audio source, the envelope as a source, the unknown port, the scope crossing both ways, the two random shapes, the cycle, and the two IR-construction refusals; `admission`'s refusal case for `ModMatrixSlotsPerVoice`. Since `P07-S003` the lowering specification puts V1's Mod Matrix slots and Mod Grid targets on this edge, at V1's per-target scale as the depth. In-crate, `modulation_tests` holds the kernel's four shapes at the quarter points of one period against V1's arithmetic, the unipolar fold and the depth, the phase offset surviving a reset, the rate read per frame, the random arms writing silence, `a_modulated_row_advances_once_per_quantum_after_its_composition` (a two-quantum segment on a modulated depth, read through an amplifier, climbing by halves rather than reaching its target in one quantum), `a_steal_resets_the_taken_voices_modulator_and_leaves_the_others` (against a no-steal control whose two instances agree), and the offline render held to the scheduler's one priming quantum apart. Bit-identical: EVD-0013's aligned render and the three `quantum_cost` digests reproduce, since a plan with no edge has no pre-pass. The two-voice test found a pre-existing defect: the renderer laid a node's ramp buffers out in target-table order, which since `P06-S001` interleaves instances, so an instance with two quantum-rate controls read another instance's buffer — the layout is per node now, and the steal test's no-steal control holds the two instances equal |
 | SOUND-INV-019 | `tempo.rs`: a beat's exact frame at a constant tempo; a step holding the old tempo up to its change; a half-frame position rounding away from zero rather than truncating; a position being the stored prefix plus its own offset, and independent of what was asked before it; a tick past exact integer range refused rather than answered; and the ramp's own nine — an equal-endpoint ramp equal to a step bit for bit, falsified by the ramp recomputing the shared linear term; a ramp lasting its beats times the mean of its two periods, asserted as the corpus fixture's exact 48 000 frames and explicitly not V1's 44 361, falsified by the quadratic term's sign and by treating every change as a ramp; positions non-decreasing across steep ramps in both directions over adjacent ticks in four sampled windows, falsified by that same sign; a tempo whose period overflows refused at construction, and a 6000-to-`1e100` BPM ramp reporting a real tempo one tick before its end, falsified separately by dropping the period check and by either rejected interpolation form; chained ramps each reaching the next declared tempo with a continuous junction, falsified by pointing a ramp at the last one; a trailing ramp behaving as a step, falsified by giving it a degenerate destination; and the reported tempo being the reciprocal of the interpolated period rather than a straight line between two tempo numbers, falsified by reporting the declared tempo. The standing source scan covers the five functions the law reaches **and is closed under calls**: every call those bodies make must be to one of the five or to a named arithmetic or accessor method, and no allowlisted name may itself be a function this module defines — so a transcendental can hide neither in an unfollowed helper nor behind an allowlisted name, both mutation-verified. It strips comments and attributes but not a line holding a quote, and that exemption is checked directly, since the module's own source cannot exercise it |
 | Node arithmetic and preparation | `voice_nodes`, internal kernel tests |
-
+| SOUND-INV-030 | `authored::tests` holds seeded traces, capture and local automation, release accounting, whole-source refusal, terminal silence and first/subsequent allocation bounds. EVD-0020 owns qualification and capacity selection. |
 | SOUND-INV-029 | `tests/audio_scripts.rs` holds sample cadence across callbacks, stereo routing and unwritten-channel silence, the audio evaluation clock and first-sample marker, local automation, source-level cycle/scope refusals, and the independently counted maximum-polyphony work warning. `modulation_tests::an_audio_script_resets_at_the_taken_voices_exact_sample` holds an off-boundary reset against exact evaluation counts in both voices. `render_allocation::yams_audio_allocates_nothing_at_the_profiles_voice_and_block_maximum` arms before the first render of a stereo program at both configured maxima. |
 | SOUND-INV-028 | `tests/scripts.rs` holds stateful cadence, local automation and previous-value feedback under one-frame and irregular partitions; stable keys under reorder/remove/rename; source-level missing, cycle and scope refusals; graph dependencies ahead of native modulation; explicit base and automated layers; seed repeatability across recompile and declaration order. `modulation_tests` checks per-voice reset timing, state isolation and allocated bytes against the admission charge. `render_allocation` checks first and subsequent Control renders at the configured block and voice maximum. `admission` includes actual script-host usage in the refusal set; `render_loop_purity` includes the transitive VM sources. |
 

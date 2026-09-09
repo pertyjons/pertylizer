@@ -102,6 +102,7 @@ fn input_value(
     first: bool,
 ) -> f32 {
     match input {
+        PreparedInput::NoteField(_) => 0.0,
         PreparedInput::Local(index) => kernels::ramp_of(io.ramps, usize::from(index.as_u8()))
             .get(frame)
             .copied()
@@ -139,4 +140,28 @@ fn input_value(
                 })
         }
     }
+}
+
+/// Semantic storage owned by the Note node, independent of arena reuse or observation.
+pub(crate) fn capture(prepared: &PreparedNode, state: &mut NodeState, io: &mut NodeIo<'_>) {
+    let PreparedNode::Script { program, .. } = prepared else {
+        return;
+    };
+    let NodeState::Script {
+        captured,
+        captured_once,
+        voice,
+        ..
+    } = state
+    else {
+        return;
+    };
+    let Some(program) = io.scripts.programs.get(program.index()) else {
+        return;
+    };
+    for (input, source) in program.inputs.iter().zip(captured) {
+        *source = input_value(*input, io, 0, *voice, false);
+    }
+    *captured_once = true;
+    io.out.fill(0.0);
 }

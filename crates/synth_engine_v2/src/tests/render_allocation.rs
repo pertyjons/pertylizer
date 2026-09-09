@@ -94,7 +94,7 @@ impl Drop for AllocationGuard {
 }
 
 /// Run `f` with counting armed, and return how many allocator events it caused.
-fn count_allocs(f: impl FnOnce()) -> u64 {
+pub(crate) fn count_allocs(f: impl FnOnce()) -> u64 {
     let guard = AllocationGuard::arm();
     f();
     guard.count()

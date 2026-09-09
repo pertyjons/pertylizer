@@ -299,7 +299,11 @@ fn the_conversion_uses_only_the_four_operations() {
     // functions: the segment integral, the beat conversion both of the others call, and the
     // reported tempo, which clause 7 makes the reciprocal of the interpolated period.
     // Scanning only the first would have let a ramp arrive through either of the others.
-    let source = include_str!("../tempo.rs");
+    let source = concat!(
+        include_str!("../tempo.rs"),
+        "\n",
+        include_str!("../tempo/hot.rs")
+    );
     // **Comments are stripped before the scan**, because the check is about code and a
     // substring list this broad hits ordinary prose: the word "rising" contains `sin`, and
     // it failed a correct implementation once for exactly that reason. Stripping is the

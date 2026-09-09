@@ -166,6 +166,8 @@ pub enum IrNodeKind {
     Script { program: crate::script::ScriptRef },
     /// A per-sample program with an explicitly shaped audio output.
     AudioScript { program: crate::script::ScriptRef },
+    /// Captures previous-quantum sources for the authored Note event producer.
+    NoteScript { program: crate::script::ScriptRef },
     /// A controller held at quantum rate, available as a modulation source.
     Controller {
         /// Which controller the source represents.
@@ -1186,7 +1188,9 @@ impl GraphIr {
             if node.scope() == ExecutionScope::Voice
                 && matches!(
                     node.kind(),
-                    IrNodeKind::Script { .. } | IrNodeKind::AudioScript { .. }
+                    IrNodeKind::Script { .. }
+                        | IrNodeKind::AudioScript { .. }
+                        | IrNodeKind::NoteScript { .. }
                 )
             {
                 count = count.saturating_add(1);
@@ -1234,7 +1238,9 @@ impl GraphIr {
 
     pub(crate) fn descriptor(&self, kind: IrNodeKind) -> Option<crate::node::NodeDescriptor> {
         match kind {
-            IrNodeKind::Script { program } | IrNodeKind::AudioScript { program } => self
+            IrNodeKind::Script { program }
+            | IrNodeKind::AudioScript { program }
+            | IrNodeKind::NoteScript { program } => self
                 .script_program(program)
                 .map(crate::script::ScriptProgram::descriptor),
             _ => crate::node::descriptor(kind),
@@ -1249,7 +1255,9 @@ impl GraphIr {
     ) -> Vec<crate::validate::PortSpec> {
         if matches!(
             kind,
-            IrNodeKind::Script { .. } | IrNodeKind::AudioScript { .. }
+            IrNodeKind::Script { .. }
+                | IrNodeKind::AudioScript { .. }
+                | IrNodeKind::NoteScript { .. }
         ) {
             return self.descriptor(kind).map_or_else(Vec::new, |d| d.ports);
         }
@@ -1870,6 +1878,7 @@ impl GraphIrBuilder {
             id,
             match program.domain() {
                 crate::script::ScriptDomain::Control => IrNodeKind::Script { program: reference },
+                crate::script::ScriptDomain::Note => IrNodeKind::NoteScript { program: reference },
                 crate::script::ScriptDomain::Audio(_) => {
                     IrNodeKind::AudioScript { program: reference }
                 }
@@ -1986,6 +1995,16 @@ impl GraphIrBuilder {
             self.declarations
                 .programs
                 .retain(|declared| declared.id() != program.work().id());
+            let instances = if program.domain() == crate::script::ScriptDomain::Note {
+                self.declarations
+                    .authored_sources
+                    .iter()
+                    .fold(0_u32, |total, source| {
+                        total.saturating_add(source.destination_occupancy.get() / 2)
+                    })
+            } else {
+                instances
+            };
             self.declarations.programs.push(program.work_for(instances));
         }
         let mut kinds: std::collections::HashMap<NodeId, IrNodeKind> =
@@ -1996,8 +2015,9 @@ impl GraphIrBuilder {
             }
         }
         for node in &self.nodes {
-            if let IrNodeKind::Script { program } | IrNodeKind::AudioScript { program } =
-                node.kind()
+            if let IrNodeKind::Script { program }
+            | IrNodeKind::AudioScript { program }
+            | IrNodeKind::NoteScript { program } = node.kind()
                 && !self.scripts.get(program.index()).is_some_and(|program| {
                     program.node() == node.id()
                         && matches!(
@@ -2008,6 +2028,9 @@ impl GraphIrBuilder {
                             ) | (
                                 IrNodeKind::AudioScript { .. },
                                 crate::script::ScriptDomain::Audio(_)
+                            ) | (
+                                IrNodeKind::NoteScript { .. },
+                                crate::script::ScriptDomain::Note
                             )
                         )
                 })

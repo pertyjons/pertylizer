@@ -1180,20 +1180,7 @@ impl Lowered {
             .iter()
             .map(|producer| producer.simultaneous_holds)
             .collect();
-        // Sorted and deduplicated so the renderer-ingress refusal is a lookup rather than a
-        // scan, and so two authored sources on one producer name it once. Validation has
-        // already refused a source whose producer does not resolve, so every entry here is
-        // an index into the two lists above.
-        let authored_note_producers: Vec<_> = {
-            let mut claimed: Vec<_> = declarations
-                .authored_sources
-                .iter()
-                .map(|source| source.producer)
-                .collect();
-            claimed.sort_unstable_by_key(|producer| producer.as_u16());
-            claimed.dedup();
-            claimed
-        };
+        let authored_sources = declarations.authored_sources.clone();
         // Validation has already refused a second one, so the first is the only one.
         let compiled_note_producer = declarations
             .note_producers
@@ -1222,7 +1209,7 @@ impl Lowered {
             profile.limits().events().shares().compiled_event_share(),
             note_producer_ranges,
             note_producer_holds,
-            authored_note_producers,
+            authored_sources,
             compiled_note_producer,
             profile.limits().events().forward_event_horizon(),
             FrameCount::QUANTUM,

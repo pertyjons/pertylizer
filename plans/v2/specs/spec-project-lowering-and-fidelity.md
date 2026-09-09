@@ -371,3 +371,11 @@ by the Sound Core render contract's own rules, which this specification does not
 | Where a comparison harness reads a lowered outcome, and what encapsulation it needs so `LOWER-INV-003` cannot be bypassed | Yes for the first comparison consumer | ADR-0028 and Phase 10B for the surface; ADR-0057 clause 5 refuses it meanwhile |
 | Which further V1 module types the lowerer supports | No — a per-phase subset choice, refused by name meanwhile | Phase 5 and later |
 | An instrument soloed **elsewhere** silences this one in V1, and a lowering's input is one instrument, so it cannot be seen from here | No for a single-instrument lowering, which is all this phase performs; yes for the first caller that lowers a whole project | The first multi-instrument consumer, which needs Phase 8's mixer model anyway |
+
+## P07-S007 Note-processing disposition
+
+Saved Note Grid bindings and note-processor racks remain named refusals under
+P07-R001, owned by Phase 10A's canonical note-processing model. SOUND-INV-030
+introduces a finite standalone Note YAMS source with explicit quantum context
+and cut semantics; this does not establish a faithful lowering of those saved
+structures. Existing refusal coverage in `lowering/tests.rs` remains binding.

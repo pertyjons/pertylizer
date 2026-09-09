@@ -195,18 +195,22 @@ pub(crate) enum ProgramInput {
     SampleRate,
     ControlRate,
     FirstSample,
+    NoteField(synth_core::script::NoteField),
 }
 
 /// Execution cadence and output shape, fixed by compilation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ScriptDomain {
     Control,
+    Note,
     Audio(crate::quantities::ChannelLayout),
 }
 impl ScriptDomain {
     pub(crate) fn evaluation_rate(self, rate: crate::quantities::SampleRate) -> f32 {
         match self {
-            Self::Control => rate.as_f32() / f32::from(crate::time::QUANTUM_FRAMES as u16),
+            Self::Control | Self::Note => {
+                rate.as_f32() / f32::from(crate::time::QUANTUM_FRAMES as u16)
+            }
             Self::Audio(_) => rate.as_f32(),
         }
     }
@@ -268,6 +272,16 @@ impl ScriptIdentity {
         self.compile_domain(source, rate, bindings, ScriptDomain::Audio(layout))
     }
 
+    /// Compile a stateless, one-input/one-output Note event transformation.
+    pub fn compile_note(
+        &mut self,
+        source: &str,
+        rate: crate::quantities::SampleRate,
+        bindings: &[ScriptBinding],
+    ) -> Result<ScriptProgram, Vec<synth_script::diag::Diagnostic>> {
+        self.compile_domain(source, rate, bindings, ScriptDomain::Note)
+    }
+
     fn compile_domain(
         &mut self,
         source: &str,
@@ -289,15 +303,20 @@ impl ScriptIdentity {
         let options = CompileOptions {
             control_rate: domain.evaluation_rate(rate),
             control_ports: domain == ScriptDomain::Control,
+            note_event: domain == ScriptDomain::Note,
             audio_rate: matches!(domain, ScriptDomain::Audio(_)),
-            ..CompileOptions::default()
         };
-        let (compiled, mut diagnostics) = synth_script::compile::compile(source, &options);
+        let (compiled, mut diagnostics) = if domain == ScriptDomain::Note {
+            synth_script::compile::compile_note_with_params(source, options.control_rate)
+        } else {
+            synth_script::compile::compile(source, &options)
+        };
         let Some(compiled) = compiled else {
             return Err(diagnostics);
         };
         let output_slots = match domain {
             ScriptDomain::Audio(crate::quantities::ChannelLayout::Stereo) => 2,
+            ScriptDomain::Note => 4,
             _ => 1,
         };
         if compiled
@@ -352,7 +371,8 @@ impl ScriptIdentity {
             if !compiled.inputs.contains(&binding.input)
                 || matches!(
                     binding.input,
-                    SourceInput::LocalParam(_)
+                    SourceInput::NoteField(_)
+                        | SourceInput::LocalParam(_)
                         | SourceInput::Context(
                             synth_script::symbols::Context::Sr
                                 | synth_script::symbols::Context::Cr
@@ -369,14 +389,14 @@ impl ScriptIdentity {
                 ));
             }
         }
-        if domain == ScriptDomain::Control
+        if matches!(domain, ScriptDomain::Control | ScriptDomain::Note)
             && bindings
                 .iter()
                 .any(|binding| matches!(binding.source, ScriptSource::AudioSignal { .. }))
         {
             diagnostics.push(Diagnostic::error(
                 Span::new(0, 0),
-                "a Control script cannot read per-sample audio",
+                "a Control or Note script cannot read per-sample audio",
             ));
         }
         let mut inputs = Vec::new();
@@ -384,6 +404,7 @@ impl ScriptIdentity {
         for input in &compiled.inputs {
             let span = source_span(&ast, input);
             let bound = match input {
+                SourceInput::NoteField(field) => Some(ProgramInput::NoteField(*field)),
                 SourceInput::LocalParam(name) => parameters
                     .iter()
                     .position(|p| p.declaration.name == *name)
@@ -661,6 +682,8 @@ impl ScriptSeed {
 
 #[derive(Debug, Clone, Copy, PartialEq, Error)]
 pub enum ScriptFault {
+    #[error("a Note program requires its qualified authored source owner")]
+    NoteSourceRequired,
     #[error("script resource is missing")]
     Missing,
     #[error("script identity belongs to {actual}")]
@@ -708,6 +731,7 @@ impl ScriptProgram {
         let w = self.work;
         let evaluations = match self.domain {
             ScriptDomain::Control => evaluations,
+            ScriptDomain::Note => evaluations,
             ScriptDomain::Audio(_) => evaluations.saturating_mul(crate::time::QUANTUM_FRAMES),
         };
         crate::ir::IrProgram::new(
@@ -731,6 +755,11 @@ impl ScriptProgram {
             validate::{PortDirection, PortSpec},
         };
         let (domain, layout, kernel) = match self.domain {
+            ScriptDomain::Note => (
+                SignalDomain::Event,
+                ChannelLayout::Mono,
+                crate::node::kernels::NOTE_SCRIPT,
+            ),
             ScriptDomain::Control => (
                 SignalDomain::Control,
                 ChannelLayout::Mono,
@@ -791,6 +820,7 @@ pub use cost::{AudioScriptCost, VmWorkUnits};
 /// Numeric source binding; names and graph lookup remain off the audio thread.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) enum PreparedInput {
+    NoteField(synth_core::script::NoteField),
     Local(crate::node::kernels::ControlIndex),
     Signal(ScriptSignalIndex),
     AudioSignal {
@@ -810,9 +840,13 @@ pub(crate) enum PreparedInput {
 /// Immutable executable resource. Only the compiler can construct it.
 #[derive(Debug, Clone, PartialEq)]
 pub struct PreparedScript {
+    pub(crate) domain: ScriptDomain,
+    pub(crate) node: NodeId,
+    pub(crate) seed: ScriptSeed,
+    pub(crate) initial_sources: [f32; synth_core::script::MAX_SOURCES],
     mono_output: bool,
-    code: synth_core::script::CompiledScript,
-    inputs: Vec<PreparedInput>,
+    pub(crate) code: synth_core::script::CompiledScript,
+    pub(crate) inputs: Vec<PreparedInput>,
 }
 
 impl PreparedScript {
@@ -856,6 +890,7 @@ impl ScriptProgram {
             };
             inputs.push(match *input {
                 ProgramInput::Local(index) => PreparedInput::Local(index),
+                ProgramInput::NoteField(field) => PreparedInput::NoteField(field),
                 ProgramInput::FirstSample => PreparedInput::FirstSample,
                 ProgramInput::SampleRate => PreparedInput::Constant(
                     ParameterValue::new(self.rate.as_f32())
@@ -911,7 +946,26 @@ impl ScriptProgram {
                 }
             });
         }
+        let mut initial_sources = [0.0; synth_core::script::MAX_SOURCES];
+        for (input, value) in inputs.iter().zip(&mut initial_sources) {
+            *value = match *input {
+                PreparedInput::Local(index) => self
+                    .parameters
+                    .get(usize::from(index.as_u8()))
+                    .map_or(0.0, |parameter| parameter.default.value().as_f32()),
+                PreparedInput::Constant(constant) => constant.as_f32(),
+                PreparedInput::Parameter { slot, .. } => plan
+                    .parameter_targets()
+                    .get(slot.index())
+                    .map_or(0.0, |target| target.base.as_f32()),
+                _ => 0.0,
+            };
+        }
         Ok(PreparedScript {
+            domain: self.domain,
+            node: self.node(),
+            seed: self.seed().for_voice(ScriptVoiceId::ZERO),
+            initial_sources,
             mono_output: self.mono_output,
             code: self.code.clone(),
             inputs,
@@ -954,6 +1008,24 @@ impl ScriptProgram {
         stream: crate::quantities::ChannelLayout,
     ) -> Result<(), crate::diagnostics::CompileError> {
         use crate::{ir::SignalDomain, validate::PortDirection};
+        if self.domain == ScriptDomain::Note
+            && !matches!(
+                ir.scope_of(self.node()),
+                Some(
+                    crate::ir::ExecutionScope::Global
+                        | crate::ir::ExecutionScope::InstrumentInstance
+                )
+            )
+        {
+            return Err(crate::diagnostics::CompileError::ScriptBinding {
+                node: self.node(),
+                span: synth_script::span::Span::new(0, 0),
+                reason: ScriptBindingFault::Scope {
+                    source_node: self.node(),
+                },
+            });
+        }
+
         for (input, span) in self.inputs.iter().zip(&self.spans) {
             let ProgramInput::External(binding) = *input else {
                 continue;

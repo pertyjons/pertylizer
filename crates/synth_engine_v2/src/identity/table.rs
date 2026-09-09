@@ -1,8 +1,9 @@
-//! The identity table's construction and minting.
+//! The identity table's construction and off-thread producer helpers.
 //!
 //! Off the audio thread. `HOST-INV-009` puts the atomic slot-hold-identity acquisition at
 //! the live boundary, and construction allocates — which is why the resolving half lives in
 //! `hot.rs`: the real-time purity region is file-granular and admits no mixed file.
+//! The exclusive authored source also uses bounded `mint_keyed` there.
 
 use super::{
     INDEX_SPACE, IdentityError, IdentityTable, LiveNotes, NoteIdentity, PRODUCER_SPACE, ProducerId,
@@ -230,65 +231,6 @@ impl IdentityTable {
                 Some(Slot::Live { .. })
             )
         })
-    }
-
-    /// [`Self::mint`], recording the key the note-on named.
-    pub fn mint_keyed(
-        &mut self,
-        producer: ProducerId,
-        note: crate::plan::NoteSlot,
-        key: crate::quantities::KeyIdentity,
-    ) -> Result<NoteIdentity, IdentityError> {
-        let range = *self
-            .ranges
-            .get(usize::from(producer.as_u16()))
-            .ok_or(IdentityError::UnknownProducer { producer })?;
-
-        for offset in 0..range.len {
-            let index = range.start.saturating_add(offset);
-            let Some(slot) = self.slots.get_mut(index as usize) else {
-                break;
-            };
-            if let Slot::Free { next_generation } = *slot {
-                let sequence = self.minted;
-                self.minted = self.minted.saturating_add(1);
-                *slot = Slot::Live {
-                    generation: next_generation,
-                    note,
-                    key,
-                    sequence,
-                };
-                self.live = self.live.saturating_add(1);
-                return Ok(NoteIdentity {
-                    table: self.id,
-                    index: u16::try_from(index).unwrap_or(u16::MAX),
-                    generation: next_generation,
-                });
-            }
-        }
-
-        // No free index. **Which condition this is matters**, and the two are not the same
-        // fault: if every index is live the producer is holding more notes at once than it
-        // was admitted for, which is over-emission; if some are retired, the usable range
-        // shrank underneath a producer that declared correctly. Reporting the second as the
-        // first would send someone to fix a producer that is behaving.
-        let mut retired = 0_u32;
-        for offset in 0..range.len {
-            let index = range.start.saturating_add(offset);
-            if matches!(self.slots.get(index as usize), Some(Slot::Retired)) {
-                retired = retired.saturating_add(1);
-            }
-        }
-        let admitted = HeldNoteCount::measured(range.len);
-        if retired == 0 {
-            Err(IdentityError::ProducerOverEmitted { producer, admitted })
-        } else {
-            Err(IdentityError::ProducerRangeEroded {
-                producer,
-                admitted,
-                retired,
-            })
-        }
     }
 
     /// Build the successor of this table, refusing while it still holds obligations.

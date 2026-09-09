@@ -785,6 +785,7 @@ pub enum NodeKindId {
     Script,
     /// A per-sample YAMS program with a program-specific interface.
     AudioScript,
+    NoteScript,
     /// Mod wheel source.
     ModWheel,
     /// Aftertouch source.
@@ -1563,6 +1564,8 @@ static SCRIPT: NodeDeclaration = NodeDeclaration {
         bool,
         crate::script::ScriptVoiceId,
         bool,
+        [f32; synth_core::script::MAX_SOURCES],
+        bool,
     )>() as u64,
 };
 
@@ -1582,6 +1585,30 @@ static AUDIO_SCRIPT: NodeDeclaration = NodeDeclaration {
         crate::script::ScriptSeed,
         bool,
         crate::script::ScriptVoiceId,
+        bool,
+        [f32; synth_core::script::MAX_SOURCES],
+        bool,
+    )>() as u64,
+};
+
+static NOTE_SCRIPT: NodeDeclaration = NodeDeclaration {
+    id: NodeKindId::NoteScript,
+    name: "note_script",
+    kernel: kernels::NOTE_SCRIPT,
+    ports: &[],
+    controls: &[],
+    in_place_safe: false,
+    note_control: None,
+    taps: &[],
+    prepare: prepare_notescript,
+    prepared_bytes: size_of::<(crate::script::ScriptSlot, crate::script::ScriptSeed, f32)>() as u64,
+    state_bytes: size_of::<(
+        synth_core::script::RegisterFile,
+        crate::script::ScriptSeed,
+        bool,
+        crate::script::ScriptVoiceId,
+        bool,
+        [f32; synth_core::script::MAX_SOURCES],
         bool,
     )>() as u64,
 };
@@ -1603,6 +1630,17 @@ fn prepare_audioscript(
     ctx: &PrepareContext<'_>,
 ) -> Result<PreparedNode, CompileError> {
     let IrNodeKind::AudioScript { program: reference } = kind else {
+        return Err(declared_for_another_kind(node));
+    };
+    prepare_script_program(node, reference, ctx)
+}
+
+fn prepare_notescript(
+    node: NodeId,
+    kind: IrNodeKind,
+    ctx: &PrepareContext<'_>,
+) -> Result<PreparedNode, CompileError> {
+    let IrNodeKind::NoteScript { program: reference } = kind else {
         return Err(declared_for_another_kind(node));
     };
     prepare_script_program(node, reference, ctx)
@@ -1643,9 +1681,10 @@ fn prepare_script_program(
 /// the declarations are `static` rather than `const`: a `const` is materialised at each
 /// use and has no single address to compare — so a kind declared but left out here cannot
 /// be discovered, and one listed here but not resolvable cannot compile.
-static DECLARED: [&NodeDeclaration; 23] = [
+static DECLARED: [&NodeDeclaration; 24] = [
     &SCRIPT,
     &AUDIO_SCRIPT,
+    &NOTE_SCRIPT,
     &SILENCE,
     &CONSTANT,
     &IMPULSE,
@@ -1966,6 +2005,7 @@ pub(crate) fn declaration(kind: IrNodeKind) -> Option<&'static NodeDeclaration> 
         IrNodeKind::Lfo { .. } => Some(&LFO),
         IrNodeKind::Script { .. } => Some(&SCRIPT),
         IrNodeKind::AudioScript { .. } => Some(&AUDIO_SCRIPT),
+        IrNodeKind::NoteScript { .. } => Some(&NOTE_SCRIPT),
         // The output node has no kernel and no declaration: writing the stream's channels
         // is the renderer's boundary rather than a node's work.
         IrNodeKind::Output => None,
@@ -2014,6 +2054,7 @@ pub(crate) fn descriptor(kind: IrNodeKind) -> Option<NodeDescriptor> {
         IrNodeKind::Lfo { .. } => declared.map(NodeDeclaration::descriptor),
         IrNodeKind::Script { .. } => declared.map(NodeDeclaration::descriptor),
         IrNodeKind::AudioScript { .. } => declared.map(NodeDeclaration::descriptor),
+        IrNodeKind::NoteScript { .. } => declared.map(NodeDeclaration::descriptor),
     }
 }
 
@@ -2258,6 +2299,7 @@ pub fn prepared_payload_bytes(kind: IrNodeKind) -> u64 {
         IrNodeKind::Lfo { .. } => return declared.map_or(0, |d| d.prepared_bytes),
         IrNodeKind::Script { .. } => return declared.map_or(0, |d| d.prepared_bytes),
         IrNodeKind::AudioScript { .. } => return declared.map_or(0, |d| d.prepared_bytes),
+        IrNodeKind::NoteScript { .. } => return declared.map_or(0, |d| d.prepared_bytes),
     }) as u64
 }
 
@@ -2308,6 +2350,7 @@ pub fn state_payload_bytes(kind: IrNodeKind) -> u64 {
         IrNodeKind::Lfo { .. } => return declared.map_or(0, |d| d.state_bytes),
         IrNodeKind::Script { .. } => return declared.map_or(0, |d| d.state_bytes),
         IrNodeKind::AudioScript { .. } => return declared.map_or(0, |d| d.state_bytes),
+        IrNodeKind::NoteScript { .. } => return declared.map_or(0, |d| d.state_bytes),
         IrNodeKind::Output => 0,
     }) as u64
 }
@@ -2369,6 +2412,9 @@ mod tests {
                 program: crate::script::ScriptRef::new(0),
             },
             IrNodeKind::AudioScript {
+                program: crate::script::ScriptRef::new(0),
+            },
+            IrNodeKind::NoteScript {
                 program: crate::script::ScriptRef::new(0),
             },
             IrNodeKind::Controller {
@@ -2654,7 +2700,9 @@ mod tests {
             // is prepared against an IR holding one sample and a one-zone map naming it.
             let ir = if matches!(
                 kind,
-                IrNodeKind::Script { .. } | IrNodeKind::AudioScript { .. }
+                IrNodeKind::Script { .. }
+                    | IrNodeKind::AudioScript { .. }
+                    | IrNodeKind::NoteScript { .. }
             ) {
                 let mut identity = crate::script::ScriptIdentity::new(
                     NodeId::new(0),
@@ -2664,6 +2712,9 @@ mod tests {
                 let program = match kind {
                     IrNodeKind::AudioScript { .. } => {
                         identity.compile_audio("out = 1", rate, ChannelLayout::Mono, &[])
+                    }
+                    IrNodeKind::NoteScript { .. } => {
+                        identity.compile_note("out.pitch = note_pitch", rate, &[])
                     }
                     _ => identity.compile_control("out = 1", rate, &[]),
                 }
@@ -2690,7 +2741,9 @@ mod tests {
                 (kind, &prepared),
                 (IrNodeKind::Silence, PreparedNode::Silence)
                     | (
-                        IrNodeKind::Script { .. } | IrNodeKind::AudioScript { .. },
+                        IrNodeKind::Script { .. }
+                            | IrNodeKind::AudioScript { .. }
+                            | IrNodeKind::NoteScript { .. },
                         PreparedNode::Script { .. }
                     )
                     | (IrNodeKind::Constant { .. }, PreparedNode::Constant { .. })
@@ -2740,6 +2793,7 @@ mod tests {
                 | IrNodeKind::Sampler { .. }
                 | IrNodeKind::Script { .. }
                 | IrNodeKind::AudioScript { .. }
+                | IrNodeKind::NoteScript { .. }
                 | IrNodeKind::Lfo { .. } => (true, true),
                 IrNodeKind::NoteSource { .. }
                 | IrNodeKind::Silence

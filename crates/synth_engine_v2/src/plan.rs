@@ -976,7 +976,7 @@ pub struct CompiledPlan {
     /// bound different things: a range bounds occurrences, an entitlement bounds
     /// obligations, and a compiled producer declares the first and none of the second.
     note_producer_holds: Vec<EventCount>,
-    /// Every producer an authored runtime source claims, in ascending order.
+    /// Admitted authored source declarations, retaining their authored order and envelopes.
     ///
     /// ADR-0046 clause 6 makes hold entitlements disjoint across admitted non-compiled
     /// producers, and an entitlement is per producer rather than per claimant. Admission
@@ -985,7 +985,7 @@ pub struct CompiledPlan {
     /// could claim the same producer and spend the same holds a second time. An independent
     /// review found exactly that: the authored link proved the index resolved and was
     /// non-compiled, which is not the same as proving it was *unclaimed*.
-    authored_note_producers: Vec<crate::identity::ProducerId>,
+    authored_sources: Vec<crate::ir::AuthoredSourceDeclaration>,
     compiled_note_producer: Option<crate::identity::ProducerId>,
     forward_event_horizon: FrameCount,
     added_latency: FrameCount,
@@ -1048,7 +1048,7 @@ impl CompiledPlan {
         compiled_event_share: EventCount,
         note_producer_ranges: Vec<HeldNoteCount>,
         note_producer_holds: Vec<EventCount>,
-        authored_note_producers: Vec<crate::identity::ProducerId>,
+        authored_sources: Vec<crate::ir::AuthoredSourceDeclaration>,
         compiled_note_producer: Option<crate::identity::ProducerId>,
         forward_event_horizon: FrameCount,
         added_latency: FrameCount,
@@ -1079,7 +1079,7 @@ impl CompiledPlan {
             compiled_event_share,
             note_producer_ranges,
             note_producer_holds,
-            authored_note_producers,
+            authored_sources,
             compiled_note_producer,
             forward_event_horizon,
             added_latency,
@@ -1491,13 +1491,13 @@ impl CompiledPlan {
         &self.note_producer_holds
     }
 
-    /// Every producer an authored runtime source claims, in ascending order.
+    /// Admitted authored source declarations, retaining their authored order and envelopes.
     ///
     /// A renderer-ingress store may not prepare against one of these: the authored source
     /// already holds that producer's entitlement, and clause 6 forbids two claimants sharing
     /// it. See the field for what an earlier revision let through.
-    pub fn authored_note_producers(&self) -> &[crate::identity::ProducerId] {
-        &self.authored_note_producers
+    pub fn authored_sources(&self) -> &[crate::ir::AuthoredSourceDeclaration] {
+        &self.authored_sources
     }
 
     /// Which producer owns the plan's compiled note events, if it has any.

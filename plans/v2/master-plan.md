@@ -1783,6 +1783,12 @@ current save path can reach them.
 - Introduce `ProjectDocument` as the sole persisted authority. It is plain
   authoring data: no audio-thread objects, command senders, GUI widget state,
   locks, atomics, compiled programs, device handles, or runtime telemetry.
+- Resolve P07-R001: define canonical note-processor racks and Note Grid graphs,
+  including processor order, event timing, stable occurrence identity, bounded
+  runtime source admission and explicit V1 fidelity dispositions. Implement their
+  saved-input lowering before enabling such a consumer; keep the current named
+  refusal until that contract and its integration tests are complete. This is
+  distinct from Phase 7's finite standalone Note YAMS source (ADR-0060).
 - Give every persistent domain concept an opaque newtype identity. At minimum:
   project asset, patch definition, instrument instance, node, parameter, track,
   placement, clip, automation lane, channel, bus, sample, graph, mapping, and

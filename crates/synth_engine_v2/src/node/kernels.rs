@@ -159,6 +159,11 @@ pub const LFO: Kernel = Kernel(lfo);
 pub const SCRIPT: Kernel = Kernel(script);
 /// The per-sample YAMS domain.
 pub const AUDIO_SCRIPT: Kernel = Kernel(audio_script);
+pub const NOTE_SCRIPT: Kernel = Kernel(note_script);
+
+pub fn note_script(prepared: &PreparedNode, state: &mut NodeState, io: &mut NodeIo<'_>) {
+    crate::script::hot::capture(prepared, state, io);
+}
 
 pub fn audio_script(prepared: &PreparedNode, state: &mut NodeState, io: &mut NodeIo<'_>) {
     crate::script::hot::audio(prepared, state, io);
@@ -370,6 +375,8 @@ pub enum NodeState {
         reset_pending: bool,
         voice: crate::script::ScriptVoiceId,
         first_sample: bool,
+        captured: [f32; synth_core::script::MAX_SOURCES],
+        captured_once: bool,
     },
     /// A node that keeps nothing between quanta.
     Stateless,
@@ -529,6 +536,8 @@ impl NodeState {
                 reset_pending: false,
                 voice: crate::script::ScriptVoiceId::ZERO,
                 first_sample: true,
+                captured: [0.0; synth_core::script::MAX_SOURCES],
+                captured_once: false,
             },
             PreparedNode::Sine { frequency, .. } => Self::Sine {
                 phase: 0.0,

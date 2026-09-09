@@ -176,11 +176,35 @@ impl Default for CompileOptions {
 /// Compile YAMS source into a [`CompiledProgram`], or `None` plus diagnostics.
 #[must_use]
 pub fn compile(src: &str, opts: &CompileOptions) -> (Option<CompiledProgram>, Vec<Diagnostic>) {
+    compile_with_note_params(src, opts, false)
+}
+
+/// Compile a Note event module whose host supplies ordinary local parameter slots.
+/// Legacy Note transforms keep their no-knob grammar through [`compile`].
+#[must_use]
+pub fn compile_note_with_params(
+    src: &str,
+    control_rate: f32,
+) -> (Option<CompiledProgram>, Vec<Diagnostic>) {
+    let opts = CompileOptions {
+        control_rate,
+        note_event: true,
+        ..CompileOptions::default()
+    };
+    compile_with_note_params(src, &opts, true)
+}
+
+fn compile_with_note_params(
+    src: &str,
+    opts: &CompileOptions,
+    note_params: bool,
+) -> (Option<CompiledProgram>, Vec<Diagnostic>) {
     let (program, diags) = parse(src);
     let mut compiler = Compiler {
         control_rate: opts.control_rate,
         audio_rate: opts.audio_rate,
         note_event: opts.note_event,
+        note_params,
         control_ports: opts.control_ports,
         code: Vec::new(),
         constants: Vec::new(),
@@ -233,6 +257,7 @@ struct Compiler {
     control_rate: f32,
     audio_rate: bool,
     note_event: bool,
+    note_params: bool,
     control_ports: bool,
     code: Vec<Op>,
     constants: Vec<f32>,
@@ -368,7 +393,7 @@ impl Compiler {
     fn register_param(&mut self, p: &ParamDecl) {
         let name = &p.name.name;
         // Dialect gate: knobs belong to the two script *modules*, not the Mod Matrix.
-        if !self.control_ports && !self.audio_rate {
+        if !self.control_ports && !self.audio_rate && !self.note_params {
             self.error(
                 p.name.span,
                 "`param` knobs are only available in a Script or AudioScript program",

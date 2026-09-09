@@ -414,11 +414,13 @@ macro_rules! catalog {
     };
 }
 
-fn script_kind(audio: bool) -> IrNodeKind {
+fn script_kind(domain: synth_engine_v2::script::ScriptDomain) -> IrNodeKind {
     use synth_engine_v2::script::{ProjectSeed, ScriptIdentity, ScriptStateId};
     let mut identity =
         ScriptIdentity::new(NodeId::new(999), ScriptStateId::new(1), ProjectSeed::new(1));
-    let program = if audio {
+    let program = if domain == synth_engine_v2::script::ScriptDomain::Note {
+        identity.compile_note("out.pitch = note_pitch", common::rate(48_000.0), &[])
+    } else if matches!(domain, synth_engine_v2::script::ScriptDomain::Audio(_)) {
         identity.compile_audio("out = 0", common::rate(48_000.0), ChannelLayout::Mono, &[])
     } else {
         identity.compile_control("out = 0", common::rate(48_000.0), &[])
@@ -433,8 +435,9 @@ fn script_kind(audio: bool) -> IrNodeKind {
 }
 
 catalog! {
-    script_kind(false) => IrNodeKind::Script { .. },
-    script_kind(true) => IrNodeKind::AudioScript { .. },
+    script_kind(synth_engine_v2::script::ScriptDomain::Note) => IrNodeKind::NoteScript { .. },
+    script_kind(synth_engine_v2::script::ScriptDomain::Control) => IrNodeKind::Script { .. },
+    script_kind(synth_engine_v2::script::ScriptDomain::Audio(ChannelLayout::Mono)) => IrNodeKind::AudioScript { .. },
     IrNodeKind::Controller { kind: synth_engine_v2::controller::ControllerKind::ModWheel } => IrNodeKind::Controller { .. },
     IrNodeKind::NoteSource { kind: synth_engine_v2::controller::NoteSource::Pressure } => IrNodeKind::NoteSource { .. },
     IrNodeKind::Silence => IrNodeKind::Silence,

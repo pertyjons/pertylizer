@@ -410,7 +410,9 @@ fn next_boundary(at: SampleTime) -> Option<SampleTime> {
 
 /// The off-thread half of one prepared stream.
 ///
-/// Holds no audio-thread state and is never touched from a callback.
+/// Ordinary split streams keep this off-thread. ADR-0060's exclusive authored owner
+/// takes both halves after preparation and uses this minter on its render thread;
+/// it exposes no concurrent control or activation interface.
 #[derive(Debug)]
 #[must_use]
 pub struct StreamControl {
@@ -494,6 +496,24 @@ impl StreamControl {
     /// **stream**, which is both halves, and because a value two constructors could produce
     /// is a value the two can disagree about.
     pub fn open(
+        plan: CompiledPlan,
+        anchor: StreamAnchor,
+    ) -> Result<(Self, PreparedRenderer), CompileError> {
+        if let Some(program) = plan
+            .prepared_scripts()
+            .iter()
+            .find(|program| program.domain == crate::script::ScriptDomain::Note)
+        {
+            return Err(CompileError::Script {
+                node: program.node,
+                fault: crate::script::ScriptFault::NoteSourceRequired,
+            });
+        }
+        Self::open_authored(plan, anchor)
+    }
+
+    /// Exclusive authored owner takes both fresh halves; no concurrent control interface.
+    pub(crate) fn open_authored(
         plan: CompiledPlan,
         anchor: StreamAnchor,
     ) -> Result<(Self, PreparedRenderer), CompileError> {
@@ -1616,7 +1636,8 @@ impl StreamControl {
         self.live_notes_open
     }
 
-    /// The minting half, for the off-thread producer that stamps a compiled list.
+    /// The authoritative minter: off-thread for compiled/live producers, or exclusively
+    /// owned by ADR-0060's authored render path.
     ///
     /// Crate-private because a producer outside this crate has no admitted range: the
     /// partition is the plan's, and reaching it from elsewhere would put occurrences outside

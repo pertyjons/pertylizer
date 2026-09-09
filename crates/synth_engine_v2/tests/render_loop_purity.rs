@@ -44,7 +44,7 @@ use std::path::{Path, PathBuf};
 /// more: it is the only file in the region that **writes back** into a producer's own
 /// storage while the call runs, so an allocation there would be one the producing half
 /// never sees.
-const REGION: [&str; 12] = [
+const REGION: [&str; 14] = [
     "src/render/hot.rs",
     "src/render/slot.rs",
     "src/observe/hot.rs",
@@ -54,6 +54,8 @@ const REGION: [&str; 12] = [
     "src/ingress/hot.rs",
     "src/node/kernels.rs",
     "src/script/hot.rs",
+    "src/authored/hot.rs",
+    "src/tempo/hot.rs",
     "../synth_core/src/script/eval.rs",
     "../synth_core/src/script/bytecode.rs",
     "../synth_core/src/hash.rs",
@@ -510,6 +512,7 @@ fn every_call_the_render_loop_makes_is_inside_the_checked_region() {
                 .or_else(|| trimmed.strip_prefix("pub const fn "))
                 .or_else(|| trimmed.strip_prefix("const fn "))
                 .or_else(|| trimmed.strip_prefix("pub(crate) fn "))
+                .or_else(|| trimmed.strip_prefix("pub(super) fn "))
                 .or_else(|| trimmed.strip_prefix("pub(crate) const fn "))
         })
         .filter_map(|rest| rest.split(['(', '<']).next())
@@ -776,6 +779,18 @@ fn every_call_the_render_loop_makes_is_inside_the_checked_region() {
         // a slice the caller already holds; `silence` is one `fill(0.0)` over it. Neither
         // allocates, locks or can panic, and the block was shape-checked at construction.
         "reborrow",
+        // The local `source_error` closure constructs an enum from two Copy fields.
+        "source_error",
+        // Lazy Option/Iterator adapters over bounded slices; no collection or allocation.
+        "ok_or_else",
+        "filter_map",
+        // StreamControl field borrows, now owned exclusively by the authored render path.
+        "anchor",
+        "minter_mut",
+        // PublicationArbiter reads a fixed six-entry ledger at a ProducerClass index.
+        "high_water",
+        // StreamAnchor::locate is checked integer subtraction/addition over Copy newtypes.
+        "locate",
         "silence",
         // `charge_operation` is ADR-0046 clause 6's bounded mass release charged as **one**
         // unit of the session share. It is defined in `publish/hot.rs`, inside the scanned
@@ -900,6 +915,8 @@ fn every_call_the_render_loop_makes_is_inside_the_checked_region() {
         "count_orphan_note_event",
         "count_oversized_callback",
         "count_publication_fault",
+        // DiagnosticsReport performs one saturating counter increment.
+        "count_authored_source_fault",
         // `PreparedRenderer::diagnostics` and `DiagnosticsReport::needs_reprepare` are
         // `const fn` field reads. The scheduler consults them before publishing so a dead
         // epoch is not faulted a second time, which is a read of state the loop already

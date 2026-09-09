@@ -23,7 +23,35 @@ use crate::plan::{ControlRate, PlanOp};
 use crate::time::QuantumOffset;
 use crate::time::{FrameCount, PlanPosition, QUANTUM_FRAMES, SampleTime, TimeSource};
 
+impl AudioBlockMut<'_> {
+    /// Checked subrange for the authored owner's bounded Q-sized subcalls.
+    pub(crate) fn window(&mut self, start: usize, frames: usize) -> Option<AudioBlockMut<'_>> {
+        let channels = self.layout.channels();
+        let begin = start.checked_mul(channels)?;
+        let end = start.checked_add(frames)?.checked_mul(channels)?;
+        Some(AudioBlockMut {
+            samples: self.samples.get_mut(begin..end)?,
+            frames,
+            layout: self.layout,
+        })
+    }
+}
+
 impl PreparedRenderer {
+    pub(crate) fn note_context(
+        &self,
+        node: crate::plan::NodeSlot,
+    ) -> Option<([f32; synth_core::script::MAX_SOURCES], bool)> {
+        match self.node_states.get(node.index()) {
+            Some(crate::node::kernels::NodeState::Script {
+                captured,
+                captured_once,
+                ..
+            }) => Some((*captured, *captured_once)),
+            _ => None,
+        }
+    }
+
     /// Silence the output and end the epoch.
     ///
     /// ADR-0021 part 3's shape, shared by the two terminal faults: output silence,
@@ -53,6 +81,20 @@ impl PreparedRenderer {
     /// [`RenderError::NeedsReprepare`] and silences every later callback.
     pub(crate) fn terminal_fault(&mut self, output: &mut AudioBlockMut<'_>) {
         self.diagnostics.count_publication_fault();
+        self.fault(output);
+    }
+
+    /// Attribute the exclusive authored owner's fault without mislabelling other causes
+    /// as publication overruns. Publication failures contribute to both named counters.
+    pub(crate) fn terminal_authored_fault(
+        &mut self,
+        output: &mut AudioBlockMut<'_>,
+        fault: crate::authored::AuthoredFault,
+    ) {
+        self.diagnostics.count_authored_source_fault();
+        if fault == crate::authored::AuthoredFault::Publication {
+            self.diagnostics.count_publication_fault();
+        }
         self.fault(output);
     }
 

@@ -956,6 +956,7 @@ pub struct DiagnosticsReport {
     oversized_callback_faults: u64,
     clock_exhaustion_faults: u64,
     publication_faults: u64,
+    authored_source_faults: u64,
     displacement_faults: u64,
     late_activations: u64,
     refused_activations: u64,
@@ -1152,6 +1153,11 @@ impl DiagnosticsReport {
         self.clock_exhaustion_faults
     }
 
+    /// Terminal authored-source failures; `AuthoredNoteStream::fault` retains their kind.
+    pub const fn authored_source_faults(&self) -> u64 {
+        self.authored_source_faults
+    }
+
     /// Publications the arbiter could not seal.
     ///
     /// ADR-0046 clause 7 requires the terminal response to increment an **attributable**
@@ -1242,6 +1248,10 @@ impl DiagnosticsReport {
 
     pub(crate) fn count_clock_exhaustion(&mut self) {
         self.clock_exhaustion_faults = self.clock_exhaustion_faults.saturating_add(1);
+    }
+
+    pub(crate) fn count_authored_source_fault(&mut self) {
+        self.authored_source_faults = self.authored_source_faults.saturating_add(1);
     }
 
     pub(crate) fn count_publication_fault(&mut self) {

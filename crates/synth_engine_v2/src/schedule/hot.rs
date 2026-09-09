@@ -42,15 +42,43 @@ fn boundary_quanta(clock: SampleTime, boundary: SampleTime) -> usize {
 }
 
 impl CompiledEventScheduler {
+    /// Only the exclusive authored owner calls this; preparation refused note payloads.
+    /// Any missed compiled write faults that owner's whole callback, as an authored miss does.
+    pub(crate) fn drain_authored_automation(
+        &mut self,
+        epoch: crate::time::StreamEpoch,
+        clock: SampleTime,
+        publication: &mut crate::publish::Publication<'_>,
+    ) -> Result<(), crate::authored::AuthoredFault> {
+        use crate::authored::AuthoredFault;
+        if self.epoch != epoch {
+            return Err(AuthoredFault::Publication);
+        }
+        while let Some(event) = self.events.get(self.next).copied() {
+            if event.envelope().time() < clock {
+                return Err(AuthoredFault::Late);
+            }
+            if !publication.reaches(event) {
+                break;
+            }
+            publication
+                .charge(ProducerClass::Compiled, event)
+                .map_err(|_| AuthoredFault::Publication)?;
+            self.next += 1;
+        }
+        Ok(())
+    }
+
     /// The placed event at `index`, displaced by the activation shift.
     ///
     /// ADR-0050 clause 1's uniform offset, applied where an event is read rather than by
     /// rewriting the list: the displacement is the same for every event, so reproducing it
     /// costs one addition and the audio thread never walks the schedule to re-place it.
     ///
-    /// Every read of the schedule goes through here — the missed-event check, the window
-    /// scan and the charge — because a shift applied at some reads and not others would put
-    /// the window and the events it selects on different timelines.
+    /// Every activation-aware read goes through here — the missed-event check, the window
+    /// scan and the charge. The exclusive authored drain reads undisplaced events directly
+    /// because it has no activation interface and its shift is always zero. A shift applied
+    /// at some reads and not others would put the window and its events on different timelines.
     fn placed(&self, index: usize) -> Result<Option<TimedEvent>, ScheduledRenderError> {
         let Some(event) = self.events.get(index).copied() else {
             return Ok(None);

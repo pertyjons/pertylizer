@@ -327,9 +327,10 @@ fn a_widened_signal_is_copied_by_a_scheduled_kernel() {
 fn a_declared_kind_appears_in_the_registry_only_by_deferring_to_its_declaration() {
     // The variant as it is spelled in a pattern — fieldless kinds have no `{ .. }` — and
     // the declaration constant it forwards to.
-    const DECLARED: [(&str, &str); 15] = [
+    const DECLARED: [(&str, &str); 16] = [
         ("Script { .. }", "SCRIPT"),
         ("AudioScript { .. }", "AUDIO_SCRIPT"),
+        ("NoteScript { .. }", "NOTE_SCRIPT"),
         ("Lfo { .. }", "LFO"),
         ("Saw { .. }", "SAW"),
         ("VelocityScaler { .. }", "VELOCITY_SCALER"),
@@ -437,14 +438,16 @@ fn discovery_and_validation_describe_the_same_ports() {
 
     let sample = |id: NodeKindId| -> IrNodeKind {
         match id {
-            NodeKindId::Script | NodeKindId::AudioScript => {
+            NodeKindId::Script | NodeKindId::AudioScript | NodeKindId::NoteScript => {
                 let mut identity = synth_engine_v2::script::ScriptIdentity::new(
                     NodeId::new(999),
                     synth_engine_v2::script::ScriptStateId::new(1),
                     synth_engine_v2::script::ProjectSeed::new(1),
                 );
                 let rate = synth_engine_v2::quantities::SampleRate::new(48000.0).expect("rate");
-                let program = if id == NodeKindId::AudioScript {
+                let program = if id == NodeKindId::NoteScript {
+                    identity.compile_note("out.pitch = note_pitch", rate, &[])
+                } else if id == NodeKindId::AudioScript {
                     identity.compile_audio("out = 0", rate, ChannelLayout::Mono, &[])
                 } else {
                     identity.compile_control("out = 0", rate, &[])
@@ -541,7 +544,7 @@ fn discovery_and_validation_describe_the_same_ports() {
     let entries = catalog();
     assert_eq!(
         entries.len(),
-        23,
+        24,
         "every kind but the output node is discoverable"
     );
     for entry in entries {

@@ -1,0 +1,8 @@
+case,inputs,pending_peak,hold_peak,future_peak,reserved_peak,eval_peak,authored_peak,release_peak,source_bytes,allocations,draws,median_ns,max_ns
+empty,0,0,0,0,0,0,0,0,48,0,101,1976474,2304628
+drop,24,24,0,0,24,24,0,0,2928,0,101,1963507,3175499
+same_batch,24,24,0,0,24,24,48,0,2928,0,101,1948564,2058452
+held,24,24,24,24,24,24,24,24,2928,0,101,1937871,2009143
+until_cut,24,24,24,24,24,24,24,24,2928,0,101,1945226,2055017
+retained_inputs,24,24,0,0,24,0,0,0,2928,0,101,1912157,2039455
+staggered,24,24,7,7,24,1,1,1,2928,0,101,1965538,2045986

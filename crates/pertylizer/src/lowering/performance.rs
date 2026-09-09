@@ -298,7 +298,7 @@ fn note_spans(
                     LoweringReason::OwnedByLaterPhase {
                         capability: "a pattern bound to a Note Grid graph, which transforms \
                                      the notes it plays",
-                        owner: "Phase 6, with the note-processing model",
+                        owner: "Phase 10A, canonical note processing (P07-R001)",
                     },
                 ));
                 return None;
@@ -321,7 +321,7 @@ fn note_spans(
                         LoweringReason::OwnedByLaterPhase {
                             capability: "a pattern note-processor rack, which V1 expands into \
                                          the notes it plays",
-                            owner: "Phase 6, with the note-processing model",
+                            owner: "Phase 10A, canonical note processing (P07-R001)",
                         },
                     ));
                     return None;
@@ -353,7 +353,7 @@ fn note_spans(
                     LoweringReason::OwnedByLaterPhase {
                         capability: "a note bound to a note-scope Note Grid graph, which \
                                      articulates it before the pattern plays",
-                        owner: "Phase 6, with the note-processing model",
+                        owner: "Phase 10A, canonical note processing (P07-R001)",
                     },
                 ));
                 return None;

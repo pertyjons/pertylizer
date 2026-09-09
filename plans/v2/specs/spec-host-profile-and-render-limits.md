@@ -982,6 +982,23 @@ recorded here so the entry's closure has a visible successor.
 | ~~`event_queue_capacity`~~ (critical / high / normal / low) | — | **Withdrawn** | **This field is removed from the profile, and the removal is the correction rather than a simplification.** It was a V1 carry-over of `LIMIT-0013`'s four prioritized rings, admitted through HOST-INV-005 ground 1 by that ledger entry's `HostProfile` ownership. [ADR-0038](../decisions/ADR-0038-engine-egress-queue-classification.md) part 3 establishes that the prioritized channel has no workspace production caller. Its public export leaves external use unknown, so removal is an explicit compatibility break rather than an unreachability claim. The entry moves to `N/A — removed` and this field loses its only admissibility ground. The source evidence belongs to the [resource-limit inventory](../inventories/resource-limits.md), not to a copy in this specification. Sizing a V2 capacity from four rings with no observed workspace production use would carry an unvalidated shape forward: nothing has established that four priority tiers, or these four numbers, are right for anything. V2's engine egress is ADR-0038 part 1's rule with a capacity per surviving entry — `event_egress_capacity` for the GUI ring, and the protocol contract's own for `LIMIT-0076`. If V2 wants priority classes on egress it designs them from a requirement | ~~`LIMIT-0013`~~ — none; the entry is `N/A — removed` | Withdrawn |
 | `event_egress_capacity` (engine-to-GUI event ring **only**) | `EventCount` | 256 | V1 carry-over of what `LIMIT-0014`'s constant sizes on the GUI side. **The field is one capacity, not two, and that is a change.** Earlier revisions carried `EventCount x 2` because one V1 constant sizes a GUI ring and an OSC note-telemetry ring; [ADR-0038](../decisions/ADR-0038-engine-egress-queue-classification.md) part 4 splits the ledger entry, and the OSC ring becomes `LIMIT-0076` owned by the protocol contract that serializes it — **not a profile field**. The two may take different sizes from that point on, which is the reason to split them. **Loss semantics are ADR-0038's, not HOST-INV-009's**: this is engine *egress*, which does not meet ADR-0021's definition of a live bounded queue, so dropping is licensed by ADR-0038 part 1 and only under its three conditions — observational payload, counted drop, count in the structured diagnostics report. V1 satisfies none of the three on this ring, which is why the field's conformance work is Phase 5's rather than Phase 1's. **`RecordedNotesFlushed` is custodial under ADR-0038 part 2 and may not share this capacity** | `LIMIT-0014` | Phase 5 |
 
+#### Non-dropping authored source registry
+
+ADR-0060 defines this registry for ADR-0054's non-dropping authored stores; it grants no live-input
+drop licence and is separate from HOST-INV-009's registry below.
+
+| Store | Admitting declaration and checked relation | Overload rule |
+|---|---|---|
+| Note YAMS finite source | SOUND-INV-030; N complete raw inputs <= named identity range, distinct gate instances and hold entitlement; 2N <= authored destination and retained-future envelopes; pending reservations + materialized holds <= N; at most 32 tempo segments | Refuse the complete source before playback; any runtime violation terminates the stream. No live share or queue is borrowed |
+
+The fixed occurrence records hold raw input, future release, identity and compact
+generated trace together. Source byte reporting uses their actual boxed extent
+and the tempo map's allocated capacity. Script/capture state and immutable code
+remain in ordinary plan/node resource accounting; compiled automation uses the
+existing admitted scheduler store. EVD-0020 records the real peaks before normal
+consumer enablement. The finite bound does not qualify a streaming producer or
+the complete production-live partition.
+
 #### Renderer-ingress source-store registry
 
 This table and the Events field table above are HOST-INV-009's complete **live-input** drop-licence registry; ADR-0038's

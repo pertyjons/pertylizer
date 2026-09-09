@@ -635,7 +635,11 @@ impl PerformanceIngress {
         if plan.compiled_note_producer() == Some(producer) {
             return Err(IngressPrepareError::CompiledProducer { producer });
         }
-        if plan.authored_note_producers().contains(&producer) {
+        if plan
+            .authored_sources()
+            .iter()
+            .any(|source| source.producer == producer)
+        {
             return Err(IngressPrepareError::AuthoredProducer { producer });
         }
         if let Some(compiled) = plan.compiled_note_producer() {

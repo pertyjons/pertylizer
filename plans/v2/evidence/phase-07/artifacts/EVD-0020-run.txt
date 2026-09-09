@@ -1,0 +1,69 @@
+Subject: d632f874a6a76c728a5b5fb7cb4a8da2a9138a10
+Parent: d871d70d314dafe32c0ca854356e699f770d5258
+Initial worktree: clean
+Recorded UTC: 2026-09-09T01:36:45.869040+00:00
+
+rustc 1.98.0 (88d9e12ae 2026-08-18)
+binary: rustc
+commit-hash: 88d9e12ae178fab0fb5cc050a94da85685d449ea
+commit-date: 2026-08-18
+host: x86_64-unknown-linux-gnu
+release: 1.98.0
+LLVM version: 22.1.8
+Linux 7.1.13-200.fc44.x86_64 x86_64 GNU/Linux
+CPU: 13th Gen Intel Core i7-13700H, 20 logical CPUs
+No CPU affinity or governor control; other desktop work may run.
+
+Ordinary release controls:
+   Compiling typenum v1.20.1
+   Compiling const-oid v0.10.2
+   Compiling cpufeatures v0.3.0
+   Compiling synth_script v0.1.0 (/home/per/github/pertylizer/crates/synth_script)
+   Compiling hybrid-array v0.4.14
+   Compiling block-buffer v0.12.1
+   Compiling crypto-common v0.2.2
+   Compiling digest v0.11.3
+   Compiling sha2 v0.11.0
+   Compiling synth_engine_v2 v0.1.0 (/home/per/github/pertylizer/crates/synth_engine_v2)
+    Finished `release` profile [optimized] target(s) in 27.30s
+     Running unittests src/lib.rs (target/release/deps/synth_engine_v2-98b050f45282094c)
+
+running 17 tests
+test authored::tests::evd_0020_authored_capacity ... ignored, retained evidence run on a committed subject, not an ordinary test
+test authored::tests::excessive_authored_declarations_refuse_without_overflowing_the_ir_builder ... ok
+test authored::tests::compiler_note_knobs_are_opt_in_and_keep_the_note_output_grammar ... ok
+test authored::tests::a_shared_gate_cannot_accept_several_potentially_overlapping_notes ... ok
+test authored::tests::one_past_input_refuses_the_whole_source_before_playback ... ok
+test authored::tests::plain_stream_cannot_silently_skip_a_note_program ... ok
+test authored::tests::explicit_cut_bounds_a_longer_finite_output ... ok
+test authored::tests::a_later_quantum_fault_silences_the_entire_callback_and_all_future_calls ... ok
+test authored::tests::vm_nonfinite_arithmetic_keeps_its_existing_finite_store_rule ... ok
+test authored::tests::same_batch_charges_both_authored_and_later_release_redeems_a_hold ... ok
+test authored::tests::note_context_captures_local_automation_and_signal_on_the_quantum_clock ... ok
+test authored::tests::occurrence_seed_is_independent_of_same_time_input_order ... ok
+test authored::tests::parameter_bindings_initialize_from_base_then_capture_the_named_layer ... ok
+test authored::tests::forged_late_and_overfull_sources_are_terminal_not_live_drops ... ok
+test authored::tests::finite_until_cut_drop_and_zero_duration_have_explicit_outcomes ... ok
+test authored::tests::seeded_notes_and_audio_are_partition_invariant ... ok
+test authored::tests::first_and_repeated_authored_callbacks_allocate_nothing_at_the_admitted_maximum ... ok
+
+test result: ok. 16 passed; 0 failed; 1 ignored; 0 measured; 295 filtered out; finished in 0.02s
+
+
+Retained measurement:
+    Finished `release` profile [optimized] target(s) in 0.09s
+     Running unittests src/lib.rs (target/release/deps/synth_engine_v2-98b050f45282094c)
+
+running 1 test
+case,inputs,pending_peak,hold_peak,future_peak,reserved_peak,eval_peak,authored_peak,release_peak,source_bytes,allocations,draws,median_ns,max_ns
+empty,0,0,0,0,0,0,0,0,48,0,101,1976474,2304628
+drop,24,24,0,0,24,24,0,0,2928,0,101,1963507,3175499
+same_batch,24,24,0,0,24,24,48,0,2928,0,101,1948564,2058452
+held,24,24,24,24,24,24,24,24,2928,0,101,1937871,2009143
+until_cut,24,24,24,24,24,24,24,24,2928,0,101,1945226,2055017
+retained_inputs,24,24,0,0,24,0,0,0,2928,0,101,1912157,2039455
+staggered,24,24,7,7,24,1,1,1,2928,0,101,1965538,2045986
+test authored::tests::evd_0020_authored_capacity ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 311 filtered out; finished in 1.50s
+
