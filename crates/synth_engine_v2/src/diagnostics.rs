@@ -35,6 +35,15 @@ pub enum CompileError {
         node: crate::ir::NodeId,
         fault: crate::script::ScriptFault,
     },
+    /// A mix channel or a sum in the voice scope (`P08-S001`). Both run once, outside it:
+    /// a channel is per instrument, and the voice sum's seed copies a mono source
+    /// (`SOUND-INV-025`), so a stereo per-instance output would not be summed as it is
+    /// written. Refused by name rather than instantiated per voice.
+    #[error("{node} is a mix channel or a sum in the voice scope; both run once, outside it")]
+    MixerNodeInVoiceScope {
+        /// The node.
+        node: crate::ir::NodeId,
+    },
     /// An occurrence source outside voice scope would share one value across notes.
     #[error("{node} declares a per-note source in {scope:?}, which is not a voice scope")]
     NoteSourceOutsideVoice {

@@ -681,6 +681,52 @@ pub struct TapTarget {
     pub bytes_per_quantum: crate::quantities::QuantumBytes,
 }
 
+/// The identity of one mix channel in one plan (`SOUND-INV-031`).
+///
+/// Minted by the compiler, one per `Channel` node in ascending node identity, and carried
+/// with the plan it names — as a [`ParameterSlot`] is — so a channel of one plan cannot
+/// address another's. A mixer consumer keys a send, a meter or a sidechain by this and
+/// never by an instrument's identity, which the master plan's Phase 8 requires.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[must_use]
+pub struct ChannelId {
+    plan: PlanId,
+    index: usize,
+}
+
+impl ChannelId {
+    /// An identity. Crate-private for the reason [`ParameterSlot::new`] is.
+    pub(crate) const fn new(plan: PlanId, index: usize) -> Self {
+        Self { plan, index }
+    }
+
+    /// Which plan this channel belongs to.
+    pub const fn plan(self) -> PlanId {
+        self.plan
+    }
+
+    /// The channel's position among the plan's channels, in ascending node identity.
+    pub const fn index(self) -> usize {
+        self.index
+    }
+}
+
+/// One mix channel the plan compiled, with the slots its three controls occupy.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[must_use]
+pub struct ChannelRecord {
+    /// The channel's identity.
+    pub id: ChannelId,
+    /// The node it was compiled from.
+    pub node: NodeId,
+    /// Its fader's slot.
+    pub fader: ParameterSlot,
+    /// Its pan's slot.
+    pub pan: ParameterSlot,
+    /// Its mute's slot.
+    pub mute: ParameterSlot,
+}
+
 /// A declared tap by the identity a caller addresses it with.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[must_use]
@@ -936,6 +982,7 @@ pub struct CompiledPlan {
     /// `SOUND-INV-022`'s taps, derived from the nodes' declarations; indexed by [`TapSlot`].
     taps: Vec<TapTarget>,
     tap_addresses: Vec<TapAddress>,
+    channels: Vec<ChannelRecord>,
     note_targets: Vec<NoteTarget>,
     note_addresses: Vec<NoteAddress>,
     /// Every note target's magnitude writes, flattened.
@@ -1036,6 +1083,7 @@ impl CompiledPlan {
         parameter_addresses: Vec<ParameterAddress>,
         taps: Vec<TapTarget>,
         tap_addresses: Vec<TapAddress>,
+        channels: Vec<ChannelRecord>,
         note_targets: Vec<NoteTarget>,
         note_addresses: Vec<NoteAddress>,
         note_magnitudes: Vec<NoteMagnitudeTarget>,
@@ -1067,6 +1115,7 @@ impl CompiledPlan {
             parameter_addresses,
             taps,
             tap_addresses,
+            channels,
             note_targets,
             note_addresses,
             note_magnitudes,
@@ -1249,6 +1298,12 @@ impl CompiledPlan {
     }
 
     /// Every declared tap by node and port, for a subscriber resolving one.
+    /// The mix channels the plan compiled, in ascending node identity (`SOUND-INV-031`).
+    /// Admission counted them against `max_mix_channels`.
+    pub fn channels(&self) -> &[ChannelRecord] {
+        &self.channels
+    }
+
     pub fn tap_addresses(&self) -> &[TapAddress] {
         &self.tap_addresses
     }

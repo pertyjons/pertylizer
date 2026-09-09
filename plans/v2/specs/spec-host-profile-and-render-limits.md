@@ -1129,7 +1129,7 @@ section did.
 
 | Field | Type | Default | Basis | Replaces | Revisit |
 |-------|------|---------|-------|----------|---------|
-| `max_mix_channels` | `MixChannelCount` | 256 | Chosen | — | Phase 8 |
+| `max_mix_channels` | `MixChannelCount` | 256 | Chosen. **Counted from the plan's compiled `Channel` nodes** since `P08-S001` (`SOUND-INV-031`), not from a declaration | — | Phase 8 |
 | `max_buses` | `BusCount` | 64 | Chosen | — | Phase 8 |
 | `max_sends_per_channel` | `SendCount` | 16 | V1 carry-over. **ADR-0034 owns what a send is** | `LIMIT-0024` | Phase 8 |
 

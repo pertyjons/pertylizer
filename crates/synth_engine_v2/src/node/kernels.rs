@@ -153,6 +153,10 @@ pub const VELOCITY_SCALER: Kernel = Kernel(velocity_scaler);
 pub const SAMPLER: Kernel = Kernel(sampler);
 /// The monitor's kernel: its input, unchanged.
 pub const MONITOR: Kernel = Kernel(monitor);
+/// The mix channel's kernel (`SOUND-INV-031`).
+pub const CHANNEL: Kernel = Kernel(channel);
+/// The explicit sum's kernel: the summed region, unchanged (`SOUND-INV-031`).
+pub const MIX: Kernel = Kernel(mix);
 /// The low-frequency oscillator's kernel (`SOUND-INV-027`).
 pub const LFO: Kernel = Kernel(lfo);
 /// The bounded, prepared YAMS VM.
@@ -301,6 +305,18 @@ pub enum PreparedNode {
         /// The base its sensitivity slot starts from.
         sensitivity: NormalizedLevel,
     },
+    /// A mix channel's authored fader, pan and mute (`SOUND-INV-031`): the bases its three
+    /// slots start from.
+    Channel {
+        /// The base the fader slot starts from.
+        fader: Amplitude,
+        /// The base the pan slot starts from.
+        pan: crate::controller::BipolarLevel,
+        /// Whether the mute starts held.
+        muted: bool,
+    },
+    /// An explicit sum: nothing is prepared, the summed region is its input.
+    Mix,
     /// A two-pole low-pass, as the four coefficients its integrators read.
     ///
     /// The corner frequency and the quality factor are **gone** by this point: they were
@@ -384,6 +400,12 @@ pub enum NodeState {
     Scaled {
         /// The velocity last written, applied to every sample.
         velocity: NoteVelocity,
+    },
+    /// A mix channel's mute, held between quanta (`SOUND-INV-031`). Its fader and pan are
+    /// quantum-rate slots read from the ramps, so nothing else is kept.
+    Channel {
+        /// Whether the mute was held at the end of the last quantum.
+        muted: bool,
     },
     /// An LFO's place in its period, in `[0, 1)` (`SOUND-INV-027`). Its rate and depth are
     /// quantum-rate slots and are read from the ramps, so nothing else is kept.
@@ -575,6 +597,8 @@ impl NodeState {
             PreparedNode::VelocityScaler { .. } => Self::Scaled {
                 velocity: NoteVelocity::FULL,
             },
+            PreparedNode::Channel { muted, .. } => Self::Channel { muted: *muted },
+            PreparedNode::Mix => Self::Stateless,
             PreparedNode::Controller { .. } | PreparedNode::NoteSource => Self::Stateless,
             PreparedNode::Lfo { .. } => Self::Lfo { phase: 0.0 },
             PreparedNode::Sampler { .. } => Self::Sampler {
@@ -622,6 +646,14 @@ impl NodeState {
             },
             Self::Scaled { velocity } => match control {
                 VELOCITY_SCALER_VELOCITY => ParameterValue::new(velocity.as_f32()).ok(),
+                _ => None,
+            },
+            Self::Channel { muted } => match control {
+                CHANNEL_MUTE => Some(if *muted {
+                    ParameterValue::ONE
+                } else {
+                    ParameterValue::ZERO
+                }),
                 _ => None,
             },
             Self::Sampler { velocity, held, .. } => match control {
@@ -700,6 +732,17 @@ pub(crate) fn authored_value(
             VELOCITY_SCALER_SENSITIVITY => Some(ParameterValue::from_level(*sensitivity)),
             _ => None,
         },
+        PreparedNode::Channel { fader, pan, muted } => match control {
+            CHANNEL_FADER => Some(ParameterValue::from_amplitude(*fader)),
+            CHANNEL_PAN => Some(ParameterValue::from_bipolar(*pan)),
+            CHANNEL_MUTE => Some(if *muted {
+                ParameterValue::ONE
+            } else {
+                ParameterValue::ZERO
+            }),
+            _ => None,
+        },
+        PreparedNode::Mix => None,
         PreparedNode::Controller { .. } | PreparedNode::NoteSource => Some(ParameterValue::ZERO),
         PreparedNode::Lfo { rate, depth, .. } => match control {
             LFO_RATE => Some(ParameterValue::from_frequency(*rate)),
@@ -819,6 +862,12 @@ pub const SAW_AMPLITUDE: ControlIndex = ControlIndex::new(1);
 pub const LFO_RATE: ControlIndex = ControlIndex::new(0);
 /// An LFO's depth, quantum-rate.
 pub const LFO_DEPTH: ControlIndex = ControlIndex::new(1);
+/// A mix channel's fader, quantum-rate, read per frame from its ramp (`SOUND-INV-031`).
+pub const CHANNEL_FADER: ControlIndex = ControlIndex::new(0);
+/// A mix channel's pan, quantum-rate, read per frame from its ramp.
+pub const CHANNEL_PAN: ControlIndex = ControlIndex::new(1);
+/// A mix channel's mute, sample-positioned: held from the frame it lands on.
+pub const CHANNEL_MUTE: ControlIndex = ControlIndex::new(2);
 
 /// What one of a kernel's inputs turned out to be.
 ///
@@ -1836,6 +1885,78 @@ pub fn amplifier(_prepared: &PreparedNode, _state: &mut NodeState, io: &mut Node
 /// layouts are equal by the declaration, so this is a plain per-sample copy where the
 /// arena gave the two distinct regions.
 pub fn monitor(_prepared: &PreparedNode, _state: &mut NodeState, io: &mut NodeIo<'_>) {
+    match io.inputs[0] {
+        InputBuffer::Patched(source) => {
+            for (index, sample) in io.out.iter_mut().enumerate() {
+                *sample = source.get(index).copied().unwrap_or(0.0);
+            }
+        }
+        InputBuffer::InPlace => {}
+        InputBuffer::Unpatched => io.out.fill(0.0),
+    }
+}
+
+/// A mix channel (`SOUND-INV-031`): every frame scaled per side by the fader and V1's
+/// constant-power pan, and silenced while the mute is held.
+///
+/// The pan law is V1's `Gain::from_pan`, computed here rather than called: the angle is
+/// `(pan + 1) × π/4`, the left gain its cosine and the right its sine, so centre is
+/// `cos(π/4)` per side and never unity. The per-side gain is formed as V1's channel stage
+/// forms it — the pan coefficient times the fader, then the sample times that — so a test
+/// oracle built from V1's own function matches bit for bit. The fader and the pan are read
+/// per frame from their ramps; the mute is applied at the frame its control lands on, as
+/// every sample-positioned control is. Channel `0` takes the left gain and every further
+/// channel the right, which is correct for the one layout the port table admits.
+pub fn channel(_prepared: &PreparedNode, state: &mut NodeState, io: &mut NodeIo<'_>) {
+    let NodeState::Channel { muted } = state else {
+        return;
+    };
+    let fader = ramp_of(io.ramps, 0);
+    let pan = ramp_of(io.ramps, 1);
+    let channels = io.channels.channels().max(1);
+    let frames = io.out.len() / channels;
+    let source = io.inputs[0];
+    let mut held = *muted;
+    let mut due = 0_usize;
+    for frame in 0..frames {
+        while let Some(control) = io.controls.get(due) {
+            if control.offset.as_usize() != frame {
+                break;
+            }
+            due += 1;
+            if matches!(control.control, CHANNEL_MUTE) {
+                held = control.value.as_f32() > 0.0;
+            }
+        }
+        let level = if held {
+            0.0
+        } else {
+            fader.get(frame).or(fader.last()).copied().unwrap_or(1.0)
+        };
+        let position = pan.get(frame).or(pan.last()).copied().unwrap_or(0.0);
+        let angle = (position + 1.0) * core::f32::consts::FRAC_PI_4;
+        let left = angle.cos() * level;
+        let right = angle.sin() * level;
+        for channel in 0..channels {
+            let index = frame * channels + channel;
+            let input = match source {
+                InputBuffer::Patched(source) => source.get(index).copied().unwrap_or(0.0),
+                InputBuffer::InPlace => io.out.get(index).copied().unwrap_or(0.0),
+                InputBuffer::Unpatched => 0.0,
+            };
+            let gain = if channel == 0 { left } else { right };
+            if let Some(sample) = io.out.get_mut(index) {
+                *sample = input * gain;
+            }
+        }
+    }
+    *muted = held;
+}
+
+/// An explicit sum's step (`SOUND-INV-031`): the region the compiler summed its cables
+/// into, passed through unchanged — as the monitor passes its input — so the arena may give
+/// the node that very region and the step writes nothing.
+pub fn mix(_prepared: &PreparedNode, _state: &mut NodeState, io: &mut NodeIo<'_>) {
     match io.inputs[0] {
         InputBuffer::Patched(source) => {
             for (index, sample) in io.out.iter_mut().enumerate() {

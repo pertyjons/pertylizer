@@ -13,9 +13,9 @@
 
 use crate::quantities::{
     Amplitude, BusCount, CostRatio, CutoffFrequency, EventCount, Frequency, GainFactor,
-    HeldNoteCount, InstructionCount, MixChannelCount, NodeCount, NormalizedLevel, PhaseOffset,
-    PreparedBytes, RecordCount, Resonance, ScriptWorkPerQuantum, Seconds, SendCount, SlotCount,
-    VoiceCount, WritesPerNote,
+    HeldNoteCount, InstructionCount, NodeCount, NormalizedLevel, PhaseOffset, PreparedBytes,
+    RecordCount, Resonance, ScriptWorkPerQuantum, Seconds, SendCount, SlotCount, VoiceCount,
+    WritesPerNote,
 };
 use crate::sample::{PlayDirection, PlayMode, PreparedSample, SampleMap, SampleMapRef};
 use crate::time::{FrameCount, PlanPosition};
@@ -294,6 +294,35 @@ pub enum IrNodeKind {
         /// V1's `velocity_amp_sensitivity`: one is the full velocity, zero ignores it.
         sensitivity: NormalizedLevel,
     },
+    /// A mix channel (`P08-S001`, `SOUND-INV-031`): one stereo signal scaled by a fader,
+    /// placed by a constant-power pan and silenced by a mute, each a declared control.
+    ///
+    /// The fader is a linear amplitude under the decibel law, V1's `0..2` mixer range read
+    /// from V1's own bound by the lowerer; the pan is V1's constant-power law, `cos` and
+    /// `sin` of `(pan + 1) × π/4` per side; the mute is a thresholded boolean and
+    /// sample-positioned, so it silences the channel from the sample it lands on. The
+    /// compiler mints a [`crate::plan::ChannelId`] per node of this kind and admits the
+    /// count against `max_mix_channels`.
+    ///
+    /// A mono source reaching its stereo input is widened by the compiler's scheduled
+    /// conversion (`SOUND-INV-014`), which is what makes a centre pan on a mono voice sum
+    /// V1's `cos(π/4)` per side rather than unity.
+    Channel {
+        /// The authored fader, a linear amplitude.
+        fader: Amplitude,
+        /// The authored pan, `−1` hard left through `0` centre to `1` hard right.
+        pan: crate::controller::BipolarLevel,
+        /// Whether the channel starts muted.
+        muted: bool,
+    },
+    /// An explicit stereo sum (`P08-S001`, `SOUND-INV-031`): its one input port declares
+    /// fan-in, so every cable into it is a scheduled sum — linear, in float, unclamped —
+    /// rather than the illegal fan-in `SOUND-INV-007` refuses on every other port.
+    ///
+    /// The kind has no control of its own: a level on a sum is a channel's fader. The node's
+    /// step passes the summed region through unchanged, so the arena may hand it that region
+    /// and the pass costs nothing.
+    Mix,
     /// A one-zone sampler on the prepared map/zone contract (ADR-0026).
     ///
     /// The map it consumes is one of the plan's, named by reference for the reason a node
@@ -595,6 +624,13 @@ pub mod parameters {
     pub const LFO_RATE: ParameterId = ParameterId::new(0);
     /// An LFO's depth, the peak its shape is scaled to. Quantum-rate.
     pub const LFO_DEPTH: ParameterId = ParameterId::new(1);
+    /// A mix channel's fader, a linear amplitude under the decibel law (`SOUND-INV-031`).
+    /// Quantum-rate.
+    pub const CHANNEL_FADER: ParameterId = ParameterId::new(0);
+    /// A mix channel's pan, bipolar. Quantum-rate.
+    pub const CHANNEL_PAN: ParameterId = ParameterId::new(1);
+    /// A mix channel's mute, a thresholded boolean. Sample-positioned.
+    pub const CHANNEL_MUTE: ParameterId = ParameterId::new(2);
 }
 
 /// One node in the IR.
@@ -826,8 +862,6 @@ pub struct PlanDeclarations {
     pub note_producers: Vec<NoteProducerDeclaration>,
     /// Notes held at once across the plan.
     pub held_notes: HeldNoteCount,
-    /// Mix channels.
-    pub mix_channels: MixChannelCount,
     /// Buses.
     pub buses: BusCount,
     /// The most sends any one channel has.
@@ -933,7 +967,6 @@ impl Default for PlanDeclarations {
             // partition that the plan never asked for.
             note_producers: Vec::new(),
             held_notes: HeldNoteCount::NONE,
-            mix_channels: MixChannelCount::NONE,
             buses: BusCount::NONE,
             max_sends_on_any_channel: SendCount::NONE,
             events_per_quantum: EventCount::NONE,

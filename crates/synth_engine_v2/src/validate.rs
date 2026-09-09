@@ -53,6 +53,19 @@ impl std::fmt::Display for PortDirection {
     }
 }
 
+/// How many cables one input port takes.
+///
+/// `SOUND-INV-007` refuses fan-in, and `SOUND-INV-031` names the one exception: a port
+/// that declares it. Every cable into such a port is summed by scheduled operations the
+/// compiler inserts, so the kernel behind it still reads one region.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FanIn {
+    /// One source, the rule; a second edge is refused by name.
+    One,
+    /// Any number of sources, summed linearly in float before the kernel reads them.
+    Summed,
+}
+
 /// One port a node kind declares.
 ///
 /// The layout is a property of the **port**, never of the buffer it is assigned:
@@ -65,10 +78,11 @@ pub struct PortSpec {
     direction: PortDirection,
     domain: SignalDomain,
     layout: ChannelLayout,
+    fan_in: FanIn,
 }
 
 impl PortSpec {
-    /// Declare a port.
+    /// Declare a port taking one cable.
     pub const fn new(
         id: PortId,
         direction: PortDirection,
@@ -80,7 +94,24 @@ impl PortSpec {
             direction,
             domain,
             layout,
+            fan_in: FanIn::One,
         }
+    }
+
+    /// Declare an input port whose cables are summed (`SOUND-INV-031`).
+    pub const fn summing(id: PortId, domain: SignalDomain, layout: ChannelLayout) -> Self {
+        Self {
+            id,
+            direction: PortDirection::Input,
+            domain,
+            layout,
+            fan_in: FanIn::Summed,
+        }
+    }
+
+    /// How many cables the port takes.
+    pub const fn fan_in(self) -> FanIn {
+        self.fan_in
     }
 
     /// The port's identity within its node.
@@ -444,9 +475,21 @@ pub(crate) fn validate(ir: &GraphIr, stream: ChannelLayout) -> Result<Validated,
                 scope: node.scope(),
             });
         }
+        // `P08-S001`: a mix channel is per instrument and a sum runs once; the voice sum
+        // seeds its region with a mono copy, so a stereo per-instance output would not be
+        // summed as written. An independent read built a two-voice channel and found the
+        // second voice's controls landing on inserted steps; both kinds are refused here.
+        if node.scope() == crate::ir::ExecutionScope::Voice
+            && matches!(
+                node.kind(),
+                crate::ir::IrNodeKind::Channel { .. } | crate::ir::IrNodeKind::Mix
+            )
+        {
+            return Err(CompileError::MixerNodeInVoiceScope { node: node.id() });
+        }
     }
     modulations(ir, &index)?;
-    fan_in(ir)?;
+    fan_in(ir, &index)?;
     let order = topological_order(&index)?;
     let warnings = outputs(ir)?;
 
@@ -627,8 +670,9 @@ fn modulations(ir: &GraphIr, index: &Index<'_>) -> Result<(), CompileError> {
 ///
 /// One pass to tally, then one pass in edge order to report — so a plan with three
 /// edges into one input produces one diagnostic, and which one it is does not depend
-/// on hash iteration order.
-fn fan_in(ir: &GraphIr) -> Result<(), CompileError> {
+/// on hash iteration order. A port declaring [`FanIn::Summed`] is exempt: its cables are
+/// summed by the compiler (`SOUND-INV-031`).
+fn fan_in(ir: &GraphIr, index: &Index<'_>) -> Result<(), CompileError> {
     let mut arrivals: HashMap<(NodeId, PortId), (u32, EdgeId, Option<EdgeId>)> =
         HashMap::with_capacity(ir.edges().len());
     for edge in ir.edges() {
@@ -649,6 +693,12 @@ fn fan_in(ir: &GraphIr) -> Result<(), CompileError> {
         };
         if count > 1 {
             let (node, port) = edge.to();
+            if index
+                .port(node, port, PortDirection::Input)
+                .is_some_and(|spec| spec.fan_in() == FanIn::Summed)
+            {
+                continue;
+            }
             return Err(CompileError::UnsupportedFanIn {
                 node,
                 port,

@@ -117,6 +117,11 @@ fn address_of(id: ModuleId) -> NodeId {
 /// reaches them, so [`address_of`] can never produce it.
 pub const VOICE_OUTPUT_SCALER: NodeId = NodeId::new(0xFFFF_0000);
 
+/// The address of the mix channel the lowerer inserts between the voice's output stage and
+/// the plan's output (`P08-S001`), which no saved module has, for the reason
+/// [`VOICE_OUTPUT_SCALER`]'s high bits give.
+pub const CHANNEL: NodeId = NodeId::new(0xFFFF_0001);
+
 impl ResolvedIdentities {
     /// Resolve every module in one patch.
     ///

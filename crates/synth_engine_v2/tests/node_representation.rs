@@ -327,13 +327,15 @@ fn a_widened_signal_is_copied_by_a_scheduled_kernel() {
 fn a_declared_kind_appears_in_the_registry_only_by_deferring_to_its_declaration() {
     // The variant as it is spelled in a pattern — fieldless kinds have no `{ .. }` — and
     // the declaration constant it forwards to.
-    const DECLARED: [(&str, &str); 16] = [
+    const DECLARED: [(&str, &str); 18] = [
         ("Script { .. }", "SCRIPT"),
         ("AudioScript { .. }", "AUDIO_SCRIPT"),
         ("NoteScript { .. }", "NOTE_SCRIPT"),
         ("Lfo { .. }", "LFO"),
         ("Saw { .. }", "SAW"),
         ("VelocityScaler { .. }", "VELOCITY_SCALER"),
+        ("Channel { .. }", "CHANNEL"),
+        ("Mix", "MIX"),
         ("Sampler { .. }", "SAMPLER"),
         ("Envelope { .. }", "ENVELOPE"),
         ("Sine { .. }", "SINE"),
@@ -511,6 +513,12 @@ fn discovery_and_validation_describe_the_same_ports() {
             NodeKindId::VelocityScaler => IrNodeKind::VelocityScaler {
                 sensitivity: synth_engine_v2::quantities::NormalizedLevel::FULL,
             },
+            NodeKindId::Channel => IrNodeKind::Channel {
+                fader: Amplitude::UNITY,
+                pan: synth_engine_v2::controller::BipolarLevel::ZERO,
+                muted: false,
+            },
+            NodeKindId::Mix => IrNodeKind::Mix,
             NodeKindId::Sampler => IrNodeKind::Sampler {
                 map: synth_engine_v2::sample::SampleMapRef::new(0),
                 level: Amplitude::UNITY,
@@ -544,7 +552,7 @@ fn discovery_and_validation_describe_the_same_ports() {
     let entries = catalog();
     assert_eq!(
         entries.len(),
-        24,
+        26,
         "every kind but the output node is discoverable"
     );
     for entry in entries {
@@ -559,6 +567,7 @@ fn discovery_and_validation_describe_the_same_ports() {
                 direction: port.direction(),
                 domain: port.domain(),
                 layout: port.layout(),
+                fan_in: port.fan_in(),
             })
             .collect();
         assert_eq!(

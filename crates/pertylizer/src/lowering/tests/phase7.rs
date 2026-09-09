@@ -77,6 +77,7 @@ fn authoring() -> GraphIr {
         &connections,
         EventCount::measured(2),
         None,
+        None,
         &sources,
     );
     lowered

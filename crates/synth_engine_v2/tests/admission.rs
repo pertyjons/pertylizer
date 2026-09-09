@@ -208,6 +208,52 @@ fn two_monitors() -> GraphIr {
         .expect("a monitored source is a readable plan")
 }
 
+/// One source through two mix channels into one sum: two compiled channels
+/// (`SOUND-INV-031`), which admission counts from the IR rather than from a declaration.
+fn two_channels() -> GraphIr {
+    const FIRST_CHANNEL: NodeId = NodeId::new(23);
+    const SECOND_CHANNEL: NodeId = NodeId::new(24);
+    const MIX: NodeId = NodeId::new(25);
+    let channel = || IrNodeKind::Channel {
+        fader: synth_engine_v2::quantities::Amplitude::UNITY,
+        pan: synth_engine_v2::controller::BipolarLevel::ZERO,
+        muted: false,
+    };
+    GraphIr::builder()
+        .node(SOURCE, IrNodeKind::Silence, ExecutionScope::Voice)
+        .node(FIRST_CHANNEL, channel(), ExecutionScope::Channel)
+        .node(SECOND_CHANNEL, channel(), ExecutionScope::Channel)
+        .node(MIX, IrNodeKind::Mix, ExecutionScope::Global)
+        .node(OUTPUT, IrNodeKind::Output, ExecutionScope::Global)
+        .connect(
+            (SOURCE, PortId::FIRST),
+            (FIRST_CHANNEL, PortId::FIRST),
+            SignalDomain::Audio,
+        )
+        .connect(
+            (SOURCE, PortId::FIRST),
+            (SECOND_CHANNEL, PortId::FIRST),
+            SignalDomain::Audio,
+        )
+        .connect(
+            (FIRST_CHANNEL, PortId::FIRST),
+            (MIX, PortId::FIRST),
+            SignalDomain::Audio,
+        )
+        .connect(
+            (SECOND_CHANNEL, PortId::FIRST),
+            (MIX, PortId::FIRST),
+            SignalDomain::Audio,
+        )
+        .connect(
+            (MIX, PortId::FIRST),
+            (OUTPUT, PortId::FIRST),
+            SignalDomain::Audio,
+        )
+        .build()
+        .expect("two channels into one sum is a readable plan")
+}
+
 /// A plan declaring one of everything the profile bounds, so a lowered limit bites.
 fn declared() -> PlanDeclarations {
     PlanDeclarations {
@@ -219,7 +265,6 @@ fn declared() -> PlanDeclarations {
             simultaneous_holds: EventCount::NONE,
         }],
         held_notes: HeldNoteCount::measured(2),
-        mix_channels: MixChannelCount::measured(2),
         buses: BusCount::measured(2),
         max_sends_on_any_channel: SendCount::measured(2),
         events_per_quantum: EventCount::measured(2),
@@ -701,10 +746,25 @@ fn refusal_cases(host: &HostProfile) -> Vec<(ResourceField, GraphIr, HostProfile
         // `SOUND-INV-022`: a plan's taps are its nodes' declarations' — two monitors
         // declare two taps, and a profile allowing one refuses the plan by count.
         (ResourceField::MaxObservationTaps, two_monitors(), taps(1)),
+        // `SOUND-INV-031`: a plan's mix channels are its `Channel` nodes, counted from the
+        // IR — two channels into one sum, and a profile allowing one refuses the plan by
+        // count.
         (
             ResourceField::MaxMixChannels,
-            declares.clone(),
-            mixing(1, 64, 16),
+            two_channels(),
+            // A channel's output is stereo, so the profile that refuses it is a stereo
+            // one; a mono stream would refuse the plan on its layout before its count.
+            {
+                let stereo = profile(256, ChannelLayout::Stereo);
+                let mut groups = Groups::of(&stereo);
+                groups.mixing = MixingLimits::new(
+                    MixChannelCount::limit(1).expect("positive"),
+                    BusCount::limit(64).expect("positive"),
+                    SendCount::limit(16).expect("positive"),
+                )
+                .expect("the overridden capacities are above zero");
+                groups.build(&stereo)
+            },
         ),
         (
             ResourceField::MaxBuses,
@@ -831,6 +891,60 @@ fn each_refusal_names_its_field_both_amounts_and_the_responsible_object() {
     for (field, ir, profile) in refusal_cases(&host) {
         assert_refused(field, &ir, profile);
     }
+}
+
+#[test]
+fn an_admitted_sum_fits_a_budget_equal_to_its_own_prepared_bytes() {
+    // `SOUND-INV-031`'s inserted operations are counted exactly at preflight: an
+    // independent read set a sum's prepared budget to the figure its own admitted report
+    // stated and found the plan refused with a larger request, because the preflight
+    // charged an accumulate for a summed port of one cable. The report's figure is the
+    // plan's cost, and a budget equal to it admits the plan.
+    const MIX: NodeId = NodeId::new(26);
+    let host = profile(256, ChannelLayout::Stereo);
+    let summed = GraphIr::builder()
+        .node(SOURCE, IrNodeKind::Silence, ExecutionScope::Global)
+        .node(MIX, IrNodeKind::Mix, ExecutionScope::Global)
+        .node(OUTPUT, IrNodeKind::Output, ExecutionScope::Global)
+        .connect(
+            (SOURCE, PortId::FIRST),
+            (MIX, PortId::FIRST),
+            SignalDomain::Audio,
+        )
+        .connect(
+            (MIX, PortId::FIRST),
+            (OUTPUT, PortId::FIRST),
+            SignalDomain::Audio,
+        )
+        .build()
+        .expect("a summed source is a readable plan");
+    let outcome = compile(&summed, &RenderConfig::new(host));
+    assert!(outcome.plan().is_ok(), "{:?}", outcome.plan().err());
+    let requested = |field: ResourceField| {
+        outcome
+            .report()
+            .rows()
+            .iter()
+            .find(|row| row.field() == field)
+            .map(|row| match row.requested() {
+                ResourceAmount::Bytes(bytes) => bytes.get(),
+                other => panic!("{field:?} is not a byte row: {other:?}"),
+            })
+            .expect("the row exists")
+    };
+    let prepared = requested(ResourceField::PreparedImmutableBytes);
+    let mutable = requested(ResourceField::MutableStateBytes);
+    let scratch = requested(ResourceField::BufferScratchBytes);
+    let bytes = |value: u64| PreparedBytes::limit(value).expect("positive");
+    let mut groups = Groups::of(&host);
+    groups.memory = MemoryLimits::new(bytes(prepared), bytes(mutable), bytes(scratch))
+        .expect("the reported figures are above zero");
+    let exact = compile(&summed, &RenderConfig::new(groups.build(&host)));
+    assert!(
+        exact.plan().is_ok(),
+        "a budget equal to the report's own figures admits the plan: {:?}",
+        exact.plan().err()
+    );
 }
 
 #[test]

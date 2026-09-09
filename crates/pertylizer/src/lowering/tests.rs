@@ -1548,12 +1548,7 @@ fn a_saved_instrument_and_song_render_through_v2_and_are_audible() {
     let saved = saved_instrument(modules, connections);
     let song = four_note_song();
 
-    let profile = HostProfile::harness(
-        SampleRate::new(48_000.0).expect("a real rate"),
-        FrameCount::new(512),
-        ChannelLayout::Mono,
-    )
-    .expect("a harness profile");
+    let profile = harness_profile();
 
     let rendered = super::render::smoke_render(
         &saved,
@@ -1603,12 +1598,7 @@ fn overlapping_notes_on_one_gate_are_refused() {
     let saved = saved_instrument(modules, connections);
     let song = overlapping_song();
 
-    let profile = HostProfile::harness(
-        SampleRate::new(48_000.0).expect("a real rate"),
-        FrameCount::new(512),
-        ChannelLayout::Mono,
-    )
-    .expect("a harness profile");
+    let profile = harness_profile();
 
     let rendered = super::render::smoke_render(
         &saved,
@@ -1645,12 +1635,7 @@ fn a_tempo_change_moves_the_notes_it_should() {
     let (modules, connections) = corpus_patch("sine");
     let saved = saved_instrument(modules, connections);
 
-    let profile = HostProfile::harness(
-        SampleRate::new(48_000.0).expect("a real rate"),
-        FrameCount::new(512),
-        ChannelLayout::Mono,
-    )
-    .expect("a harness profile");
+    let profile = harness_profile();
 
     let steady = super::render::smoke_render(
         &saved,
@@ -1997,13 +1982,22 @@ fn the_declared_event_peak_counts_the_lowered_timeline() {
 }
 
 /// A harness profile at the rate every smoke-render test uses.
+/// The smoke render's profile. **Stereo** since `P08-S001`: the lowered instrument renders
+/// through its mix channel, whose output is stereo as V1's is, and a mono stream would
+/// refuse the channel's edge into the output rather than down-mix it (`SOUND-INV-014`).
+/// The samples are interleaved, so a frame count is half the sample count.
 fn harness_profile() -> HostProfile {
     HostProfile::harness(
         SampleRate::new(48_000.0).expect("a real rate"),
         FrameCount::new(512),
-        ChannelLayout::Mono,
+        ChannelLayout::Stereo,
     )
     .expect("a harness profile")
+}
+
+/// How many frames a smoke render holds: its interleaved samples over the stream's channels.
+fn frames_of(rendered: &super::render::SmokeRender) -> u64 {
+    (rendered.samples.len() / harness_profile().capabilities().channel_layout().channels()) as u64
 }
 
 /// A note expression or ornament is refused, because V1 expands it before playing.
@@ -2087,9 +2081,13 @@ fn a_note_expression_is_refused_rather_than_played_as_authored() {
     );
 }
 
-/// A muted instrument renders nothing, and says so.
+/// A muted instrument lowers to a muted channel and renders the silence V1 renders.
+///
+/// Until `P08-S001` a mute was refused by name; now it is the channel's mute, held from the
+/// first sample, so the notes are lowered — V1 plays them into a silenced channel — and the
+/// render is zeros with no mark naming the mute.
 #[test]
-fn a_muted_instrument_is_refused_rather_than_rendered_audible() {
+fn a_muted_instrument_lowers_to_a_muted_channel_and_renders_silence() {
     let (modules, connections) = corpus_patch("sine");
     let mut saved = saved_instrument(modules, connections);
     saved.muted = true;
@@ -2103,17 +2101,202 @@ fn a_muted_instrument_is_refused_rather_than_rendered_audible() {
     );
     assert_eq!(
         rendered.lowered_events,
-        synth_engine_v2::quantities::EventCount::measured(0),
-        "a project the user silenced must not be lowered as sounding"
+        synth_engine_v2::quantities::EventCount::measured(8),
+        "the notes are lowered into the silenced channel: {:?}",
+        rendered.diagnostics
     );
     assert!(
-        rendered.diagnostics.iter().any(|d| matches!(
+        !rendered.samples.is_empty() && rendered.samples.iter().all(|s| *s == 0.0),
+        "and the render is the silence V1 renders"
+    );
+    assert!(
+        !rendered.diagnostics.iter().any(|d| matches!(
             d.reason(),
             LoweringReason::OwnedByLaterPhase { capability, .. }
-                if capability.contains("muted instrument")
+                if capability.contains("muted")
         )),
-        "the refusal must name the mute, got {:?}",
+        "nothing names the mute any more, got {:?}",
         rendered.diagnostics
+    );
+}
+
+/// The instrument's fader, pan and mute are the channel's authored bases (`P08-S001`).
+#[test]
+fn the_instruments_strip_lowers_onto_its_mix_channel() {
+    use synth_engine_v2::ir::IrNodeKind;
+    let (modules, connections) = corpus_patch("sine");
+    let mut saved = saved_instrument(modules, connections);
+    saved.volume = synth_core::Gain::new(0.5);
+    saved.pan = synth_core::BipolarValue::new(-0.25);
+    saved.muted = true;
+
+    let lowered = super::graph::lower_voice_patch_with(
+        instrument(),
+        &saved.patch.modules,
+        &saved.patch.connections,
+        synth_engine_v2::quantities::EventCount::NONE,
+        Some(synth_engine_v2::quantities::NormalizedLevel::FULL),
+        Some(super::graph::ChannelStrip {
+            fader: synth_engine_v2::quantities::Amplitude::new(0.5).expect("finite"),
+            pan: synth_engine_v2::controller::BipolarLevel::new(-0.25).expect("in range"),
+            muted: true,
+        }),
+        &super::modulation::SongModulators::default(),
+    );
+    let ir = lowered.ir.expect("the strip lowers");
+    let channel = ir
+        .node(super::identity::CHANNEL)
+        .expect("one channel at the reserved address");
+    assert_eq!(
+        channel.scope(),
+        synth_engine_v2::ir::ExecutionScope::Channel
+    );
+    match channel.kind() {
+        IrNodeKind::Channel { fader, pan, muted } => {
+            assert_eq!(fader.as_f32(), 0.5);
+            assert_eq!(pan.as_f32(), -0.25);
+            assert!(muted);
+        }
+        other => panic!("{other:?}"),
+    }
+    // The chain: the scaler feeds the channel and the channel feeds the output, and nothing
+    // else reaches the output.
+    let output = ir
+        .nodes()
+        .iter()
+        .find(|node| matches!(node.kind(), IrNodeKind::Output))
+        .expect("an output")
+        .id();
+    let into_output: Vec<_> = ir
+        .edges()
+        .iter()
+        .filter(|edge| edge.to().0 == output)
+        .map(|edge| edge.from().0)
+        .collect();
+    assert_eq!(into_output, vec![super::identity::CHANNEL]);
+    assert!(
+        ir.edges()
+            .iter()
+            .any(|edge| edge.from().0 == super::identity::VOICE_OUTPUT_SCALER
+                && edge.to().0 == super::identity::CHANNEL)
+    );
+}
+
+/// The fader scales the render, the pan places it and neither is a mark any more.
+#[test]
+fn the_instruments_fader_and_pan_reach_the_render_under_v1s_laws() {
+    let rendered_at = |volume: f32, pan: f32| {
+        let (modules, connections) = corpus_patch("sine");
+        let mut saved = saved_instrument(modules, connections);
+        saved.volume = synth_core::Gain::new(volume);
+        saved.pan = synth_core::BipolarValue::new(pan);
+        super::render::smoke_render(
+            &saved,
+            &four_note_song(),
+            &crate::project::GlobalProjectState::default(),
+            harness_profile(),
+            FrameCount::new(4_800),
+        )
+    };
+    let unity = rendered_at(1.0, 0.0);
+    let half = rendered_at(0.5, 0.0);
+    assert!(unity.is_audible() && half.is_audible());
+    let ratio = peak(&half) / peak(&unity);
+    assert!(
+        (ratio - 0.5).abs() < 1e-6,
+        "half the fader is half the peak, got {ratio}"
+    );
+    // Hard left: the right side is exactly silent — `sin(0)` is zero, not nearly zero —
+    // and the left side is the centre render scaled by V1's own coefficient ratio.
+    let left = rendered_at(1.0, -1.0);
+    let sides = |rendered: &super::render::SmokeRender| {
+        let l: Vec<f32> = rendered.samples.iter().copied().step_by(2).collect();
+        let r: Vec<f32> = rendered
+            .samples
+            .iter()
+            .copied()
+            .skip(1)
+            .step_by(2)
+            .collect();
+        (l, r)
+    };
+    let (left_l, left_r) = sides(&left);
+    assert!(
+        left_r.iter().all(|s| *s == 0.0),
+        "hard left renders nothing on the right"
+    );
+    assert!(
+        left_l.iter().any(|s| s.abs() > 0.01),
+        "and something on the left"
+    );
+    let (centre_l, centre_r) = sides(&unity);
+    assert_eq!(centre_l, centre_r, "centre is symmetric");
+    let (hard, _) = synth_core::Gain::from_pan(synth_core::BipolarValue::new(-1.0));
+    let (centre, _) = synth_core::Gain::from_pan(synth_core::BipolarValue::CENTER);
+    let expected = hard.as_f32() / centre.as_f32();
+    let measured = peak(&left) / peak(&unity);
+    assert!(
+        (measured - expected).abs() < 1e-5,
+        "the left side carries V1's coefficient ratio {expected}, got {measured}"
+    );
+    // And no diagnostic names the fader or the pan: they are lowered, not reported.
+    for rendered in [&unity, &half, &left] {
+        assert!(
+            !rendered.diagnostics.iter().any(|d| matches!(
+                d.reason(),
+                LoweringReason::OwnedByLaterPhase { capability, .. }
+                    if capability.contains("instrument volume")
+                        || capability.contains("instrument pan")
+            )),
+            "{:?}",
+            rendered.diagnostics
+        );
+    }
+}
+
+/// A saved volume outside V1's own mixer range is refused by name and by value, and one
+/// inside it — above unity, where V1's range reaches — lowers.
+#[test]
+fn a_saved_volume_outside_v1s_mixer_range_is_refused_and_one_inside_it_lowers() {
+    let rendered_at = |volume: f32| {
+        let (modules, connections) = corpus_patch("sine");
+        let mut saved = saved_instrument(modules, connections);
+        saved.volume = synth_core::Gain::new(volume);
+        super::render::smoke_render(
+            &saved,
+            &four_note_song(),
+            &crate::project::GlobalProjectState::default(),
+            harness_profile(),
+            FrameCount::new(4_800),
+        )
+    };
+    let over = rendered_at(3.0);
+    assert!(over.samples.is_empty(), "refused, so nothing renders");
+    assert!(
+        over.diagnostics.iter().any(|d| matches!(
+            (d.severity(), d.reason()),
+            (Severity::Refused, LoweringReason::UnsupportedParameterValue { value })
+                if value.contains("3") && value.contains("mixer range")
+        )),
+        "refused by name and by value, got {:?}",
+        over.diagnostics
+    );
+    let hot = rendered_at(1.5);
+    assert!(hot.is_audible(), "{:?}", hot.diagnostics);
+    let unity = rendered_at(1.0);
+    let ratio = peak(&hot) / peak(&unity);
+    assert!(
+        (ratio - 1.5).abs() < 1e-5,
+        "V1's range reaches above unity, got {ratio}"
+    );
+    let nan = rendered_at(f32::NAN);
+    assert!(nan.samples.is_empty());
+    assert!(
+        nan.diagnostics
+            .iter()
+            .any(|d| matches!(d.reason(), LoweringReason::UnsupportedParameterValue { .. })),
+        "{:?}",
+        nan.diagnostics
     );
 }
 
@@ -2264,7 +2447,7 @@ fn a_note_free_arrangement_still_renders_through_the_whole_path() {
         rendered.diagnostics
     );
     assert_eq!(
-        rendered.samples.len() as u64,
+        frames_of(&rendered),
         rendered.lowered_frames.as_u64() + 4_800,
         "so the render proceeds over the song's extent, for the tail it was asked for: {:?}",
         rendered.diagnostics
@@ -4369,6 +4552,14 @@ fn lowered_performance_at(
         connections,
         peak,
         Some(NormalizedLevel::new(0.0).expect("a level")),
+        // The channel `smoke_render` inserts for `saved_instrument`'s strip (`P08-S001`):
+        // unity, centre, unmuted. Without it the oracle would be the smoke render's samples
+        // less V1's centre coefficient.
+        Some(super::graph::ChannelStrip {
+            fader: synth_engine_v2::quantities::Amplitude::UNITY,
+            pan: synth_engine_v2::controller::BipolarLevel::ZERO,
+            muted: false,
+        }),
         &super::modulation::SongModulators::default(),
     );
     let ir = lowered.ir.expect("the fixture lowers");
@@ -5996,6 +6187,7 @@ fn a_global_mod_grid_lfo_into_a_module_target_lowers_to_a_global_node_and_edges(
         &modules,
         &connections,
         synth_engine_v2::quantities::EventCount::NONE,
+        None,
         None,
         &modulators,
     );

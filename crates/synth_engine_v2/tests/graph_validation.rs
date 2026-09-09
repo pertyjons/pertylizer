@@ -455,6 +455,12 @@ catalog! {
     IrNodeKind::VelocityScaler {
         sensitivity: synth_engine_v2::quantities::NormalizedLevel::FULL,
     } => IrNodeKind::VelocityScaler { .. },
+    IrNodeKind::Channel {
+        fader: level(1.0),
+        pan: synth_engine_v2::controller::BipolarLevel::ZERO,
+        muted: false,
+    } => IrNodeKind::Channel { .. },
+    IrNodeKind::Mix => IrNodeKind::Mix,
     IrNodeKind::Sampler {
         map: synth_engine_v2::sample::SampleMapRef::new(0),
         level: level(1.0),
@@ -490,9 +496,12 @@ catalog! {
 fn every_kernel_admits_exactly_one_channel_on_every_port() {
     // ADR-0041 clause 12's exemption, **checked** rather than assumed: a kernel whose
     // ports admit only one channel is tested at one, with a test asserting that its port
-    // table admits only one. Today that is every authored kind — the compiler's own
+    // table admits only one. That is every authored kind but two — the compiler's own
     // widening is the one operation that writes more — so the obligation to test at two
-    // channels does not yet reach any of them, and this is what says so.
+    // channels does not reach them, and this is what says so. The two exceptions are the
+    // mix channel and the sum (`SOUND-INV-031`), whose every port admits exactly two:
+    // `tests/mix_channel.rs` tests both kernels at two and holds their port tables to two,
+    // which is the same shape of check in the other direction.
     for kind in catalog() {
         // The output node has no kernel: it declares one input port carrying the
         // **stream's** layout, and what reads that region is the boundary copy rather
@@ -501,13 +510,18 @@ fn every_kernel_admits_exactly_one_channel_on_every_port() {
         if matches!(kind, IrNodeKind::Output) {
             continue;
         }
+        let admitted = if matches!(kind, IrNodeKind::Channel { .. } | IrNodeKind::Mix) {
+            ChannelLayout::Stereo
+        } else {
+            ChannelLayout::Mono
+        };
         for layout in [ChannelLayout::Mono, ChannelLayout::Stereo] {
             for port in synth_engine_v2::node::ports(kind, layout) {
                 assert_eq!(
                     port.layout(),
-                    ChannelLayout::Mono,
-                    "{kind:?} declares a {:?} port in a {layout:?} stream; it now admits a \
-                     second channel and owes a test at every count its ports admit",
+                    admitted,
+                    "{kind:?} declares a {:?} port in a {layout:?} stream; it now admits \
+                     another channel count and owes a test at every count its ports admit",
                     port.layout()
                 );
             }
@@ -528,23 +542,59 @@ fn every_kernel_admits_exactly_one_channel_on_every_port() {
 }
 
 #[test]
-fn the_layout_refusal_has_no_constructible_case_in_this_phase() {
-    // Every node kind produces mono, so the *refusing* direction of the layout rule —
-    // anything into a narrower port — cannot be built. This test asserts that premise
-    // rather than leaving the rule looking untested: the day a node declares a stereo
-    // output, this fails, and the refusal case has to be written with it.
-    for kind in catalog() {
-        for port in synth_engine_v2::node::ports(kind, ChannelLayout::Stereo) {
-            if port.direction() == PortDirection::Output {
-                assert_eq!(
-                    port.layout(),
-                    ChannelLayout::Mono,
-                    "{kind:?} declares a non-mono output; the layout refusal is now reachable \
-                     and needs its own case"
-                );
-            }
+fn a_stereo_output_into_a_narrower_port_is_refused_as_a_layout_mismatch() {
+    // Until `P08-S001` every node kind produced mono, so the *refusing* direction of the
+    // layout rule — anything into a narrower port — could not be built, and a test held that
+    // premise so the day a kind declared a stereo output the case would be written with it.
+    // That day is the mix channel's (`SOUND-INV-031`): its stereo output into a **mono**
+    // stream's output port is exactly the edge `SOUND-INV-014` refuses rather than
+    // down-mixing, and the refusal names the edge, both endpoints and both layouts.
+    const CHANNEL: NodeId = NodeId::new(40);
+    let stereo_into_mono = GraphIr::builder()
+        .node(SOURCE, constant(0.5), ExecutionScope::Global)
+        .node(
+            CHANNEL,
+            IrNodeKind::Channel {
+                fader: level(1.0),
+                pan: synth_engine_v2::controller::BipolarLevel::ZERO,
+                muted: false,
+            },
+            ExecutionScope::Channel,
+        )
+        .node(OUTPUT, IrNodeKind::Output, ExecutionScope::Global)
+        .connect(
+            (SOURCE, PortId::FIRST),
+            (CHANNEL, PortId::FIRST),
+            SignalDomain::Audio,
+        )
+        .connect(
+            (CHANNEL, PortId::FIRST),
+            (OUTPUT, PortId::FIRST),
+            SignalDomain::Audio,
+        )
+        .build()
+        .expect("readable, and refused at compilation");
+    let error = common::refuse(&stereo_into_mono, profile(256, ChannelLayout::Mono));
+    match error {
+        CompileError::LayoutMismatch {
+            source_node,
+            source_layout,
+            target_node,
+            target_layout,
+            ..
+        } => {
+            assert_eq!(
+                (source_node, source_layout),
+                (CHANNEL, ChannelLayout::Stereo)
+            );
+            assert_eq!((target_node, target_layout), (OUTPUT, ChannelLayout::Mono));
         }
+        other => panic!("refused as {other:?}, not as a layout mismatch"),
     }
+    // And the same plan into a stereo stream is admitted: the mismatch is the stream's.
+    let _ = common::admit(&stereo_into_mono, profile(256, ChannelLayout::Stereo));
+    // The premise the old test held still holds for every other kind, in
+    // `every_kernel_admits_exactly_one_channel_on_every_port` above.
 }
 
 #[test]

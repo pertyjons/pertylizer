@@ -684,6 +684,30 @@ fn prepare_velocityscaler(
     Ok(PreparedNode::VelocityScaler { sensitivity })
 }
 
+/// Prepare a mix channel: its fader, pan and mute, as authored (`SOUND-INV-031`).
+fn prepare_channel(
+    node: NodeId,
+    kind: IrNodeKind,
+    _: &PrepareContext<'_>,
+) -> Result<PreparedNode, CompileError> {
+    let IrNodeKind::Channel { fader, pan, muted } = kind else {
+        return Err(declared_for_another_kind(node));
+    };
+    Ok(PreparedNode::Channel { fader, pan, muted })
+}
+
+/// Prepare an explicit sum: nothing, the compiler sums its cables (`SOUND-INV-031`).
+fn prepare_mix(
+    node: NodeId,
+    kind: IrNodeKind,
+    _: &PrepareContext<'_>,
+) -> Result<PreparedNode, CompileError> {
+    let IrNodeKind::Mix = kind else {
+        return Err(declared_for_another_kind(node));
+    };
+    Ok(PreparedNode::Mix)
+}
+
 /// Prepare a sampler: its one zone, resolved against the plan's sample table (ADR-0026).
 ///
 /// The one-zone subset is enforced here by name — a map of two or more zones is refused as
@@ -819,6 +843,10 @@ pub enum NodeKindId {
     Gain,
     /// V1's voice-output velocity stage (ADR-0059).
     VelocityScaler,
+    /// A mix channel: fader, pan and mute over one stereo signal (`SOUND-INV-031`).
+    Channel,
+    /// An explicit stereo sum whose input declares fan-in (`SOUND-INV-031`).
+    Mix,
     /// A one-zone sampler on the prepared map/zone contract (ADR-0026).
     Sampler,
     /// An amplifier driven by a control input.
@@ -1681,7 +1709,7 @@ fn prepare_script_program(
 /// the declarations are `static` rather than `const`: a `const` is materialised at each
 /// use and has no single address to compare — so a kind declared but left out here cannot
 /// be discovered, and one listed here but not resolvable cannot compile.
-static DECLARED: [&NodeDeclaration; 24] = [
+static DECLARED: [&NodeDeclaration; 26] = [
     &SCRIPT,
     &AUDIO_SCRIPT,
     &NOTE_SCRIPT,
@@ -1696,6 +1724,8 @@ static DECLARED: [&NodeDeclaration; 24] = [
     &ENVELOPE,
     &MONITOR,
     &VELOCITY_SCALER,
+    &CHANNEL,
+    &MIX,
     &SAMPLER,
     &LFO,
     &MOD_WHEEL,
@@ -1746,6 +1776,112 @@ pub(crate) static VELOCITY_SCALER: NodeDeclaration = NodeDeclaration {
     prepare: prepare_velocityscaler,
     prepared_bytes: size_of::<NormalizedLevel>() as u64,
     state_bytes: size_of::<crate::quantities::NoteVelocity>() as u64,
+};
+
+/// A stereo audio input, the mix channel's.
+const STEREO_AUDIO_IN: PortSpec = PortSpec::new(
+    crate::ir::PortId::FIRST,
+    PortDirection::Input,
+    SignalDomain::Audio,
+    ChannelLayout::Stereo,
+);
+
+/// A stereo audio output, the mix channel's and the sum's.
+const STEREO_AUDIO_OUT: PortSpec = PortSpec::new(
+    crate::ir::PortId::FIRST,
+    PortDirection::Output,
+    SignalDomain::Audio,
+    ChannelLayout::Stereo,
+);
+
+/// A stereo audio input whose cables are summed, the sum's (`SOUND-INV-031`).
+const SUMMED_STEREO_AUDIO_IN: PortSpec = PortSpec::summing(
+    crate::ir::PortId::FIRST,
+    SignalDomain::Audio,
+    ChannelLayout::Stereo,
+);
+
+/// The mix channel, declared once — `P08-S001`, `SOUND-INV-031`.
+///
+/// Stereo in and stereo out, so a mono voice sum reaching it is widened by the compiler's
+/// scheduled conversion and a stereo insert chain, when one exists, reaches it as it is.
+/// Three controls: the **fader**, a linear amplitude under the decibel law, quantum-rate
+/// and unsmoothed — V1 applies its channel fader as one gain per block, measured in
+/// `mix_channel_busses`, so a step is parity and `P05-R001`'s trigger is discharged here
+/// by that reading rather than by a ramp; the **pan**, bipolar and quantum-rate; and the
+/// **mute**, a thresholded boolean and sample-positioned, held from the frame it lands on.
+/// In-place safe: every output sample is its own input sample times a gain. The byte
+/// attributions name the kernel's layouts: the three authored bases, and the held mute.
+pub(crate) static CHANNEL: NodeDeclaration = NodeDeclaration {
+    id: NodeKindId::Channel,
+    name: "channel",
+    kernel: kernels::CHANNEL,
+    ports: &[STEREO_AUDIO_IN, STEREO_AUDIO_OUT],
+    controls: &[
+        ControlSpec {
+            controller: false,
+            parameter: parameters::CHANNEL_FADER,
+            name: "fader",
+            default: ParameterDefault::LinearAmplitude(crate::quantities::Amplitude::UNITY),
+            law: ModulationLaw::DecibelAdditive,
+            smoothing: Smoothing::None,
+            control: kernels::CHANNEL_FADER,
+            rate: ControlRate::Quantum,
+            magnitude: None,
+        },
+        ControlSpec {
+            controller: false,
+            parameter: parameters::CHANNEL_PAN,
+            name: "pan",
+            default: ParameterDefault::BipolarLevel(crate::controller::BipolarLevel::ZERO),
+            law: ModulationLaw::BipolarAdditive,
+            smoothing: Smoothing::None,
+            control: kernels::CHANNEL_PAN,
+            rate: ControlRate::Quantum,
+            magnitude: None,
+        },
+        ControlSpec {
+            controller: false,
+            parameter: parameters::CHANNEL_MUTE,
+            name: "mute",
+            default: ParameterDefault::Gate(crate::quantities::ParameterValue::ZERO),
+            law: ModulationLaw::ThresholdedBoolean,
+            smoothing: Smoothing::None,
+            control: kernels::CHANNEL_MUTE,
+            rate: ControlRate::Sample,
+            magnitude: None,
+        },
+    ],
+    in_place_safe: true,
+    note_control: None,
+    taps: &[],
+    prepare: prepare_channel,
+    prepared_bytes: size_of::<(
+        crate::quantities::Amplitude,
+        crate::controller::BipolarLevel,
+        bool,
+    )>() as u64,
+    state_bytes: size_of::<bool>() as u64,
+};
+
+/// The explicit sum, declared once — `P08-S001`, `SOUND-INV-031`.
+///
+/// One stereo input that declares fan-in and one stereo output, no control: every cable
+/// into the input is summed by operations the compiler schedules, and the node's own step
+/// passes that region through. In-place safe, so the arena may hand the step the summed
+/// region and the pass writes nothing. Nothing is prepared and nothing kept.
+pub(crate) static MIX: NodeDeclaration = NodeDeclaration {
+    id: NodeKindId::Mix,
+    name: "mix",
+    kernel: kernels::MIX,
+    ports: &[SUMMED_STEREO_AUDIO_IN, STEREO_AUDIO_OUT],
+    controls: &[],
+    in_place_safe: true,
+    note_control: None,
+    taps: &[],
+    prepare: prepare_mix,
+    prepared_bytes: 0,
+    state_bytes: 0,
 };
 
 /// The one-zone sampler, declared once — ADR-0026, `P06-S005`.
@@ -1860,6 +1996,8 @@ pub struct PortDescription {
     pub domain: SignalDomain,
     /// The channel layout it carries.
     pub layout: ChannelLayout,
+    /// How many cables it takes (`SOUND-INV-031`).
+    pub fan_in: crate::validate::FanIn,
 }
 
 /// One addressable parameter, as discovery presents it.
@@ -1937,6 +2075,7 @@ pub fn catalog() -> Vec<KindDescription> {
                     direction: port.direction(),
                     domain: port.domain(),
                     layout: port.layout(),
+                    fan_in: port.fan_in(),
                 })
                 .collect(),
             parameters: declared
@@ -1988,6 +2127,8 @@ pub(crate) fn declaration(kind: IrNodeKind) -> Option<&'static NodeDeclaration> 
         IrNodeKind::Monitor => Some(&MONITOR),
         IrNodeKind::Gain { .. } => Some(&GAIN),
         IrNodeKind::VelocityScaler { .. } => Some(&VELOCITY_SCALER),
+        IrNodeKind::Channel { .. } => Some(&CHANNEL),
+        IrNodeKind::Mix => Some(&MIX),
         IrNodeKind::Sampler { .. } => Some(&SAMPLER),
         IrNodeKind::Filter { .. } => Some(&FILTER),
         IrNodeKind::Controller { kind } => Some(match kind {
@@ -2047,6 +2188,8 @@ pub(crate) fn descriptor(kind: IrNodeKind) -> Option<NodeDescriptor> {
         IrNodeKind::Filter { .. } => declared.map(NodeDeclaration::descriptor),
         IrNodeKind::Gain { .. } => declared.map(NodeDeclaration::descriptor),
         IrNodeKind::VelocityScaler { .. } => declared.map(NodeDeclaration::descriptor),
+        IrNodeKind::Channel { .. } => declared.map(NodeDeclaration::descriptor),
+        IrNodeKind::Mix => declared.map(NodeDeclaration::descriptor),
         IrNodeKind::Sampler { .. } => declared.map(NodeDeclaration::descriptor),
         IrNodeKind::Controller { .. } | IrNodeKind::NoteSource { .. } => {
             declared.map(NodeDeclaration::descriptor)
@@ -2288,6 +2431,8 @@ pub fn prepared_payload_bytes(kind: IrNodeKind) -> u64 {
         IrNodeKind::Monitor => return declared.map_or(0, |d| d.prepared_bytes),
         IrNodeKind::Gain { .. } => return declared.map_or(0, |d| d.prepared_bytes),
         IrNodeKind::VelocityScaler { .. } => return declared.map_or(0, |d| d.prepared_bytes),
+        IrNodeKind::Channel { .. } => return declared.map_or(0, |d| d.prepared_bytes),
+        IrNodeKind::Mix => return declared.map_or(0, |d| d.prepared_bytes),
         IrNodeKind::Sampler { .. } => return declared.map_or(0, |d| d.prepared_bytes),
         IrNodeKind::Filter { .. } => return declared.map_or(0, |d| d.prepared_bytes),
         // The output node has no kernel, so it carries no prepared data of its own.
@@ -2342,6 +2487,8 @@ pub fn state_payload_bytes(kind: IrNodeKind) -> u64 {
         IrNodeKind::Monitor => return declared.map_or(0, |d| d.state_bytes),
         IrNodeKind::Gain { .. } => return declared.map_or(0, |d| d.state_bytes),
         IrNodeKind::VelocityScaler { .. } => return declared.map_or(0, |d| d.state_bytes),
+        IrNodeKind::Channel { .. } => return declared.map_or(0, |d| d.state_bytes),
+        IrNodeKind::Mix => return declared.map_or(0, |d| d.state_bytes),
         IrNodeKind::Sampler { .. } => return declared.map_or(0, |d| d.state_bytes),
         IrNodeKind::Envelope { .. } => return declared.map_or(0, |d| d.state_bytes),
         IrNodeKind::Controller { .. } | IrNodeKind::NoteSource { .. } => {
@@ -2472,6 +2619,12 @@ mod tests {
             IrNodeKind::VelocityScaler {
                 sensitivity: crate::quantities::NormalizedLevel::FULL,
             },
+            IrNodeKind::Channel {
+                fader: Amplitude::UNITY,
+                pan: crate::controller::BipolarLevel::ZERO,
+                muted: false,
+            },
+            IrNodeKind::Mix,
             IrNodeKind::Amplifier,
             IrNodeKind::Monitor,
             IrNodeKind::Envelope {
@@ -2755,6 +2908,8 @@ mod tests {
                         IrNodeKind::VelocityScaler { .. },
                         PreparedNode::VelocityScaler { .. }
                     )
+                    | (IrNodeKind::Channel { .. }, PreparedNode::Channel { .. })
+                    | (IrNodeKind::Mix, PreparedNode::Mix)
                     | (IrNodeKind::Amplifier, PreparedNode::Amplifier)
                     | (IrNodeKind::Monitor, PreparedNode::Copy)
                     | (IrNodeKind::Filter { .. }, PreparedNode::Filter { .. })
@@ -2790,6 +2945,7 @@ mod tests {
                 | IrNodeKind::Gain { .. } => (true, false),
                 IrNodeKind::Filter { .. }
                 | IrNodeKind::VelocityScaler { .. }
+                | IrNodeKind::Channel { .. }
                 | IrNodeKind::Sampler { .. }
                 | IrNodeKind::Script { .. }
                 | IrNodeKind::AudioScript { .. }
@@ -2798,6 +2954,7 @@ mod tests {
                 IrNodeKind::NoteSource { .. }
                 | IrNodeKind::Silence
                 | IrNodeKind::Amplifier
+                | IrNodeKind::Mix
                 | IrNodeKind::Monitor => (false, false),
                 other => panic!("{other:?} is declared but this test does not know its shape"),
             };
@@ -2819,6 +2976,8 @@ mod tests {
                         | IrNodeKind::Monitor
                         | IrNodeKind::Gain { .. }
                         | IrNodeKind::VelocityScaler { .. }
+                        | IrNodeKind::Channel { .. }
+                        | IrNodeKind::Mix
                         | IrNodeKind::Filter { .. }
                 ),
                 "{kind:?}"

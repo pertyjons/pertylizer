@@ -24,7 +24,7 @@ use synth_engine_v2::quantities::EventCount;
 use synth_engine_v2::time::{FrameCount, PlanPosition};
 
 use super::diagnostics::{Fidelity, LoweringDiagnostic, LoweringReason, ProjectSubject, Severity};
-use super::graph::lower_voice_patch_with;
+use super::graph::{ChannelStrip, lower_voice_patch_with};
 use super::performance::{AutomationTargets, lower_performance};
 use crate::patch::InstrumentState;
 
@@ -183,13 +183,13 @@ fn instrument_state_dispositions(
         // Not read by the offline arrangement path: a track names its instrument by id, and
         // `arrangement_render` never consults the channel. It is MIDI routing for live input.
         channel: _,
-        // Mixer stages V2 has no place for. Reported rather than refused: the notes V1 plays
-        // are still the notes lowered here, only their level and position differ.
-        volume,
-        pan,
-        // Silent in V1. Rendering it audibly and calling that a smoke render would report sound
-        // for a project the user silenced.
-        muted,
+        // The instrument's channel stage, lowered onto a mix channel by `channel_strip`
+        // (`P08-S001`): the fader within V1's own mixer range, the pan under V1's law and the
+        // mute, so a silenced project renders the silence V1 renders rather than being
+        // refused.
+        volume: _,
+        pan: _,
+        muted: _,
         // One instrument is this input's whole world, so a solo **elsewhere** cannot be seen
         // from here — recorded as an input-shape limit in `spec-project-lowering-and-fidelity`
         // rather than pretended away. A solo on *this* instrument silences nothing of its own.
@@ -236,17 +236,6 @@ fn instrument_state_dispositions(
         instrument: *id,
         name: name.clone(),
     };
-
-    if *muted {
-        diagnostics.push(LoweringDiagnostic::refused(
-            subject(),
-            LoweringReason::OwnedByLaterPhase {
-                capability: "a muted instrument, which V1 renders silent",
-                owner: "Phase 8, with the mixer model",
-            },
-        ));
-        return Continue::No;
-    }
 
     // Read through V1's own boundary rather than compared as a tuple. `project_apply` builds
     // the range with `KeyRange::new(MidiNote::new(lo), MidiNote::new(hi))`, which **swaps**
@@ -343,26 +332,70 @@ fn instrument_state_dispositions(
             },
         ));
     }
-    if *volume != synth_core::Gain::UNITY {
-        diagnostics.push(LoweringDiagnostic::unrepresented(
-            subject(),
-            LoweringReason::OwnedByLaterPhase {
-                capability: "an instrument volume other than unity",
-                owner: "Phase 8",
-            },
-        ));
-    }
-    if *pan != synth_core::BipolarValue::CENTER {
-        diagnostics.push(LoweringDiagnostic::unrepresented(
-            subject(),
-            LoweringReason::OwnedByLaterPhase {
-                capability: "an instrument pan",
-                owner: "Phase 8",
-            },
-        ));
-    }
 
     Continue::Yes
+}
+
+/// The instrument's fader, pan and mute as the mix channel's authored bases (`P08-S001`),
+/// or `None` with the refusal recorded.
+///
+/// The fader is held to **V1's own bound**, `Gain::MIXER_RANGE`, which is the range V1's
+/// channel stage clamps the instrument volume to per block; a saved volume outside it is
+/// refused by name and by value rather than clamped, since clamping persisted input is the
+/// reinterpretation `AGENTS.md` forbids. The pan is a `BipolarValue` and so within range by
+/// its type; only a value that is not a number can fail, and it is refused the same way.
+fn channel_strip(
+    saved: &InstrumentState,
+    diagnostics: &mut Vec<LoweringDiagnostic>,
+) -> Option<ChannelStrip> {
+    let subject = || ProjectSubject::Instrument {
+        instrument: saved.id,
+        name: saved.name.clone(),
+    };
+    let range = synth_core::Gain::MIXER_RANGE;
+    let volume = saved.volume.as_f32();
+    if !volume.is_finite() || volume < range.min || volume > range.max {
+        diagnostics.push(LoweringDiagnostic::refused(
+            subject(),
+            LoweringReason::UnsupportedParameterValue {
+                value: format!(
+                    "an instrument volume of {volume} is outside V1's mixer range \
+                     {}..={}",
+                    range.min, range.max
+                ),
+            },
+        ));
+        return None;
+    }
+    let fader = match synth_engine_v2::quantities::Amplitude::new(volume) {
+        Ok(fader) => fader,
+        Err(error) => {
+            diagnostics.push(LoweringDiagnostic::refused(
+                subject(),
+                LoweringReason::UnsupportedParameterValue {
+                    value: error.to_string(),
+                },
+            ));
+            return None;
+        }
+    };
+    let pan = match synth_engine_v2::controller::BipolarLevel::new(saved.pan.as_f32()) {
+        Ok(pan) => pan,
+        Err(error) => {
+            diagnostics.push(LoweringDiagnostic::refused(
+                subject(),
+                LoweringReason::UnsupportedParameterValue {
+                    value: error.to_string(),
+                },
+            ));
+            return None;
+        }
+    };
+    Some(ChannelStrip {
+        fader,
+        pan,
+        muted: saved.muted,
+    })
 }
 
 /// The longest render this bounded scope admits, in seconds.
@@ -519,12 +552,21 @@ pub fn smoke_render(
         };
     }
 
+    let Some(strip) = channel_strip(saved, &mut diagnostics) else {
+        return SmokeRender {
+            samples: Vec::new(),
+            diagnostics,
+            lowered_events: EventCount::NONE,
+            lowered_frames: FrameCount::new(0),
+        };
+    };
     let lowered = lower_voice_patch_with(
         saved.id,
         &saved.patch.modules,
         &saved.patch.connections,
         peak,
         Some(amp_sensitivity),
+        Some(strip),
         &modulators,
     );
     diagnostics.extend(lowered.diagnostics);

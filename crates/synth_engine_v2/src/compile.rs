@@ -354,11 +354,34 @@ fn arena_upper_bound(ir: &GraphIr, profile: &HostProfile) -> u64 {
 /// would otherwise be measured against memory it never takes.
 fn inserted_records_upper_bound(ir: &GraphIr, profile: &HostProfile) -> u64 {
     let widened = profile.capabilities().channel_layout().channels() > 1;
+    // Only a **mono** signal reaching a wider output is widened; a stereo source — a mix
+    // channel's or a sum's since `P08-S001` — is copied out as it is, and charging it a
+    // widening refused a plan whose own report fit its budget.
     let reached_output = ir
         .nodes()
         .iter()
         .filter(|node| matches!(node.kind(), IrNodeKind::Output))
-        .any(|output| ir.edges().iter().any(|edge| edge.to().0 == output.id()));
+        .any(|output| {
+            ir.edges().iter().any(|edge| {
+                edge.to().0 == output.id()
+                    && ir
+                        .node(edge.from().0)
+                        .and_then(|source| ir.descriptor(source.kind()))
+                        .and_then(|descriptor| {
+                            descriptor
+                                .ports
+                                .iter()
+                                .find(|port| {
+                                    port.id() == edge.from().1
+                                        && port.direction()
+                                            == crate::validate::PortDirection::Output
+                                })
+                                .map(|port| port.layout())
+                        })
+                        .unwrap_or(ChannelLayout::Mono)
+                        == ChannelLayout::Mono
+            })
+        });
     let widening = u64::from(reached_output && widened);
     // `P06-S001`'s voice sum: every voice-scope node whose output feeds a node outside the
     // scope is summed by one copy and `voices − 1` accumulates, when there is more than one
@@ -372,7 +395,89 @@ fn inserted_records_upper_bound(ir: &GraphIr, profile: &HostProfile) -> u64 {
     } else {
         0
     };
-    widening.saturating_add(summed)
+    // `SOUND-INV-031` and `SOUND-INV-014`, **exact** rather than bounded, because this count
+    // feeds the memory rows preflight can refuse on: an over-estimate would refuse a plan
+    // whose admitted report fits its own budget, which an independent read reproduced. Per
+    // declared input port: one widening per cable whose layout is narrower than the port's,
+    // and, where the port sums, one accumulate per cable after the first — exactly what
+    // lowering schedules. Per instance of the consuming node.
+    let scopes: HashMap<NodeId, crate::ir::ExecutionScope> = ir
+        .nodes()
+        .iter()
+        .map(|node| (node.id(), node.scope()))
+        .collect();
+    let kinds: HashMap<NodeId, IrNodeKind> = ir
+        .nodes()
+        .iter()
+        .map(|node| (node.id(), node.kind()))
+        .collect();
+    // Per target port: cables, cables to widen, and whether the port sums.
+    let mut ports: HashMap<(NodeId, PortId), (u64, u64, bool)> = HashMap::new();
+    for edge in ir.edges() {
+        let (from, from_port) = edge.from();
+        let (to, to_port) = edge.to();
+        let Some(target) = kinds
+            .get(&to)
+            .and_then(|kind| ir.descriptor(*kind))
+            .and_then(|descriptor| {
+                descriptor
+                    .ports
+                    .iter()
+                    .find(|port| {
+                        port.id() == to_port
+                            && port.direction() == crate::validate::PortDirection::Input
+                    })
+                    .copied()
+            })
+        else {
+            continue;
+        };
+        let source_layout = kinds
+            .get(&from)
+            .and_then(|kind| ir.descriptor(*kind))
+            .and_then(|descriptor| {
+                descriptor
+                    .ports
+                    .iter()
+                    .find(|port| {
+                        port.id() == from_port
+                            && port.direction() == crate::validate::PortDirection::Output
+                    })
+                    .map(|port| port.layout())
+            })
+            .unwrap_or(ChannelLayout::Mono);
+        let entry = ports.entry((to, to_port)).or_insert((0, 0, false));
+        entry.0 = entry.0.saturating_add(1);
+        entry.1 = entry
+            .1
+            .saturating_add(u64::from(source_layout != target.layout()));
+        entry.2 = target.fan_in() == crate::validate::FanIn::Summed;
+    }
+    let mut into_inputs = 0_u64;
+    for ((to, _), (cables, widened, sums)) in ports {
+        let accumulates = if sums { cables.saturating_sub(1) } else { 0 };
+        let instances = if scopes.get(&to) == Some(&crate::ir::ExecutionScope::Voice) {
+            voices
+        } else {
+            1
+        };
+        into_inputs = into_inputs.saturating_add(
+            widened
+                .saturating_add(accumulates)
+                .saturating_mul(instances),
+        );
+    }
+    widening.saturating_add(summed).saturating_add(into_inputs)
+}
+
+/// The mix channels a plan compiles: its `Channel` nodes (`SOUND-INV-031`).
+pub(crate) fn compiled_channels(ir: &GraphIr) -> crate::quantities::MixChannelCount {
+    let count = ir
+        .nodes()
+        .iter()
+        .filter(|node| matches!(node.kind(), IrNodeKind::Channel { .. }))
+        .count();
+    crate::quantities::MixChannelCount::measured(u32::try_from(count).unwrap_or(u32::MAX))
 }
 
 /// The voice-scope nodes whose output is read by a node outside the voice scope, each once,
@@ -714,9 +819,11 @@ fn build_rows(
         IrObject::Plan,
     ));
 
+    // `SOUND-INV-031`: the channels a plan renders are its `Channel` nodes, counted from the
+    // IR rather than taken from a declaration that could disagree with what is compiled.
     rows.push(ResourceRow::new(
         ResourceField::MaxMixChannels,
-        ResourceAmount::MixChannels(declarations.mix_channels),
+        ResourceAmount::MixChannels(compiled_channels(ir)),
         ResourceAmount::MixChannels(limits.mixing().max_mix_channels()),
         IrObject::Plan,
     ));
@@ -1141,6 +1248,8 @@ struct Lowered {
     parameter_addresses: Vec<ParameterAddress>,
     taps: Vec<crate::plan::TapTarget>,
     tap_addresses: Vec<crate::plan::TapAddress>,
+    /// The mix channels, in ascending node identity (`SOUND-INV-031`).
+    channels: Vec<crate::plan::ChannelRecord>,
     note_targets: Vec<NoteTarget>,
     note_addresses: Vec<NoteAddress>,
     note_magnitudes: Vec<NoteMagnitudeTarget>,
@@ -1197,6 +1306,7 @@ impl Lowered {
             self.parameter_addresses,
             self.taps,
             self.tap_addresses,
+            self.channels,
             self.note_targets,
             self.note_addresses,
             self.note_magnitudes,
@@ -1268,6 +1378,31 @@ impl Lowering {
         )
     }
 
+    /// Schedule the compiler's widening of a narrower signal into `layout` (`SOUND-INV-014`):
+    /// one copy writing each sample into every channel of one wider region, with the
+    /// conversion recorded in the warnings so a reader of the outcome need not infer it from
+    /// the operation list.
+    fn widen(
+        &mut self,
+        source: BufferSlot,
+        layout: ChannelLayout,
+        edge: crate::ir::EdgeId,
+        conversion: crate::validate::Conversion,
+        warnings: &mut Vec<CompileWarning>,
+    ) -> BufferSlot {
+        let copy = node::copy_descriptor();
+        let prepared = self.prepare(node::prepare_copy());
+        let (_, out) = self.schedule(
+            &copy,
+            prepared,
+            crate::node::kernels::pair_inputs(Some(source), None),
+            layout,
+        );
+        self.inserted += 1;
+        warnings.push(CompileWarning::ConversionInserted { edge, conversion });
+        out
+    }
+
     /// Schedule one step writing an **existing** buffer: the voice sum's accumulate, whose
     /// output is the sum region its second input also names (`P06-S001`).
     fn schedule_into(
@@ -1326,6 +1461,29 @@ fn lower(
     for edge in ir.edges() {
         source_of.entry(edge.to()).or_insert(edge.from().0);
     }
+    // Every cable into each input port, in ascending source identity — the order a summed
+    // port adds them in, which is a function of identity and not of declaration position
+    // (`SOUND-INV-008`), and the order the one cable of an ordinary port is found in
+    // (validation refused a second). Keyed by port, as `source_of` is.
+    let mut edges_into: HashMap<(NodeId, PortId), Vec<(crate::ir::EdgeId, NodeId)>> =
+        HashMap::with_capacity(ir.edges().len());
+    for edge in ir.edges() {
+        edges_into
+            .entry(edge.to())
+            .or_default()
+            .push((edge.id(), edge.from().0));
+    }
+    for arrivals in edges_into.values_mut() {
+        arrivals.sort_by_key(|(edge, from)| (*from, *edge));
+    }
+    // The validator's record of which edges need the widening, which is the one authority
+    // on it; lowering does not re-derive it from the layouts.
+    let converted: HashMap<crate::ir::EdgeId, crate::validate::Conversion> = validated
+        .conversions()
+        .iter()
+        .map(|conversion| (conversion.edge, conversion.conversion))
+        .collect();
+    let mut channels: Vec<crate::plan::ChannelRecord> = Vec::new();
     let mut slots: HashMap<NodeId, BufferSlot> = HashMap::with_capacity(ir.nodes().len());
     // The node's place in the *state* tables, which is what a note target addresses. Kept
     // beside the buffer slots rather than derived from them: they are two numberings, and
@@ -1479,38 +1637,95 @@ fn lower(
             .find(|port| port.direction() == crate::validate::PortDirection::Output)
             .map_or(ChannelLayout::Mono, |port| port.layout());
 
-        let mut first_node = None;
-        let mut outs = Vec::with_capacity(instances);
+        // Every instance's inputs are resolved — and any widening scheduled — **before** the
+        // first instance step, and every accumulate after the last, so the instance steps
+        // occupy contiguous state slots: a parameter target and an instance group address
+        // instance `k` as `first + k`, and an inserted step between two instances would be
+        // what instance `k` addressed. An independent read built exactly that.
+        let mut bound: Vec<([Option<BufferSlot>; MAX_INPUTS], Vec<BufferSlot>)> =
+            Vec::with_capacity(instances);
         for instance in 0..instances {
             // Inputs in the order the node declares them, so port identity — not edge
             // order, and not declaration order — decides which slot a kernel reads first.
             // A source in the voice scope is read from the **same instance**; a source
             // outside it is the one shared buffer every instance reads.
             let mut inputs = [None; MAX_INPUTS];
+            // The cables a summed port adds after its first, each already the port's layout
+            // (`SOUND-INV-031`); accumulated into the node's own output once its step exists.
+            let mut summed: Vec<BufferSlot> = Vec::new();
             let declared = descriptor
                 .ports
                 .iter()
                 .filter(|port| port.direction() == crate::validate::PortDirection::Input);
             for (index, port) in declared.enumerate() {
-                let source =
-                    source_of
-                        .get(&(*id, port.id()))
-                        .and_then(|from| match voice_slots.get(from) {
-                            // Only a consumer inside the scope reads a voice-scope source
-                            // per instance; one outside it reads what the scope's outside
-                            // reads — the voice sum, which is what `slots` holds for it.
-                            Some(per_instance) if in_voice => per_instance.get(instance).copied(),
-                            _ => slots.get(from).copied(),
-                        });
+                let arrivals = edges_into
+                    .get(&(*id, port.id()))
+                    .map_or(&[][..], Vec::as_slice);
+                let mut resolved: Vec<BufferSlot> = Vec::with_capacity(arrivals.len());
+                for (edge, from) in arrivals {
+                    let buffer = match voice_slots.get(from) {
+                        // Only a consumer inside the scope reads a voice-scope source
+                        // per instance; one outside it reads what the scope's outside
+                        // reads — the voice sum, which is what `slots` holds for it.
+                        Some(per_instance) if in_voice => per_instance.get(instance).copied(),
+                        _ => slots.get(from).copied(),
+                    };
+                    let Some(buffer) = buffer else {
+                        continue;
+                    };
+                    // `SOUND-INV-014`: a narrower signal reaching a declared wider input is
+                    // widened by a scheduled conversion, exactly as one reaching the output
+                    // is, on the validator's record of the edge.
+                    let buffer = match converted.get(edge) {
+                        Some(conversion) => {
+                            state.widen(buffer, port.layout(), *edge, *conversion, warnings)
+                        }
+                        None => buffer,
+                    };
+                    resolved.push(buffer);
+                    if port.fan_in() == crate::validate::FanIn::One {
+                        break;
+                    }
+                }
+                let mut resolved = resolved.into_iter();
+                let source = resolved.next();
+                summed.extend(resolved);
                 if let Some(entry) = inputs.get_mut(index) {
                     *entry = source;
                 }
             }
+            bound.push((inputs, summed));
+        }
+        let mut first_node = None;
+        let mut outs = Vec::with_capacity(instances);
+        let mut sums: Vec<(BufferSlot, Vec<BufferSlot>)> = Vec::with_capacity(instances);
+        for (inputs, summed) in bound {
             let (node_slot, out) = state.schedule(&descriptor, prepared_slot, inputs, out_layout);
-            if first_node.is_none() {
-                first_node = Some(node_slot);
+            let first = *first_node.get_or_insert(node_slot);
+            // The contiguity the addressing relies on, held rather than assumed: a step
+            // scheduled between two instances is a compiler defect, refused here.
+            if node_slot.index() != first.index().saturating_add(outs.len()) {
+                fault = fault.or(Some(CompileError::DestinationWithoutSlot { node: *id }));
             }
             outs.push(out);
+            sums.push((out, summed));
+        }
+        // `SOUND-INV-031`: each instance's own step seeded its output with the first cable;
+        // every further cable is accumulated into that region, in identity order, by the
+        // voice sum's own step. Linear, in float, unclamped.
+        for (out, summed) in sums {
+            for source in summed {
+                let accumulate = node::accumulate_descriptor();
+                let accumulate_prepared = state.prepare(node::prepare_copy());
+                let _ = state.schedule_into(
+                    &accumulate,
+                    accumulate_prepared,
+                    crate::node::kernels::pair_inputs(Some(source), Some(out)),
+                    out_layout,
+                    out,
+                );
+                state.inserted += 1;
+            }
         }
         let Some(node_slot) = first_node else {
             continue;
@@ -1640,6 +1855,33 @@ fn lower(
                 slot,
             });
         }
+        // `SOUND-INV-031`: a channel record with the slots its three controls compile to;
+        // its identity is minted below, once every channel is known.
+        if matches!(kind, IrNodeKind::Channel { .. }) {
+            let slot_of = |parameter: crate::ir::ParameterId| {
+                parameter_addresses
+                    .iter()
+                    .rev()
+                    .find(|address| address.node == *id && address.parameter == parameter)
+                    .map(|address| address.slot)
+            };
+            match (
+                slot_of(crate::ir::parameters::CHANNEL_FADER),
+                slot_of(crate::ir::parameters::CHANNEL_PAN),
+                slot_of(crate::ir::parameters::CHANNEL_MUTE),
+            ) {
+                (Some(fader), Some(pan), Some(mute)) => {
+                    channels.push(crate::plan::ChannelRecord {
+                        id: crate::plan::ChannelId::new(plan_id, channels.len()),
+                        node: *id,
+                        fader,
+                        pan,
+                        mute,
+                    });
+                }
+                _ => fault = fault.or(Some(CompileError::DestinationWithoutSlot { node: *id })),
+            }
+        }
         if !own_modulations.is_empty() {
             // Ahead of this source's steps: the composition its kernel then reads. The steps
             // are the last `instances` operations scheduled, since a source has no sum.
@@ -1736,6 +1978,15 @@ fn lower(
         state.ops.insert(prepass_end.saturating_add(offset), step);
     }
 
+    // `SOUND-INV-031`: a channel's identity is its position among the plan's channels in
+    // ascending node identity — not in schedule order, which is a function of identity too
+    // but of the graph's shape besides, so two plans with the same channels in another
+    // topology would number them differently.
+    channels.sort_by_key(|record| record.node);
+    for (index, record) in channels.iter_mut().enumerate() {
+        record.id = crate::plan::ChannelId::new(plan_id, index);
+    }
+
     // ADR-0005: lowering emits one buffer per value; the arena decides which of them
     // share storage, once, here. The render loop reads slot indices and learns nothing
     // about it.
@@ -1765,6 +2016,7 @@ fn lower(
         parameter_addresses,
         taps,
         tap_addresses,
+        channels,
         note_targets,
         note_addresses,
         note_magnitudes,

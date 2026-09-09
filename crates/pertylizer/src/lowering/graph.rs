@@ -132,16 +132,39 @@ pub fn lower_voice_patch(
         connections,
         events_per_quantum,
         None,
+        None,
         &SongModulators::default(),
     )
 }
 
-/// [`lower_voice_patch`], with V1's voice-output velocity stage (ADR-0059).
+/// The instrument's fader, pan and mute, lowered onto one mix channel (`P08-S001`).
+///
+/// What V1's channel stage applies once per instrument after the shared effect chain —
+/// `mix_channel_busses`: the fader within V1's own `Gain::MIXER_RANGE`, the pan under V1's
+/// constant-power law and the mute — carried as the authored bases of a
+/// [`IrNodeKind::Channel`] the lowerer places between the voice's output stage and the
+/// plan's output, so the render carries the stage V1 renders rather than reporting it.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ChannelStrip {
+    /// The saved instrument volume, a linear amplitude.
+    pub fader: synth_engine_v2::quantities::Amplitude,
+    /// The saved instrument pan.
+    pub pan: synth_engine_v2::controller::BipolarLevel,
+    /// The saved mute.
+    pub muted: bool,
+}
+
+/// [`lower_voice_patch`], with V1's voice-output velocity stage (ADR-0059) and the
+/// instrument's mix channel (`P08-S001`).
 ///
 /// `velocity_amp_sensitivity` is the instrument's saved sensitivity; `Some` places a
 /// [`IrNodeKind::VelocityScaler`] between the voice's terminating node and the output, so a
 /// note is scaled by V1's `(1 − s) + s × v` there as V1 scales it at the voice's output.
-/// `None` lowers the patch as it is, for a caller that lowers no instrument.
+/// `None` lowers the patch as it is, for a caller that lowers no instrument. `channel` is
+/// the instrument's strip; `Some` places a [`IrNodeKind::Channel`] after the velocity stage,
+/// so the cable into the terminating node enters the scaler, the scaler feeds the channel
+/// and the channel feeds the output. `None` leaves the output fed directly, which is what a
+/// caller lowering a bare patch gets and what every render before this slice rendered.
 ///
 /// `modulators` is what the song's Mod Grid adds to this instrument's graph (`P07-S003`):
 /// global-scope modulator nodes and their routes into the patch's modules, lowered by
@@ -153,6 +176,7 @@ pub fn lower_voice_patch_with(
     connections: &[ConnectionState],
     events_per_quantum: EventCount,
     velocity_amp_sensitivity: Option<NormalizedLevel>,
+    channel: Option<ChannelStrip>,
     modulators: &SongModulators,
 ) -> LoweredGraph {
     let mut diagnostics = Vec::new();
@@ -267,6 +291,23 @@ pub fn lower_voice_patch_with(
             ExecutionScope::Voice,
         );
     }
+    // `P08-S001`: the instrument's mix channel, in the channel scope — once per instrument,
+    // after the voice sum, where V1 applies its fader.
+    let strip = channel.map(|_| super::identity::CHANNEL);
+    if let Some(channel) = channel {
+        builder = builder.node(
+            super::identity::CHANNEL,
+            IrNodeKind::Channel {
+                fader: channel.fader,
+                pan: channel.pan,
+                muted: channel.muted,
+            },
+            ExecutionScope::Channel,
+        );
+    }
+    // The stage the cable into the output enters instead: the velocity stage where there is
+    // one, else the channel, else the output itself.
+    let into_output = scaler.or(strip);
 
     // V1 applies exactly one Mod Matrix per voice: `Voice::from_graph` asks its `BTreeMap`
     // for the first module of the type, which is the lowest identity, and any other matrix
@@ -393,9 +434,9 @@ pub fn lower_voice_patch_with(
         ) {
             Some((from, to, domain)) => {
                 // ADR-0059: the cable into the output enters the velocity stage instead, and
-                // the stage feeds the output below.
-                let to = match scaler {
-                    Some(scaler) if Some(to.0) == output_node => (scaler, PortId::FIRST),
+                // the stage feeds the output below — through the channel since `P08-S001`.
+                let to = match into_output {
+                    Some(stage) if Some(to.0) == output_node => (stage, PortId::FIRST),
                     _ => to,
                 };
                 edges.push((from.0, to.0, connection.clone()));
@@ -404,12 +445,20 @@ pub fn lower_voice_patch_with(
             None => refused = true,
         }
     }
-    if let (Some(scaler), Some(output)) = (scaler, output_node) {
-        builder = builder.connect(
-            (scaler, PortId::FIRST),
-            (output, PortId::FIRST),
-            SignalDomain::Audio,
-        );
+    // The inserted stages in order: scaler, then channel, then the output. Each present
+    // stage feeds the next present one.
+    if let Some(output) = output_node {
+        let mut chain: Vec<NodeId> = Vec::with_capacity(3);
+        chain.extend(scaler);
+        chain.extend(strip);
+        chain.push(output);
+        for pair in chain.windows(2) {
+            builder = builder.connect(
+                (pair[0], PortId::FIRST),
+                (pair[1], PortId::FIRST),
+                SignalDomain::Audio,
+            );
+        }
     }
 
     // V2 refuses a cyclic graph at compilation, and `GraphIr::build` does not look. Without
