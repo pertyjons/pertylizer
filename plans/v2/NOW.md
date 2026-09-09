@@ -109,6 +109,101 @@ an amplitude parameter.
 
 ## Active streams
 
+### Phase 8 — active since 2026-09-09
+
+Activated by selection, as the Phase 7 exit said it would be. Its entry prerequisite is met:
+Phase 7 is `Complete` under [REV-P07](reviews/phase-07-exit-review.md), which is the one phase
+`ROADMAP.md` names this one as depending on. No record is drafted at entry. Under `PROCESS.md`'s
+decision-timing rule the phase's open decisions bind the slices that need them, not the entry:
+
+- **ADR-0033**, the graph feedback rule, is a register row with no record. V2 refuses a cycle at
+  compilation (`SOUND-INV-007`) and the lowerer refuses a V1 feedback cable naming this phase. An
+  **acyclic** sidechain is a dependency edge scheduled in current-quantum order and needs no
+  record; the record is drafted before the first slice that admits a cyclic path through an
+  explicit delay (`P08-S006` below), and until then such a path stays refused by name.
+- **ADR-0034**, track, source and channel ownership, stays `Proposed` for Phase 0B/10A: it owns
+  the *persisted* relationship between a track, an instrument, a patch and a strip. This phase
+  defines the **compiled** channel, bus and send as plan concepts in the render contract, keyed by
+  `ChannelId` and `BusId` and never by `InstrumentId`, and states what `max_sends_per_channel`
+  counts (per channel, as `LIMIT-0024` counts it). Nothing is persisted and a reversal is a
+  rebuild, so that is a current-spec rule, not a decision. If a slice needs the meaning of the
+  profile field to change, ADR-0034's Sound Core half is drafted before it.
+- **ADR-0022** keeps the physical mapping and hardware latency ownership at Phase 9's exit. The
+  latency this phase makes visible is the **plan's**: a node's declared latency, a path's sum and
+  the compensation the compiler inserts, reported in frames of plan time and independent of the
+  host's block size.
+- **ADR-0012** stays `Proposed` for Phase 10. A track lane over the fader, pan or mute takes the
+  strict form `P07-S002b` applied: two absolute writers on one target at one sample are refused
+  at compilation by name.
+- **ADR-0027** is accepted and binds: a meter is a declared tap, not an engine read. The open
+  question of whether `max_mix_channels` and `max_observation_taps` should be coupled is answered
+  by the slice that declares the channel meters (`P08-S007`).
+
+What V2 has at the phase's start: one `Output` node per plan at global scope, whose `PlanOp` copies
+**one** source into the stream's layout, widening mono to stereo by duplication and refusing a
+stereo-to-mono edge (`SOUND-INV-014`); `Mono` and `Stereo` are the only layouts (`SOUND-INV-009`);
+two cables into one input are illegal fan-in, so the **only** summing that exists is the
+compiler-inserted voice sum — one copy and `N − 1` accumulates, where the steal fade is applied
+(`SOUND-INV-025`, ADR-0058); no node pans, trims or limits — V2's amplifier has no level of its
+own and does not pan; no node declares a latency or a tail, and the plan's `added_latency` is
+the constant `Q`; the profile carries `max_mix_channels` (256), `max_buses` (64) and
+`max_sends_per_channel` (16), reported against a plan declaration a builder states and no
+compiled object yet fills, as Phase 7's capacities were until its slices declared usage; and
+no effect kind exists — the lowerer maps the oscillator, envelope, filter, amplifier, LFO, Mod
+Matrix and terminating node, and every V1 effect module is refused as an unmapped kind.
+The one-slot composition Phase 7 built is what a fader, a pan or a send level becomes: a
+declared control in the same slot type, reached by the same edge, lane, controller and script
+producers, so this phase declares parameters and builds no new writer.
+
+What V1 does per block, read at its own boundary rather than copied: a track's volume, pan and
+audibility are applied **per voice** before the instrument's shared effect chain, so an
+instrument shared by two tracks carries two gains inside one signal; the instrument's fader
+and pan — V1's constant-power law, with the Mod Grid's offsets added — are applied once per
+instrument after that chain and summed linearly into the master mix, with sends tapped pre- or
+post-fader into return buses, a channel's resolved sends dropped past the sixteenth; each
+return runs its effect chain, **soft-clips** its own output and feeds bus-to-bus sends in a
+Kahn order **recomputed every block**, which is exactly what this phase's fifth exit bullet
+forbids; the master effect chain runs on the mix, the master volume is applied and the output
+is **hard-clamped** to full scale; a sidechain reads the source's **previous callback**, so its
+latency is the host's block size, which the second exit bullet forbids; and the terminating
+`StereoOutput` module pans, soft-limits at −0.3 dB and meters. EVD-0013 measured three centre
+pans in that chain at `0x3eb504f2`, which is the figure a lowered channel has to reconcile
+against, not reproduce blindly. The lowerer today names this phase for: an instrument volume or
+pan other than neutral, a muted instrument, a sidechain source, a master volume other than
+unity, a per-placement gain, a track volume or pan, a track lane over the fader, pan or mute,
+an instrument volume or pan lane, a master volume lane, a send into a return bus, a second
+output module, two cables into one input, a feedback cable, the amplifier's pan stage, the
+terminating node's pan, limiter and metering stages, and a Mod Matrix or Mod Grid route to a
+track or master target or an audio tap. An instrument soloed **elsewhere** is the lowering
+spec's open question and needs the first whole-project lowering. Instrument **oversampling** is
+refused under a "Phase 5" label that phase never claimed — the master plan places oversampling
+islands here — so `P08-S003` decides whether it lowers in this phase and corrects the label
+either way, as Phase 7 did for the note-processing label. Inventoried in V1: the mixing tools
+(`CAP-0004`), the mixer view (`CAP-0033`), the return-bus and effect-chain identities
+(`IDN-0005`, `IDN-0012`, `IDN-0020`, `IDN-0021`) and the send cap (`LIMIT-0024`).
+
+Not built by design, under the phase's own YAGNI: layouts beyond `Mono` and `Stereo` — the
+contract's general rule is stated where a layout is declared and only stereo is compiled, since
+V1 is stereo; a stereo-to-mono summing law, unless a slice's corpus case needs V1's offline
+`(L + R) / 2`; and a sample-rate island, unless `P08-S003` takes oversampling.
+
+| Task | State | Current boundary |
+|---|---|---|
+| P08-S001 — the mix channel and explicit summing | **Selected** 2026-09-09 | A **channel** in the IR and the plan, keyed by a `ChannelId` the compiler mints: a fader, a pan and a mute as declared controls under their laws — the fader under the decibel law with V1's linear `0..2` range read from V1's own bound, the pan as V1's constant-power law computed by V1's own function rather than transcribed (`LOWER-INV-004`), the mute as a thresholded boolean — placed between the voice sum and the output, and a **`Mix`** kind with a declared fan-in that sums its inputs linearly in float with no clamp, so that a second source into one point becomes a scheduled sum rather than illegal fan-in. `Output` takes the channel. The lowerer maps the instrument's fader, pan and mute onto the channel's controls and the marks for them come off; the amplifier's own pan stage and the terminating node's pan are reconciled against EVD-0013's three-pan figure and lowered or refused by name with the difference stated. Admission counts compiled channels against `max_mix_channels` from the plan's own objects rather than a stated declaration, which moves that row into the refusal set. **Completion check:** a sine through a channel at a fader of `g` and a pan of `p` renders `g × law(p)` per side against an oracle from V1's own function, sample for sample — at unity and centre that is V1's centre coefficient, `cos(π/4)` per side, which is the law and **not** neutrality, so a channel never pretends to be absent; a plan that declares **no** channel renders bit-identically to today, and EVD-0013's harness and the `quantum_cost` examples compile their graphs directly, declare none and never call the lowerer, so their digests reproduce unchanged, while a lowered project's render changes by exactly the stages the marks named; two sources through one `Mix` render the sum of each alone, exactly, and a sum above full scale is preserved in float; a mute renders zeros from its sample; a fader lane, a fader edge and a fader script write compose in the one slot as `SOUND-INV-023` orders them; the channel count over the profile is refused by name; sample-identical under four host partitions; the purity scan covers the new kernels; mutation-verified. `P05-R001` binds here: the fader is the first dynamic write to a V2 amplitude — V1 applies the channel fader as one gain per block, so the slice measures a step against V1's per-block value and declares the smoothing that measurement supports; the amplifier module's own ramped level stays refused unless unity until a slice maps it. Real-time path and admission: the core Rust gate and one independent review apply |
+| P08-S002 — a whole project through one plan | Not started | Every instrument the project plays as its own channel — `N` channels sharing one prepared patch shape where instruments share a patch, each with its own fader, inserts, sends, meter row, voices and tail, which is the first exit bullet — summed by one master `Mix` into the master volume as a declared control and an explicit **output policy** node: float headroom preserved offline, V1's hard clamp at full scale as a named sink policy the lowerer selects for parity and an offline caller may decline. Solo across instruments, mute, the per-placement gain and the track fader, pan and mute lower where a track and an instrument are one to one; an instrument shared by two tracks with differing track controls — V1's per-voice gain — is refused by name until ADR-0034. Track lanes over the fader, pan and mute lower as `P07-S002b` lowers instrument lanes, and the master volume lane with them. The lowering spec's solo-elsewhere question closes here |
+| P08-S003 — inserts: the first native effects with latency and tail | Not started | The declaration gains its **latency** and **tail** fields, owed by Phase 5 to their first reader, and a per-channel insert chain in V1's `effect_chain_order`. Effect kinds arrive as the corpus demands them, one kind with V1's law at a time under `SOUND-INV-013`'s own-justification rule, each declaring its latency (a lookahead) and its tail (a delay, a reverb); an unmapped effect stays refused by name. Whether instrument oversampling lowers in this phase as a rate island is decided here; the "Phase 5" label is corrected either way. A compressor with a sidechain input is the kind `P08-S006` needs |
+| P08-S004 — sends, return buses and the bus graph | Not started | A **bus** keyed by `BusId` with its own inserts, fader, pan and mute; a **send** from a channel or a bus into a bus, pre- or post-fader, with its level a declared control; return-to-return routing as the same bus graph as channels and groups, compiled **once** into dependency order so no block sorts anything, which is the fifth exit bullet; a cyclic send refused at compilation naming the closing edge. Admission counts buses against `max_buses` and a channel's sends against `max_sends_per_channel`, refusing where V1 dropped (`LIMIT-0024`). V1's soft-clip on a return's output is an explicit node with V1's law or a named refusal, decided here. The send mark and the Mod Matrix and Mod Grid marks for a track, master or bus target come off as each becomes addressable |
+| P08-S005 — path latency and compensation | Not started | The compiler sums declared latency along every path to the output, inserts the compensation the declared policy asks for as scheduled delay operations, and reports node, path and compensated latency in the plan's diagnostics; the plan's `added_latency` becomes `Q` plus the compensated path. Two paths of unequal latency into one `Mix` arrive aligned; a policy that declines compensation reports the skew instead. Fourth exit bullet. Sample-identical under partitions; digests unchanged for a plan whose nodes all declare zero |
+| P08-S006 — sidechains and feedback | Not started | An acyclic sidechain is an audio edge into an effect's declared sidechain port, scheduled in current-quantum dependency order, with its latency reported in plan frames and independent of the host's block — V1's previous-callback read is an intentional difference with its own corpus category, as `CORPUS-0003-C1` is for modulation timing. A cyclic path through an explicit delay needs ADR-0033 first; until it is accepted the cycle stays refused by name. Second exit bullet |
+| P08-S007 — meters as taps, and the terminating node's stages | Not started | Channel, bus and master meters as declared taps under ADR-0027, read through the host subscription Phase 5 built, with the `max_mix_channels`-versus-`max_observation_taps` question answered in the profile spec; V1's terminating limiter as an explicit node with V1's law, selectable as the output policy; the master effect chain as the master bus's inserts. The terminating node's remaining marks come off |
+| P08-S008 — parity, refusal behavior and the RT guard | Not started | The exit's evidence: every corpus project whose routing this phase carries renders through its own channels, buses and sends and is compared against V1 under the comparison categories the phase declared, an intentional difference named rather than hidden (`LOWER-INV-003` still refuses a verdict over any remaining mark); a bounded refusal for every route the phase does not carry; and the channel and bus processing held allocation-free under the render-loop purity scan and the allocation test, which is the sixth exit bullet |
+
+Inherited before it builds: `P05-R001` (a lowered level's smoothing policy, `P08-S001`). Owed
+to this phase by Phase 7 and taken by name above: the track, master and bus targets and the
+audio tap `P07-S003` refuses, and the track and master lanes `P07-S002b` refuses. `P07-R001`
+is Phase 10A's, `P06-R002` is Phase 9's, `P05-R002` is Phase 10D's and `P04-R004` is Phase
+10B's; none binds this phase.
+
 ### Phase 0B — active in parallel
 
 Phase 0B remains `Active, parallel`; Phase 10 still waits for its exit.
@@ -150,18 +245,19 @@ Phase 3 is complete. Its exit review accepted these bounded residuals:
 
 ## Current blockers
 
-Nothing blocks the selected slice. Residuals bind later work by name: `P07-R001` binds Phase
-10A's note-processing work item; `P06-R002` binds Phase 9's live host; `P05-R002` binds Phase
-10D's digest; `P05-R001` — a lowered level's smoothing policy — binds the first slice that
-modulates or automates a V2 amplitude or maps V1's amplifier level; and Phase 3's residuals
-block only their named consumers. `P04-R004` binds the first shared render surface, which is
-Phase 10B's. `P07-S001`'s rule that a modulation source declares no input port and no
-sample-positioned control still keeps the envelope from being a source; the slice that lowers
-V1's envelope matrix source owns the collection split that lifts it, and the slice that gives
-the LFO a lowered target owes the refusal that names the slot a modulation cycle would close.
+Nothing blocks the selected slice. Residuals bind later work by name: `P05-R001` — a lowered
+level's smoothing policy — binds `P08-S001`, the first slice that writes a V2 amplitude
+dynamically; `P07-R001` binds Phase 10A's note-processing work item; `P06-R002` binds Phase 9's
+live host; `P05-R002` binds Phase 10D's digest; and Phase 3's residuals block only their named
+consumers. `P04-R004` binds the first shared render surface, which is Phase 10B's. `P07-S001`'s
+rule that a modulation source declares no input port and no sample-positioned control still
+keeps the envelope from being a source; the slice that lowers V1's envelope matrix source owns
+the collection split that lifts it, and the slice that gives the LFO a lowered target owes the
+refusal that names the slot a modulation cycle would close. ADR-0033 is drafted before
+`P08-S006`, not before the selected slice, because `P08-S001` sums and pans and admits no cycle.
 
-One stream is active: Phase 0B, with `P00B-T003` as its selected slice. Phase 8 is
-`Not started` and unselected; its activation is the user's selection, not this file's.
+Two streams are active: Phase 8, with `P08-S001` selected, and Phase 0B, with `P00B-T003` as
+its selected slice.
 
-Next action: **the user's selection** — activate Phase 8 by selection, or continue
-`P00B-T003`. Reload remains owned by Phase 9.
+Next action: **build `P08-S001`** on a branch off `main`; its completion check is in the table
+above. Reload remains owned by Phase 9.
