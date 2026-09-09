@@ -2,20 +2,37 @@
 //!
 //! This is the second half of the first Phase 4 slice: the lowerer can represent a bounded
 //! subset, and this is what proves it by rendering. Deliberately narrow — one project, one
-//! instrument, one in-memory buffer, no job contract, no streaming, no cancellation. ADR-0028
-//! may remain `Deferred` for exactly this scope and must be `Accepted` before any of those.
+//! in-memory buffer, no job contract, no streaming, no cancellation. ADR-0028 may remain
+//! `Deferred` for exactly this scope and must be `Accepted` before any of those.
+//!
+//! # A whole project through one plan (`P08-S002`)
+//!
+//! Every instrument the project holds lowers into one graph: its voice patch in the voice
+//! scope, then V1's stages in V1's order — the velocity scaler and the track's balance per
+//! voice, the instrument's channel and V1's channel-stage clipper on the voice sum — into
+//! one master sum, the master volume as a trim, V1's output clamp, and the plan's one
+//! output. The voice scope is instantiated once per note the arrangement holds open at once
+//! across the project, every instrument's chain in every instance, so a note lands on any
+//! free instance and the voice sum carries only the instances that sound (`SOUND-INV-025`).
+//!
+//! Solo is V1's: a track soloed anywhere silences every unsoloed track's notes before they
+//! are lowered, and an instrument soloed anywhere mutes every unsoloed instrument's channel.
+//! The lowering specification's open question — a solo *elsewhere*, unseeable from one
+//! instrument — closes here, because the whole project is the input.
 //!
 //! # What the render is not
 //!
-//! Not faithful, and it says so. Every note raises `P04-R001`, so the outcome's
-//! [`Fidelity`] is [`Fidelity::UnsupportedScope`] and a parity comparison is refused. The
-//! audio is evidence that the lowering, admission, scheduling and rendering path connects
-//! end to end — not evidence that it matches V1.
+//! Not faithful, and it says so: what remains named is Phase 8's — the amplifier's pan stage
+//! and the terminating node's stages — so the outcome's [`Fidelity`] is
+//! [`Fidelity::UnsupportedScope`] and a parity comparison is refused. The audio is evidence
+//! that the lowering, admission, scheduling and rendering path connects end to end — not
+//! evidence that it matches V1.
 //!
 //! V1 remains the default renderer for the GUI, MCP, CLI and releases. Nothing here is
 //! reachable without the non-default `v2-lowering` feature ADR-0056 selects.
 
 use synth_core::ModuleType;
+use synth_engine::instrument::InstrumentId;
 use synth_engine_v2::compile::{RenderConfig, compile};
 use synth_engine_v2::ir::NodeId;
 use synth_engine_v2::offline::render_offline;
@@ -23,9 +40,19 @@ use synth_engine_v2::profile::HostProfile;
 use synth_engine_v2::quantities::EventCount;
 use synth_engine_v2::time::{FrameCount, PlanPosition};
 
+use synth_engine_v2::ir::{ExecutionScope, IrNodeKind, PortId, SignalDomain};
+use synth_engine_v2::quantities::Amplitude;
+
 use super::diagnostics::{Fidelity, LoweringDiagnostic, LoweringReason, ProjectSubject, Severity};
-use super::graph::{ChannelStrip, lower_voice_patch_with};
-use super::performance::{AutomationTargets, lower_performance};
+use super::graph::{
+    ChannelStrip, GraphAccumulator, InstrumentStages, Sink, lower_instrument_into,
+    plan_declarations, voice_tuning,
+};
+use super::identity::{MASTER_CLAMP, MASTER_MIX, MASTER_OUTPUT, MASTER_TRIM};
+use super::performance::{
+    AutomationTargets, InstrumentPerformance, lower_project_performance, peak_concurrency,
+    playing_tracks, project_peak,
+};
 use crate::patch::InstrumentState;
 
 /// What the project as a whole asks for that V2 cannot do.
@@ -36,10 +63,30 @@ use crate::patch::InstrumentState;
 /// survey of every saved project in the repository found it — `sends-returns-master` counted
 /// as eligible for a subset that cannot render either stage.
 fn project_diagnostics(
+    instruments: &[InstrumentState],
     song: &synth_sequencer::Song,
     global: &crate::project::GlobalProjectState,
 ) -> Vec<LoweringDiagnostic> {
     let mut diagnostics = Vec::new();
+
+    // V1 sums its instruments into the master in the order the project lists them; V2 sums
+    // the master's cables in ascending identity (`SOUND-INV-008`), which is the instruments'
+    // identity order. A float sum of three or more terms depends on its order, so a project
+    // whose list is not in identity order is a marked difference, not a translation. Two
+    // terms sum the same either way.
+    let in_identity_order = instruments
+        .windows(2)
+        .all(|pair| pair[0].id.as_u64() < pair[1].id.as_u64());
+    if instruments.len() >= 3 && !in_identity_order {
+        diagnostics.push(LoweringDiagnostic::unrepresented(
+            ProjectSubject::Project,
+            LoweringReason::OwnedByLaterPhase {
+                capability: "three or more instruments saved out of identity order, which V1 \
+                             sums in list order and V2 in identity order",
+                owner: "the first A/B consumer, under the corpus's intentional-correction class",
+            },
+        ));
+    }
 
     // Every saved project-global field, dispositioned once, by the same mechanism as
     // `instrument_state_dispositions`: destructured **without `..`**, so a field added to
@@ -48,8 +95,8 @@ fn project_diagnostics(
     // by field and recorded the gap as an open question, which an independent review read as
     // the invariant promising a mechanism it did not have.
     let crate::project::GlobalProjectState {
-        // Reported below: a level stage V2 does not apply.
-        master_volume,
+        // Lowered onto the master trim by `master_trim` (`P08-S002`), within V1's own bound.
+        master_volume: _,
         // The live keyboard's octave. It shifts what a played key sounds as, and nothing in
         // either engine's arrangement playback reads it: `audio::preview` reads the
         // *instrument's* own `octave_offset`, which the instrument destructure dispositions.
@@ -125,17 +172,8 @@ fn project_diagnostics(
     // a lane names its own instrument — and the classes V2 does not carry are refused there
     // by name.
 
-    // The master volume and the global glide are stages V2 does not apply. They change what
-    // V1 renders without stopping the lowering, so they are reported rather than refused.
-    if *master_volume != synth_core::Gain::UNITY {
-        diagnostics.push(LoweringDiagnostic::unrepresented(
-            ProjectSubject::Project,
-            LoweringReason::OwnedByLaterPhase {
-                capability: "a project master volume other than unity",
-                owner: "Phase 8",
-            },
-        ));
-    }
+    // The global glide is a stage V2 does not apply. It changes what V1 renders without
+    // stopping the lowering, so it is reported rather than refused.
     if *glide_time != synth_core::Seconds::ZERO {
         diagnostics.push(LoweringDiagnostic::unrepresented(
             ProjectSubject::Project,
@@ -344,8 +382,14 @@ fn instrument_state_dispositions(
 /// refused by name and by value rather than clamped, since clamping persisted input is the
 /// reinterpretation `AGENTS.md` forbids. The pan is a `BipolarValue` and so within range by
 /// its type; only a value that is not a number can fail, and it is refused the same way.
+///
+/// `soloed_out` is V1's instrument solo seen from the whole project (`P08-S002`): when any
+/// instrument is soloed, every unsoloed one is skipped by V1's mix stage — `mix_channel_busses`
+/// reads `any_soloed && !instrument.is_solo()` as inaudible — so its channel starts muted
+/// here, and the silence V1 renders for it is the silence rendered.
 fn channel_strip(
     saved: &InstrumentState,
+    soloed_out: bool,
     diagnostics: &mut Vec<LoweringDiagnostic>,
 ) -> Option<ChannelStrip> {
     let subject = || ProjectSubject::Instrument {
@@ -367,7 +411,7 @@ fn channel_strip(
         ));
         return None;
     }
-    let fader = match synth_engine_v2::quantities::Amplitude::new(volume) {
+    let fader = match Amplitude::new(volume) {
         Ok(fader) => fader,
         Err(error) => {
             diagnostics.push(LoweringDiagnostic::refused(
@@ -394,10 +438,63 @@ fn channel_strip(
     Some(ChannelStrip {
         fader,
         pan,
-        muted: saved.muted,
+        muted: saved.muted || soloed_out,
     })
 }
 
+/// The project's master volume as the master trim's authored level (`P08-S002`), or `None`
+/// with the refusal recorded.
+///
+/// Held to V1's own bound: V1 clamps the master volume it applies into `0..=2` at every
+/// stage that reads it — `handle_set_master_volume`, the mix-stage read and the automation
+/// lane alike. A saved value outside that range is refused by name and by value rather than
+/// clamped, as the instrument's fader is.
+fn master_trim(
+    global: &crate::project::GlobalProjectState,
+    diagnostics: &mut Vec<LoweringDiagnostic>,
+) -> Option<Amplitude> {
+    let volume = global.master_volume.as_f32();
+    if !volume.is_finite() || !(0.0..=2.0).contains(&volume) {
+        diagnostics.push(LoweringDiagnostic::refused(
+            ProjectSubject::Project,
+            LoweringReason::UnsupportedParameterValue {
+                value: format!("a master volume of {volume} is outside V1's range 0..=2"),
+            },
+        ));
+        return None;
+    }
+    match Amplitude::new(volume) {
+        Ok(level) => Some(level),
+        Err(error) => {
+            diagnostics.push(LoweringDiagnostic::refused(
+                ProjectSubject::Project,
+                LoweringReason::UnsupportedParameterValue {
+                    value: error.to_string(),
+                },
+            ));
+            None
+        }
+    }
+}
+
+/// What the lowered plan does where V1 saturates (`P08-S002`).
+///
+/// V1 has two saturation stages a lowered project meets: each channel's post-fader signal
+/// is soft-clipped as it is summed into the master (`mix_stereo_faded`), and the output is
+/// hard-clamped to full scale after the master volume. Both are explicit nodes in the plan
+/// rather than hidden mixing behaviour, and both are selected together: the parity policy
+/// places them where V1 has them, and the headroom policy places neither, so a float
+/// render preserves everything above full scale, which the master plan asks of offline
+/// output unless the caller asks for clipping.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[must_use]
+pub enum OutputPolicy {
+    /// V1's stages, for parity: a soft clipper after every channel and a hard clamp before
+    /// the output.
+    Parity,
+    /// Neither stage: linear summation with float headroom preserved offline.
+    Headroom,
+}
 /// The longest render this bounded scope admits, in seconds.
 ///
 /// The master plan's initial Phase 4 scope is "one bounded in-process smoke render", and a
@@ -464,11 +561,10 @@ impl SmokeRender {
     }
 }
 
-/// Lower one saved instrument and its song, and render it.
+/// Lower one saved instrument and its song, and render it under the parity policy.
 ///
-/// `tail` is added to the arrangement's own length so a final release is heard rather than
-/// cut at the last note-off. It is the caller's, because how long a release lasts is a
-/// property of the patch rather than of this path.
+/// The one-instrument form of [`smoke_render_project`]: the project is this instrument
+/// alone, so a solo elsewhere cannot arise.
 pub fn smoke_render(
     saved: &InstrumentState,
     song: &synth_sequencer::Song,
@@ -476,194 +572,318 @@ pub fn smoke_render(
     profile: HostProfile,
     tail: FrameCount,
 ) -> SmokeRender {
-    let sample_rate = profile.capabilities().sample_rate();
-    let mut mixer_diagnostics = project_diagnostics(song, global);
-    let project_refused = mixer_diagnostics
-        .iter()
-        .any(|d| d.severity() == Severity::Refused);
-    if project_refused {
-        return SmokeRender {
-            samples: Vec::new(),
-            diagnostics: mixer_diagnostics,
-            lowered_events: EventCount::NONE,
-            lowered_frames: FrameCount::new(0),
-        };
-    }
+    smoke_render_project(
+        std::slice::from_ref(saved),
+        song,
+        global,
+        profile,
+        tail,
+        OutputPolicy::Parity,
+    )
+}
 
-    if let Continue::No = instrument_state_dispositions(saved, &mut mixer_diagnostics) {
-        return SmokeRender {
-            samples: Vec::new(),
-            diagnostics: mixer_diagnostics,
-            lowered_events: EventCount::NONE,
-            lowered_frames: FrameCount::new(0),
+/// A refused render: no samples beside the diagnostics that say why.
+fn refused(diagnostics: Vec<LoweringDiagnostic>) -> SmokeRender {
+    SmokeRender {
+        samples: Vec::new(),
+        diagnostics,
+        lowered_events: EventCount::NONE,
+        lowered_frames: FrameCount::new(0),
+    }
+}
+
+/// Lower every saved instrument and the song into one plan, and render it (`P08-S002`).
+///
+/// `tail` is added to the arrangement's own length so a final release is heard rather than
+/// cut at the last note-off. It is the caller's, because how long a release lasts is a
+/// property of the patch rather than of this path. `policy` selects V1's saturation stages
+/// or declines them.
+#[allow(
+    clippy::too_many_lines,
+    reason = "one pass over the project, stage by stage"
+)]
+pub fn smoke_render_project(
+    instruments: &[InstrumentState],
+    song: &synth_sequencer::Song,
+    global: &crate::project::GlobalProjectState,
+    profile: HostProfile,
+    tail: FrameCount,
+    policy: OutputPolicy,
+) -> SmokeRender {
+    let sample_rate = profile.capabilities().sample_rate();
+    let mut diagnostics = project_diagnostics(instruments, song, global);
+    let stop = |diagnostics: &[LoweringDiagnostic]| {
+        diagnostics
+            .iter()
+            .any(|d| d.severity() == Severity::Refused)
+    };
+    if stop(&diagnostics) {
+        return refused(diagnostics);
+    }
+    let Some(master_level) = master_trim(global, &mut diagnostics) else {
+        return refused(diagnostics);
+    };
+
+    // Every instrument's dispositions first, so a project is refused with every
+    // instrument's reasons rather than the first's alone.
+    // V1's instrument solo, across the project: `any(is_solo)` over every instrument the
+    // engine holds, playing or not.
+    let any_soloed = instruments.iter().any(|saved| saved.solo);
+    struct Prepared<'a> {
+        saved: &'a InstrumentState,
+        strip: ChannelStrip,
+        amp_sensitivity: synth_engine_v2::quantities::NormalizedLevel,
+        playing: Option<super::performance::PlayingTracks>,
+        modulators: super::modulation::SongModulators,
+    }
+    let mut prepared: Vec<Prepared<'_>> = Vec::with_capacity(instruments.len());
+    for saved in instruments {
+        if let Continue::No = instrument_state_dispositions(saved, &mut diagnostics) {
+            continue;
+        }
+        let subject = || ProjectSubject::Instrument {
+            instrument: saved.id,
+            name: saved.name.clone(),
         };
+        let amp_sensitivity = match synth_engine_v2::quantities::NormalizedLevel::new(
+            saved.velocity_amp_sensitivity.as_f32(),
+        ) {
+            Ok(level) => level,
+            Err(error) => {
+                diagnostics.push(LoweringDiagnostic::refused(
+                    subject(),
+                    LoweringReason::UnsupportedParameterValue {
+                        value: error.to_string(),
+                    },
+                ));
+                continue;
+            }
+        };
+        // What the song's Mod Grid adds to this instrument's graph (`P07-S003`). Asked of
+        // V1's own builder, so a graph with no routing sink or a track-scoped graph assigned
+        // to no track — for which `build_instance` returns `None`, exactly as `audio::export`
+        // and `audio::arrangement_render` see it — lowers to nothing. An earlier revision
+        // refused on the pool being non-empty, so a freshly created, still-empty graph
+        // blocked every render of a project V1 plays unchanged; an independent review found
+        // it.
+        let modulators = super::modulation::lower_mod_grid(song, saved.id, &saved.patch.modules);
+        diagnostics.extend(modulators.diagnostics.iter().cloned());
+        let Some(strip) = channel_strip(saved, any_soloed && !saved.solo, &mut diagnostics) else {
+            continue;
+        };
+        // The track or tracks that play it, whose control its balance stage carries.
+        let Ok(playing) = playing_tracks(saved.id, song, &mut diagnostics) else {
+            continue;
+        };
+        prepared.push(Prepared {
+            saved,
+            strip,
+            amp_sensitivity,
+            playing,
+            modulators,
+        });
+    }
+    if stop(&diagnostics) || prepared.iter().any(|p| p.modulators.refused) {
+        return refused(diagnostics);
     }
 
     // Admission needs the arrangement's event peak before the plan exists, so it is counted
     // from the timeline. `None` means the arrangement could not be read; the lowering below
     // then produces the refusal with its subject intact, and a declared peak of zero is
     // correct for a plan that will carry no events.
-    let peak = super::performance::peak_events_per_quantum(
-        saved.id,
-        &saved.patch.modules,
-        song,
-        sample_rate,
-    )
-    .unwrap_or(EventCount::NONE);
+    let counted: Vec<(
+        InstrumentId,
+        &[crate::patch::ModuleState],
+        &[synth_sequencer::TrackId],
+        bool,
+    )> = prepared
+        .iter()
+        .map(|p| {
+            (
+                p.saved.id,
+                p.saved.patch.modules.as_slice(),
+                p.playing
+                    .as_ref()
+                    .map_or(&[][..], |playing| playing.tracks.as_slice()),
+                true,
+            )
+        })
+        .collect();
+    let peak = project_peak(&counted, true, song, sample_rate).unwrap_or(EventCount::NONE);
+    let ids: Vec<InstrumentId> = prepared.iter().map(|p| p.saved.id).collect();
+    let notes = peak_concurrency(&ids, song, sample_rate);
 
-    let amp_sensitivity = match synth_engine_v2::quantities::NormalizedLevel::new(
-        saved.velocity_amp_sensitivity.as_f32(),
-    ) {
-        Ok(level) => level,
+    let mut graph = GraphAccumulator::default();
+    struct Lowered<'a> {
+        saved: &'a InstrumentState,
+        identities: super::identity::ResolvedIdentities,
+        targets: AutomationTargets,
+        playing: Vec<synth_sequencer::TrackId>,
+    }
+    let mut lowered: Vec<Lowered<'_>> = Vec::with_capacity(prepared.len());
+    let mut refused_any = false;
+    for p in &prepared {
+        let stages = InstrumentStages {
+            velocity: Some(p.amp_sensitivity),
+            track: p.playing.as_ref().map(|playing| playing.stage),
+            channel: Some(p.strip),
+            soft_clip: policy == OutputPolicy::Parity,
+        };
+        let outcome = lower_instrument_into(
+            &mut graph,
+            p.saved.id,
+            &p.saved.patch.modules,
+            &p.saved.patch.connections,
+            stages,
+            &p.modulators,
+            Sink::Node(MASTER_MIX),
+        );
+        diagnostics.extend(outcome.diagnostics);
+        if outcome.refused {
+            refused_any = true;
+            continue;
+        }
+        let slot = outcome.identities.slot();
+        let mut targets =
+            AutomationTargets::resolve(&outcome.identities).with_channel(slot.channel());
+        if let Some(playing) = &p.playing {
+            targets = targets.with_balance(slot.balance(), playing.tracks.clone());
+        }
+        lowered.push(Lowered {
+            saved: p.saved,
+            identities: outcome.identities,
+            targets,
+            playing: p
+                .playing
+                .as_ref()
+                .map(|playing| playing.tracks.clone())
+                .unwrap_or_default(),
+        });
+    }
+    if refused_any {
+        return refused(diagnostics);
+    }
+
+    // The master, in V1's order: every channel into one sum, the master volume, V1's output
+    // clamp under the parity policy, and the plan's one output.
+    let mut master_ir = master_nodes(policy, master_level);
+    master_ir.push((MASTER_OUTPUT, IrNodeKind::Output));
+    let mut previous: Option<synth_engine_v2::ir::NodeId> = None;
+    let mut builder_error = None;
+    for (id, kind) in master_ir {
+        if let Err(taken) = graph.node(id, kind, ExecutionScope::Global) {
+            builder_error = Some(format!("{taken} is claimed by two different nodes"));
+        }
+        if let Some(from) = previous {
+            graph.connect(
+                (from, PortId::FIRST),
+                (id, PortId::FIRST),
+                SignalDomain::Audio,
+            );
+        }
+        previous = Some(id);
+    }
+    if let Some(error) = builder_error {
+        diagnostics.push(LoweringDiagnostic::refused(
+            ProjectSubject::Project,
+            LoweringReason::UnresolvedEndpoint { spelling: error },
+        ));
+        return refused(diagnostics);
+    }
+
+    let tuning = match voice_tuning() {
+        Ok(tuning) => tuning,
         Err(error) => {
-            let mut diagnostics = mixer_diagnostics;
             diagnostics.push(LoweringDiagnostic::refused(
-                ProjectSubject::Instrument {
-                    instrument: saved.id,
-                    name: saved.name.clone(),
-                },
+                ProjectSubject::Project,
                 LoweringReason::UnsupportedParameterValue {
                     value: error.to_string(),
                 },
             ));
-            return SmokeRender {
-                samples: Vec::new(),
-                diagnostics,
-                lowered_events: EventCount::NONE,
-                lowered_frames: FrameCount::new(0),
-            };
+            return refused(diagnostics);
         }
     };
-    // What the song's Mod Grid adds to this instrument's graph (`P07-S003`). Asked of V1's own
-    // builder, so a graph with no routing sink or a track-scoped graph assigned to no track —
-    // for which `build_instance` returns `None`, exactly as `audio::export` and
-    // `audio::arrangement_render` see it — lowers to nothing. An earlier revision refused on
-    // the pool being non-empty, so a freshly created, still-empty graph blocked every render
-    // of a project V1 plays unchanged; an independent review found it.
-    let modulators = super::modulation::lower_mod_grid(song, saved.id, &saved.patch.modules);
-    let mut diagnostics = mixer_diagnostics;
-    diagnostics.extend(modulators.diagnostics.iter().cloned());
-    if modulators.refused {
-        return SmokeRender {
-            samples: Vec::new(),
-            diagnostics,
-            lowered_events: EventCount::NONE,
-            lowered_frames: FrameCount::new(0),
-        };
-    }
-
-    let Some(strip) = channel_strip(saved, &mut diagnostics) else {
-        return SmokeRender {
-            samples: Vec::new(),
-            diagnostics,
-            lowered_events: EventCount::NONE,
-            lowered_frames: FrameCount::new(0),
-        };
-    };
-    let lowered = lower_voice_patch_with(
-        saved.id,
-        &saved.patch.modules,
-        &saved.patch.connections,
-        peak,
-        Some(amp_sensitivity),
-        Some(strip),
-        &modulators,
-    );
-    diagnostics.extend(lowered.diagnostics);
-
-    let Some(ir) = lowered.ir else {
-        return SmokeRender {
-            samples: Vec::new(),
-            diagnostics,
-            lowered_events: EventCount::NONE,
-            lowered_frames: FrameCount::new(0),
-        };
+    let ir = match graph.build(tuning, plan_declarations(notes, peak)) {
+        Ok(ir) => ir,
+        Err(error) => {
+            diagnostics.push(LoweringDiagnostic::refused(
+                ProjectSubject::Project,
+                LoweringReason::UnresolvedEndpoint {
+                    spelling: error.to_string(),
+                },
+            ));
+            return refused(diagnostics);
+        }
     };
 
     // The node a note plays is the one whose kind declares a note control, and in this subset
     // that is the envelope. More than one is ambiguous: nothing in the project says which
     // note-on reaches which, and choosing would be inventing a rule Phase 6 owns.
-    let envelopes: Vec<NodeId> = lowered
-        .identities
-        .pairs()
-        .filter(|(id, _)| id.module_type == ModuleType::Envelope)
-        .map(|(_, node)| node)
-        .collect();
-    let gate = match envelopes.as_slice() {
-        [one] => *one,
-        [] => {
-            diagnostics.push(LoweringDiagnostic::refused(
-                ProjectSubject::Instrument {
-                    instrument: saved.id,
-                    name: saved.name.clone(),
-                },
-                LoweringReason::OwnedByLaterPhase {
-                    capability: "a voice patch with no envelope, so no node a note can play",
-                    owner: "Phase 6",
-                },
-            ));
-            return SmokeRender {
-                samples: Vec::new(),
-                diagnostics,
-                lowered_events: EventCount::NONE,
-                lowered_frames: FrameCount::new(0),
-            };
+    let mut gates: Vec<(InstrumentId, NodeId)> = Vec::with_capacity(lowered.len());
+    for l in &lowered {
+        let envelopes: Vec<NodeId> = l
+            .identities
+            .pairs()
+            .filter(|(id, _)| id.module_type == ModuleType::Envelope)
+            .map(|(_, node)| node)
+            .collect();
+        let subject = ProjectSubject::Instrument {
+            instrument: l.saved.id,
+            name: l.saved.name.clone(),
+        };
+        match envelopes.as_slice() {
+            [one] => gates.push((l.saved.id, *one)),
+            [] => {
+                diagnostics.push(LoweringDiagnostic::refused(
+                    subject,
+                    LoweringReason::OwnedByLaterPhase {
+                        capability: "a voice patch with no envelope, so no node a note can play",
+                        owner: "Phase 6",
+                    },
+                ));
+                return refused(diagnostics);
+            }
+            _ => {
+                diagnostics.push(LoweringDiagnostic::refused(
+                    subject,
+                    LoweringReason::OwnedByLaterPhase {
+                        capability: "a voice patch with more than one envelope, where nothing \
+                                     says which one a note plays",
+                        owner: "Phase 6, with the voice-instantiation model",
+                    },
+                ));
+                return refused(diagnostics);
+            }
         }
-        _ => {
-            diagnostics.push(LoweringDiagnostic::refused(
-                ProjectSubject::Instrument {
-                    instrument: saved.id,
-                    name: saved.name.clone(),
-                },
-                LoweringReason::OwnedByLaterPhase {
-                    capability: "a voice patch with more than one envelope, where nothing says \
-                                 which one a note plays",
-                    owner: "Phase 6, with the voice-instantiation model",
-                },
-            ));
-            return SmokeRender {
-                samples: Vec::new(),
-                diagnostics,
-                lowered_events: EventCount::NONE,
-                lowered_frames: FrameCount::new(0),
-            };
-        }
-    };
+    }
 
     let outcome = compile(&ir, &RenderConfig::new(profile));
     let plan = match outcome.into_plan() {
         Ok(plan) => plan,
         Err(error) => {
             diagnostics.push(LoweringDiagnostic::refused(
-                ProjectSubject::Instrument {
-                    instrument: saved.id,
-                    name: saved.name.clone(),
-                },
+                ProjectSubject::Project,
                 LoweringReason::UnsupportedParameterValue {
                     value: error.to_string(),
                 },
             ));
-            return SmokeRender {
-                samples: Vec::new(),
-                diagnostics,
-                lowered_events: EventCount::NONE,
-                lowered_frames: FrameCount::new(0),
-            };
+            return refused(diagnostics);
         }
     };
 
-    // Where V1's instrument automation lands: the first filter and the first envelope, in
-    // identity order, with the descriptors V1 denormalizes a lane through (`P07-S002b`).
-    let targets = AutomationTargets::resolve(&lowered.identities);
-    let performance = lower_performance(
-        saved.id,
-        &saved.name,
-        song,
-        &plan,
-        gate,
-        &targets,
-        sample_rate,
-    );
+    let performers: Vec<InstrumentPerformance<'_>> = lowered
+        .iter()
+        .zip(&gates)
+        .map(|(l, (_, gate))| InstrumentPerformance {
+            id: l.saved.id,
+            name: &l.saved.name,
+            gate: *gate,
+            targets: &l.targets,
+            playing: &l.playing,
+        })
+        .collect();
+    let performance =
+        lower_project_performance(song, &plan, &performers, Some(MASTER_TRIM), sample_rate);
     // A refusal and a genuinely note-free arrangement both leave the event list empty, and
     // only the second may render. Reading the list alone let a refused arrangement — an
     // overlap, an expression, an unrepresentable position — fall through and return a
@@ -671,17 +891,6 @@ pub fn smoke_render(
     let performance_refused = performance.refused();
     diagnostics.extend(performance.diagnostics);
 
-    // **A saved note renders here now**, and `P04-R001`'s precondition is what released it.
-    // The work list's rule is "before rendering the first saved pitched note, close P03-R003
-    // with minimum typed pitch and velocity payload semantics", restated by `SOUND-INV-017`;
-    // a lowered note carries the project's own key and velocity, so that residual is closed
-    // and the refusal that stood here is gone.
-    //
-    // The **fidelity marker** is a separate question and is unchanged: it governs reporting,
-    // and `lower_performance` still marks the outcome `UnsupportedScope` because V2 applies
-    // velocity as one scale where V1 composes two sensitivities. The work list is explicit
-    // that closing this residual "does not decide Phase 6's tuning or expression-composition
-    // model", so the render is admissible and a parity claim over it is not.
     let lowered_events =
         EventCount::measured(u32::try_from(performance.events.len()).unwrap_or(u32::MAX));
     let lowered_frames = performance.frames;
@@ -699,10 +908,7 @@ pub fn smoke_render(
     let ceiling = ceiling as u64;
     if requested > ceiling {
         diagnostics.push(LoweringDiagnostic::refused(
-            ProjectSubject::Instrument {
-                instrument: saved.id,
-                name: saved.name.clone(),
-            },
+            ProjectSubject::Project,
             LoweringReason::OwnedByLaterPhase {
                 capability: "a render longer than the bounded smoke scope admits",
                 owner: "ADR-0028, with the long-running job contract",
@@ -729,10 +935,7 @@ pub fn smoke_render(
         },
         Err(error) => {
             diagnostics.push(LoweringDiagnostic::refused(
-                ProjectSubject::Instrument {
-                    instrument: saved.id,
-                    name: saved.name.clone(),
-                },
+                ProjectSubject::Project,
                 LoweringReason::UnsupportedParameterValue {
                     value: error.to_string(),
                 },
@@ -745,4 +948,17 @@ pub fn smoke_render(
             }
         }
     }
+}
+
+/// The master's nodes in signal order, before the output: the sum, the trim, and V1's
+/// clamp under the parity policy.
+fn master_nodes(policy: OutputPolicy, level: Amplitude) -> Vec<(NodeId, IrNodeKind)> {
+    let mut master = vec![
+        (MASTER_MIX, IrNodeKind::Mix),
+        (MASTER_TRIM, IrNodeKind::Trim { level }),
+    ];
+    if policy == OutputPolicy::Parity {
+        master.push((MASTER_CLAMP, IrNodeKind::HardClamp));
+    }
+    master
 }

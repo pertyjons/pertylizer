@@ -552,6 +552,14 @@ fn sampler_voice() -> CompiledPlan {
             (OUTPUT, PortId::FIRST),
             SignalDomain::Audio,
         )
+        // The sampler also feeds the amplifier, which nothing reads: what puts it in the
+        // envelope's island (`P08-S002`), so the note's trigger reaches it, while the output
+        // still reads the sampler directly and the zero release masks no tail.
+        .connect(
+            (SOURCE, PortId::FIRST),
+            (AMPLIFIER, PortId::FIRST),
+            SignalDomain::Audio,
+        )
         .tuning(ExecutionScope::Voice, common::twelve_tet())
         .declaring(common::compiled_notes(2))
         .build()

@@ -319,6 +319,36 @@ fn velocity_filter_sensitivity_is_inert_in_v1() {
     );
 }
 
+/// A placement's `gain` is persisted and settable, and read by nothing that renders: the
+/// sequencer's event collection and both engines' mixing stages ignore it. The V2 lowerer
+/// therefore lowers it to nothing and marks nothing (`P08-S002`), on the strength of this
+/// measurement — which fails the day someone implements it, and then the lowerer owes a
+/// stage.
+#[test]
+fn placement_gain_is_inert_in_v1() {
+    let with_gain = |gain: f32| {
+        move |project: &mut ProjectFile| {
+            let placement = project
+                .song
+                .arrangement()
+                .first()
+                .cloned()
+                .expect("the fixture places one pattern");
+            let replaced = placement.clone().with_gain(synth_core::Gain::new(gain));
+            assert!(project.song.update_placement(
+                placement.pattern_id,
+                placement.track_id,
+                placement.start,
+                replaced,
+            ));
+        }
+    };
+    assert!(
+        !project_renders_differ(with_gain(0.25), with_gain(1.0)),
+        "a placement gain now changes the render — see this test's doc comment"
+    );
+}
+
 /// Oversampling, which changes the anti-aliasing of everything the voice does.
 #[test]
 fn oversampling_reaches_the_offline_renderer() {

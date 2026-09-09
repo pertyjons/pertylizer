@@ -157,6 +157,14 @@ pub const MONITOR: Kernel = Kernel(monitor);
 pub const CHANNEL: Kernel = Kernel(channel);
 /// The explicit sum's kernel: the summed region, unchanged (`SOUND-INV-031`).
 pub const MIX: Kernel = Kernel(mix);
+/// The balance stage's kernel (`SOUND-INV-032`).
+pub const BALANCE: Kernel = Kernel(balance);
+/// The trim's kernel (`SOUND-INV-032`).
+pub const TRIM: Kernel = Kernel(trim);
+/// V1's channel-stage soft clipper's kernel (`SOUND-INV-032`).
+pub const SOFT_CLIP: Kernel = Kernel(soft_clip);
+/// V1's output clamp's kernel (`SOUND-INV-032`).
+pub const HARD_CLAMP: Kernel = Kernel(hard_clamp);
 /// The low-frequency oscillator's kernel (`SOUND-INV-027`).
 pub const LFO: Kernel = Kernel(lfo);
 /// The bounded, prepared YAMS VM.
@@ -317,6 +325,25 @@ pub enum PreparedNode {
     },
     /// An explicit sum: nothing is prepared, the summed region is its input.
     Mix,
+    /// A balance stage's authored level, pan and mute (`SOUND-INV-032`): the bases its three
+    /// slots start from.
+    Balance {
+        /// The base the level slot starts from.
+        level: Amplitude,
+        /// The base the pan slot starts from.
+        pan: crate::controller::BipolarLevel,
+        /// Whether the mute starts held.
+        muted: bool,
+    },
+    /// A trim's authored level (`SOUND-INV-032`): the base its one slot starts from.
+    Trim {
+        /// The base the level slot starts from.
+        level: Amplitude,
+    },
+    /// V1's soft clipper: nothing is prepared, the law has no parameter.
+    SoftClip,
+    /// V1's output clamp: nothing is prepared, the bounds are full scale.
+    HardClamp,
     /// A two-pole low-pass, as the four coefficients its integrators read.
     ///
     /// The corner frequency and the quality factor are **gone** by this point: they were
@@ -404,6 +431,11 @@ pub enum NodeState {
     /// A mix channel's mute, held between quanta (`SOUND-INV-031`). Its fader and pan are
     /// quantum-rate slots read from the ramps, so nothing else is kept.
     Channel {
+        /// Whether the mute was held at the end of the last quantum.
+        muted: bool,
+    },
+    /// A balance stage's mute, held between quanta (`SOUND-INV-032`), as the channel's is.
+    Balance {
         /// Whether the mute was held at the end of the last quantum.
         muted: bool,
     },
@@ -599,6 +631,10 @@ impl NodeState {
             },
             PreparedNode::Channel { muted, .. } => Self::Channel { muted: *muted },
             PreparedNode::Mix => Self::Stateless,
+            PreparedNode::Balance { muted, .. } => Self::Balance { muted: *muted },
+            PreparedNode::Trim { .. } | PreparedNode::SoftClip | PreparedNode::HardClamp => {
+                Self::Stateless
+            }
             PreparedNode::Controller { .. } | PreparedNode::NoteSource => Self::Stateless,
             PreparedNode::Lfo { .. } => Self::Lfo { phase: 0.0 },
             PreparedNode::Sampler { .. } => Self::Sampler {
@@ -650,6 +686,14 @@ impl NodeState {
             },
             Self::Channel { muted } => match control {
                 CHANNEL_MUTE => Some(if *muted {
+                    ParameterValue::ONE
+                } else {
+                    ParameterValue::ZERO
+                }),
+                _ => None,
+            },
+            Self::Balance { muted } => match control {
+                BALANCE_MUTE => Some(if *muted {
                     ParameterValue::ONE
                 } else {
                     ParameterValue::ZERO
@@ -743,6 +787,21 @@ pub(crate) fn authored_value(
             _ => None,
         },
         PreparedNode::Mix => None,
+        PreparedNode::Balance { level, pan, muted } => match control {
+            BALANCE_LEVEL => Some(ParameterValue::from_amplitude(*level)),
+            BALANCE_PAN => Some(ParameterValue::from_bipolar(*pan)),
+            BALANCE_MUTE => Some(if *muted {
+                ParameterValue::ONE
+            } else {
+                ParameterValue::ZERO
+            }),
+            _ => None,
+        },
+        PreparedNode::Trim { level } => match control {
+            TRIM_LEVEL => Some(ParameterValue::from_amplitude(*level)),
+            _ => None,
+        },
+        PreparedNode::SoftClip | PreparedNode::HardClamp => None,
         PreparedNode::Controller { .. } | PreparedNode::NoteSource => Some(ParameterValue::ZERO),
         PreparedNode::Lfo { rate, depth, .. } => match control {
             LFO_RATE => Some(ParameterValue::from_frequency(*rate)),
@@ -868,6 +927,14 @@ pub const CHANNEL_FADER: ControlIndex = ControlIndex::new(0);
 pub const CHANNEL_PAN: ControlIndex = ControlIndex::new(1);
 /// A mix channel's mute, sample-positioned: held from the frame it lands on.
 pub const CHANNEL_MUTE: ControlIndex = ControlIndex::new(2);
+/// A balance stage's level, quantum-rate, read per frame from its ramp (`SOUND-INV-032`).
+pub const BALANCE_LEVEL: ControlIndex = ControlIndex::new(0);
+/// A balance stage's pan, quantum-rate, read per frame from its ramp.
+pub const BALANCE_PAN: ControlIndex = ControlIndex::new(1);
+/// A balance stage's mute, sample-positioned: held from the frame it lands on.
+pub const BALANCE_MUTE: ControlIndex = ControlIndex::new(2);
+/// A trim's level, quantum-rate, read per frame from its ramp (`SOUND-INV-032`).
+pub const TRIM_LEVEL: ControlIndex = ControlIndex::new(0);
 
 /// What one of a kernel's inputs turned out to be.
 ///
@@ -1968,6 +2035,135 @@ pub fn mix(_prepared: &PreparedNode, _state: &mut NodeState, io: &mut NodeIo<'_>
     }
 }
 
+/// A balance stage (`SOUND-INV-032`): every frame scaled per side by the level and V1's
+/// **balance** law, and zeroed while the mute is held.
+///
+/// The law is V1's `apply_track_control`, term for term: the left gain is
+/// `sqrt(1 − pan) × level` and the right `sqrt(1 + pan) × level`, so centre is unity and not
+/// the constant-power `cos(π/4)` the mix channel forms — the two stages are two laws in V1
+/// and two kinds here (`SOUND-INV-013`). The level and the pan are read per frame from their
+/// ramps; the mute is applied at the frame its control lands on, and a muted frame is
+/// written as zero, as V1 fills a muted voice. Channel `0` takes the left gain and every
+/// further channel the right, which is correct for the one layout the port table admits.
+pub fn balance(_prepared: &PreparedNode, state: &mut NodeState, io: &mut NodeIo<'_>) {
+    let NodeState::Balance { muted } = state else {
+        return;
+    };
+    let level = ramp_of(io.ramps, 0);
+    let pan = ramp_of(io.ramps, 1);
+    let channels = io.channels.channels().max(1);
+    let frames = io.out.len() / channels;
+    let source = io.inputs[0];
+    let mut held = *muted;
+    let mut due = 0_usize;
+    for frame in 0..frames {
+        while let Some(control) = io.controls.get(due) {
+            if control.offset.as_usize() != frame {
+                break;
+            }
+            due += 1;
+            if matches!(control.control, BALANCE_MUTE) {
+                held = control.value.as_f32() > 0.0;
+            }
+        }
+        let volume = level.get(frame).or(level.last()).copied().unwrap_or(1.0);
+        let position = pan.get(frame).or(pan.last()).copied().unwrap_or(0.0);
+        let left = (1.0 - position).sqrt() * volume;
+        let right = (1.0 + position).sqrt() * volume;
+        for channel in 0..channels {
+            let index = frame * channels + channel;
+            let input = match source {
+                InputBuffer::Patched(source) => source.get(index).copied().unwrap_or(0.0),
+                InputBuffer::InPlace => io.out.get(index).copied().unwrap_or(0.0),
+                InputBuffer::Unpatched => 0.0,
+            };
+            let gain = if channel == 0 { left } else { right };
+            if let Some(sample) = io.out.get_mut(index) {
+                *sample = if held { 0.0 } else { input * gain };
+            }
+        }
+    }
+    *muted = held;
+}
+
+/// A trim (`SOUND-INV-032`): every sample times the level, read per frame from its ramp.
+///
+/// V1's master stage multiplies each side by the one master volume it read for the
+/// callback; this is the same multiplication, at quantum grain.
+pub fn trim(_prepared: &PreparedNode, _state: &mut NodeState, io: &mut NodeIo<'_>) {
+    let level = ramp_of(io.ramps, 0);
+    let channels = io.channels.channels().max(1);
+    let frames = io.out.len() / channels;
+    let source = io.inputs[0];
+    for frame in 0..frames {
+        let gain = level.get(frame).or(level.last()).copied().unwrap_or(1.0);
+        for channel in 0..channels {
+            let index = frame * channels + channel;
+            let input = match source {
+                InputBuffer::Patched(source) => source.get(index).copied().unwrap_or(0.0),
+                InputBuffer::InPlace => io.out.get(index).copied().unwrap_or(0.0),
+                InputBuffer::Unpatched => 0.0,
+            };
+            if let Some(sample) = io.out.get_mut(index) {
+                *sample = input * gain;
+            }
+        }
+    }
+}
+
+/// The knee of V1's soft clipper: a sample within it passes unchanged.
+const SOFT_CLIP_THRESHOLD: f32 = 0.8;
+
+/// V1's `soft_clip`, term for term (`SOUND-INV-032`): identity to the knee, and above it
+/// `knee + headroom × (1 − e^(−excess / headroom))` with the sample's sign, where the
+/// headroom is what remains to full scale. Computed here rather than called
+/// (`SOUND-INV-013`) and held to V1's own function by a bit-for-bit test.
+fn soft_clip_law(sample: f32) -> f32 {
+    if sample.abs() <= SOFT_CLIP_THRESHOLD {
+        return sample;
+    }
+    let abs_sample = sample.abs();
+    let excess = abs_sample - SOFT_CLIP_THRESHOLD;
+    let headroom = 1.0 - SOFT_CLIP_THRESHOLD;
+    let compressed = SOFT_CLIP_THRESHOLD + headroom * (1.0 - (-excess / headroom).exp());
+    if sample < 0.0 {
+        -compressed
+    } else {
+        compressed
+    }
+}
+
+/// V1's soft clipper as a node (`SOUND-INV-032`): every sample through V1's law.
+pub fn soft_clip(_prepared: &PreparedNode, _state: &mut NodeState, io: &mut NodeIo<'_>) {
+    let source = io.inputs[0];
+    for index in 0..io.out.len() {
+        let input = match source {
+            InputBuffer::Patched(source) => source.get(index).copied().unwrap_or(0.0),
+            InputBuffer::InPlace => io.out.get(index).copied().unwrap_or(0.0),
+            InputBuffer::Unpatched => 0.0,
+        };
+        if let Some(sample) = io.out.get_mut(index) {
+            *sample = soft_clip_law(input);
+        }
+    }
+}
+
+/// V1's output clamp as a node (`SOUND-INV-032`): every sample held to `[−1, 1]`, as V1's
+/// output stage holds each side after its master volume.
+pub fn hard_clamp(_prepared: &PreparedNode, _state: &mut NodeState, io: &mut NodeIo<'_>) {
+    let source = io.inputs[0];
+    for index in 0..io.out.len() {
+        let input = match source {
+            InputBuffer::Patched(source) => source.get(index).copied().unwrap_or(0.0),
+            InputBuffer::InPlace => io.out.get(index).copied().unwrap_or(0.0),
+            InputBuffer::Unpatched => 0.0,
+        };
+        if let Some(sample) = io.out.get_mut(index) {
+            *sample = input.clamp(-1.0, 1.0);
+        }
+    }
+}
+
 /// One voice instance's output added into the voice sum (`P06-S001`).
 ///
 /// The compiler inserts one of these per instance after the first, whose output is copied
@@ -2095,14 +2291,28 @@ pub fn copy(_prepared: &PreparedNode, state: &mut NodeState, io: &mut NodeIo<'_>
     // ADR-0041 clause 8: the one implicit conversion this phase inserts writes each
     // sample into **both channels of one wider region**, frame-major. At one channel it
     // is the plain copy it was, which is what a mono path renders through.
-    let channels = io.channels.channels();
+    //
+    // The source is either mono, widened into every channel, or already the output's own
+    // layout — a stereo instance output seeding its voice sum (`P08-S002`) — and copied
+    // verbatim. Decided from the lengths the arena bound rather than assumed mono: before
+    // this, a stereo voice-scope output was read as twice as many mono frames and its sum
+    // came out interleaved wrongly, which a probe of a two-voice stereo script showed.
+    let channels = io.channels.channels().max(1);
+    let source_channels = if source.len() == io.out.len() {
+        channels
+    } else {
+        1
+    };
+    let frames = source.len() / source_channels;
     let fading = matches!(state, NodeState::Sum { fade_total, .. } if *fade_total != 0)
         || !io.controls.is_empty();
     if !fading {
-        for (frame, input) in source.iter().enumerate() {
+        for frame in 0..frames {
             for channel in 0..channels {
+                let read = frame * source_channels + channel.min(source_channels - 1);
+                let input = source.get(read).copied().unwrap_or(0.0);
                 if let Some(sample) = io.out.get_mut(frame * channels + channel) {
-                    *sample = *input;
+                    *sample = input;
                 }
             }
         }
@@ -2122,12 +2332,13 @@ pub fn copy(_prepared: &PreparedNode, state: &mut NodeState, io: &mut NodeIo<'_>
         total: *fade_total,
     };
     let mut due = 0_usize;
-    for (frame, input) in source.iter().enumerate() {
+    for frame in 0..frames {
         fade.take(io.controls, &mut due, frame);
-        let scaled = fade.gain() * *input;
         for channel in 0..channels {
+            let read = frame * source_channels + channel.min(source_channels - 1);
+            let input = source.get(read).copied().unwrap_or(0.0);
             if let Some(sample) = io.out.get_mut(frame * channels + channel) {
-                *sample = scaled;
+                *sample = fade.gain() * input;
             }
         }
     }

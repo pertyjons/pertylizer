@@ -323,6 +323,37 @@ pub enum IrNodeKind {
     /// step passes the summed region through unchanged, so the arena may hand it that region
     /// and the pass costs nothing.
     Mix,
+    /// A balance stage (`P08-S002`, `SOUND-INV-032`): V1's per-voice **track** control as
+    /// one stage after the voice sum — one stereo signal scaled by a level and placed by a
+    /// balance pan whose centre is **unity**, `sqrt(1 − pan)` on the left and `sqrt(1 + pan)`
+    /// on the right, and silenced by a mute. The three controls have the mix channel's
+    /// shape; the pan law is the difference, and it is why this is its own kind rather than a
+    /// parameter of the channel (`SOUND-INV-013`).
+    Balance {
+        /// The authored level, a linear amplitude — V1's track volume, `0..1`.
+        level: Amplitude,
+        /// The authored balance, `−1` hard left through `0` centre to `1` hard right.
+        pan: crate::controller::BipolarLevel,
+        /// Whether the stage starts muted.
+        muted: bool,
+    },
+    /// A trim (`P08-S002`, `SOUND-INV-032`): one stereo signal scaled by one declared level,
+    /// a linear amplitude under the decibel law, quantum-rate and unsmoothed — V1's master
+    /// volume, which V1 applies as one gain per callback.
+    Trim {
+        /// The authored level.
+        level: Amplitude,
+    },
+    /// V1's channel-stage soft clipper as an explicit node (`P08-S002`, `SOUND-INV-032`):
+    /// every sample within `±0.8` passes unchanged and every sample beyond it approaches
+    /// full scale exponentially, per side, with no control. The lowerer places one after each
+    /// channel under its parity policy, because V1 clips each channel's post-fader signal
+    /// before summing it; an offline caller that declines the policy gets the unclipped sum.
+    SoftClip,
+    /// V1's output clamp as an explicit sink policy node (`P08-S002`, `SOUND-INV-032`):
+    /// every sample held to `[−1, 1]`, per side, with no control. Selected by the lowerer
+    /// for parity and declinable, so float headroom is preserved offline unless asked for.
+    HardClamp,
     /// A one-zone sampler on the prepared map/zone contract (ADR-0026).
     ///
     /// The map it consumes is one of the plan's, named by reference for the reason a node
@@ -631,6 +662,16 @@ pub mod parameters {
     pub const CHANNEL_PAN: ParameterId = ParameterId::new(1);
     /// A mix channel's mute, a thresholded boolean. Sample-positioned.
     pub const CHANNEL_MUTE: ParameterId = ParameterId::new(2);
+    /// A balance stage's level, a linear amplitude under the decibel law (`SOUND-INV-032`).
+    /// Quantum-rate.
+    pub const BALANCE_LEVEL: ParameterId = ParameterId::new(0);
+    /// A balance stage's pan, bipolar. Quantum-rate.
+    pub const BALANCE_PAN: ParameterId = ParameterId::new(1);
+    /// A balance stage's mute, a thresholded boolean. Sample-positioned.
+    pub const BALANCE_MUTE: ParameterId = ParameterId::new(2);
+    /// A trim's level, a linear amplitude under the decibel law (`SOUND-INV-032`).
+    /// Quantum-rate.
+    pub const TRIM_LEVEL: ParameterId = ParameterId::new(0);
 }
 
 /// One node in the IR.
@@ -1081,12 +1122,15 @@ pub enum IrError {
 
 /// What one execution scope declares, accumulated in one pass over a plan's nodes.
 ///
-/// `SOUND-INV-021`'s two report figures are both per scope, and computing either by asking
-/// each node about its scope is quadratic in a plan the profile admits.
+/// `SOUND-INV-021`'s two report figures are both per **island** — the nodes of one scope
+/// connected to each other by the plan's edges, which is what a note's binding reaches
+/// since `P08-S002` — and computing either by asking each node about its island is
+/// quadratic in a plan the profile admits.
 #[derive(Debug, Clone, Copy)]
 struct ScopeSummary {
+    /// The island's scope, through which its tuning is stated.
     scope: ExecutionScope,
-    /// Whether any node of the scope can be sent a note.
+    /// Whether any node of the island can be sent a note.
     playable: bool,
     /// How many pitch and velocity destinations its kinds declare, together.
     magnitudes: u32,
@@ -1459,9 +1503,9 @@ impl GraphIr {
     /// here would reject a plan that fits. An independent review found exactly that.
     ///
     /// Exactness comes from computing it over the same set admission binds magnitudes over:
-    /// **the scopes holding a playable node**, which one linear pass over the nodes
+    /// **the islands holding a playable node**, which one linear pass over the nodes
     /// establishes. A tuning declared for a scope no note reaches is never prepared and is not
-    /// charged, and a pitch destination outside those scopes is not a reference.
+    /// charged, and a pitch destination outside those islands is not a reference.
     /// `the_reported_tuning_charge_is_what_the_plan_holds` ties this figure to the tables the
     /// compiled plan actually carries, so the two cannot drift.
     ///
@@ -1471,7 +1515,7 @@ impl GraphIr {
     pub fn tuning_bytes(&self) -> u64 {
         let mut distinct: Vec<&PreparedTuning> = Vec::new();
         let mut references = 0_u64;
-        for summary in self.scope_summaries() {
+        for summary in self.island_summaries() {
             if !summary.playable || summary.pitch_destinations == 0 {
                 continue;
             }
@@ -1547,7 +1591,7 @@ impl GraphIr {
     /// Never below one: a plan with no playable node still writes a gate per note event it
     /// could never receive, and a scratch of zero would be a buffer nothing can be put in.
     pub fn max_writes_per_note(&self) -> WritesPerNote {
-        self.scope_summaries()
+        self.island_summaries()
             .into_iter()
             .filter(|summary| summary.playable)
             .map(|summary| WritesPerNote::with_magnitudes(summary.magnitudes))
@@ -1555,24 +1599,96 @@ impl GraphIr {
             .unwrap_or(WritesPerNote::GATE_ONLY)
     }
 
-    /// What each execution scope declares, in **one pass** over the plan's nodes.
+    /// Which island each node belongs to (`SOUND-INV-021`, `P08-S002`): the nodes of one
+    /// execution scope connected to one another by the plan's edges and modulation edges,
+    /// numbered by the position of the island's first node. An edge whose ends are in two
+    /// scopes joins nothing — a global modulator read by two voices leaves them two islands.
     ///
-    /// Both figures above are per scope, and the obvious form asks each node whether its scope
-    /// holds a playable node — a scan inside a scan, and then a third for the magnitudes. A
-    /// plan near `max_nodes` pays roughly `N²` node visits for that, twice per compile, and an
-    /// *oversized* plan pays it **before** the refusal that would have rejected it. A review of
-    /// the finished branch found it, and `compile.rs` already carries the same lesson about
-    /// edges.
+    /// A note's binding reaches its island: a whole project lowers every instrument's voice
+    /// chain into the one voice scope, and two instruments never share a cable inside it, so
+    /// each is its own island and a note for one moves nothing of the other's. Before this,
+    /// the binding reached the whole scope and a second instrument was refused there.
     ///
-    /// Linear instead: one descriptor per node, accumulated into an entry per scope. The
-    /// lookup is a scan of that list and stays constant because [`ExecutionScope`] is a closed
-    /// enum of five.
-    fn scope_summaries(&self) -> Vec<ScopeSummary> {
+    /// Union-find over the node table, near-linear in the nodes and edges, off the audio
+    /// thread; the lookup is by node identity.
+    pub(crate) fn note_islands(&self) -> std::collections::HashMap<NodeId, u32> {
+        let index: std::collections::HashMap<NodeId, usize> = self
+            .nodes
+            .iter()
+            .enumerate()
+            .map(|(position, node)| (node.id(), position))
+            .collect();
+        let mut parent: Vec<usize> = (0..self.nodes.len()).collect();
+        fn root(parent: &mut [usize], mut at: usize) -> usize {
+            while let Some(&up) = parent.get(at) {
+                if up == at {
+                    break;
+                }
+                // Path halving: point at the grandparent on the way up.
+                let grand = parent.get(up).copied().unwrap_or(up);
+                if let Some(slot) = parent.get_mut(at) {
+                    *slot = grand;
+                }
+                at = up;
+            }
+            at
+        }
+        let mut join = |a: NodeId, b: NodeId| {
+            let (Some(&a), Some(&b)) = (index.get(&a), index.get(&b)) else {
+                return;
+            };
+            let (Some(scope_a), Some(scope_b)) = (self.nodes.get(a), self.nodes.get(b)) else {
+                return;
+            };
+            if scope_a.scope() != scope_b.scope() {
+                return;
+            }
+            let (ra, rb) = (root(&mut parent, a), root(&mut parent, b));
+            if ra != rb {
+                // The lower position roots, so an island is numbered by its first node.
+                let (low, high) = if ra < rb { (ra, rb) } else { (rb, ra) };
+                if let Some(slot) = parent.get_mut(high) {
+                    *slot = low;
+                }
+            }
+        };
+        for edge in &self.edges {
+            join(edge.from().0, edge.to().0);
+        }
+        for modulation in &self.modulations {
+            join(modulation.source().0, modulation.target().0);
+        }
+        self.nodes
+            .iter()
+            .enumerate()
+            .map(|(position, node)| {
+                let island = root(&mut parent, position);
+                (node.id(), u32::try_from(island).unwrap_or(u32::MAX))
+            })
+            .collect()
+    }
+
+    /// What each island declares, in **one pass** over the plan's nodes.
+    ///
+    /// Both figures above are per island, and the obvious form asks each node whether its
+    /// island holds a playable node — a scan inside a scan, and then a third for the
+    /// magnitudes. A plan near `max_nodes` pays roughly `N²` node visits for that, twice per
+    /// compile, and an *oversized* plan pays it **before** the refusal that would have
+    /// rejected it. A review of the finished branch found it, and `compile.rs` already
+    /// carries the same lesson about edges.
+    ///
+    /// Linear instead: one descriptor per node, accumulated into an entry per island, found
+    /// through a map from the island's number.
+    fn island_summaries(&self) -> Vec<ScopeSummary> {
+        let islands = self.note_islands();
         let mut summaries: Vec<ScopeSummary> = Vec::new();
+        let mut position_of: std::collections::HashMap<u32, usize> =
+            std::collections::HashMap::new();
         for node in &self.nodes {
             let scope = node.scope();
-            let index = match summaries.iter().position(|held| held.scope == scope) {
-                Some(index) => index,
+            let island = islands.get(&node.id()).copied().unwrap_or(u32::MAX);
+            let index = match position_of.get(&island) {
+                Some(index) => *index,
                 None => {
                     summaries.push(ScopeSummary {
                         scope,
@@ -1580,6 +1696,7 @@ impl GraphIr {
                         magnitudes: 0,
                         pitch_destinations: 0,
                     });
+                    position_of.insert(island, summaries.len() - 1);
                     summaries.len() - 1
                 }
             };

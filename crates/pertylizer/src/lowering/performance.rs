@@ -68,8 +68,8 @@ use synth_engine_v2::ir::{NodeId, ParameterId, parameters};
 use synth_engine_v2::offline::OfflineEvent;
 use synth_engine_v2::plan::{CompiledPlan, ParameterSlot};
 use synth_engine_v2::quantities::{
-    CutoffFrequency, EventCount, KeyIdentity, NormalizedLevel, NoteVelocity, ParameterValue,
-    Resonance, SampleRate, Seconds,
+    CutoffFrequency, EventCount, HeldNoteCount, KeyIdentity, NormalizedLevel, NoteVelocity,
+    ParameterValue, Resonance, SampleRate, Seconds,
 };
 use synth_engine_v2::schedule::CompiledPayload;
 use synth_engine_v2::tempo::{Bpm as V2Bpm, MusicalTick, TempoChange as V2TempoChange, TempoMap};
@@ -120,6 +120,8 @@ impl LoweredPerformance {
 struct Span {
     start: u64,
     end: u64,
+    /// The track whose placement places it, whose control V1 applies to its voice.
+    track: TrackId,
     pattern: PatternId,
     note: synth_sequencer::NoteId,
     /// The saved pitch, transposed by its placement, as a V2 key.
@@ -128,7 +130,8 @@ struct Span {
     velocity: NoteVelocity,
 }
 
-/// Every note this instrument's tracks place, in absolute song ticks.
+/// Every note this instrument's tracks place, in absolute song ticks, refusing two on one
+/// gate at once.
 ///
 /// Shared by the event lowering and the event-peak calculation, so the two cannot disagree
 /// about which notes the plan contains — the peak is what admission is told, and telling it
@@ -137,6 +140,35 @@ struct Span {
 ///
 /// Returns `None` when a refusal was recorded.
 fn note_spans(
+    instrument: InstrumentId,
+    song: &Song,
+    diagnostics: &mut Vec<LoweringDiagnostic>,
+) -> Option<Vec<Span>> {
+    let spans = note_spans_unchecked(instrument, song, diagnostics)?;
+    // One gate, so one note at a time. Sorted by start, any span beginning before its
+    // predecessor ends is an overlap.
+    for window in spans.windows(2) {
+        if window[1].start < window[0].end {
+            diagnostics.push(LoweringDiagnostic::refused(
+                ProjectSubject::Note {
+                    pattern: window[1].pattern,
+                    note: window[1].note,
+                },
+                LoweringReason::OwnedByLaterPhase {
+                    capability: "two notes sounding at once through one gate",
+                    owner: "Phase 6, with voice allocation",
+                },
+            ));
+            return None;
+        }
+    }
+    Some(spans)
+}
+
+/// [`note_spans`] before the one-gate rule: what the instrument's playing tracks are read
+/// from (`P08-S002`), so a project refused for a shared instrument's differing track
+/// controls is named for that rather than for the overlap the sharing usually brings.
+fn note_spans_unchecked(
     instrument: InstrumentId,
     song: &Song,
     diagnostics: &mut Vec<LoweringDiagnostic>,
@@ -235,15 +267,13 @@ fn note_spans(
             ));
             return None;
         }
-        if placement.gain != synth_core::Gain::UNITY {
-            diagnostics.push(LoweringDiagnostic::unrepresented(
-                subject(),
-                LoweringReason::OwnedByLaterPhase {
-                    capability: "a per-placement gain",
-                    owner: "Phase 8",
-                },
-            ));
-        }
+        // A placement's `gain` is persisted and settable, and **read by nothing that
+        // renders**: neither the sequencer's event collection nor either engine's mixing
+        // stage consults it, which `placement_gain_is_inert_in_v1` in
+        // `offline_instrument_settings` measures as two identical renders. Inert in V1, so
+        // it lowers to nothing and is not a mark; an earlier revision reported it as a stage
+        // V2 lacked, which V1 lacks too. The test fails the day someone implements it.
+        let _ = placement.gain;
         // A length override changes the **note set**, not the level: shorter than its pattern
         // clips the onsets past it, and longer under `Repeat` emits further passes. Lowering
         // the source notes exactly once would sound a stream V1 never plays, so it is refused
@@ -491,6 +521,7 @@ fn note_spans(
             spans.push(Span {
                 start,
                 end,
+                track: placement.track_id,
                 pattern: pattern.id,
                 note: note.id,
                 key,
@@ -499,33 +530,234 @@ fn note_spans(
         }
     }
 
-    // One gate, so one note at a time. Sorted by start, any span beginning before its
-    // predecessor ends is an overlap.
     spans.sort_by_key(|span| (span.start, span.end));
-    for window in spans.windows(2) {
-        if window[1].start < window[0].end {
-            diagnostics.push(LoweringDiagnostic::refused(
-                ProjectSubject::Note {
-                    pattern: window[1].pattern,
-                    note: window[1].note,
-                },
-                LoweringReason::OwnedByLaterPhase {
-                    capability: "two notes sounding at once through one gate",
-                    owner: "Phase 6, with voice allocation",
-                },
-            ));
-            return None;
-        }
-    }
     Some(spans)
 }
 
-/// One lane V1 would run on this instrument, with the ticks it is active over.
+/// The tracks that play one instrument and the balance stage they share (`P08-S002`).
+///
+/// V1 applies a track's volume, pan and audibility to every voice the track plays, so a
+/// track that places no audible note has no voice for its control to reach and is inert;
+/// the tracks that matter are exactly those [`note_spans`] takes a span from. One such track
+/// owns the instrument's stage. Two or more with **equal** static controls are one stage
+/// too — every voice gets the same gains — but a track lane on any of them would then be a
+/// per-voice difference this plan cannot carry, which [`active_lanes`] refuses. Two with
+/// differing controls are V1's per-voice gain and are refused here by name, until ADR-0034
+/// decides what a track, a source and a channel are to each other.
+#[derive(Debug, Clone, PartialEq)]
+#[must_use]
+pub(super) struct PlayingTracks {
+    /// Every track a span comes from, in first-span order.
+    pub tracks: Vec<TrackId>,
+    /// The stage they all lower to.
+    pub stage: super::graph::TrackStage,
+}
+
+/// The playing tracks of `instrument`, `None` where it plays nothing, or `Err` after a
+/// refusal was recorded.
+///
+/// The spans are walked with their own diagnostics discarded: a refusal in that walk is
+/// the performance lowering's to name, once, and an instrument whose walk refuses plays
+/// nothing here.
+pub(super) fn playing_tracks(
+    instrument: InstrumentId,
+    song: &Song,
+    diagnostics: &mut Vec<LoweringDiagnostic>,
+) -> Result<Option<PlayingTracks>, ()> {
+    let mut ignored = Vec::new();
+    let Some(spans) = note_spans_unchecked(instrument, song, &mut ignored) else {
+        return Ok(None);
+    };
+    let mut tracks: Vec<TrackId> = Vec::new();
+    for span in &spans {
+        if !tracks.contains(&span.track) {
+            tracks.push(span.track);
+        }
+    }
+    let Some(first) = tracks.first().and_then(|id| song.track(*id)) else {
+        return Ok(None);
+    };
+    for other in tracks.iter().skip(1).filter_map(|id| song.track(*id)) {
+        if other.volume != first.volume || other.pan != first.pan {
+            diagnostics.push(LoweringDiagnostic::refused(
+                ProjectSubject::Track {
+                    track: other.id,
+                    name: other.name.clone(),
+                },
+                LoweringReason::OwnedByLaterPhase {
+                    capability: "an instrument shared by two tracks with differing track \
+                                 controls, which V1 applies per voice",
+                    owner: "ADR-0034, with the track, source and channel ownership model",
+                },
+            ));
+            return Err(());
+        }
+    }
+    let subject = || ProjectSubject::Track {
+        track: first.id,
+        name: first.name.clone(),
+    };
+    // V1's own reads: the volume is a `NormalizedValue`, so within `0..1` by its type, and
+    // the pan a `BipolarValue`; only a value that is not a number can fail either, and it is
+    // refused by name rather than substituted.
+    let level = match synth_engine_v2::quantities::Amplitude::new(first.volume.as_f32()) {
+        Ok(level) => level,
+        Err(error) => {
+            diagnostics.push(LoweringDiagnostic::refused(
+                subject(),
+                LoweringReason::UnsupportedParameterValue {
+                    value: error.to_string(),
+                },
+            ));
+            return Err(());
+        }
+    };
+    let pan = match synth_engine_v2::controller::BipolarLevel::new(first.pan.as_f32()) {
+        Ok(pan) => pan,
+        Err(error) => {
+            diagnostics.push(LoweringDiagnostic::refused(
+                subject(),
+                LoweringReason::UnsupportedParameterValue {
+                    value: error.to_string(),
+                },
+            ));
+            return Err(());
+        }
+    };
+    Ok(Some(PlayingTracks {
+        tracks,
+        stage: super::graph::TrackStage {
+            level,
+            pan,
+            // A track a span comes from passed V1's mute and solo filters, so it is audible.
+            muted: false,
+        },
+    }))
+}
+
+/// The most notes the arrangement holds open at once across every instrument, floored at
+/// one (`P08-S002`).
+///
+/// What the plan's one compiled producer declares, and so how many times the voice scope
+/// is instantiated. Counted over the **sample positions** the events are emitted at, through
+/// the same tempo map, not over ticks: two ticks can round to one sample at a low rate and a
+/// high tempo, and what the minter sees is the sample. A note ending at the sample another
+/// begins at is counted as **overlapping**: the events at one sample keep the order they
+/// were emitted in — one instrument's edges before the next's — so a note-on can be
+/// presented before the release that would have freed an index, and the declaration is a
+/// bound admission holds the stream to; one voice too generous costs an idle instance where
+/// one too tight refuses the stream. An earlier revision ordered every release before every
+/// note-on at one sample instead, which put a note whose two edges round to one sample after
+/// its own release and aborted the render; the revision after it counted in ticks, which
+/// missed two ticks rounding to one sample across two instruments — an independent read
+/// found each. Per-instrument overlap is still refused by [`note_spans`]. A tempo map that
+/// cannot be built, or a position that does not fit, leaves the floor; the performance
+/// lowering refuses both by name.
+pub(super) fn peak_concurrency(
+    instruments: &[InstrumentId],
+    song: &Song,
+    sample_rate: SampleRate,
+) -> HeldNoteCount {
+    let mut ignored = Vec::new();
+    let Ok(tempo) = lower_tempo(song, sample_rate, &mut ignored) else {
+        return HeldNoteCount::measured(1);
+    };
+    let mut edges: Vec<(u64, bool)> = Vec::new();
+    for instrument in instruments {
+        for span in note_spans(*instrument, song, &mut ignored).unwrap_or_default() {
+            for (tick, on) in [(span.start, true), (span.end, false)] {
+                let Ok(position) = tempo.position_of(MusicalTick::new(tick)) else {
+                    return HeldNoteCount::measured(1);
+                };
+                edges.push((position.as_u64(), on));
+            }
+        }
+    }
+    // Onsets before releases at one sample, so a note ending where another begins counts.
+    edges.sort_by_key(|(frame, on)| (*frame, !*on));
+    let (mut open, mut peak) = (0_u32, 1_u32);
+    for (_, on) in edges {
+        if on {
+            open = open.saturating_add(1);
+            peak = peak.max(open);
+        } else {
+            open = open.saturating_sub(1);
+        }
+    }
+    HeldNoteCount::measured(peak)
+}
+
+/// What one lane writes, once its target is resolved (`P08-S002`).
+///
+/// V1's targets, each keyed as V1 keys its dedup and its override maps: an instrument's
+/// parameter, a track's control, or the master volume.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LaneTarget {
+    /// An instrument's channel state or one of its module parameters.
+    Instrument(InstrumentId, AutoInstrumentParam),
+    /// A track's fader, pan or mute, applied to the voices the track plays.
+    Track(TrackId, TrackParam),
+    /// The project's master volume.
+    Master,
+}
+
+impl LaneTarget {
+    /// V1's label for the target, for a diagnostic.
+    fn display_name(self) -> String {
+        match self {
+            Self::Instrument(instrument, param) => {
+                format!("Inst {} {}", instrument.as_u64(), param.display_name())
+            }
+            Self::Track(track, param) => format!("Track {} {}", track.0, param.display_name()),
+            Self::Master => "Master Volume".to_owned(),
+        }
+    }
+}
+
+/// Which instrument a playing track's stage belongs to (`P08-S002`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum TrackOwner {
+    /// The one track that plays the instrument, whose lanes write its balance stage.
+    Owned(InstrumentId),
+    /// One of several tracks playing the instrument with equal controls: a lane on it would
+    /// be a per-voice difference, refused until ADR-0034.
+    Shared(InstrumentId),
+    /// A track that plays the instrument on a plan lowered **without** its balance stage —
+    /// the one-instrument form — so a lane on it has nowhere to land and is refused rather
+    /// than dropped as inert. An independent read found it dropped.
+    Unstaged(InstrumentId),
+}
+
+/// Where an instrument lane lands in one plan (`P08-S002`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum LaneLanding {
+    /// On a declared control the plan holds.
+    Lowered,
+    /// Nowhere in V1 either: no module of the type, so the lane is V1's no-op.
+    Inert,
+    /// On a stage V1 has and this plan was lowered without — the instrument's channel in
+    /// the one-instrument form — so the lane is refused rather than dropped.
+    Unstaged,
+}
+
+/// What the lanes may address in one plan (`P08-S002`).
+pub(super) struct LaneScope<'a> {
+    /// Where an instrument's lane on a parameter lands: `None` for an instrument the
+    /// project does not hold, whose lane V1's `find` never resolves.
+    pub declares: &'a dyn Fn(InstrumentId, AutoInstrumentParam) -> Option<LaneLanding>,
+    /// Every track that plays a note, and whose stage it writes. A track absent here plays
+    /// nothing, so V1 writes its control slot and no voice reads it: inert.
+    pub tracks: Vec<(TrackId, TrackOwner)>,
+    /// Whether the plan holds a master trim for a master volume lane to write.
+    pub master: bool,
+}
+
+/// One lane V1 would run, with the ticks it is active over.
 struct ActiveLane<'a> {
     lane: &'a AutomationLane,
     placement: &'a PatternPlacement,
     pattern: &'a Pattern,
-    param: AutoInstrumentParam,
+    target: LaneTarget,
     /// The first absolute tick V1 reads the lane at.
     start: u64,
     /// One past the last: `pattern_tick_at` resolves no tick from here on.
@@ -537,8 +769,8 @@ struct ActiveLane<'a> {
 struct LaneWrite {
     /// The plan position of the tick V1 emits it at.
     position: u64,
-    param: AutoInstrumentParam,
-    /// The lane's own value, before V1's descriptor denormalizes it.
+    target: LaneTarget,
+    /// The lane's own value, before V1 denormalizes it.
     value: NormalizedValue,
     /// The pattern whose lane emitted it, for a diagnostic.
     pattern: PatternId,
@@ -557,40 +789,40 @@ struct LaneWrite {
 /// found the walk unbounded.
 const MAX_AUTOMATION_TICKS: u64 = 1 << 25;
 
-/// Every lane V1 runs on this instrument's module parameters, over every placement.
+/// Every lane V1 runs, over every placement, classified against the plan's scope.
 ///
-/// Walked over **every** placement rather than this instrument's audible ones, because V1
-/// runs a pattern's automation whether or not its track's notes are audible — a muted host
-/// track still carries its fades — and a lane names its instrument itself, so a placement on
-/// another instrument's track can still write this one's filter. What the walk classifies:
+/// Walked over **every** placement rather than the audible ones, because V1 runs a pattern's
+/// automation whether or not its track's notes are audible — a muted host track still
+/// carries its fades — and a lane names its target itself, so a placement anywhere can
+/// write anything. What the walk classifies (`P08-S002`):
 ///
-/// - an instrument lane on one of the six module parameters, for **this** instrument, is
-///   lowered; one on `Volume` or `Pan` is instrument-level channel state Phase 8 owns and is
-///   refused;
-/// - an instrument or module lane for **another** instrument is not this render's, exactly as
-///   that instrument's notes are not, and is skipped;
-/// - a module-addressed lane for this instrument names a module positionally and denormalizes
-///   through the descriptor `apply_module_param_override` reads; it is refused for a later
-///   slice of this phase;
-/// - a track lane over the fader, pan or mute is Phase 8's; a track pitch lane is a
-///   channel-scoped pitch offset the controller layer owns; a global master-volume lane is
-///   Phase 8's. All three are refused whatever track or instrument they touch, since the
-///   lowerer sees one instrument and cannot tell whether that touch reaches it.
+/// - an instrument lane on one of the six module parameters lowers to its module's control,
+///   and one on `Volume` or `Pan` to the instrument's channel — V1 sets the instrument's
+///   own fader and pan from them, outside its override layer, so neither is restored at the
+///   song's end; a lane naming an instrument the project does not hold is V1's failed
+///   `find` and lowers to nothing, as does one on a parameter no module of the type declares;
+/// - a module-addressed lane names a module positionally and denormalizes through the
+///   descriptor `apply_module_param_override` reads; it is refused for a later slice of
+///   Phase 7;
+/// - a track lane over the fader, pan or mute lowers to the balance stage of the instrument
+///   the track alone plays; on a track that plays nothing it is V1's write to a slot no
+///   voice reads and lowers to nothing; on a track sharing its instrument it is a per-voice
+///   difference refused until ADR-0034; a track pitch lane is a channel-scoped pitch offset
+///   the controller layer owns. A lane hosted by its placement resolves to the placement's
+///   track, as V1's placement walk resolves it;
+/// - a master volume lane lowers to the master trim where the plan holds one.
 ///
 /// A lane with no points is not automation: `value_at` returns `None` for it and V1 emits
 /// nothing. A placement that is never active — a zero-length pattern, or a zero-length
 /// override — is skipped whatever it holds, because `pattern_tick_at` resolves no tick in it.
-/// A lane on a parameter `declared` answers `false` for — no module of its type in the patch
-/// — is V1's no-op, `apply_normalized_override` returning before it writes, and is dropped
-/// here, **before** the conflict check below: two inert lanes conflict over nothing. An
-/// independent read found them refused.
+/// The inert cases are dropped **before** the conflict check below: two inert lanes conflict
+/// over nothing. An independent read found them refused.
 ///
 /// Returns `None` when a refusal was recorded, including two lanes writing one target over
 /// one tick.
 fn active_lanes<'a>(
-    instrument: InstrumentId,
+    scope: &LaneScope<'_>,
     song: &'a Song,
-    declared: &dyn Fn(AutoInstrumentParam) -> bool,
     diagnostics: &mut Vec<LoweringDiagnostic>,
 ) -> Option<Vec<ActiveLane<'a>>> {
     let mut lanes = Vec::new();
@@ -620,42 +852,48 @@ fn active_lanes<'a>(
             if lane.is_empty() {
                 continue;
             }
-            let reason = match &lane.target {
+            // V1's own resolution of a host-track lane: the placement's track.
+            let Some(resolved) = lane.target.resolved(Some(placement.track_id)) else {
+                continue;
+            };
+            let reason = match &resolved {
                 AutomationTarget::Instrument {
                     instrument: target,
                     param,
                 } => {
-                    if *target != instrument {
+                    let Some(landing) = (scope.declares)(*target, *param) else {
                         continue;
-                    }
-                    match param {
-                        AutoInstrumentParam::Volume | AutoInstrumentParam::Pan => {
-                            LoweringReason::OwnedByLaterPhase {
-                                capability: "an instrument volume or pan automation lane, which \
-                                             V1 applies to the instrument's channel",
-                                owner: "Phase 8, with the mixer model",
-                            }
+                    };
+                    match landing {
+                        LaneLanding::Inert => continue,
+                        LaneLanding::Unstaged => {
+                            diagnostics.push(LoweringDiagnostic::refused(
+                                subject(),
+                                LoweringReason::OwnedByLaterPhase {
+                                    capability: "an instrument volume or pan lane, on a plan \
+                                                 lowered without the instrument's channel",
+                                    owner: "the whole-project lowering, which places the \
+                                            channel",
+                                },
+                            ));
+                            return None;
                         }
-                        lowered => {
-                            if !declared(*lowered) {
-                                continue;
-                            }
-                            lanes.push(ActiveLane {
-                                lane,
-                                placement,
-                                pattern,
-                                param: *lowered,
-                                start,
-                                end,
-                            });
-                            continue;
-                        }
+                        LaneLanding::Lowered => {}
                     }
+                    lanes.push(ActiveLane {
+                        lane,
+                        placement,
+                        pattern,
+                        target: LaneTarget::Instrument(*target, *param),
+                        start,
+                        end,
+                    });
+                    continue;
                 }
                 AutomationTarget::Module {
                     instrument: target, ..
                 } => {
-                    if *target != instrument {
+                    if (scope.declares)(*target, AutoInstrumentParam::Volume).is_none() {
                         continue;
                     }
                     LoweringReason::OwnedByLaterPhase {
@@ -665,23 +903,64 @@ fn active_lanes<'a>(
                         owner: "Phase 7, in a later slice",
                     }
                 }
-                AutomationTarget::Track { param, .. } => match param {
-                    TrackParam::Volume | TrackParam::Pan | TrackParam::Mute => {
-                        LoweringReason::OwnedByLaterPhase {
-                            capability: "a track automation lane over the fader, pan or mute",
-                            owner: "Phase 8, with the mixer and bus model",
+                AutomationTarget::Track {
+                    track: Some(track),
+                    param,
+                } => {
+                    let Some((_, owner)) = scope.tracks.iter().find(|(id, _)| id == track) else {
+                        continue;
+                    };
+                    match (param, owner) {
+                        (TrackParam::Pitch, _) => LoweringReason::OwnedByLaterPhase {
+                            capability: "a track pitch lane, a channel-scoped pitch offset \
+                                         applied to every voice the track plays",
+                            owner: "Phase 7, with the controller layer",
+                        },
+                        (_, TrackOwner::Shared(_)) => LoweringReason::OwnedByLaterPhase {
+                            capability: "a track lane on an instrument two tracks share, which \
+                                         V1 applies to that track's voices alone",
+                            owner: "ADR-0034, with the track, source and channel ownership \
+                                    model",
+                        },
+                        (_, TrackOwner::Unstaged(_)) => LoweringReason::OwnedByLaterPhase {
+                            capability: "a track lane over the fader, pan or mute, on a plan \
+                                         lowered without the track's balance stage",
+                            owner: "the whole-project lowering, which places the stage",
+                        },
+                        (_, TrackOwner::Owned(_)) => {
+                            lanes.push(ActiveLane {
+                                lane,
+                                placement,
+                                pattern,
+                                target: LaneTarget::Track(*track, *param),
+                                start,
+                                end,
+                            });
+                            continue;
                         }
                     }
-                    TrackParam::Pitch => LoweringReason::OwnedByLaterPhase {
-                        capability: "a track pitch lane, a channel-scoped pitch offset applied \
-                                     to every voice the track plays",
-                        owner: "Phase 7, with the controller layer",
-                    },
+                }
+                // Unreachable after `resolved` with a host: kept so a shape that escapes it
+                // is refused rather than silently dropped.
+                AutomationTarget::Track { track: None, .. } => LoweringReason::OwnedByLaterPhase {
+                    capability: "a track lane that resolved to no track",
+                    owner: "the sequencer's placement walk",
                 },
                 AutomationTarget::Global(GlobalParam::MasterVolume) => {
+                    if scope.master {
+                        lanes.push(ActiveLane {
+                            lane,
+                            placement,
+                            pattern,
+                            target: LaneTarget::Master,
+                            start,
+                            end,
+                        });
+                        continue;
+                    }
                     LoweringReason::OwnedByLaterPhase {
-                        capability: "a master volume automation lane",
-                        owner: "Phase 8, with the mixer model",
+                        capability: "a master volume lane, on a plan lowered without a master",
+                        owner: "the whole-project lowering, which places the master trim",
                     }
                 }
             };
@@ -697,7 +976,7 @@ fn active_lanes<'a>(
     for (index, second) in lanes.iter().enumerate() {
         let conflicting = lanes[..index]
             .iter()
-            .find(|first| first.param == second.param && second.start < first.end);
+            .find(|first| first.target == second.target && second.start < first.end);
         if let Some(first) = conflicting {
             diagnostics.push(LoweringDiagnostic::refused(
                 ProjectSubject::Pattern {
@@ -705,7 +984,7 @@ fn active_lanes<'a>(
                     name: second.pattern.name.clone(),
                 },
                 LoweringReason::ConflictingWriters {
-                    target: second.param.display_name().to_owned(),
+                    target: second.target.display_name(),
                     first: first.pattern.id,
                     second: second.pattern.id,
                 },
@@ -755,7 +1034,7 @@ fn placed_writes(
 
     let mut writes = Vec::new();
     // Per target: the last emitted value, and the last placed write's position and lane.
-    let mut last: Vec<(AutoInstrumentParam, f32, u64, usize)> = Vec::new();
+    let mut last: Vec<(LaneTarget, f32, u64, usize)> = Vec::new();
     for (writer, lane) in lanes.iter().enumerate() {
         for tick in lane.start..lane.end {
             let Some(pattern_tick) = lane
@@ -767,7 +1046,7 @@ fn placed_writes(
             let Some(value) = lane.lane.value_at(pattern_tick) else {
                 continue;
             };
-            let previous = last.iter_mut().find(|(param, ..)| *param == lane.param);
+            let previous = last.iter_mut().find(|(target, ..)| *target == lane.target);
             let changed = previous.as_ref().is_none_or(|(_, emitted, ..)| {
                 (value.as_f32() - *emitted).abs() > AUTOMATION_DEDUP_THRESHOLD
             });
@@ -798,7 +1077,7 @@ fn placed_writes(
                                 name: lane.pattern.name.clone(),
                             },
                             LoweringReason::ConflictingWriters {
-                                target: lane.param.display_name().to_owned(),
+                                target: lane.target.display_name(),
                                 first: first.pattern.id,
                                 second: lane.pattern.id,
                             },
@@ -808,11 +1087,11 @@ fn placed_writes(
                     *placed = position;
                     *by = writer;
                 }
-                None => last.push((lane.param, value.as_f32(), position, writer)),
+                None => last.push((lane.target, value.as_f32(), position, writer)),
             }
             writes.push(LaneWrite {
                 position,
-                param: lane.param,
+                target: lane.target,
                 value,
                 pattern: lane.pattern.id,
             });
@@ -823,19 +1102,37 @@ fn placed_writes(
     Ok(writes)
 }
 
-/// Where V1's instrument automation lands in one lowered graph (`P07-S002b`).
+/// Whether a lane's write is cleared where V1's transport stops.
+///
+/// V1 keeps two kinds of automation state: the transient overrides — a module parameter's,
+/// and the track control map — which `stop` clears, so the tail after the song hears the
+/// authored values; and the instrument's own fader and pan and the master volume, which a
+/// lane **sets** and nothing restores.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Restore {
+    AtSongEnd,
+    Never,
+}
+
+/// Where V1's automation lands in one lowered instrument (`P07-S002b`, `P08-S002`).
 ///
 /// V1's `apply_normalized_override` finds the **first** module of the parameter's type in the
 /// instrument's graph — a `BTreeMap` keyed by `ModuleId`, so the lowest identity of that type
 /// — and denormalizes the lane's value through that module's own descriptor. Both are
 /// resolved once here, from the identities the graph was lowered through and from V1's own
 /// module factory, and read per write. A missing module is V1's no-op: the lane is inert
-/// there and lowers to nothing here.
+/// there and lowers to nothing here. The instrument's channel and its balance stage, where
+/// the graph lowering inserted them, are where its volume and pan lanes and its playing
+/// track's lanes land.
 #[derive(Debug)]
 #[must_use]
 pub struct AutomationTargets {
     filter: Option<(NodeId, ModuleDescriptor)>,
     envelope: Option<(NodeId, ModuleDescriptor)>,
+    /// The instrument's mix channel, when one was inserted.
+    channel: Option<NodeId>,
+    /// The instrument's balance stage and the tracks whose control it carries.
+    balance: Option<(NodeId, Vec<TrackId>)>,
 }
 
 impl AutomationTargets {
@@ -854,17 +1151,48 @@ impl AutomationTargets {
         Self {
             filter: first(ModuleType::Filter),
             envelope: first(ModuleType::Envelope),
+            channel: None,
+            balance: None,
         }
     }
 
-    /// Whether V1 would find a module for this parameter in the lowered graph.
-    fn declares(&self, param: AutoInstrumentParam) -> bool {
-        crate::mod_grid_build::instrument_param_module(param).is_some_and(|(kind, _, _)| match kind
-        {
-            ModuleType::Filter => self.filter.is_some(),
-            ModuleType::Envelope => self.envelope.is_some(),
-            _ => false,
-        })
+    /// With the instrument's mix channel, where its volume and pan lanes land.
+    pub fn with_channel(mut self, channel: NodeId) -> Self {
+        self.channel = Some(channel);
+        self
+    }
+
+    /// With the instrument's balance stage and the tracks it carries the control of.
+    pub fn with_balance(mut self, balance: NodeId, tracks: Vec<TrackId>) -> Self {
+        self.balance = Some((balance, tracks));
+        self
+    }
+
+    /// Where V1's write to this parameter lands in the lowered graph.
+    fn declares(&self, param: AutoInstrumentParam) -> LaneLanding {
+        match param {
+            AutoInstrumentParam::Volume | AutoInstrumentParam::Pan => {
+                if self.channel.is_some() {
+                    LaneLanding::Lowered
+                } else {
+                    LaneLanding::Unstaged
+                }
+            }
+            _ => {
+                let declared = crate::mod_grid_build::instrument_param_module(param).is_some_and(
+                    |(kind, _, _)| match kind {
+                        ModuleType::Filter => self.filter.is_some(),
+                        ModuleType::Envelope => self.envelope.is_some(),
+                        _ => false,
+                    },
+                );
+                if declared {
+                    LaneLanding::Lowered
+                } else {
+                    LaneLanding::Inert
+                }
+            }
+        }
     }
 
     /// Whether V1 would find a module for this parameter, from the saved modules alone.
@@ -872,13 +1200,32 @@ impl AutomationTargets {
     /// The peak is counted before the graph is lowered, so it cannot ask the resolved
     /// targets; it asks the saved patch the same question. A module of the type that later
     /// fails to lower refuses the whole lowering, so the two answers cannot differ for a plan
-    /// that renders.
-    fn declared_in(param: AutoInstrumentParam, modules: &[ModuleState]) -> bool {
-        crate::mod_grid_build::instrument_param_module(param)
-            .is_some_and(|(kind, _, _)| modules.iter().any(|module| module.module_type == kind))
+    /// that renders. The channel is always inserted for a project's instrument, so its two
+    /// lanes always land.
+    fn declared_in(param: AutoInstrumentParam, modules: &[ModuleState]) -> LaneLanding {
+        let declared =
+            match param {
+                AutoInstrumentParam::Volume | AutoInstrumentParam::Pan => true,
+                _ => crate::mod_grid_build::instrument_param_module(param).is_some_and(
+                    |(kind, _, _)| modules.iter().any(|module| module.module_type == kind),
+                ),
+            };
+        if declared {
+            LaneLanding::Lowered
+        } else {
+            LaneLanding::Inert
+        }
     }
 
-    /// The write V1's emission becomes: the node, the control, and the value in its unit.
+    /// Whether this instrument's balance stage carries the track's control.
+    fn carries(&self, track: TrackId) -> bool {
+        self.balance
+            .as_ref()
+            .is_some_and(|(_, tracks)| tracks.contains(&track))
+    }
+
+    /// The write V1's emission becomes: the node, the control, the value in its unit, and
+    /// whether V1's transport stop restores it.
     ///
     /// `Ok(None)` is V1's no-op — no module of the type — and `Err` names a value the
     /// control's unit refuses, which the descriptor's clamped range makes unreachable and
@@ -887,7 +1234,40 @@ impl AutomationTargets {
         &self,
         param: AutoInstrumentParam,
         value: NormalizedValue,
-    ) -> Result<Option<(NodeId, ParameterId, ParameterValue)>, String> {
+    ) -> Result<Option<(NodeId, ParameterId, ParameterValue, Restore)>, String> {
+        // V1's channel state, set directly: `set_volume(Gain::new(value))` and
+        // `set_pan(BipolarValue::new(value × 2 − 1))`, and never restored.
+        match param {
+            AutoInstrumentParam::Volume => {
+                let Some(channel) = self.channel else {
+                    return Ok(None);
+                };
+                let level = synth_engine_v2::quantities::Amplitude::new(value.as_f32())
+                    .map_err(|error| error.to_string())?;
+                return Ok(Some((
+                    channel,
+                    parameters::CHANNEL_FADER,
+                    ParameterValue::from_amplitude(level),
+                    Restore::Never,
+                )));
+            }
+            AutoInstrumentParam::Pan => {
+                let Some(channel) = self.channel else {
+                    return Ok(None);
+                };
+                let pan = synth_engine_v2::controller::BipolarLevel::new(
+                    BipolarValue::new(value.as_f32() * 2.0 - 1.0).as_f32(),
+                )
+                .map_err(|error| error.to_string())?;
+                return Ok(Some((
+                    channel,
+                    parameters::CHANNEL_PAN,
+                    ParameterValue::from_bipolar(pan),
+                    Restore::Never,
+                )));
+            }
+            _ => {}
+        }
         let Some((kind, _, key)) = crate::mod_grid_build::instrument_param_module(param) else {
             return Ok(None);
         };
@@ -942,53 +1322,153 @@ impl AutomationTargets {
             ),
             AutoInstrumentParam::Volume | AutoInstrumentParam::Pan => return Ok(None),
         };
-        Ok(Some((*node, parameter, value)))
+        Ok(Some((*node, parameter, value, Restore::AtSongEnd)))
+    }
+
+    /// The write a track lane's emission becomes on this instrument's balance stage.
+    ///
+    /// V1's own conversions from `SequencerEngine`'s placement walk: the volume as it is,
+    /// the pan through `NormalizedValue::to_bipolar`, the mute as `value ≥ 0.5`; all three
+    /// live in the track control map `stop` clears, so all three are restored.
+    fn track_value(
+        &self,
+        param: TrackParam,
+        value: NormalizedValue,
+    ) -> Result<Option<(NodeId, ParameterId, ParameterValue, Restore)>, String> {
+        let Some((balance, _)) = self.balance.as_ref() else {
+            return Ok(None);
+        };
+        let (parameter, value) = match param {
+            TrackParam::Volume => (
+                parameters::BALANCE_LEVEL,
+                synth_engine_v2::quantities::Amplitude::new(value.as_f32())
+                    .map(ParameterValue::from_amplitude)
+                    .map_err(|error| error.to_string())?,
+            ),
+            TrackParam::Pan => (
+                parameters::BALANCE_PAN,
+                synth_engine_v2::controller::BipolarLevel::new(value.to_bipolar().as_f32())
+                    .map(ParameterValue::from_bipolar)
+                    .map_err(|error| error.to_string())?,
+            ),
+            TrackParam::Mute => (
+                parameters::BALANCE_MUTE,
+                if value.as_f32() >= 0.5 {
+                    ParameterValue::ONE
+                } else {
+                    ParameterValue::ZERO
+                },
+            ),
+            TrackParam::Pitch => return Ok(None),
+        };
+        Ok(Some((*balance, parameter, value, Restore::AtSongEnd)))
     }
 }
 
-/// The most events this arrangement puts in any one render quantum: note edges and the
+/// One instrument as the performance lowering sees it (`P08-S002`).
+pub(super) struct InstrumentPerformance<'a> {
+    pub id: InstrumentId,
+    /// The **instrument's** own name, which is what `ProjectSubject::Instrument` documents
+    /// its `name` to be. An earlier revision passed the song's, so a diagnostic about an
+    /// instrument named the project instead; an independent review found it.
+    pub name: &'a str,
+    /// The node its notes play.
+    pub gate: NodeId,
+    pub targets: &'a AutomationTargets,
+    /// The tracks that play it, from [`playing_tracks`]; the ones its balance stage carries
+    /// when the plan holds one, and the ones a lane is refused on when it does not.
+    pub playing: &'a [TrackId],
+}
+
+/// The lane scope a set of instruments and a master imply: each instrument's playing tracks,
+/// and whether the plan holds a balance stage for them.
+fn lane_scope<'a>(
+    declares: &'a dyn Fn(InstrumentId, AutoInstrumentParam) -> Option<LaneLanding>,
+    playing: impl Iterator<Item = (InstrumentId, &'a [TrackId], bool)>,
+    master: bool,
+) -> LaneScope<'a> {
+    let mut tracks = Vec::new();
+    for (instrument, plays, staged) in playing {
+        for track in plays {
+            let owner = if !staged {
+                TrackOwner::Unstaged(instrument)
+            } else if plays.len() == 1 {
+                TrackOwner::Owned(instrument)
+            } else {
+                TrackOwner::Shared(instrument)
+            };
+            tracks.push((*track, owner));
+        }
+    }
+    LaneScope {
+        declares,
+        tracks,
+        master,
+    }
+}
+
+/// The most events this project puts in any one render quantum: note edges and the
 /// override writes its automation lanes emit, with the restoring writes at the song's end.
 ///
 /// Admission needs this **before** the plan is compiled, and the plan is needed before an
 /// event can name a note slot — so the count is taken from the timeline rather than from the
-/// events. The notes come from [`note_spans`] and the writes from [`lane_writes`], the same
-/// two functions [`lower_performance`] reads, so the number admission is told is a count of
-/// the same events the renderer is later given. `modules` is the saved patch, which decides
-/// whether a lane has a module to land on at all.
+/// events. The notes come from [`note_spans`] and the writes from [`placed_writes`], the same
+/// two functions [`lower_project_performance`] reads, so the number admission is told is a
+/// count of the same events the renderer is later given. `modules` per instrument is its
+/// saved patch, which decides whether a lane has a module to land on at all; `playing` is
+/// each instrument's playing tracks, which decides whose stage a track lane writes.
 ///
 /// Returns `None` when the arrangement could not be read; the caller lowers anyway and the
 /// refusal surfaces there with its subject intact.
-pub fn peak_events_per_quantum(
-    instrument: InstrumentId,
-    modules: &[ModuleState],
+pub(super) fn project_peak(
+    instruments: &[(InstrumentId, &[ModuleState], &[TrackId], bool)],
+    master: bool,
     song: &Song,
     sample_rate: SampleRate,
 ) -> Option<EventCount> {
     let mut ignored = Vec::new();
-    let spans = note_spans(instrument, song, &mut ignored)?;
-    let declared = |param| AutomationTargets::declared_in(param, modules);
-    let lanes = active_lanes(instrument, song, &declared, &mut ignored)?;
+    let mut frames = Vec::new();
     let tempo = lower_tempo(song, sample_rate, &mut ignored).ok()?;
-
-    let mut frames = Vec::with_capacity(spans.len() * 2);
-    for span in &spans {
-        for tick in [span.start, span.end] {
-            frames.push(tempo.position_of(MusicalTick::new(tick)).ok()?.as_u64());
+    for (instrument, _, _, _) in instruments {
+        let spans = note_spans(*instrument, song, &mut ignored)?;
+        for span in &spans {
+            for tick in [span.start, span.end] {
+                frames.push(tempo.position_of(MusicalTick::new(tick)).ok()?.as_u64());
+            }
         }
     }
-    let mut written: Vec<AutoInstrumentParam> = Vec::new();
+    let declares = |instrument: InstrumentId, param: AutoInstrumentParam| {
+        instruments
+            .iter()
+            .find(|(id, _, _, _)| *id == instrument)
+            .map(|(_, modules, _, _)| AutomationTargets::declared_in(param, modules))
+    };
+    let scope = lane_scope(
+        &declares,
+        instruments
+            .iter()
+            .map(|(id, _, tracks, staged)| (*id, *tracks, *staged)),
+        master,
+    );
+    let lanes = active_lanes(&scope, song, &mut ignored)?;
+    let mut restored: Vec<LaneTarget> = Vec::new();
     for write in placed_writes(&lanes, &tempo).ok()? {
         frames.push(write.position);
-        if !written.contains(&write.param) {
-            written.push(write.param);
+        let restores = match write.target {
+            LaneTarget::Instrument(_, AutoInstrumentParam::Volume | AutoInstrumentParam::Pan)
+            | LaneTarget::Master => false,
+            LaneTarget::Instrument(..) | LaneTarget::Track(..) => true,
+        };
+        if restores && !restored.contains(&write.target) {
+            restored.push(write.target);
         }
     }
-    // One restoring write per touched target where the transport stops.
+    // One restoring write per touched transient target where the transport stops.
     let end = tempo
         .position_of(MusicalTick::new(song_end(song, &mut ignored)?))
         .ok()?
         .as_u64();
-    frames.extend(std::iter::repeat_n(end, written.len()));
+    frames.extend(std::iter::repeat_n(end, restored.len()));
     frames.sort_unstable();
 
     // The worst case over every anchor phase, counted the way admission counts it: a `Q`-frame
@@ -1014,15 +1494,38 @@ pub fn peak_events_per_quantum(
     ))
 }
 
-/// Lower a song's arrangement into events that play `gate`.///
+/// [`project_peak`] for one instrument lowered on its own, with its playing tracks read
+/// from the song, no balance stage and no master.
+pub fn peak_events_per_quantum(
+    instrument: InstrumentId,
+    modules: &[ModuleState],
+    song: &Song,
+    sample_rate: SampleRate,
+) -> Option<EventCount> {
+    let mut ignored = Vec::new();
+    let tracks = playing_tracks(instrument, song, &mut ignored)
+        .ok()
+        .flatten()
+        .map(|playing| playing.tracks)
+        .unwrap_or_default();
+    project_peak(
+        &[(instrument, modules, &tracks, false)],
+        false,
+        song,
+        sample_rate,
+    )
+}
+
+/// Lower a song's arrangement into events that play one instrument's `gate`, on a plan
+/// lowered without a master.
+///
 /// `gate` is the node a note plays, which `SOUND-INV-016` makes the node's own choice rather
 /// than the caller's: only a kind declaring a note control resolves, and
-/// [`CompiledPlan::resolve_note`] is what refuses one that does not.
+/// [`CompiledPlan::resolve_note`] is what refuses one that does not. The playing tracks are
+/// read from the song, so a track lane on one of them is refused by name where `targets`
+/// holds no balance stage rather than dropped as a silent track's.
 pub fn lower_performance(
     instrument: InstrumentId,
-    // The **instrument's** own name, which is what `ProjectSubject::Instrument` documents its
-    // `name` to be. An earlier revision passed the song's, so a diagnostic about an instrument
-    // named the project instead; an independent review found it.
     instrument_name: &str,
     song: &Song,
     plan: &CompiledPlan,
@@ -1030,21 +1533,42 @@ pub fn lower_performance(
     targets: &AutomationTargets,
     sample_rate: SampleRate,
 ) -> LoweredPerformance {
-    let mut diagnostics = Vec::new();
+    let mut ignored = Vec::new();
+    let playing = playing_tracks(instrument, song, &mut ignored)
+        .ok()
+        .flatten()
+        .map(|playing| playing.tracks)
+        .unwrap_or_default();
+    lower_project_performance(
+        song,
+        plan,
+        &[InstrumentPerformance {
+            id: instrument,
+            name: instrument_name,
+            gate,
+            targets,
+            playing: &playing,
+        }],
+        None,
+        sample_rate,
+    )
+}
 
-    let Some(slot) = plan.resolve_note(gate) else {
-        diagnostics.push(LoweringDiagnostic::refused(
-            ProjectSubject::Instrument {
-                instrument,
-                name: instrument_name.to_owned(),
-            },
-            LoweringReason::OwnedByLaterPhase {
-                capability: "a voice patch whose graph declares no node a note can play",
-                owner: "Phase 6, with the voice-instantiation model",
-            },
-        ));
-        return refused(diagnostics);
-    };
+/// Lower a song's arrangement into the events a whole project's plan renders (`P08-S002`):
+/// every instrument's notes on its own gate, every lane V1 runs on the target it names, and
+/// the restoring writes where V1's transport stops.
+#[allow(
+    clippy::too_many_lines,
+    reason = "one walk over the song, instrument by instrument"
+)]
+pub(super) fn lower_project_performance(
+    song: &Song,
+    plan: &CompiledPlan,
+    instruments: &[InstrumentPerformance<'_>],
+    master: Option<NodeId>,
+    sample_rate: SampleRate,
+) -> LoweredPerformance {
+    let mut diagnostics = Vec::new();
 
     let tempo = match lower_tempo(song, sample_rate, &mut diagnostics) {
         Ok(tempo) => tempo,
@@ -1057,74 +1581,90 @@ pub fn lower_performance(
         }
     };
 
-    let Some(spans) = note_spans(instrument, song, &mut diagnostics) else {
-        return refused(diagnostics);
-    };
-
-    // Velocity is V1's since ADR-0059: the envelope lowers with its own sensitivity and the
-    // instrument's amp sensitivity lowers to a velocity scaler, so a note renders at V1's
-    // product of the two and the marker this site raised — "V1's two velocity sensitivities
-    // and how they compose" — is discharged. `P04-R001` closes with it.
-
-    // A second difference, and it is **not** the overlap this lowerer refuses. Overlapping
-    // gates are refused above; what remains is that V1 gives each note its own voice, so a
-    // release can still ring under the next one, while V2 has a single gate the next note
-    // retriggers. The diagnostic names that **shape** rather than asserting a ringing release in
-    // any particular arrangement: whether one actually rings depends on the envelope's release
-    // against the gap, which this lowerer does not compute — an independent review caught the
-    // stronger wording. Raised once per lowering, because it is a property of the single gate.
-    if spans.len() > 1 {
-        diagnostics.push(LoweringDiagnostic::unrepresented(
-            ProjectSubject::Instrument {
-                instrument,
-                name: instrument_name.to_owned(),
-            },
-            LoweringReason::OwnedByLaterPhase {
-                capability: "two or more notes through one gate, where V1 allocates a voice \
-                             per note and lets a release ring under the next while V2 \
-                             retriggers its one gate and cuts it",
-                owner: "Phase 6, with the voice allocator",
-            },
-        ));
-    }
-
-    let mut events: Vec<OfflineEvent> = Vec::with_capacity(spans.len() * 2);
+    let mut events: Vec<OfflineEvent> = Vec::new();
     let mut last_frame = 0_u64;
-    for span in spans {
-        for (tick, payload) in [
-            (
-                span.start,
-                CompiledPayload::NoteOn {
-                    slot,
-                    key: span.key,
-                    velocity: span.velocity,
+    for instrument in instruments {
+        let Some(slot) = plan.resolve_note(instrument.gate) else {
+            diagnostics.push(LoweringDiagnostic::refused(
+                ProjectSubject::Instrument {
+                    instrument: instrument.id,
+                    name: instrument.name.to_owned(),
                 },
-            ),
-            (
-                span.end,
-                CompiledPayload::NoteOff {
-                    slot,
-                    key: span.key,
+                LoweringReason::OwnedByLaterPhase {
+                    capability: "a voice patch whose graph declares no node a note can play",
+                    owner: "Phase 6, with the voice-instantiation model",
                 },
-            ),
-        ] {
-            match tempo.position_of(MusicalTick::new(tick)) {
-                Ok(position) => {
-                    let frame = position.as_u64();
-                    last_frame = last_frame.max(frame);
-                    events.push(OfflineEvent::new(SampleTime::new(frame), payload));
-                }
-                Err(error) => {
-                    diagnostics.push(LoweringDiagnostic::refused(
-                        ProjectSubject::Note {
-                            pattern: span.pattern,
-                            note: span.note,
-                        },
-                        LoweringReason::UnsupportedParameterValue {
-                            value: error.to_string(),
-                        },
-                    ));
-                    return refused(diagnostics);
+            ));
+            return refused(diagnostics);
+        };
+        let Some(spans) = note_spans(instrument.id, song, &mut diagnostics) else {
+            return refused(diagnostics);
+        };
+
+        // Velocity is V1's since ADR-0059: the envelope lowers with its own sensitivity and
+        // the instrument's amp sensitivity lowers to a velocity scaler, so a note renders at
+        // V1's product of the two and the marker this site raised — "V1's two velocity
+        // sensitivities and how they compose" — is discharged. `P04-R001` closes with it.
+
+        // A second difference, and it is **not** the overlap this lowerer refuses. Overlapping
+        // gates are refused above; what remains is that V1 gives each note its own voice, so a
+        // release can still ring under the next one, while V2 has a single gate the next note
+        // retriggers. The diagnostic names that **shape** rather than asserting a ringing
+        // release in any particular arrangement: whether one actually rings depends on the
+        // envelope's release against the gap, which this lowerer does not compute — an
+        // independent review caught the stronger wording. Raised once per instrument,
+        // because it is a property of the single gate.
+        if spans.len() > 1 {
+            diagnostics.push(LoweringDiagnostic::unrepresented(
+                ProjectSubject::Instrument {
+                    instrument: instrument.id,
+                    name: instrument.name.to_owned(),
+                },
+                LoweringReason::OwnedByLaterPhase {
+                    capability: "two or more notes through one gate, where V1 allocates a \
+                                 voice per note and lets a release ring under the next while \
+                                 V2 retriggers its one gate and cuts it",
+                    owner: "Phase 6, with the voice allocator",
+                },
+            ));
+        }
+
+        for span in spans {
+            for (tick, payload) in [
+                (
+                    span.start,
+                    CompiledPayload::NoteOn {
+                        slot,
+                        key: span.key,
+                        velocity: span.velocity,
+                    },
+                ),
+                (
+                    span.end,
+                    CompiledPayload::NoteOff {
+                        slot,
+                        key: span.key,
+                    },
+                ),
+            ] {
+                match tempo.position_of(MusicalTick::new(tick)) {
+                    Ok(position) => {
+                        let frame = position.as_u64();
+                        last_frame = last_frame.max(frame);
+                        events.push(OfflineEvent::new(SampleTime::new(frame), payload));
+                    }
+                    Err(error) => {
+                        diagnostics.push(LoweringDiagnostic::refused(
+                            ProjectSubject::Note {
+                                pattern: span.pattern,
+                                note: span.note,
+                            },
+                            LoweringReason::UnsupportedParameterValue {
+                                value: error.to_string(),
+                            },
+                        ));
+                        return refused(diagnostics);
+                    }
                 }
             }
         }
@@ -1152,11 +1692,28 @@ pub fn lower_performance(
     };
     last_frame = last_frame.max(end_frame);
 
-    // `P07-S002b`: the automation lanes, as override writes. Every emission V1 makes lands
-    // as one `SetParameter` on the declared control's slot, at the emission's own position;
-    // the renderer composes it through the slot and reads it at the boundary that follows.
-    let declared = |param| targets.declares(param);
-    let Some(lanes) = active_lanes(instrument, song, &declared, &mut diagnostics) else {
+    // `P07-S002b`, `P08-S002`: the automation lanes, as override writes. Every emission V1
+    // makes lands as one `SetParameter` on the declared control's slot, at the emission's
+    // own position; the renderer composes it through the slot and reads it at the boundary
+    // that follows.
+    let declares = |id: InstrumentId, param: AutoInstrumentParam| {
+        instruments
+            .iter()
+            .find(|instrument| instrument.id == id)
+            .map(|instrument| instrument.targets.declares(param))
+    };
+    let scope = lane_scope(
+        &declares,
+        instruments.iter().map(|instrument| {
+            (
+                instrument.id,
+                instrument.playing,
+                instrument.targets.balance.is_some(),
+            )
+        }),
+        master.is_some(),
+    );
+    let Some(lanes) = active_lanes(&scope, song, &mut diagnostics) else {
         return refused(diagnostics);
     };
     let writes = match placed_writes(&lanes, &tempo) {
@@ -1166,7 +1723,7 @@ pub fn lower_performance(
             return refused(diagnostics);
         }
     };
-    // Each touched slot with its prepared base, for the restoring write below.
+    // Each touched transient slot with its prepared base, for the restoring write below.
     let mut touched: Vec<(ParameterSlot, ParameterValue)> = Vec::new();
     for write in writes {
         let subject = || ProjectSubject::Pattern {
@@ -1176,7 +1733,38 @@ pub fn lower_performance(
                 .map(|pattern| pattern.name.clone())
                 .unwrap_or_default(),
         };
-        let (node, parameter, value) = match targets.override_value(write.param, write.value) {
+        let resolved = match write.target {
+            LaneTarget::Instrument(id, param) => instruments
+                .iter()
+                .find(|instrument| instrument.id == id)
+                .map_or(Ok(None), |instrument| {
+                    instrument.targets.override_value(param, write.value)
+                }),
+            LaneTarget::Track(track, param) => instruments
+                .iter()
+                .find(|instrument| instrument.targets.carries(track))
+                .map_or(Ok(None), |instrument| {
+                    instrument.targets.track_value(param, write.value)
+                }),
+            // V1's `apply_global_automation`: `value.clamp(0.0, 2.0)`, set and never
+            // restored.
+            LaneTarget::Master => match master {
+                Some(trim) => synth_engine_v2::quantities::Amplitude::new(
+                    write.value.as_f32().clamp(0.0, 2.0),
+                )
+                .map(|level| {
+                    Some((
+                        trim,
+                        parameters::TRIM_LEVEL,
+                        ParameterValue::from_amplitude(level),
+                        Restore::Never,
+                    ))
+                })
+                .map_err(|error| error.to_string()),
+                None => Ok(None),
+            },
+        };
+        let (node, parameter, value, restore) = match resolved {
             // V1's no-op: no module of the type, so the lane is inert there and here.
             Ok(None) => continue,
             Ok(Some(resolved)) => resolved,
@@ -1188,16 +1776,16 @@ pub fn lower_performance(
                 return refused(diagnostics);
             }
         };
-        // Every lowered kind declares the six as controls since `P07-S002a`, so a plan that
-        // compiled addresses each; a refusal here rather than a skip, so a declaration that
-        // narrows is found rather than silenced.
+        // Every lowered kind declares its targets as controls, so a plan that compiled
+        // addresses each; a refusal here rather than a skip, so a declaration that narrows
+        // is found rather than silenced.
         let Some(slot) = plan.resolve_parameter(node, parameter) else {
             diagnostics.push(LoweringDiagnostic::refused(
                 subject(),
                 LoweringReason::UnsupportedParameterValue {
                     value: format!(
                         "{} addresses a control the plan does not declare",
-                        write.param.display_name()
+                        write.target.display_name()
                     ),
                 },
             ));
@@ -1207,7 +1795,7 @@ pub fn lower_performance(
             SampleTime::new(write.position),
             CompiledPayload::SetParameter { slot, value },
         ));
-        if !touched.iter().any(|(known, _)| *known == slot) {
+        if restore == Restore::AtSongEnd && !touched.iter().any(|(known, _)| *known == slot) {
             // The compiled base is the prepared value, which is the authored one.
             let Some(base) = plan
                 .parameter_targets()
@@ -1219,7 +1807,7 @@ pub fn lower_performance(
                     LoweringReason::UnsupportedParameterValue {
                         value: format!(
                             "{} resolves to a slot the plan's target table does not hold",
-                            write.param.display_name()
+                            write.target.display_name()
                         ),
                     },
                 ));
@@ -1243,8 +1831,10 @@ pub fn lower_performance(
     // Ascending, as the offline renderer requires. Sorting spans by start tick does not
     // establish it: a release is emitted beside its own note-on rather than in time order,
     // and the lane writes follow every note. Stable, so events at one position keep the
-    // order they were emitted in: a note's edges before the lane writes at its tick, and the
-    // restoring writes after everything.
+    // order they were emitted in: a note's on edge before its own release — which a note
+    // whose two edges round to one sample depends on — a note's edges before the lane
+    // writes at its tick, the restoring writes after everything, and one instrument's edges
+    // before the next's, which [`peak_concurrency`] covers by counting a tie as an overlap.
     events.sort_by_key(OfflineEvent::time);
 
     LoweredPerformance {
@@ -1357,11 +1947,12 @@ fn track_dispositions(
         color: _,
         // Represented: this is what decides whose notes a lowering carries.
         instrument: _,
-        // V1 mixes the track through these — `auto.volume.unwrap_or(track.volume)` and the same
-        // for pan — and V2 has no mixer stage to carry them. Reported rather than refused: the
-        // notes V1 plays are still the notes lowered here, only their level and position differ.
-        volume,
-        pan,
+        // Lowered onto the balance stage by `playing_tracks` (`P08-S002`), for a track that
+        // plays a note: V1 applies `auto.volume.unwrap_or(track.volume)` and the same for pan
+        // to every voice the track plays, and the stage carries both under V1's own balance
+        // law. A track that plays nothing has no voice for them to reach.
+        volume: _,
+        pan: _,
         // Represented: both decide what is lowered at all, above.
         mute: _,
         solo: _,
@@ -1377,28 +1968,6 @@ fn track_dispositions(
     match mode {
         synth_sequencer::TrackMode::Polyphonic => {}
     }
-
-    let subject = || ProjectSubject::Track {
-        track: *id,
-        name: name.clone(),
-    };
-    if *volume != NormalizedValue::MAX {
-        diagnostics.push(LoweringDiagnostic::unrepresented(
-            subject(),
-            LoweringReason::OwnedByLaterPhase {
-                capability: "a track volume other than unity",
-                owner: "Phase 8",
-            },
-        ));
-    }
-    if *pan != BipolarValue::CENTER {
-        diagnostics.push(LoweringDiagnostic::unrepresented(
-            subject(),
-            LoweringReason::OwnedByLaterPhase {
-                capability: "a track pan",
-                owner: "Phase 8",
-            },
-        ));
-    }
+    let _ = (id, name, diagnostics);
     true
 }

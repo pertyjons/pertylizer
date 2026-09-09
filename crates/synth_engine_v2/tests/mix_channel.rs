@@ -583,9 +583,10 @@ fn fan_in_into_a_port_that_does_not_declare_it_is_still_refused() {
 #[test]
 fn a_channel_in_the_voice_scope_is_refused_by_name() {
     // An independent read built a two-voice channel and found the second voice's controls
-    // landing on inserted steps; the voice sum also seeds with a mono copy, so a stereo
-    // instance output would not be summed as written. Refused at validation, naming the
-    // node, rather than instantiated per voice.
+    // landing on inserted steps. The voice sum's seed once also read a stereo instance
+    // output as mono frames; `P08-S002` corrected the seed, so what keeps these two kinds
+    // out of the voice scope is what they are — a channel is per instrument and a sum runs
+    // once. Refused at validation, naming the node, rather than instantiated per voice.
     let voiced = GraphIr::builder()
         .node(SOURCE, constant(LEVEL), ExecutionScope::Voice)
         .node(CHANNEL, channel(1.0, 0.0, false), ExecutionScope::Voice)
@@ -634,20 +635,36 @@ fn a_channel_in_the_voice_scope_is_refused_by_name() {
 
 #[test]
 fn a_channel_and_a_sum_admit_exactly_two_channels_on_every_port() {
-    // ADR-0041 clause 12, in the direction `graph_validation` does not take: the two kinds
-    // whose kernels this file tests at two channels declare exactly two on every port, so
-    // the exemption every other kind takes cannot apply to them by mistake.
+    // ADR-0041 clause 12, in the direction `graph_validation` does not take: the kinds
+    // whose kernels this file and `mix_stages` test at two channels declare exactly two on
+    // every port, so the exemption every other kind takes cannot apply to them by mistake.
+    use synth_engine_v2::node::NodeKindId;
     for kind in catalog() {
         let two = matches!(
             kind.id,
-            synth_engine_v2::node::NodeKindId::Channel | synth_engine_v2::node::NodeKindId::Mix
+            NodeKindId::Channel
+                | NodeKindId::Mix
+                | NodeKindId::Balance
+                | NodeKindId::Trim
+                | NodeKindId::SoftClip
+                | NodeKindId::HardClamp
         );
         if !two {
             continue;
         }
         for layout in [ChannelLayout::Mono, ChannelLayout::Stereo] {
             let sample = match kind.id {
-                synth_engine_v2::node::NodeKindId::Channel => channel(1.0, 0.0, false),
+                NodeKindId::Channel => channel(1.0, 0.0, false),
+                NodeKindId::Balance => IrNodeKind::Balance {
+                    level: Amplitude::UNITY,
+                    pan: BipolarLevel::ZERO,
+                    muted: false,
+                },
+                NodeKindId::Trim => IrNodeKind::Trim {
+                    level: Amplitude::UNITY,
+                },
+                NodeKindId::SoftClip => IrNodeKind::SoftClip,
+                NodeKindId::HardClamp => IrNodeKind::HardClamp,
                 _ => IrNodeKind::Mix,
             };
             for port in ports(sample, layout) {

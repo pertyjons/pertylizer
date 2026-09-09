@@ -327,7 +327,7 @@ fn a_widened_signal_is_copied_by_a_scheduled_kernel() {
 fn a_declared_kind_appears_in_the_registry_only_by_deferring_to_its_declaration() {
     // The variant as it is spelled in a pattern — fieldless kinds have no `{ .. }` — and
     // the declaration constant it forwards to.
-    const DECLARED: [(&str, &str); 18] = [
+    const DECLARED: [(&str, &str); 22] = [
         ("Script { .. }", "SCRIPT"),
         ("AudioScript { .. }", "AUDIO_SCRIPT"),
         ("NoteScript { .. }", "NOTE_SCRIPT"),
@@ -336,6 +336,10 @@ fn a_declared_kind_appears_in_the_registry_only_by_deferring_to_its_declaration(
         ("VelocityScaler { .. }", "VELOCITY_SCALER"),
         ("Channel { .. }", "CHANNEL"),
         ("Mix", "MIX"),
+        ("Balance { .. }", "BALANCE"),
+        ("Trim { .. }", "TRIM"),
+        ("SoftClip", "SOFT_CLIP"),
+        ("HardClamp", "HARD_CLAMP"),
         ("Sampler { .. }", "SAMPLER"),
         ("Envelope { .. }", "ENVELOPE"),
         ("Sine { .. }", "SINE"),
@@ -519,6 +523,16 @@ fn discovery_and_validation_describe_the_same_ports() {
                 muted: false,
             },
             NodeKindId::Mix => IrNodeKind::Mix,
+            NodeKindId::Balance => IrNodeKind::Balance {
+                level: Amplitude::UNITY,
+                pan: synth_engine_v2::controller::BipolarLevel::ZERO,
+                muted: false,
+            },
+            NodeKindId::Trim => IrNodeKind::Trim {
+                level: Amplitude::UNITY,
+            },
+            NodeKindId::SoftClip => IrNodeKind::SoftClip,
+            NodeKindId::HardClamp => IrNodeKind::HardClamp,
             NodeKindId::Sampler => IrNodeKind::Sampler {
                 map: synth_engine_v2::sample::SampleMapRef::new(0),
                 level: Amplitude::UNITY,
@@ -552,7 +566,7 @@ fn discovery_and_validation_describe_the_same_ports() {
     let entries = catalog();
     assert_eq!(
         entries.len(),
-        26,
+        30,
         "every kind but the output node is discoverable"
     );
     for entry in entries {

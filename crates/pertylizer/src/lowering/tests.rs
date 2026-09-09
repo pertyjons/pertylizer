@@ -40,7 +40,8 @@ fn corpus_modules() -> Vec<ModuleState> {
 
 #[test]
 fn every_module_resolves_in_both_directions() {
-    let resolved = ResolvedIdentities::resolve(&corpus_modules()).expect("the fixture resolves");
+    let resolved =
+        ResolvedIdentities::resolve(instrument(), &corpus_modules()).expect("the fixture resolves");
     assert_eq!(resolved.len(), 5);
     assert!(!resolved.is_empty());
 
@@ -65,11 +66,11 @@ fn every_module_resolves_in_both_directions() {
 /// `ModuleId`, none does.
 #[test]
 fn reordering_the_modules_array_changes_no_assignment() {
-    let forward = ResolvedIdentities::resolve(&corpus_modules()).expect("resolves");
+    let forward = ResolvedIdentities::resolve(instrument(), &corpus_modules()).expect("resolves");
 
     let mut reversed = corpus_modules();
     reversed.reverse();
-    let backward = ResolvedIdentities::resolve(&reversed).expect("resolves");
+    let backward = ResolvedIdentities::resolve(instrument(), &reversed).expect("resolves");
 
     let forward_pairs: Vec<_> = forward.pairs().collect();
     let backward_pairs: Vec<_> = backward.pairs().collect();
@@ -82,7 +83,7 @@ fn reordering_the_modules_array_changes_no_assignment() {
 /// Two patches whose modules differ only in identity must not share an address by accident.
 #[test]
 fn distinct_modules_receive_distinct_addresses() {
-    let resolved = ResolvedIdentities::resolve(&corpus_modules()).expect("resolves");
+    let resolved = ResolvedIdentities::resolve(instrument(), &corpus_modules()).expect("resolves");
     let mut seen = Vec::new();
     for (_, node) in resolved.pairs() {
         assert!(!seen.contains(&node), "{node} was assigned twice");
@@ -97,13 +98,13 @@ fn distinct_modules_receive_distinct_addresses() {
 /// shifts every rank. Because the address is computed from the identity alone, none moves.
 #[test]
 fn adding_a_module_that_sorts_first_moves_no_other_address() {
-    let before = ResolvedIdentities::resolve(&corpus_modules()).expect("resolves");
+    let before = ResolvedIdentities::resolve(instrument(), &corpus_modules()).expect("resolves");
 
     let mut grown = corpus_modules();
     // `Oscillator` is the first `ModuleType` variant, so `osc-0` sorts before every module
     // the fixture declares.
     grown.push(module("osc-0", ModuleType::Oscillator));
-    let after = ResolvedIdentities::resolve(&grown).expect("resolves");
+    let after = ResolvedIdentities::resolve(instrument(), &grown).expect("resolves");
 
     for (id, node) in before.pairs() {
         assert_eq!(
@@ -118,11 +119,11 @@ fn adding_a_module_that_sorts_first_moves_no_other_address() {
 /// The same property under removal.
 #[test]
 fn removing_a_module_moves_no_other_address() {
-    let full = ResolvedIdentities::resolve(&corpus_modules()).expect("resolves");
+    let full = ResolvedIdentities::resolve(instrument(), &corpus_modules()).expect("resolves");
 
     let mut fewer = corpus_modules();
     fewer.retain(|m| m.id != "amp-1");
-    let reduced = ResolvedIdentities::resolve(&fewer).expect("resolves");
+    let reduced = ResolvedIdentities::resolve(instrument(), &fewer).expect("resolves");
 
     for (id, node) in reduced.pairs() {
         assert_eq!(
@@ -136,7 +137,7 @@ fn removing_a_module_moves_no_other_address() {
 #[test]
 fn a_module_whose_id_and_type_disagree_is_refused() {
     let modules = vec![module("osc-1", ModuleType::Filter)];
-    let error = ResolvedIdentities::resolve(&modules).expect_err("must refuse");
+    let error = ResolvedIdentities::resolve(instrument(), &modules).expect_err("must refuse");
     assert_eq!(
         error,
         IdentityError::TypeMismatch {
@@ -151,7 +152,7 @@ fn a_module_whose_id_and_type_disagree_is_refused() {
 #[test]
 fn an_unparsable_module_id_is_refused_and_names_its_spelling() {
     let modules = vec![module("not a module id", ModuleType::Oscillator)];
-    let error = ResolvedIdentities::resolve(&modules).expect_err("must refuse");
+    let error = ResolvedIdentities::resolve(instrument(), &modules).expect_err("must refuse");
     match error {
         IdentityError::UnparsableModule { spelling, .. } => {
             assert_eq!(
@@ -169,7 +170,7 @@ fn a_duplicate_module_id_is_refused_rather_than_resolved_to_the_last_one() {
         module("osc-1", ModuleType::Oscillator),
         module("osc-1", ModuleType::Oscillator),
     ];
-    let error = ResolvedIdentities::resolve(&modules).expect_err("must refuse");
+    let error = ResolvedIdentities::resolve(instrument(), &modules).expect_err("must refuse");
     assert_eq!(
         error,
         IdentityError::DuplicateModule {
@@ -180,7 +181,7 @@ fn a_duplicate_module_id_is_refused_rather_than_resolved_to_the_last_one() {
 
 #[test]
 fn a_connection_naming_an_absent_module_resolves_to_nothing() {
-    let resolved = ResolvedIdentities::resolve(&corpus_modules()).expect("resolves");
+    let resolved = ResolvedIdentities::resolve(instrument(), &corpus_modules()).expect("resolves");
     assert_eq!(
         resolved.node_for(ModuleId::new(ModuleType::Lfo, 9)),
         None,
@@ -190,7 +191,8 @@ fn a_connection_naming_an_absent_module_resolves_to_nothing() {
 
 #[test]
 fn an_empty_patch_resolves_to_nothing_without_failing() {
-    let resolved = ResolvedIdentities::resolve(&[]).expect("an empty patch is not an error");
+    let resolved =
+        ResolvedIdentities::resolve(instrument(), &[]).expect("an empty patch is not an error");
     assert!(resolved.is_empty());
     assert_eq!(resolved.module_for(NodeId::FIRST), None);
 }
@@ -265,6 +267,11 @@ use crate::patch::{ConnectionState, ParamValue};
 
 fn instrument() -> synth_engine::instrument::InstrumentId {
     synth_engine::instrument::InstrumentId::new(0)
+}
+
+/// The fixture instrument's place in the address space.
+fn slot() -> super::identity::InstrumentSlot {
+    super::identity::InstrumentSlot::of(instrument()).expect("the fixture's identity fits")
 }
 
 fn floats(module: &mut ModuleState, pairs: &[(&str, f32)]) {
@@ -673,8 +680,8 @@ fn every_module_in_the_pinned_corpus_project_resolves() {
     let project = crate::project::ProjectFile::load(&path).expect("CORPUS-0001 loads");
     let saved = project.instruments.first().expect("one instrument");
 
-    let resolved =
-        ResolvedIdentities::resolve(&saved.patch.modules).expect("every saved identity resolves");
+    let resolved = ResolvedIdentities::resolve(instrument(), &saved.patch.modules)
+        .expect("every saved identity resolves");
     assert_eq!(
         resolved.len(),
         saved.patch.modules.len(),
@@ -2145,7 +2152,7 @@ fn the_instruments_strip_lowers_onto_its_mix_channel() {
     );
     let ir = lowered.ir.expect("the strip lowers");
     let channel = ir
-        .node(super::identity::CHANNEL)
+        .node(slot().channel())
         .expect("one channel at the reserved address");
     assert_eq!(
         channel.scope(),
@@ -2173,13 +2180,10 @@ fn the_instruments_strip_lowers_onto_its_mix_channel() {
         .filter(|edge| edge.to().0 == output)
         .map(|edge| edge.from().0)
         .collect();
-    assert_eq!(into_output, vec![super::identity::CHANNEL]);
-    assert!(
-        ir.edges()
-            .iter()
-            .any(|edge| edge.from().0 == super::identity::VOICE_OUTPUT_SCALER
-                && edge.to().0 == super::identity::CHANNEL)
-    );
+    assert_eq!(into_output, vec![slot().channel()]);
+    assert!(ir.edges().iter().any(
+        |edge| edge.from().0 == slot().voice_output_scaler() && edge.to().0 == slot().channel()
+    ));
 }
 
 /// The fader scales the render, the pan places it and neither is a mark any more.
@@ -2744,12 +2748,14 @@ fn instrument_note_input_is_refused_rather_than_ignored() {
     assert!(rendered.samples.is_empty());
 }
 
-/// A track's own fader and pan are reported, and once per track rather than once per placement.
+/// A track's own fader and pan lower onto its balance stage (`P08-S002`), and nothing reports
+/// them any more.
 ///
-/// V1 mixes each track through `auto.volume.unwrap_or(track.volume)` and the same for pan, so a
-/// non-neutral value changes what the render means. V2 has no mixer stage to carry it.
+/// V1 mixes each track through `auto.volume.unwrap_or(track.volume)` and the same for pan,
+/// per voice under its balance law; the stage carries both, so the render changes as V1's
+/// does — quieter, and placed to the left — and the outcome names neither.
 #[test]
-fn track_mixer_state_is_reported_rather_than_ignored() {
+fn track_mixer_state_is_lowered_rather_than_reported() {
     let (modules, connections) = corpus_patch("sawtooth");
     let saved = saved_instrument(modules, connections);
     let global = crate::project::GlobalProjectState::default();
@@ -2809,30 +2815,34 @@ fn track_mixer_state_is_reported_rather_than_ignored() {
         FrameCount::new(4_800),
     );
 
-    // Two placements sit on that one track, so a per-placement diagnostic reports it twice.
-    // It is a property of the track.
+    assert!(rendered.is_audible(), "{:?}", rendered.diagnostics);
     assert_eq!(
         count(&rendered, "track volume"),
-        1,
-        "a track fader is reported once for the track: {:?}",
+        0,
+        "{:?}",
         rendered.diagnostics
     );
-    assert_eq!(count(&rendered, "track pan"), 1);
+    assert_eq!(count(&rendered, "track pan"), 0);
+    assert_eq!(rendered.diagnostics, neutral.diagnostics);
+    // Half the volume, panned half left: both sides below the neutral render's peak, and
+    // the right side below the left, as V1's `sqrt(1 ∓ pan) × volume` places it.
+    let peak = |samples: &[f32], side: usize| {
+        samples
+            .iter()
+            .skip(side)
+            .step_by(2)
+            .fold(0.0_f32, |peak, s| peak.max(s.abs()))
+    };
+    let (left, right) = (peak(&rendered.samples, 0), peak(&rendered.samples, 1));
+    let (neutral_left, neutral_right) = (peak(&neutral.samples, 0), peak(&neutral.samples, 1));
     assert!(
-        rendered.diagnostics.iter().any(|d| {
-            matches!(d.subject(), ProjectSubject::Track { .. })
-                && matches!(
-                    d.reason(),
-                    LoweringReason::OwnedByLaterPhase { capability, .. }
-                        if capability.contains("track volume")
-                )
-        }),
-        "and it names the track rather than the song"
+        left < neutral_left && right < neutral_right,
+        "{left} {right}"
     );
-    assert_eq!(
-        rendered.fidelity(),
-        Fidelity::UnsupportedScope,
-        "a render missing V1's fader is not a faithful one"
+    assert!(right < left, "panned left: {left} {right}");
+    assert!(
+        neutral_right == neutral_left,
+        "the neutral render is centred"
     );
 }
 
@@ -3496,12 +3506,17 @@ fn every_audible_instrument_setting_is_dispositioned() {
     }
 }
 
-/// A placed pattern carrying automation V2 does not lower — a track lane here — is refused,
-/// because V1 applies it. The instrument lanes `P07-S002b` lowers are covered below.
+/// A placed pattern carrying automation V2 does not lower — a module-addressed lane here,
+/// since `P08-S002` lowers the track lanes — is refused, because V1 applies it. The
+/// instrument lanes `P07-S002b` lowers are covered below.
 #[test]
 fn pattern_automation_is_refused_rather_than_flattened() {
-    use synth_sequencer::{
-        AutomationLane, AutomationPoint, AutomationTarget, PatternTick, TrackParam,
+    use synth_sequencer::{AutomationLane, AutomationPoint, AutomationTarget, PatternTick};
+    let module_lane = || AutomationTarget::Module {
+        instrument: instrument(),
+        module_type: ModuleType::Filter,
+        instance: 1,
+        param_id: "cutoff".into(),
     };
 
     let (modules, connections) = corpus_patch("sawtooth");
@@ -3516,10 +3531,7 @@ fn pattern_automation_is_refused_rather_than_flattened() {
     // A lane with no points first. `AutomationLane::value_at` returns `None` for it, so V1's
     // sequencer emits nothing: it is a lane the user opened and never drew in. An independent
     // review found the check reading the lane list's length, which refused this project.
-    let mut lane = AutomationLane::new(AutomationTarget::Track {
-        track: None,
-        param: TrackParam::Volume,
-    });
+    let mut lane = AutomationLane::new(module_lane());
     song.pattern_mut(pattern_id)
         .expect("the pattern resolves")
         .automation
@@ -3605,10 +3617,7 @@ fn pattern_automation_is_refused_rather_than_flattened() {
         .expect("the fixture places one pattern")
         .track_id;
     let zero = song.create_pattern(synth_sequencer::Duration(0));
-    let mut lane = AutomationLane::new(AutomationTarget::Track {
-        track: None,
-        param: TrackParam::Volume,
-    });
+    let mut lane = AutomationLane::new(module_lane());
     lane.add_point(AutomationPoint::new(
         PatternTick(0),
         synth_core::NormalizedValue::new(0.5),
@@ -3631,31 +3640,62 @@ fn pattern_automation_is_refused_rather_than_flattened() {
     );
 }
 
-/// A master chain is refused, and the master volume is reported.
+/// A master chain is refused; the master volume lowers onto the master trim (`P08-S002`)
+/// and one outside V1's own range is refused by name and value.
 #[test]
 fn project_global_state_is_read_rather_than_ignored() {
     let (modules, connections) = corpus_patch("sawtooth");
     let saved = saved_instrument(modules, connections);
     let song = four_note_song();
 
-    // The default master volume is 0.8, which V2's output does not apply.
-    let rendered = super::render::smoke_render(
-        &saved,
-        &song,
-        &crate::project::GlobalProjectState::default(),
-        harness_profile(),
-        FrameCount::new(4_800),
-    );
+    let at_master = |volume: f32| {
+        super::render::smoke_render(
+            &saved,
+            &song,
+            &crate::project::GlobalProjectState {
+                master_volume: synth_core::Gain::new(volume),
+                ..Default::default()
+            },
+            harness_profile(),
+            FrameCount::new(4_800),
+        )
+    };
+    // The default master volume is 0.8: lowered, so nothing names it.
+    let rendered = at_master(0.8);
+    assert!(rendered.is_audible(), "{:?}", rendered.diagnostics);
     assert!(
-        rendered.diagnostics.iter().any(|d| {
-            d.subject() == &ProjectSubject::Project
+        !rendered.diagnostics.iter().any(|d| matches!(
+            d.reason(),
+            LoweringReason::OwnedByLaterPhase { capability, .. }
+                if capability.contains("master volume")
+        )),
+        "the master volume is lowered, not reported: {:?}",
+        rendered.diagnostics
+    );
+    // Half the master is half every sample, bit for bit: the trim is the last multiplication
+    // before V1's clamp, and the clamp is the identity on a signal within full scale.
+    let unity = at_master(1.0);
+    let half = at_master(0.5);
+    assert!(unity.samples.iter().all(|s| s.abs() <= 1.0));
+    assert_eq!(unity.samples.len(), half.samples.len());
+    for (u, h) in unity.samples.iter().zip(&half.samples) {
+        assert_eq!(h.to_bits(), (u * 0.5).to_bits());
+    }
+    // V1 clamps the master it applies into `0..=2`; a saved value outside it is refused by
+    // name rather than clamped.
+    let outside = at_master(2.5);
+    assert!(outside.samples.is_empty());
+    assert!(
+        outside.diagnostics.iter().any(|d| {
+            d.severity() == Severity::Refused
+                && d.subject() == &ProjectSubject::Project
                 && matches!(
                     d.reason(),
-                    LoweringReason::OwnedByLaterPhase { capability, .. }
-                        if capability.contains("master volume")
+                    LoweringReason::UnsupportedParameterValue { value } if value.contains("master volume")
                 )
         }),
-        "a master volume other than unity changes what V1 renders"
+        "{:?}",
+        outside.diagnostics
     );
 
     // A master effect is audible processing on everything, and V2 has no master bus.
@@ -4572,7 +4612,10 @@ fn lowered_performance_at(
         .find(|(id, _)| id.module_type == ModuleType::Envelope)
         .map(|(_, node)| node)
         .expect("the fixture has an envelope");
-    let targets = super::performance::AutomationTargets::resolve(&lowered.identities);
+    // The channel the graph above was lowered with, so an instrument volume or pan lane has
+    // its stage; no balance, so a track lane is refused by name here.
+    let targets = super::performance::AutomationTargets::resolve(&lowered.identities)
+        .with_channel(slot().channel());
     let performance = super::performance::lower_performance(
         instrument(),
         "Subtractive Voice",
@@ -4637,11 +4680,18 @@ fn a_step_lane_lowers_to_v1s_emissions_and_a_restore_at_the_songs_end() {
     );
 
     // The render is exactly the plan rendered with those writes placed by hand beside the
-    // lane-less song's note edges.
+    // lane-less song's note edges. The project's master is held at unity, and the stages
+    // `smoke_render` inserts beyond the hand-built plan's — the playing track's balance at
+    // unity and centre, the master sum of one cable, the trim at unity, and the two clippers
+    // under signals within their knees — are each the identity on every sample.
+    let unity = crate::project::GlobalProjectState {
+        master_volume: synth_core::Gain::UNITY,
+        ..Default::default()
+    };
     let rendered = super::render::smoke_render(
         &saved,
         &song,
-        &crate::project::GlobalProjectState::default(),
+        &unity,
         harness_profile(),
         FrameCount::new(4_800),
     );
@@ -4834,7 +4884,7 @@ fn two_writers_on_one_target_at_one_sample_are_refused_by_name() {
     assert_eq!(
         conflict(&rendered),
         Some((
-            "Filter Cutoff".to_owned(),
+            "Inst 0 Filter Cutoff".to_owned(),
             first,
             second,
             ProjectSubject::Pattern {
@@ -4943,7 +4993,7 @@ fn two_writers_on_one_target_at_one_sample_are_refused_by_name() {
     let rendered = render(&doubled);
     assert_eq!(
         conflict(&rendered).map(|(target, a, b, _)| (target, a, b)),
-        Some(("Filter Cutoff".to_owned(), first, first)),
+        Some(("Inst 0 Filter Cutoff".to_owned(), first, first)),
         "{:?}",
         rendered.diagnostics
     );
@@ -5223,16 +5273,6 @@ fn the_lane_classes_v2_does_not_carry_are_refused_by_name() {
             .expect("refused on the pattern by name")
     };
     let this = instrument();
-    let (capability, owner) = refusal(AutomationTarget::Instrument {
-        instrument: this,
-        param: AutoInstrumentParam::Volume,
-    });
-    assert!(capability.contains("volume or pan") && owner.contains("Phase 8"));
-    let (capability, owner) = refusal(AutomationTarget::Instrument {
-        instrument: this,
-        param: AutoInstrumentParam::Pan,
-    });
-    assert!(capability.contains("volume or pan") && owner.contains("Phase 8"));
     let (capability, owner) = refusal(AutomationTarget::Module {
         instrument: this,
         module_type: ModuleType::Filter,
@@ -5245,13 +5285,198 @@ fn the_lane_classes_v2_does_not_carry_are_refused_by_name() {
         param: TrackParam::Pitch,
     });
     assert!(capability.contains("track pitch") && owner.contains("Phase 7"));
-    let (capability, owner) = refusal(AutomationTarget::Track {
-        track: None,
-        param: TrackParam::Mute,
+
+    // `P08-S002`: the instrument's volume and pan, the host track's fader, pan and mute, and
+    // the master volume lower — the render changes and nothing names them.
+    let plain = super::render::smoke_render(
+        &saved,
+        &four_note_song(),
+        &crate::project::GlobalProjectState::default(),
+        harness_profile(),
+        FrameCount::new(4_800),
+    );
+    let lowered = |target: AutomationTarget, value: f32| {
+        let mut song = four_note_song();
+        let pattern = placed_pattern(&song);
+        let mut lane = AutomationLane::new(target);
+        lane.add_point(AutomationPoint::new(
+            PatternTick(0),
+            synth_core::NormalizedValue::new(value),
+        ));
+        song.pattern_mut(pattern)
+            .expect("resolves")
+            .add_automation_lane(lane);
+        let rendered = super::render::smoke_render(
+            &saved,
+            &song,
+            &crate::project::GlobalProjectState::default(),
+            harness_profile(),
+            FrameCount::new(4_800),
+        );
+        assert_eq!(
+            rendered.diagnostics, plain.diagnostics,
+            "{:?}",
+            rendered.diagnostics
+        );
+        assert!(
+            rendered.samples != plain.samples,
+            "the lane must change the render"
+        );
+        rendered
+    };
+    for (target, value, restores) in [
+        (
+            AutomationTarget::Instrument {
+                instrument: this,
+                param: AutoInstrumentParam::Volume,
+            },
+            0.5,
+            false,
+        ),
+        (
+            AutomationTarget::Instrument {
+                instrument: this,
+                param: AutoInstrumentParam::Pan,
+            },
+            0.25,
+            false,
+        ),
+        (
+            AutomationTarget::Track {
+                track: None,
+                param: TrackParam::Volume,
+            },
+            0.5,
+            true,
+        ),
+        (
+            AutomationTarget::Track {
+                track: None,
+                param: TrackParam::Pan,
+            },
+            0.25,
+            true,
+        ),
+        (
+            AutomationTarget::Track {
+                track: None,
+                param: TrackParam::Mute,
+            },
+            0.5,
+            true,
+        ),
+        (
+            AutomationTarget::Global(GlobalParam::MasterVolume),
+            0.5,
+            false,
+        ),
+    ] {
+        let rendered = lowered(target.clone(), value);
+        // Eight note edges and one write; a transient target — V1's track control map,
+        // cleared at the transport's stop — adds one restoring write at the song's end,
+        // where the instrument's own fader and pan and the master volume are set and
+        // never restored.
+        assert_eq!(
+            rendered.lowered_events,
+            synth_engine_v2::quantities::EventCount::measured(8 + 1 + u32::from(restores)),
+            "{target:?}"
+        );
+        if matches!(
+            target,
+            AutomationTarget::Track {
+                param: TrackParam::Mute,
+                ..
+            }
+        ) {
+            // Silent to the song's end, where V1's stop clears the track control map and
+            // the restoring write lets the last release ring into the tail.
+            let song_end = usize::try_from(rendered.lowered_frames.as_u64()).expect("fits") * 2;
+            assert!(
+                rendered.samples[..song_end].iter().all(|s| *s == 0.0),
+                "a mute lane at one half mutes, as V1's `value >= 0.5` does"
+            );
+            assert!(
+                rendered.is_audible(),
+                "and the tail rings after the restore"
+            );
+        } else {
+            assert!(rendered.is_audible());
+        }
+    }
+
+    // A track lane on a track that plays nothing is V1's write to a control slot no voice
+    // reads: inert, so it lowers to nothing and the render is the plain one.
+    let mut song = four_note_song();
+    let silent = song.create_track("silent");
+    let pattern = placed_pattern(&song);
+    let mut lane = AutomationLane::new(AutomationTarget::Track {
+        track: Some(silent),
+        param: TrackParam::Volume,
     });
-    assert!(capability.contains("fader, pan or mute") && owner.contains("Phase 8"));
-    let (capability, owner) = refusal(AutomationTarget::Global(GlobalParam::MasterVolume));
-    assert!(capability.contains("master volume") && owner.contains("Phase 8"));
+    lane.add_point(AutomationPoint::new(
+        PatternTick(0),
+        synth_core::NormalizedValue::new(0.5),
+    ));
+    song.pattern_mut(pattern)
+        .expect("resolves")
+        .add_automation_lane(lane);
+    let inert = super::render::smoke_render(
+        &saved,
+        &song,
+        &crate::project::GlobalProjectState::default(),
+        harness_profile(),
+        FrameCount::new(4_800),
+    );
+    assert_eq!(inert.lowered_events, plain.lowered_events);
+    assert!(inert.samples == plain.samples);
+
+    // A track lane on an instrument two tracks share is a per-voice difference this plan
+    // cannot carry, refused until ADR-0034 — even where the two tracks' static controls agree.
+    let mut song = four_note_song();
+    let first = placed_pattern(&song);
+    let second_track = song.create_track("second");
+    let later = song.create_pattern(synth_sequencer::Duration(960));
+    {
+        use synth_sequencer::{Duration, PatternTick, Pitch, Velocity};
+        let pattern = song.pattern_mut(later).expect("resolves");
+        let id = pattern.add_note(
+            PatternTick(0),
+            Pitch::new(64).expect("a keyboard position"),
+            Velocity::new(0.5),
+        );
+        if let Some(note) = pattern.note_mut(id) {
+            note.duration = Some(Duration(480));
+        }
+    }
+    assert!(song.place_pattern(later, second_track, synth_sequencer::Tick(3_840)));
+    let mut lane = AutomationLane::new(AutomationTarget::Track {
+        track: None,
+        param: TrackParam::Volume,
+    });
+    lane.add_point(AutomationPoint::new(
+        PatternTick(0),
+        synth_core::NormalizedValue::new(0.5),
+    ));
+    song.pattern_mut(first)
+        .expect("resolves")
+        .add_automation_lane(lane);
+    let shared = super::render::smoke_render(
+        &saved,
+        &song,
+        &crate::project::GlobalProjectState::default(),
+        harness_profile(),
+        FrameCount::new(4_800),
+    );
+    assert!(shared.samples.is_empty());
+    assert!(
+        shared.diagnostics.iter().any(|d| matches!(
+            (d.severity(), d.reason()),
+            (Severity::Refused, LoweringReason::OwnedByLaterPhase { capability, owner })
+                if capability.contains("two tracks share") && owner.contains("ADR-0034")
+        )),
+        "{:?}",
+        shared.diagnostics
+    );
 }
 
 /// The declared peak counts the lane writes admission must be told about: a ramp that emits
@@ -5352,7 +5577,7 @@ fn a_lane_lands_on_the_lowest_module_of_its_type_as_v1_resolves_it() {
         ));
     let (plan, performance) = lowered_performance(&modules, &connections, &song);
     assert!(!performance.refused(), "{:?}", performance.diagnostics);
-    let identities = ResolvedIdentities::resolve(&modules).expect("resolves");
+    let identities = ResolvedIdentities::resolve(instrument(), &modules).expect("resolves");
     let node_of = |id: &str| {
         identities
             .node_for(id.parse().expect("a module id"))
@@ -5416,7 +5641,7 @@ fn two_writers_landing_on_one_sample_from_disjoint_ticks_are_refused() {
         performance.diagnostics.iter().any(|d| matches!(
             d.reason(),
             LoweringReason::ConflictingWriters { target, first: a, second: b }
-                if target == "Filter Cutoff" && *a == first && *b == second
+                if target == "Inst 0 Filter Cutoff" && *a == first && *b == second
         )),
         "{:?}",
         performance.diagnostics
@@ -6646,21 +6871,68 @@ fn placed_track(song: &synth_sequencer::Song) -> synth_sequencer::TrackId {
         .track_id
 }
 
-/// The Mod Grid node address keeps clear of every saved module's and of the scaler's, and
-/// an identity that does not fit is refused rather than truncated into a collision.
+/// The Mod Grid node address keeps clear of every saved module's, of every inserted
+/// stage's and of the master's, across every instrument slot (`P08-S002`), and an identity
+/// that does not fit is refused rather than truncated into a collision.
 #[test]
 fn a_mod_grid_node_address_cannot_meet_a_saved_modules_or_the_scalers() {
+    use super::identity::{InstrumentSlot, MASTER_CLAMP, MASTER_MIX, MASTER_OUTPUT, MASTER_TRIM};
     use super::modulation::grid_node_address;
     use synth_sequencer::{ModGraphId, ModNodeId};
 
     let lowest = grid_node_address(ModGraphId::new(0), ModNodeId::new(0)).expect("fits");
     let highest = grid_node_address(ModGraphId::new(0x7FFE), ModNodeId::new(0xFFFF)).expect("fits");
     assert!(lowest < highest);
-    assert!(highest < super::identity::VOICE_OUTPUT_SCALER);
-    // Every saved module address keeps bit 31 clear.
-    let resolved = ResolvedIdentities::resolve(&corpus_modules()).expect("resolves");
-    for (_, node) in resolved.pairs() {
-        assert!(node < lowest, "{node} must sort below every grid address");
+    // Every address below the grid's: every instrument slot's modules and inserted stages,
+    // and the master's, keep bit 31 clear. The highest instrument is the last one that fits.
+    let last = synth_engine::instrument::InstrumentId::new(126);
+    for id in [instrument(), last] {
+        let slot = InstrumentSlot::of(id).expect("fits");
+        let resolved = ResolvedIdentities::resolve(id, &corpus_modules()).expect("resolves");
+        for (_, node) in resolved.pairs() {
+            assert!(node < lowest, "{node} must sort below every grid address");
+        }
+        for inserted in [
+            slot.voice_output_scaler(),
+            slot.balance(),
+            slot.channel(),
+            slot.soft_clip(),
+            slot.macro_source(6),
+        ] {
+            assert!(
+                inserted < lowest,
+                "{inserted} must sort below every grid address"
+            );
+            assert!(
+                resolved.pairs().all(|(_, node)| node != inserted),
+                "{inserted} meets a saved module"
+            );
+        }
+    }
+    for master in [MASTER_MIX, MASTER_TRIM, MASTER_CLAMP, MASTER_OUTPUT] {
+        assert!(master < lowest);
+        assert!(master > InstrumentSlot::of(last).expect("fits").macro_source(6));
+    }
+    // One past the last slot is refused by name, not folded into the master's addresses.
+    assert!(matches!(
+        InstrumentSlot::of(synth_engine::instrument::InstrumentId::new(127)),
+        Err(super::identity::IdentityError::InstrumentOutOfRange { .. })
+    ));
+    // Two instruments' modules never meet, and the six macro tags never meet a stage.
+    let other = ResolvedIdentities::resolve(
+        synth_engine::instrument::InstrumentId::new(1),
+        &corpus_modules(),
+    )
+    .expect("resolves");
+    let first = ResolvedIdentities::resolve(instrument(), &corpus_modules()).expect("resolves");
+    for (_, node) in other.pairs() {
+        assert!(first.pairs().all(|(_, mine)| mine != node));
+    }
+    let slot = slot();
+    for tag in 1..=6 {
+        let macro_node = slot.macro_source(tag);
+        assert!(macro_node != slot.voice_output_scaler() && macro_node != slot.channel());
+        assert!(macro_node != slot.balance() && macro_node != slot.soft_clip());
     }
     assert!(grid_node_address(ModGraphId::new(0x7FFF), ModNodeId::new(0)).is_none());
     assert!(grid_node_address(ModGraphId::new(0), ModNodeId::new(0x1_0000)).is_none());
@@ -6770,3 +7042,4 @@ fn each_mod_matrix_macro_lowers_once_at_v1s_target_scale_and_in_its_scope() {
 }
 
 mod phase7;
+mod phase8;

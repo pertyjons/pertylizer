@@ -14,7 +14,8 @@ mod common;
 use common::{OUTPUT, admit, profile, refuse, twelve_tet};
 use synth_engine_v2::diagnostics::CompileError;
 use synth_engine_v2::ir::{
-    ExecutionScope, GraphIr, IrError, IrNodeKind, NodeId, PortId, SignalDomain, parameters,
+    ExecutionScope, GraphIr, IrError, IrNodeKind, ModulationDepth, ModulationUnit, NodeId, PortId,
+    SignalDomain, parameters,
 };
 use synth_engine_v2::node::NoteMagnitude;
 use synth_engine_v2::plan::{CompiledPlan, ControlRate};
@@ -186,9 +187,10 @@ fn a_pitch_destination_whose_scope_states_no_tuning_is_refused() {
 
 #[test]
 fn two_playable_nodes_in_one_scope_are_refused_and_both_are_named() {
-    // `SOUND-INV-021`: a note's destinations are its scope's, so two playable nodes sharing
-    // a scope would each move the other's velocity. The refusal names both, because a
-    // diagnostic naming one leaves a reader to find the collision themselves.
+    // `SOUND-INV-021`: a note's destinations are its island's, so two playable nodes cabled
+    // together in one scope would each move the other's velocity. The refusal names both,
+    // because a diagnostic naming one leaves a reader to find the collision themselves. The
+    // second amplifier reads the first, which is what puts the two envelopes in one island.
     let ir = GraphIr::builder()
         .node(OSCILLATOR, sine(), ExecutionScope::Global)
         .node(ENVELOPE, envelope(), ExecutionScope::Voice)
@@ -241,6 +243,150 @@ fn two_playable_nodes_in_one_scope_are_refused_and_both_are_named() {
     assert_ne!(first, second, "the refusal names two distinct nodes");
     assert!([ENVELOPE, SECOND_ENVELOPE].contains(&first));
     assert!([ENVELOPE, SECOND_ENVELOPE].contains(&second));
+}
+
+/// `P08-S002`: two voices in the one voice scope that share no cable are two islands, each
+/// bound apart — a note for one reaches its own oscillator and not the other's — where the
+/// test above refuses the same two envelopes once a cable joins them.
+#[test]
+fn two_playable_nodes_in_two_islands_of_one_scope_are_bound_apart() {
+    const MIX: NodeId = NodeId::new(17);
+    let mut builder = GraphIr::builder()
+        .node(MIX, IrNodeKind::Mix, ExecutionScope::Global)
+        .node(OUTPUT, IrNodeKind::Output, ExecutionScope::Global)
+        .connect(
+            (MIX, PortId::FIRST),
+            (OUTPUT, PortId::FIRST),
+            SignalDomain::Audio,
+        );
+    for (oscillator, envelope_id, amplifier) in [
+        (OSCILLATOR, ENVELOPE, AMPLIFIER),
+        (SECOND_OSCILLATOR, SECOND_ENVELOPE, SECOND_AMPLIFIER),
+    ] {
+        builder = builder
+            .node(oscillator, sine(), ExecutionScope::Voice)
+            .node(envelope_id, envelope(), ExecutionScope::Voice)
+            .node(amplifier, IrNodeKind::Amplifier, ExecutionScope::Voice)
+            .connect(
+                (oscillator, PortId::FIRST),
+                (amplifier, PortId::FIRST),
+                SignalDomain::Audio,
+            )
+            .connect(
+                (envelope_id, PortId::FIRST),
+                (amplifier, synth_engine_v2::node::AMPLIFIER_CONTROL),
+                SignalDomain::Control,
+            )
+            .connect(
+                (amplifier, PortId::FIRST),
+                (MIX, PortId::FIRST),
+                SignalDomain::Audio,
+            );
+    }
+    let ir = builder
+        .tuning(ExecutionScope::Voice, twelve_tet())
+        .declaring(common::compiled_notes(2))
+        .build()
+        .expect("a readable plan");
+    let plan = admit(&ir, profile(256, ChannelLayout::Stereo));
+    assert_eq!(plan.note_addresses().len(), 2, "both stay playable");
+    for (envelope_id, own, other) in [
+        (ENVELOPE, OSCILLATOR, SECOND_OSCILLATOR),
+        (SECOND_ENVELOPE, SECOND_OSCILLATOR, OSCILLATOR),
+    ] {
+        let slot = plan.resolve_note(envelope_id).expect("playable");
+        let magnitudes = plan.note_magnitudes_of(slot);
+        let pitches: Vec<_> = magnitudes
+            .iter()
+            .filter(|entry| entry.magnitude == NoteMagnitude::Pitch)
+            .map(|entry| entry.node)
+            .collect();
+        let own_slot = plan
+            .resolve_parameter(own, parameters::SINE_FREQUENCY)
+            .expect("declared");
+        let other_slot = plan
+            .resolve_parameter(other, parameters::SINE_FREQUENCY)
+            .expect("declared");
+        let own_node = plan.parameter_targets()[own_slot.index()].node;
+        let other_node = plan.parameter_targets()[other_slot.index()].node;
+        assert_eq!(
+            pitches,
+            vec![own_node],
+            "{envelope_id}: its own oscillator alone"
+        );
+        assert_ne!(own_node, other_node);
+        assert_eq!(
+            magnitudes
+                .iter()
+                .filter(|entry| entry.magnitude == NoteMagnitude::Velocity)
+                .count(),
+            1,
+            "{envelope_id}: its own velocity alone"
+        );
+    }
+    // And the IR's own figure agrees: the widest expansion is one island's, not the scope's.
+    assert_eq!(
+        ir.max_writes_per_note(),
+        synth_engine_v2::quantities::WritesPerNote::with_magnitudes(2)
+    );
+}
+
+/// A modulation edge joins an island as a cable does: a note source read only by a
+/// modulation edge into the voice's oscillator is in the note's island, so the note's own
+/// velocity reaches it. A union over cables alone would leave it an island of its own and
+/// the source reading nothing.
+#[test]
+fn a_note_source_joined_by_a_modulation_edge_alone_is_in_the_notes_island() {
+    const SOURCE: NodeId = NodeId::new(18);
+    let ir = GraphIr::builder()
+        .node(OSCILLATOR, sine(), ExecutionScope::Voice)
+        .node(ENVELOPE, envelope(), ExecutionScope::Voice)
+        .node(AMPLIFIER, IrNodeKind::Amplifier, ExecutionScope::Voice)
+        .node(
+            SOURCE,
+            IrNodeKind::NoteSource {
+                kind: synth_engine_v2::controller::NoteSource::Velocity,
+            },
+            ExecutionScope::Voice,
+        )
+        .node(OUTPUT, IrNodeKind::Output, ExecutionScope::Global)
+        .connect(
+            (OSCILLATOR, PortId::FIRST),
+            (AMPLIFIER, PortId::FIRST),
+            SignalDomain::Audio,
+        )
+        .connect(
+            (ENVELOPE, PortId::FIRST),
+            (AMPLIFIER, synth_engine_v2::node::AMPLIFIER_CONTROL),
+            SignalDomain::Control,
+        )
+        .connect(
+            (AMPLIFIER, PortId::FIRST),
+            (OUTPUT, PortId::FIRST),
+            SignalDomain::Audio,
+        )
+        .modulate(
+            (SOURCE, PortId::FIRST),
+            (OSCILLATOR, parameters::SINE_FREQUENCY),
+            ModulationDepth::new(ModulationUnit::Semitones, 12.0).expect("finite"),
+        )
+        .tuning(ExecutionScope::Voice, twelve_tet())
+        .declaring(common::compiled_notes(1))
+        .build()
+        .expect("a readable plan");
+    let plan = plan(&ir);
+    let slot = plan.resolve_note(ENVELOPE).expect("playable");
+    let source_slot = plan
+        .resolve_parameter(SOURCE, parameters::SOURCE_VALUE)
+        .expect("declared");
+    let source_node = plan.parameter_targets()[source_slot.index()].node;
+    assert!(
+        plan.note_magnitudes_of(slot)
+            .iter()
+            .any(|entry| entry.node == source_node
+                && matches!(entry.magnitude, NoteMagnitude::Source(_))),
+        "the note's expansion reaches the source it is joined to by a modulation edge alone"
+    );
 }
 
 #[test]
@@ -400,6 +546,13 @@ fn two_scope_voice(voice_tuning: PreparedTuning, instance_tuning: PreparedTuning
             envelope(),
             ExecutionScope::InstrumentInstance,
         )
+        // Read by nothing: what puts the second oscillator in the second envelope's island
+        // (`P08-S002`), so its pitch destination is one the second note reaches.
+        .node(
+            SECOND_AMPLIFIER,
+            IrNodeKind::Amplifier,
+            ExecutionScope::InstrumentInstance,
+        )
         .node(OUTPUT, IrNodeKind::Output, ExecutionScope::Global)
         .connect(
             (OSCILLATOR, PortId::FIRST),
@@ -415,6 +568,16 @@ fn two_scope_voice(voice_tuning: PreparedTuning, instance_tuning: PreparedTuning
             (AMPLIFIER, PortId::FIRST),
             (OUTPUT, PortId::FIRST),
             SignalDomain::Audio,
+        )
+        .connect(
+            (SECOND_OSCILLATOR, PortId::FIRST),
+            (SECOND_AMPLIFIER, PortId::FIRST),
+            SignalDomain::Audio,
+        )
+        .connect(
+            (SECOND_ENVELOPE, PortId::FIRST),
+            (SECOND_AMPLIFIER, synth_engine_v2::node::AMPLIFIER_CONTROL),
+            SignalDomain::Control,
         )
         .tuning(ExecutionScope::Voice, voice_tuning)
         .tuning(ExecutionScope::InstrumentInstance, instance_tuning)

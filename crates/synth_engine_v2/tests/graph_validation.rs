@@ -461,6 +461,14 @@ catalog! {
         muted: false,
     } => IrNodeKind::Channel { .. },
     IrNodeKind::Mix => IrNodeKind::Mix,
+    IrNodeKind::Balance {
+        level: level(1.0),
+        pan: synth_engine_v2::controller::BipolarLevel::ZERO,
+        muted: false,
+    } => IrNodeKind::Balance { .. },
+    IrNodeKind::Trim { level: level(1.0) } => IrNodeKind::Trim { .. },
+    IrNodeKind::SoftClip => IrNodeKind::SoftClip,
+    IrNodeKind::HardClamp => IrNodeKind::HardClamp,
     IrNodeKind::Sampler {
         map: synth_engine_v2::sample::SampleMapRef::new(0),
         level: level(1.0),
@@ -498,10 +506,11 @@ fn every_kernel_admits_exactly_one_channel_on_every_port() {
     // ports admit only one channel is tested at one, with a test asserting that its port
     // table admits only one. That is every authored kind but two — the compiler's own
     // widening is the one operation that writes more — so the obligation to test at two
-    // channels does not reach them, and this is what says so. The two exceptions are the
-    // mix channel and the sum (`SOUND-INV-031`), whose every port admits exactly two:
-    // `tests/mix_channel.rs` tests both kernels at two and holds their port tables to two,
-    // which is the same shape of check in the other direction.
+    // channels does not reach them, and this is what says so. The exceptions are the mixer
+    // stages — the mix channel and the sum (`SOUND-INV-031`), the balance, the trim, the
+    // soft clip and the hard clamp (`SOUND-INV-032`) — whose every port admits exactly two:
+    // `tests/mix_channel.rs` and `tests/mix_stages.rs` test those kernels at two and hold
+    // their port tables to two, which is the same shape of check in the other direction.
     for kind in catalog() {
         // The output node has no kernel: it declares one input port carrying the
         // **stream's** layout, and what reads that region is the boundary copy rather
@@ -510,7 +519,15 @@ fn every_kernel_admits_exactly_one_channel_on_every_port() {
         if matches!(kind, IrNodeKind::Output) {
             continue;
         }
-        let admitted = if matches!(kind, IrNodeKind::Channel { .. } | IrNodeKind::Mix) {
+        let admitted = if matches!(
+            kind,
+            IrNodeKind::Channel { .. }
+                | IrNodeKind::Mix
+                | IrNodeKind::Balance { .. }
+                | IrNodeKind::Trim { .. }
+                | IrNodeKind::SoftClip
+                | IrNodeKind::HardClamp
+        ) {
             ChannelLayout::Stereo
         } else {
             ChannelLayout::Mono

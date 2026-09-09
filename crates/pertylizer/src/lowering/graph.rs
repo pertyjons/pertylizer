@@ -154,8 +154,150 @@ pub struct ChannelStrip {
     pub muted: bool,
 }
 
+/// The track's volume, pan and audibility, lowered onto one balance stage (`P08-S002`).
+///
+/// What V1 applies **per voice** before the instrument's shared effect chain —
+/// `apply_track_control`: the track volume, the balance pan whose centre is unity, and the
+/// audibility that zeroes a muted or soloed-out voice — carried as the authored bases of a
+/// [`IrNodeKind::Balance`] the lowerer places in the **voice scope** after the velocity
+/// stage, so each voice instance is scaled before the voice sum exactly where V1 scales it.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct TrackStage {
+    /// The saved track volume, a linear amplitude in `0..1`.
+    pub level: synth_engine_v2::quantities::Amplitude,
+    /// The saved track pan.
+    pub pan: synth_engine_v2::controller::BipolarLevel,
+    /// Whether the stage starts muted. A track that plays a note is audible, so this is
+    /// `false` for every stage the project lowering inserts; a lane may raise it.
+    pub muted: bool,
+}
+
+/// The stages the lowerer inserts between an instrument's terminating module and the plan,
+/// in V1's order: the velocity stage, the track's balance, the instrument's channel, and V1's
+/// channel-stage clipper. Each is present where the caller says so and absent otherwise, and
+/// each present stage feeds the next present one.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct InstrumentStages {
+    /// V1's voice-output velocity stage (ADR-0059), from the instrument's saved sensitivity.
+    pub velocity: Option<NormalizedLevel>,
+    /// V1's per-voice track control (`P08-S002`).
+    pub track: Option<TrackStage>,
+    /// V1's instrument channel (`P08-S001`).
+    pub channel: Option<ChannelStrip>,
+    /// V1's channel-stage soft clipper (`P08-S002`), under the parity output policy.
+    pub soft_clip: bool,
+}
+
+/// Where an instrument's signal ends.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum Sink {
+    /// The instrument's own saved output module becomes the plan's `Output` node, which is
+    /// what a bare patch lowers to and what every render before `P08-S002` rendered through.
+    OwnOutput,
+    /// A node the caller placed — the master sum — which the last stage feeds; the saved
+    /// output module then lowers to no node of its own.
+    Node(NodeId),
+}
+
+/// One plan's nodes, edges and modulation edges as a whole project is lowered into them.
+///
+/// `GraphIr`'s builder is consuming and has no `Default`, so a lowering that spans several
+/// instruments gathers here first and builds once. Nodes are keyed by address: a node two
+/// instruments both read — a global Mod Grid modulator — is added once, and an address two
+/// different nodes claim is a lowering inconsistency refused by name rather than a silent
+/// overwrite. The build feeds the builder in ascending address order, so the plan does not
+/// depend on the order instruments were lowered in (`SOUND-INV-008`).
+#[derive(Debug, Default)]
+#[must_use]
+pub(super) struct GraphAccumulator {
+    nodes: std::collections::BTreeMap<NodeId, (IrNodeKind, ExecutionScope)>,
+    edges: Vec<AccumulatedEdge>,
+    modulations: Vec<AccumulatedModulation>,
+}
+
+/// One cable as the accumulator holds it: source port, destination port, domain.
+type AccumulatedEdge = ((NodeId, PortId), (NodeId, PortId), SignalDomain);
+
+/// One modulation edge as the accumulator holds it: source port, target parameter, depth.
+type AccumulatedModulation = (
+    (NodeId, PortId),
+    (NodeId, synth_engine_v2::ir::ParameterId),
+    synth_engine_v2::ir::ModulationDepth,
+);
+
+impl GraphAccumulator {
+    /// Add a node, or name the address another node already holds.
+    pub(super) fn node(
+        &mut self,
+        id: NodeId,
+        kind: IrNodeKind,
+        scope: ExecutionScope,
+    ) -> Result<(), NodeId> {
+        match self.nodes.get(&id) {
+            None => {
+                self.nodes.insert(id, (kind, scope));
+                Ok(())
+            }
+            Some(held) if *held == (kind, scope) => Ok(()),
+            Some(_) => Err(id),
+        }
+    }
+
+    pub(super) fn connect(
+        &mut self,
+        from: (NodeId, PortId),
+        to: (NodeId, PortId),
+        domain: SignalDomain,
+    ) {
+        self.edges.push((from, to, domain));
+    }
+
+    fn modulate(
+        &mut self,
+        source: (NodeId, PortId),
+        target: (NodeId, synth_engine_v2::ir::ParameterId),
+        depth: synth_engine_v2::ir::ModulationDepth,
+    ) {
+        self.modulations.push((source, target, depth));
+    }
+
+    /// Build the plan's graph with the voice scope's tuning and the plan's declarations.
+    pub(super) fn build(
+        self,
+        tuning: PreparedTuning,
+        declarations: PlanDeclarations,
+    ) -> Result<GraphIr, synth_engine_v2::ir::IrError> {
+        let mut builder = GraphIr::builder();
+        for (id, (kind, scope)) in self.nodes {
+            builder = builder.node(id, kind, scope);
+        }
+        for (from, to, domain) in self.edges {
+            builder = builder.connect(from, to, domain);
+        }
+        for (source, target, depth) in self.modulations {
+            builder = builder.modulate(source, target, depth);
+        }
+        builder
+            .tuning(ExecutionScope::Voice, tuning)
+            .declaring(declarations)
+            .build()
+    }
+}
+
+/// What lowering one instrument into a shared graph produced.
+#[derive(Debug)]
+#[must_use]
+pub(super) struct InstrumentLowering {
+    /// The identity mapping the instrument's nodes were addressed through.
+    pub identities: ResolvedIdentities,
+    /// What the lowering has to say.
+    pub diagnostics: Vec<LoweringDiagnostic>,
+    /// Whether any of it stops the plan.
+    pub refused: bool,
+}
+
 /// [`lower_voice_patch`], with V1's voice-output velocity stage (ADR-0059) and the
-/// instrument's mix channel (`P08-S001`).
+/// instrument's mix channel (`P08-S001`), into a plan of its own.
 ///
 /// `velocity_amp_sensitivity` is the instrument's saved sensitivity; `Some` places a
 /// [`IrNodeKind::VelocityScaler`] between the voice's terminating node and the output, so a
@@ -164,12 +306,16 @@ pub struct ChannelStrip {
 /// the instrument's strip; `Some` places a [`IrNodeKind::Channel`] after the velocity stage,
 /// so the cable into the terminating node enters the scaler, the scaler feeds the channel
 /// and the channel feeds the output. `None` leaves the output fed directly, which is what a
-/// caller lowering a bare patch gets and what every render before this slice rendered.
+/// caller lowering a bare patch gets and what every render before `P08-S001` rendered.
 ///
 /// `modulators` is what the song's Mod Grid adds to this instrument's graph (`P07-S003`):
 /// global-scope modulator nodes and their routes into the patch's modules, lowered by
 /// `modulation::lower_mod_grid` so that this function stays free of the song. The patch's own
 /// Mod Matrix is lowered here, since it is a module of the patch.
+///
+/// The one-instrument form: the saved output module is the plan's output, the plan declares
+/// one compiled producer of one note, and there is no master. A whole project lowers through
+/// [`lower_instrument_into`] and the master `render::smoke_render_project` places.
 pub fn lower_voice_patch_with(
     instrument: InstrumentId,
     modules: &[ModuleState],
@@ -179,9 +325,157 @@ pub fn lower_voice_patch_with(
     channel: Option<ChannelStrip>,
     modulators: &SongModulators,
 ) -> LoweredGraph {
-    let mut diagnostics = Vec::new();
+    let mut graph = GraphAccumulator::default();
+    let lowered = lower_instrument_into(
+        &mut graph,
+        instrument,
+        modules,
+        connections,
+        InstrumentStages {
+            velocity: velocity_amp_sensitivity,
+            track: None,
+            channel,
+            soft_clip: false,
+        },
+        modulators,
+        Sink::OwnOutput,
+    );
+    let InstrumentLowering {
+        identities,
+        mut diagnostics,
+        refused,
+    } = lowered;
+    if refused {
+        return LoweredGraph {
+            ir: None,
+            diagnostics,
+            identities,
+        };
+    }
 
-    let identities = match ResolvedIdentities::resolve(modules) {
+    // ADR-0047 clause 3 partitions identity ranges across the producers a plan declares, so a
+    // plan that says nothing cannot stamp a note at all. This lowering has exactly one
+    // producer, and it is compiled: every note the arrangement places is in the plan, and a
+    // compiled producer's releases are in the plan with them, so it owes no release holds.
+    // One simultaneous note, because one scalar gate sounds one note — the same fact that
+    // makes `lower_performance` refuse an overlap.
+    let declarations = plan_declarations(HeldNoteCount::measured(1), events_per_quantum);
+    let tuning = match voice_tuning() {
+        Ok(tuning) => tuning,
+        Err(error) => {
+            diagnostics.push(LoweringDiagnostic::refused(
+                ProjectSubject::Instrument {
+                    instrument,
+                    name: String::new(),
+                },
+                LoweringReason::UnsupportedParameterValue {
+                    value: error.to_string(),
+                },
+            ));
+            return LoweredGraph {
+                ir: None,
+                diagnostics,
+                identities,
+            };
+        }
+    };
+    match graph.build(tuning, declarations) {
+        Ok(ir) => LoweredGraph {
+            ir: Some(ir),
+            diagnostics,
+            identities,
+        },
+        Err(error) => {
+            diagnostics.push(LoweringDiagnostic::refused(
+                ProjectSubject::Instrument {
+                    instrument,
+                    name: String::new(),
+                },
+                LoweringReason::UnresolvedEndpoint {
+                    spelling: error.to_string(),
+                },
+            ));
+            LoweredGraph {
+                ir: None,
+                diagnostics,
+                identities,
+            }
+        }
+    }
+}
+
+/// What a lowered plan declares: one compiled producer of `notes` simultaneous notes, the
+/// event peak the caller counted from the timeline, and nothing else.
+///
+/// One producer for the whole plan, however many instruments it holds: every note the
+/// arrangement places is in the plan and every compiled release with it, so it owes no
+/// release holds; and the voice scope is instantiated once per simultaneous note across the
+/// plan, every instrument's chain in every instance, so a note lands on whichever instance is
+/// free (`P08-S002`).
+pub(super) fn plan_declarations(
+    notes: HeldNoteCount,
+    events_per_quantum: EventCount,
+) -> PlanDeclarations {
+    PlanDeclarations {
+        note_producers: vec![NoteProducerDeclaration {
+            compiled: true,
+            simultaneous_notes: notes,
+            simultaneous_holds: EventCount::NONE,
+        }],
+        held_notes: notes,
+        // The most note edges the arrangement puts in one quantum, counted from the same
+        // timeline the renderer is later given. Admission partitions its event capacity
+        // across declared producers, so a plan declaring zero is admitted for a load it does
+        // not carry: the edges then arrive under the profile's global cap and never meet the
+        // compiled producer's own share. An independent review found exactly that.
+        events_per_quantum,
+        ..PlanDeclarations::default()
+    }
+}
+
+/// The tuning the voice scope's keys resolve through.
+///
+/// `SOUND-INV-021`: a scope holding a pitch destination states the tuning its keys resolve
+/// through, and admission refuses a plan that does not. Every lowered oscillator is in the
+/// voice scope, so that is the scope that states one.
+///
+/// Twelve-tone equal temperament, because that is what a V1 project plays: V1 resolves a
+/// note through `MidiNote::to_frequency`, which is 12-TET about A440 and is not selectable
+/// per project. A saved project therefore *has* no other tuning to carry, and choosing this
+/// one reproduces it rather than substituting for it. Per-project tuning selection is Phase
+/// 10A's authored model.
+pub(super) fn voice_tuning() -> Result<PreparedTuning, synth_engine_v2::tuning::TuningError> {
+    PreparedTuning::equal_temperament()
+}
+
+/// Lower one instrument's modules, connections, Mod Matrix and inserted stages into a shared
+/// graph, ending at `sink`.
+///
+/// Never returns `Err`: a failure that stops the graph is a `Refused` diagnostic with a
+/// subject, which is what the exit gate asks for, and a `Result` would lose the subject. The
+/// graph may be left holding this instrument's nodes after a refusal; a refused lowering is
+/// never built.
+#[allow(
+    clippy::too_many_lines,
+    reason = "one walk over one saved patch, stage by stage"
+)]
+pub(super) fn lower_instrument_into(
+    graph: &mut GraphAccumulator,
+    instrument: InstrumentId,
+    modules: &[ModuleState],
+    connections: &[ConnectionState],
+    stages: InstrumentStages,
+    modulators: &SongModulators,
+    sink: Sink,
+) -> InstrumentLowering {
+    let mut diagnostics = Vec::new();
+    let refusal = |diagnostics: Vec<LoweringDiagnostic>, identities| InstrumentLowering {
+        identities,
+        diagnostics,
+        refused: true,
+    };
+
+    let identities = match ResolvedIdentities::resolve(instrument, modules) {
         Ok(identities) => identities,
         Err(error) => {
             diagnostics.push(LoweringDiagnostic::refused(
@@ -193,13 +487,10 @@ pub fn lower_voice_patch_with(
                     spelling: error.to_string(),
                 },
             ));
-            return LoweredGraph {
-                ir: None,
-                diagnostics,
-                identities: ResolvedIdentities::default(),
-            };
+            return refusal(diagnostics, ResolvedIdentities::default());
         }
     };
+    let slot = identities.slot();
 
     // Which `(module, port)` destinations the patch actually cables. An amplifier's control
     // input is the one place where V1 and V2 disagree about what an *absent* cable means, so
@@ -250,11 +541,7 @@ pub fn lower_voice_patch_with(
                 },
             ));
         }
-        return LoweredGraph {
-            ir: None,
-            diagnostics,
-            identities,
-        };
+        return refusal(diagnostics, identities);
     }
     if outputs.is_empty() {
         diagnostics.push(LoweringDiagnostic::refused(
@@ -268,46 +555,116 @@ pub fn lower_voice_patch_with(
                 owner: "Phase 6, with the voice-instantiation model",
             },
         ));
-        return LoweredGraph {
-            ir: None,
-            diagnostics,
-            identities,
-        };
+        return refusal(diagnostics, identities);
     }
 
-    let mut builder = GraphIr::builder();
     let mut refused = false;
     let mut edges: Vec<(NodeId, NodeId, ConnectionState)> = Vec::new();
-    // The output node's address, so the cable into it can be routed through the scaler.
+    // An address two nodes claim is an inconsistency between two lowerings — a Mod Grid
+    // node read by two instruments under two kinds, say — refused by name rather than
+    // overwritten.
+    let place = |graph: &mut GraphAccumulator,
+                 id: NodeId,
+                 kind: IrNodeKind,
+                 scope: ExecutionScope,
+                 diagnostics: &mut Vec<LoweringDiagnostic>|
+     -> bool {
+        match graph.node(id, kind, scope) {
+            Ok(()) => true,
+            Err(taken) => {
+                diagnostics.push(LoweringDiagnostic::refused(
+                    ProjectSubject::Instrument {
+                        instrument,
+                        name: String::new(),
+                    },
+                    LoweringReason::UnresolvedEndpoint {
+                        spelling: format!("{taken} is claimed by two different nodes"),
+                    },
+                ));
+                false
+            }
+        }
+    };
+
+    // The output module's address, so the cable into it can be routed through the stages.
     let output_node = outputs
         .first()
         .and_then(|module| module.id.parse::<ModuleId>().ok())
         .and_then(|id| identities.node_for(id));
-    let scaler = velocity_amp_sensitivity.map(|_| super::identity::VOICE_OUTPUT_SCALER);
-    if let Some(sensitivity) = velocity_amp_sensitivity {
-        builder = builder.node(
-            super::identity::VOICE_OUTPUT_SCALER,
+    // The inserted stages, in V1's order. The scaler and the balance are per voice —
+    // V1 scales each voice's output and applies each voice's track control before the
+    // voice sum — so both are in the voice scope; the channel and the clipper run once per
+    // instrument on the sum.
+    let mut chain: Vec<NodeId> = Vec::with_capacity(5);
+    if let Some(sensitivity) = stages.velocity {
+        let id = slot.voice_output_scaler();
+        if !place(
+            graph,
+            id,
             IrNodeKind::VelocityScaler { sensitivity },
             ExecutionScope::Voice,
-        );
+            &mut diagnostics,
+        ) {
+            refused = true;
+        }
+        chain.push(id);
     }
-    // `P08-S001`: the instrument's mix channel, in the channel scope — once per instrument,
-    // after the voice sum, where V1 applies its fader.
-    let strip = channel.map(|_| super::identity::CHANNEL);
-    if let Some(channel) = channel {
-        builder = builder.node(
-            super::identity::CHANNEL,
+    if let Some(track) = stages.track {
+        let id = slot.balance();
+        if !place(
+            graph,
+            id,
+            IrNodeKind::Balance {
+                level: track.level,
+                pan: track.pan,
+                muted: track.muted,
+            },
+            ExecutionScope::Voice,
+            &mut diagnostics,
+        ) {
+            refused = true;
+        }
+        chain.push(id);
+    }
+    if let Some(channel) = stages.channel {
+        let id = slot.channel();
+        if !place(
+            graph,
+            id,
             IrNodeKind::Channel {
                 fader: channel.fader,
                 pan: channel.pan,
                 muted: channel.muted,
             },
             ExecutionScope::Channel,
-        );
+            &mut diagnostics,
+        ) {
+            refused = true;
+        }
+        chain.push(id);
     }
-    // The stage the cable into the output enters instead: the velocity stage where there is
-    // one, else the channel, else the output itself.
-    let into_output = scaler.or(strip);
+    if stages.soft_clip {
+        let id = slot.soft_clip();
+        if !place(
+            graph,
+            id,
+            IrNodeKind::SoftClip,
+            ExecutionScope::Channel,
+            &mut diagnostics,
+        ) {
+            refused = true;
+        }
+        chain.push(id);
+    }
+    // Where the chain ends: the saved output module as the plan's output, or the caller's
+    // node, in which case the saved output module lowers to no node of its own.
+    let end = match sink {
+        Sink::OwnOutput => output_node,
+        Sink::Node(node) => Some(node),
+    };
+    // The stage the cable into the output module enters instead: the first inserted stage,
+    // else the end itself.
+    let into_output = chain.first().copied().or(end);
 
     // V1 applies exactly one Mod Matrix per voice: `Voice::from_graph` asks its `BTreeMap`
     // for the first module of the type, which is the lowest identity, and any other matrix
@@ -364,7 +721,15 @@ pub fn lower_voice_patch_with(
         }
 
         match lower_module(instrument, id, module, &patched, &mut diagnostics) {
-            Some((kind, scope)) => builder = builder.node(node, kind, scope),
+            // The saved output module is audited and reported as every module is, but it
+            // is a node only where it is the plan's output: into a caller's sink it lowers
+            // to the cable that reaches it.
+            Some((IrNodeKind::Output, _)) if sink != Sink::OwnOutput => {}
+            Some((kind, scope)) => {
+                if !place(graph, node, kind, scope, &mut diagnostics) {
+                    refused = true;
+                }
+            }
             None => refused = true,
         }
     }
@@ -433,27 +798,23 @@ pub fn lower_voice_patch_with(
             &mut diagnostics,
         ) {
             Some((from, to, domain)) => {
-                // ADR-0059: the cable into the output enters the velocity stage instead, and
-                // the stage feeds the output below — through the channel since `P08-S001`.
+                // ADR-0059: the cable into the output enters the first inserted stage
+                // instead, and the stages feed each other and the end below.
                 let to = match into_output {
                     Some(stage) if Some(to.0) == output_node => (stage, PortId::FIRST),
                     _ => to,
                 };
                 edges.push((from.0, to.0, connection.clone()));
-                builder = builder.connect(from, to, domain);
+                graph.connect(from, to, domain);
             }
             None => refused = true,
         }
     }
-    // The inserted stages in order: scaler, then channel, then the output. Each present
-    // stage feeds the next present one.
-    if let Some(output) = output_node {
-        let mut chain: Vec<NodeId> = Vec::with_capacity(3);
-        chain.extend(scaler);
-        chain.extend(strip);
-        chain.push(output);
+    // The inserted stages in order, then the end. Each present stage feeds the next.
+    if let Some(end) = end {
+        chain.push(end);
         for pair in chain.windows(2) {
-            builder = builder.connect(
+            graph.connect(
                 (pair[0], PortId::FIRST),
                 (pair[1], PortId::FIRST),
                 SignalDomain::Audio,
@@ -480,11 +841,7 @@ pub fn lower_voice_patch_with(
     }
 
     if refused {
-        return LoweredGraph {
-            ir: None,
-            diagnostics,
-            identities,
-        };
+        return refusal(diagnostics, identities);
     }
 
     // The modulation edges (`SOUND-INV-027`), each from a slot or a Mod Grid target. An
@@ -509,8 +866,10 @@ pub fn lower_voice_patch_with(
             .iter()
             .any(|route| route.source == ModulationSource::Macro(source))
         {
-            let (id, kind, scope) = super::modulation::macro_node(source);
-            builder = builder.node(id, kind, scope);
+            let (id, kind, scope) = super::modulation::macro_node(slot, source);
+            if !place(graph, id, kind, scope, &mut diagnostics) {
+                return refusal(diagnostics, identities);
+            }
         }
     }
     for route in &routes {
@@ -520,7 +879,7 @@ pub fn lower_voice_patch_with(
         let source = match route.source {
             ModulationSource::Module(id) => identities.node_for(id),
             ModulationSource::Grid(node) => Some(node),
-            ModulationSource::Macro(source) => Some(super::modulation::macro_node(source).0),
+            ModulationSource::Macro(source) => Some(super::modulation::macro_node(slot, source).0),
         };
         let (Some(source), Some(target)) = (source, identities.node_for(route.target)) else {
             diagnostics.push(LoweringDiagnostic::refused(
@@ -529,11 +888,7 @@ pub fn lower_voice_patch_with(
                     spelling: format!("{} in a modulation route", route.target),
                 },
             ));
-            return LoweredGraph {
-                ir: None,
-                diagnostics,
-                identities,
-            };
+            return refusal(diagnostics, identities);
         };
         diagnostics.push(LoweringDiagnostic::unrepresented(
             route.subject.clone(),
@@ -551,7 +906,7 @@ pub fn lower_voice_patch_with(
                 owner: "the first A/B consumer, under the corpus's intentional-correction class",
             },
         ));
-        builder = builder.modulate(
+        graph.modulate(
             (source, PortId::FIRST),
             (target, route.parameter),
             route.depth,
@@ -562,84 +917,25 @@ pub fn lower_voice_patch_with(
             .iter()
             .any(|route| route.source == ModulationSource::Grid(*node));
         if read {
-            // Once per plan: a global Mod Grid graph runs one instance for the whole song.
-            builder = builder.node(*node, *kind, ExecutionScope::Global);
+            // Once per plan: a global Mod Grid graph runs one instance for the whole song,
+            // which the accumulator's dedup by address is what makes true across
+            // instruments that both read it.
+            if !place(
+                graph,
+                *node,
+                *kind,
+                ExecutionScope::Global,
+                &mut diagnostics,
+            ) {
+                return refusal(diagnostics, identities);
+            }
         }
     }
 
-    // ADR-0047 clause 3 partitions identity ranges across the producers a plan declares, so a
-    // plan that says nothing cannot stamp a note at all. This lowering has exactly one
-    // producer, and it is compiled: every note the arrangement places is in the plan, and a
-    // compiled producer's releases are in the plan with them, so it owes no release holds.
-    // One simultaneous note, because one scalar gate sounds one note — the same fact that
-    // makes `lower_performance` refuse an overlap.
-    // `SOUND-INV-021`: a scope holding a pitch destination states the tuning its keys
-    // resolve through, and admission refuses a plan that does not. Every lowered oscillator
-    // is in the voice scope, so that is the scope that states one.
-    //
-    // Twelve-tone equal temperament, because that is what a V1 project plays: V1 resolves a
-    // note through `MidiNote::to_frequency`, which is 12-TET about A440 and is not selectable
-    // per project. A saved project therefore *has* no other tuning to carry, and choosing
-    // this one reproduces it rather than substituting for it. Per-project tuning selection is
-    // Phase 10A's authored model.
-    let builder = match PreparedTuning::equal_temperament() {
-        Ok(tuning) => builder.tuning(ExecutionScope::Voice, tuning),
-        Err(error) => {
-            diagnostics.push(LoweringDiagnostic::refused(
-                ProjectSubject::Instrument {
-                    instrument,
-                    name: String::new(),
-                },
-                LoweringReason::UnsupportedParameterValue {
-                    value: error.to_string(),
-                },
-            ));
-            return LoweredGraph {
-                ir: None,
-                diagnostics,
-                identities,
-            };
-        }
-    };
-
-    let builder = builder.declaring(PlanDeclarations {
-        note_producers: vec![NoteProducerDeclaration {
-            compiled: true,
-            simultaneous_notes: HeldNoteCount::measured(1),
-            simultaneous_holds: EventCount::NONE,
-        }],
-        held_notes: HeldNoteCount::measured(1),
-        // The most note edges the arrangement puts in one quantum, counted from the same
-        // timeline the renderer is later given. Admission partitions its event capacity
-        // across declared producers, so a plan declaring zero is admitted for a load it does
-        // not carry: the edges then arrive under the profile's global cap and never meet the
-        // compiled producer's own share. An independent review found exactly that.
-        events_per_quantum,
-        ..PlanDeclarations::default()
-    });
-
-    match builder.build() {
-        Ok(ir) => LoweredGraph {
-            ir: Some(ir),
-            diagnostics,
-            identities,
-        },
-        Err(error) => {
-            diagnostics.push(LoweringDiagnostic::refused(
-                ProjectSubject::Instrument {
-                    instrument,
-                    name: String::new(),
-                },
-                LoweringReason::UnresolvedEndpoint {
-                    spelling: error.to_string(),
-                },
-            ));
-            LoweredGraph {
-                ir: None,
-                diagnostics,
-                identities,
-            }
-        }
+    InstrumentLowering {
+        identities,
+        diagnostics,
+        refused: false,
     }
 }
 

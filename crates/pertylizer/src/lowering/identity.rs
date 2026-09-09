@@ -23,16 +23,37 @@
 //! rank behind it, so an unrelated insertion silently repoints every other identity. An
 //! independent review caught it.
 //!
-//! The address is therefore **computed from the identity alone**: the module type's position
-//! in its own declaration paired with the instance number, which is exactly what a
-//! [`ModuleId`] is. Nothing about the patch's contents enters, so adding, removing or
-//! reordering modules leaves every other address where it was. The assigned number is an
-//! address inside one plan; it is never persisted and never compared across two lowerings.
+//! The address is therefore **computed from the identity alone**: the instrument's own
+//! identity, then the module type's position in its own declaration paired with the instance
+//! number, which is exactly what a [`ModuleId`] is. Nothing about the patch's contents
+//! enters, so adding, removing or reordering modules — or instruments — leaves every other
+//! address where it was. The assigned number is an address inside one plan; it is never
+//! persisted and never compared across two lowerings.
+//!
+//! # The address space, since a plan holds a whole project (`P08-S002`)
+//!
+//! A [`NodeId`] is thirty-two bits, laid out so that no two lowered objects can meet:
+//!
+//! - bit 31 set is a **Mod Grid node**, global to the song (`modulation::grid_node_address`);
+//! - bits 24–30 are the **instrument slot**, the instrument's persisted identity itself,
+//!   which must therefore be below [`InstrumentSlot::MASTER`] — a project naming a higher
+//!   identity is refused by name rather than folded into another's addresses;
+//! - bits 16–22 are the **module type**, whose seventy-odd variants never reach `0xFF`, so
+//!   a module-type field of `0xFF` marks a node the lowerer **inserts** for that instrument
+//!   — the velocity scaler, the balance stage, the channel, the clipper, the macro sources —
+//!   in the low sixteen bits;
+//! - the slot [`InstrumentSlot::MASTER`] with the inserted-node mark is the **master**: the
+//!   sum, the trim, the clamp and the plan's one output.
+//!
+//! Before this, the inserted channel sat at `0xFFFF_0001`, which was also the velocity
+//! macro's address: a patch reading velocity through its Mod Matrix could not lower beside a
+//! channel. The per-instrument range closes that by construction.
 
 use std::collections::BTreeMap;
 
 use synth_core::ModuleType;
 use synth_engine::ModuleId;
+use synth_engine::instrument::InstrumentId;
 use synth_engine_v2::ir::NodeId;
 use thiserror::Error;
 
@@ -81,16 +102,102 @@ pub enum IdentityError {
         /// The type the id's prefix names.
         named: ModuleType,
     },
+
+    /// An instrument's persisted identity lies outside the address space's instrument field.
+    ///
+    /// Refused rather than hashed or ranked into it: a rank would repoint every other
+    /// instrument's addresses when one is added, and a hash could meet another's.
+    #[error("instrument {instrument} lies outside the addressable range of {limit} instruments")]
+    InstrumentOutOfRange {
+        /// The identity that does not fit.
+        instrument: InstrumentId,
+        /// How many identities do.
+        limit: u64,
+    },
 }
+
+/// One instrument's place in the plan's address space: its persisted identity, checked to fit.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[must_use]
+pub struct InstrumentSlot(u8);
+
+impl InstrumentSlot {
+    /// The slot the master nodes share; no instrument may take it.
+    pub const MASTER: Self = Self(0x7F);
+
+    /// Where the instrument field sits in a [`NodeId`].
+    const SHIFT: u32 = 24;
+    /// The module-type field value that marks a node the lowerer inserts.
+    const INSERTED: u32 = 0x00FF_0000;
+
+    /// An instrument's slot, or the refusal naming it.
+    pub fn of(instrument: InstrumentId) -> Result<Self, IdentityError> {
+        let limit = u64::from(Self::MASTER.0);
+        match u8::try_from(instrument.as_u64()) {
+            Ok(slot) if u64::from(slot) < limit => Ok(Self(slot)),
+            _ => Err(IdentityError::InstrumentOutOfRange { instrument, limit }),
+        }
+    }
+
+    /// The address of one of this instrument's saved modules.
+    fn module(self, id: ModuleId) -> NodeId {
+        NodeId::new(
+            ((self.0 as u32) << Self::SHIFT)
+                | ((id.module_type as u32) << 16)
+                | u32::from(id.instance),
+        )
+    }
+
+    /// The address of a node the lowerer inserts for this instrument, by tag.
+    const fn inserted(self, tag: u16) -> NodeId {
+        NodeId::new(((self.0 as u32) << Self::SHIFT) | Self::INSERTED | tag as u32)
+    }
+
+    /// The voice-output velocity stage (ADR-0059).
+    pub const fn voice_output_scaler(self) -> NodeId {
+        self.inserted(0)
+    }
+
+    /// The balance stage V1's track control lowers to (`P08-S002`).
+    pub const fn balance(self) -> NodeId {
+        self.inserted(1)
+    }
+
+    /// The mix channel (`P08-S001`).
+    pub const fn channel(self) -> NodeId {
+        self.inserted(2)
+    }
+
+    /// V1's channel-stage soft clipper (`P08-S002`).
+    pub const fn soft_clip(self) -> NodeId {
+        self.inserted(3)
+    }
+
+    /// One of V1's six Mod Matrix macro sources (`P07-S004`), by its one-based tag.
+    pub const fn macro_source(self, tag: u16) -> NodeId {
+        self.inserted(0x10 + tag)
+    }
+}
+
+/// The master sum every instrument's channel feeds (`P08-S002`).
+pub const MASTER_MIX: NodeId = InstrumentSlot::MASTER.inserted(0);
+/// The master trim, V1's master volume (`P08-S002`).
+pub const MASTER_TRIM: NodeId = InstrumentSlot::MASTER.inserted(1);
+/// V1's output clamp, under the parity policy (`P08-S002`).
+pub const MASTER_CLAMP: NodeId = InstrumentSlot::MASTER.inserted(2);
+/// The plan's one output (`P08-S002`).
+pub const MASTER_OUTPUT: NodeId = InstrumentSlot::MASTER.inserted(3);
 
 /// The two-way mapping between a patch's saved module identities and one plan's node
 /// identities.
 ///
 /// Built once per instrument graph. Every later stage of lowering addresses nodes through
 /// this and never through a string.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 #[must_use]
 pub struct ResolvedIdentities {
+    /// The instrument every address below belongs to.
+    slot: InstrumentSlot,
     /// Saved identity to plan address. `BTreeMap` rather than `HashMap` because the
     /// iteration order is what assigns the addresses, and it has to be the same on every
     /// run for the plan to be deterministic.
@@ -99,35 +206,29 @@ pub struct ResolvedIdentities {
     to_module: BTreeMap<NodeId, ModuleId>,
 }
 
-/// The plan address a module identity computes to.
-///
-/// Injective, and a function of the identity alone — the patch's contents do not enter, which
-/// is what makes an address survive an unrelated module being added or removed.
-///
-/// The two halves cannot collide. `ModuleType` is a fieldless enum of 75 variants, so its
-/// discriminant needs seven bits and is shifted clear of the instance number, which is a
-/// `u16` and occupies exactly the low sixteen. The cast is of an enum discriminant rather
-/// than of a domain quantity, and it is exact for the same reason.
-fn address_of(id: ModuleId) -> NodeId {
-    NodeId::new(((id.module_type as u32) << 16) | u32::from(id.instance))
+impl Default for ResolvedIdentities {
+    /// An empty table for the first instrument slot, which is what a refused resolution
+    /// hands back beside its diagnostic.
+    fn default() -> Self {
+        Self {
+            slot: InstrumentSlot(0),
+            to_node: BTreeMap::new(),
+            to_module: BTreeMap::new(),
+        }
+    }
 }
 
-/// The address of the voice-output velocity stage the lowerer inserts (ADR-0059), which no
-/// saved module has: the high sixteen bits are all ones, and no `ModuleType` discriminant
-/// reaches them, so [`address_of`] can never produce it.
-pub const VOICE_OUTPUT_SCALER: NodeId = NodeId::new(0xFFFF_0000);
-
-/// The address of the mix channel the lowerer inserts between the voice's output stage and
-/// the plan's output (`P08-S001`), which no saved module has, for the reason
-/// [`VOICE_OUTPUT_SCALER`]'s high bits give.
-pub const CHANNEL: NodeId = NodeId::new(0xFFFF_0001);
-
 impl ResolvedIdentities {
-    /// Resolve every module in one patch.
+    /// Resolve every module in one instrument's patch.
     ///
     /// The whole patch is resolved before anything is lowered, so a graph is never half
-    /// built when an unparsable identity is found.
-    pub fn resolve(modules: &[ModuleState]) -> Result<Self, IdentityError> {
+    /// built when an unparsable identity is found. The instrument's own identity is the
+    /// address's high field, checked to fit first.
+    pub fn resolve(
+        instrument: InstrumentId,
+        modules: &[ModuleState],
+    ) -> Result<Self, IdentityError> {
+        let slot = InstrumentSlot::of(instrument)?;
         let mut parsed = BTreeMap::new();
         for module in modules {
             let id: ModuleId =
@@ -153,11 +254,20 @@ impl ResolvedIdentities {
         let mut to_node = BTreeMap::new();
         let mut to_module = BTreeMap::new();
         for id in parsed.keys() {
-            let node = address_of(*id);
+            let node = slot.module(*id);
             to_node.insert(*id, node);
             to_module.insert(node, *id);
         }
-        Ok(Self { to_node, to_module })
+        Ok(Self {
+            slot,
+            to_node,
+            to_module,
+        })
+    }
+
+    /// The instrument's slot, for the nodes the lowerer inserts beside its modules.
+    pub const fn slot(&self) -> InstrumentSlot {
+        self.slot
     }
 
     /// The plan address of a saved module identity, if the patch declared it.

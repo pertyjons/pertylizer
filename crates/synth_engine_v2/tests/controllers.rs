@@ -21,6 +21,9 @@ const CONSTANT: NodeId = NodeId::new(11);
 const AMP: NodeId = NodeId::new(12);
 const GATE: NodeId = NodeId::new(13);
 const OUT: NodeId = NodeId::new(14);
+/// An amplifier the gate drives, read by nothing: what puts the gate in the source's
+/// island (`P08-S002`), since a note's destinations are the played node's island.
+const GATE_SINK: NodeId = NodeId::new(15);
 const Q: usize = QUANTUM_FRAMES as usize;
 const FRAMES: usize = 12 * Q;
 
@@ -65,17 +68,29 @@ fn source_declaring(
             SignalDomain::Audio,
         );
     if scope == ExecutionScope::Voice {
-        builder = builder.node(
-            GATE,
-            IrNodeKind::Envelope {
-                attack: Seconds::ZERO,
-                decay: Seconds::ZERO,
-                sustain: NormalizedLevel::FULL,
-                release: Seconds::ZERO,
-                velocity_sensitivity: NormalizedLevel::FULL,
-            },
-            scope,
-        );
+        builder = builder
+            .node(
+                GATE,
+                IrNodeKind::Envelope {
+                    attack: Seconds::ZERO,
+                    decay: Seconds::ZERO,
+                    sustain: NormalizedLevel::FULL,
+                    release: Seconds::ZERO,
+                    velocity_sensitivity: NormalizedLevel::FULL,
+                },
+                scope,
+            )
+            .node(GATE_SINK, IrNodeKind::Amplifier, scope)
+            .connect(
+                (CONSTANT, PortId::FIRST),
+                (GATE_SINK, PortId::FIRST),
+                SignalDomain::Audio,
+            )
+            .connect(
+                (GATE, PortId::FIRST),
+                (GATE_SINK, AMPLIFIER_CONTROL),
+                SignalDomain::Control,
+            );
     }
     common::admit(
         &builder.declaring(declarations).build().expect("IR"),

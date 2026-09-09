@@ -166,11 +166,22 @@ fn voice_wired(
             SignalDomain::Control,
         );
     builder = if direct {
-        builder.connect(
-            (SAMPLER, PortId::FIRST),
-            (OUTPUT, PortId::FIRST),
-            SignalDomain::Audio,
-        )
+        // The output reads the sampler directly, so a transparent envelope's zero release
+        // cannot mask the tail; the sampler still feeds the amplifier, whose output nothing
+        // reads, so that it is in the envelope's **island** (`P08-S002`) — a note's
+        // destinations are the played node's island, and an uncabled sampler would receive
+        // no trigger.
+        builder
+            .connect(
+                (SAMPLER, PortId::FIRST),
+                (OUTPUT, PortId::FIRST),
+                SignalDomain::Audio,
+            )
+            .connect(
+                (SAMPLER, PortId::FIRST),
+                (AMPLIFIER, PortId::FIRST),
+                SignalDomain::Audio,
+            )
     } else {
         builder
             .connect(

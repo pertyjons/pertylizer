@@ -57,17 +57,17 @@ pub enum CompileError {
     /// `SOUND-INV-021` binds a note's magnitudes by execution scope: a note sent to a node
     /// reaches every pitch and velocity destination its **scope** declares. Two playable
     /// nodes in one scope therefore share one set of destinations, so playing either would
-    /// move the other's velocity — and, where the scope has an oscillator, contend for one
+    /// move the other's velocity — and, where the island has an oscillator, contend for one
     /// pitch. The plan is refused rather than resolved by declaration order.
     ///
-    /// The invariant states this over [`crate::ir::ExecutionScope::Voice`], because that is
-    /// where two instruments land and `Voice` names a kind rather than an instance. The
-    /// check is over **every** scope because the reason is: the binding merges within a
-    /// scope, and nothing about that is special to `Voice`. Phase 6 supplies instance
-    /// identity and generalises the binding.
+    /// The binding reaches the played node's **island** — the nodes of its scope it is
+    /// connected to (`P08-S002`) — so two instruments lowered into the one voice scope are
+    /// bound apart, and what is refused is two playable nodes **cabled together** in one
+    /// scope. The check is over every scope because the reason is: the binding merges
+    /// within an island, and nothing about that is special to `Voice`.
     #[error(
-        "{first} and {second} are both playable in the {scope:?} scope, which binds one \
-             set of note destinations"
+        "{first} and {second} are both playable in one island of the {scope:?} scope, which \
+             binds one set of note destinations"
     )]
     AmbiguousNoteScope {
         /// The first playable node found in the scope.

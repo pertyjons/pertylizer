@@ -708,6 +708,54 @@ fn prepare_mix(
     Ok(PreparedNode::Mix)
 }
 
+/// Prepare a balance stage: its level, pan and mute, as authored (`SOUND-INV-032`).
+fn prepare_balance(
+    node: NodeId,
+    kind: IrNodeKind,
+    _: &PrepareContext<'_>,
+) -> Result<PreparedNode, CompileError> {
+    let IrNodeKind::Balance { level, pan, muted } = kind else {
+        return Err(declared_for_another_kind(node));
+    };
+    Ok(PreparedNode::Balance { level, pan, muted })
+}
+
+/// Prepare a trim: its level, as authored (`SOUND-INV-032`).
+fn prepare_trim(
+    node: NodeId,
+    kind: IrNodeKind,
+    _: &PrepareContext<'_>,
+) -> Result<PreparedNode, CompileError> {
+    let IrNodeKind::Trim { level } = kind else {
+        return Err(declared_for_another_kind(node));
+    };
+    Ok(PreparedNode::Trim { level })
+}
+
+/// Prepare a soft clipper: nothing, its law has no parameter (`SOUND-INV-032`).
+fn prepare_softclip(
+    node: NodeId,
+    kind: IrNodeKind,
+    _: &PrepareContext<'_>,
+) -> Result<PreparedNode, CompileError> {
+    let IrNodeKind::SoftClip = kind else {
+        return Err(declared_for_another_kind(node));
+    };
+    Ok(PreparedNode::SoftClip)
+}
+
+/// Prepare a hard clamp: nothing, its bounds are full scale (`SOUND-INV-032`).
+fn prepare_hardclamp(
+    node: NodeId,
+    kind: IrNodeKind,
+    _: &PrepareContext<'_>,
+) -> Result<PreparedNode, CompileError> {
+    let IrNodeKind::HardClamp = kind else {
+        return Err(declared_for_another_kind(node));
+    };
+    Ok(PreparedNode::HardClamp)
+}
+
 /// Prepare a sampler: its one zone, resolved against the plan's sample table (ADR-0026).
 ///
 /// The one-zone subset is enforced here by name — a map of two or more zones is refused as
@@ -849,6 +897,15 @@ pub enum NodeKindId {
     Mix,
     /// A one-zone sampler on the prepared map/zone contract (ADR-0026).
     Sampler,
+    /// A balance stage: level, balance pan and mute over one stereo signal
+    /// (`SOUND-INV-032`).
+    Balance,
+    /// A trim: one declared level over one stereo signal (`SOUND-INV-032`).
+    Trim,
+    /// V1's channel-stage soft clipper, explicit (`SOUND-INV-032`).
+    SoftClip,
+    /// V1's output clamp as an explicit sink policy (`SOUND-INV-032`).
+    HardClamp,
     /// An amplifier driven by a control input.
     Amplifier,
     /// A low-pass filter.
@@ -1709,7 +1766,7 @@ fn prepare_script_program(
 /// the declarations are `static` rather than `const`: a `const` is materialised at each
 /// use and has no single address to compare — so a kind declared but left out here cannot
 /// be discovered, and one listed here but not resolvable cannot compile.
-static DECLARED: [&NodeDeclaration; 26] = [
+static DECLARED: [&NodeDeclaration; 30] = [
     &SCRIPT,
     &AUDIO_SCRIPT,
     &NOTE_SCRIPT,
@@ -1726,6 +1783,10 @@ static DECLARED: [&NodeDeclaration; 26] = [
     &VELOCITY_SCALER,
     &CHANNEL,
     &MIX,
+    &BALANCE,
+    &TRIM,
+    &SOFT_CLIP,
+    &HARD_CLAMP,
     &SAMPLER,
     &LFO,
     &MOD_WHEEL,
@@ -1880,6 +1941,130 @@ pub(crate) static MIX: NodeDeclaration = NodeDeclaration {
     note_control: None,
     taps: &[],
     prepare: prepare_mix,
+    prepared_bytes: 0,
+    state_bytes: 0,
+};
+
+/// The balance stage, declared once — `P08-S002`, `SOUND-INV-032`.
+///
+/// V1's per-voice track control as one stage: stereo in and stereo out, three controls in
+/// the mix channel's shape — a **level**, a linear amplitude under the decibel law,
+/// quantum-rate and unsmoothed, because V1 refreshes a track's control once per block and
+/// never ramps it; a **pan**, bipolar and quantum-rate, under the **balance** law whose
+/// centre is unity; and a **mute**, a thresholded boolean and sample-positioned. In-place
+/// safe: every output sample is its own input sample times a gain, or zero.
+pub(crate) static BALANCE: NodeDeclaration = NodeDeclaration {
+    id: NodeKindId::Balance,
+    name: "balance",
+    kernel: kernels::BALANCE,
+    ports: &[STEREO_AUDIO_IN, STEREO_AUDIO_OUT],
+    controls: &[
+        ControlSpec {
+            controller: false,
+            parameter: parameters::BALANCE_LEVEL,
+            name: "level",
+            default: ParameterDefault::LinearAmplitude(crate::quantities::Amplitude::UNITY),
+            law: ModulationLaw::DecibelAdditive,
+            smoothing: Smoothing::None,
+            control: kernels::BALANCE_LEVEL,
+            rate: ControlRate::Quantum,
+            magnitude: None,
+        },
+        ControlSpec {
+            controller: false,
+            parameter: parameters::BALANCE_PAN,
+            name: "pan",
+            default: ParameterDefault::BipolarLevel(crate::controller::BipolarLevel::ZERO),
+            law: ModulationLaw::BipolarAdditive,
+            smoothing: Smoothing::None,
+            control: kernels::BALANCE_PAN,
+            rate: ControlRate::Quantum,
+            magnitude: None,
+        },
+        ControlSpec {
+            controller: false,
+            parameter: parameters::BALANCE_MUTE,
+            name: "mute",
+            default: ParameterDefault::Gate(crate::quantities::ParameterValue::ZERO),
+            law: ModulationLaw::ThresholdedBoolean,
+            smoothing: Smoothing::None,
+            control: kernels::BALANCE_MUTE,
+            rate: ControlRate::Sample,
+            magnitude: None,
+        },
+    ],
+    in_place_safe: true,
+    note_control: None,
+    taps: &[],
+    prepare: prepare_balance,
+    prepared_bytes: size_of::<(
+        crate::quantities::Amplitude,
+        crate::controller::BipolarLevel,
+        bool,
+    )>() as u64,
+    state_bytes: size_of::<bool>() as u64,
+};
+
+/// The trim, declared once — `P08-S002`, `SOUND-INV-032`.
+///
+/// Stereo in and stereo out and one control, the **level**: a linear amplitude under the
+/// decibel law, quantum-rate and unsmoothed — V1 applies its master volume as one gain per
+/// callback and never ramps it. In-place safe for the reason the balance stage is.
+pub(crate) static TRIM: NodeDeclaration = NodeDeclaration {
+    id: NodeKindId::Trim,
+    name: "trim",
+    kernel: kernels::TRIM,
+    ports: &[STEREO_AUDIO_IN, STEREO_AUDIO_OUT],
+    controls: &[ControlSpec {
+        controller: false,
+        parameter: parameters::TRIM_LEVEL,
+        name: "level",
+        default: ParameterDefault::LinearAmplitude(crate::quantities::Amplitude::UNITY),
+        law: ModulationLaw::DecibelAdditive,
+        smoothing: Smoothing::None,
+        control: kernels::TRIM_LEVEL,
+        rate: ControlRate::Quantum,
+        magnitude: None,
+    }],
+    in_place_safe: true,
+    note_control: None,
+    taps: &[],
+    prepare: prepare_trim,
+    prepared_bytes: size_of::<crate::quantities::Amplitude>() as u64,
+    state_bytes: 0,
+};
+
+/// V1's soft clipper, declared once — `P08-S002`, `SOUND-INV-032`.
+///
+/// Stereo in and stereo out, no control, nothing prepared and nothing kept: the law is a
+/// fixed function of each sample. In-place safe.
+pub(crate) static SOFT_CLIP: NodeDeclaration = NodeDeclaration {
+    id: NodeKindId::SoftClip,
+    name: "soft clip",
+    kernel: kernels::SOFT_CLIP,
+    ports: &[STEREO_AUDIO_IN, STEREO_AUDIO_OUT],
+    controls: &[],
+    in_place_safe: true,
+    note_control: None,
+    taps: &[],
+    prepare: prepare_softclip,
+    prepared_bytes: 0,
+    state_bytes: 0,
+};
+
+/// V1's output clamp, declared once — `P08-S002`, `SOUND-INV-032`.
+///
+/// Stereo in and stereo out, no control, nothing prepared and nothing kept. In-place safe.
+pub(crate) static HARD_CLAMP: NodeDeclaration = NodeDeclaration {
+    id: NodeKindId::HardClamp,
+    name: "hard clamp",
+    kernel: kernels::HARD_CLAMP,
+    ports: &[STEREO_AUDIO_IN, STEREO_AUDIO_OUT],
+    controls: &[],
+    in_place_safe: true,
+    note_control: None,
+    taps: &[],
+    prepare: prepare_hardclamp,
     prepared_bytes: 0,
     state_bytes: 0,
 };
@@ -2129,6 +2314,10 @@ pub(crate) fn declaration(kind: IrNodeKind) -> Option<&'static NodeDeclaration> 
         IrNodeKind::VelocityScaler { .. } => Some(&VELOCITY_SCALER),
         IrNodeKind::Channel { .. } => Some(&CHANNEL),
         IrNodeKind::Mix => Some(&MIX),
+        IrNodeKind::Balance { .. } => Some(&BALANCE),
+        IrNodeKind::Trim { .. } => Some(&TRIM),
+        IrNodeKind::SoftClip => Some(&SOFT_CLIP),
+        IrNodeKind::HardClamp => Some(&HARD_CLAMP),
         IrNodeKind::Sampler { .. } => Some(&SAMPLER),
         IrNodeKind::Filter { .. } => Some(&FILTER),
         IrNodeKind::Controller { kind } => Some(match kind {
@@ -2190,6 +2379,10 @@ pub(crate) fn descriptor(kind: IrNodeKind) -> Option<NodeDescriptor> {
         IrNodeKind::VelocityScaler { .. } => declared.map(NodeDeclaration::descriptor),
         IrNodeKind::Channel { .. } => declared.map(NodeDeclaration::descriptor),
         IrNodeKind::Mix => declared.map(NodeDeclaration::descriptor),
+        IrNodeKind::Balance { .. } => declared.map(NodeDeclaration::descriptor),
+        IrNodeKind::Trim { .. } => declared.map(NodeDeclaration::descriptor),
+        IrNodeKind::SoftClip => declared.map(NodeDeclaration::descriptor),
+        IrNodeKind::HardClamp => declared.map(NodeDeclaration::descriptor),
         IrNodeKind::Sampler { .. } => declared.map(NodeDeclaration::descriptor),
         IrNodeKind::Controller { .. } | IrNodeKind::NoteSource { .. } => {
             declared.map(NodeDeclaration::descriptor)
@@ -2433,6 +2626,10 @@ pub fn prepared_payload_bytes(kind: IrNodeKind) -> u64 {
         IrNodeKind::VelocityScaler { .. } => return declared.map_or(0, |d| d.prepared_bytes),
         IrNodeKind::Channel { .. } => return declared.map_or(0, |d| d.prepared_bytes),
         IrNodeKind::Mix => return declared.map_or(0, |d| d.prepared_bytes),
+        IrNodeKind::Balance { .. } => return declared.map_or(0, |d| d.prepared_bytes),
+        IrNodeKind::Trim { .. } => return declared.map_or(0, |d| d.prepared_bytes),
+        IrNodeKind::SoftClip => return declared.map_or(0, |d| d.prepared_bytes),
+        IrNodeKind::HardClamp => return declared.map_or(0, |d| d.prepared_bytes),
         IrNodeKind::Sampler { .. } => return declared.map_or(0, |d| d.prepared_bytes),
         IrNodeKind::Filter { .. } => return declared.map_or(0, |d| d.prepared_bytes),
         // The output node has no kernel, so it carries no prepared data of its own.
@@ -2489,6 +2686,10 @@ pub fn state_payload_bytes(kind: IrNodeKind) -> u64 {
         IrNodeKind::VelocityScaler { .. } => return declared.map_or(0, |d| d.state_bytes),
         IrNodeKind::Channel { .. } => return declared.map_or(0, |d| d.state_bytes),
         IrNodeKind::Mix => return declared.map_or(0, |d| d.state_bytes),
+        IrNodeKind::Balance { .. } => return declared.map_or(0, |d| d.state_bytes),
+        IrNodeKind::Trim { .. } => return declared.map_or(0, |d| d.state_bytes),
+        IrNodeKind::SoftClip => return declared.map_or(0, |d| d.state_bytes),
+        IrNodeKind::HardClamp => return declared.map_or(0, |d| d.state_bytes),
         IrNodeKind::Sampler { .. } => return declared.map_or(0, |d| d.state_bytes),
         IrNodeKind::Envelope { .. } => return declared.map_or(0, |d| d.state_bytes),
         IrNodeKind::Controller { .. } | IrNodeKind::NoteSource { .. } => {
@@ -2625,6 +2826,16 @@ mod tests {
                 muted: false,
             },
             IrNodeKind::Mix,
+            IrNodeKind::Balance {
+                level: Amplitude::UNITY,
+                pan: crate::controller::BipolarLevel::ZERO,
+                muted: false,
+            },
+            IrNodeKind::Trim {
+                level: Amplitude::UNITY,
+            },
+            IrNodeKind::SoftClip,
+            IrNodeKind::HardClamp,
             IrNodeKind::Amplifier,
             IrNodeKind::Monitor,
             IrNodeKind::Envelope {
@@ -2910,6 +3121,10 @@ mod tests {
                     )
                     | (IrNodeKind::Channel { .. }, PreparedNode::Channel { .. })
                     | (IrNodeKind::Mix, PreparedNode::Mix)
+                    | (IrNodeKind::Balance { .. }, PreparedNode::Balance { .. })
+                    | (IrNodeKind::Trim { .. }, PreparedNode::Trim { .. })
+                    | (IrNodeKind::SoftClip, PreparedNode::SoftClip)
+                    | (IrNodeKind::HardClamp, PreparedNode::HardClamp)
                     | (IrNodeKind::Amplifier, PreparedNode::Amplifier)
                     | (IrNodeKind::Monitor, PreparedNode::Copy)
                     | (IrNodeKind::Filter { .. }, PreparedNode::Filter { .. })
@@ -2942,10 +3157,12 @@ mod tests {
                 IrNodeKind::Controller { .. }
                 | IrNodeKind::Constant { .. }
                 | IrNodeKind::Impulse { .. }
+                | IrNodeKind::Trim { .. }
                 | IrNodeKind::Gain { .. } => (true, false),
                 IrNodeKind::Filter { .. }
                 | IrNodeKind::VelocityScaler { .. }
                 | IrNodeKind::Channel { .. }
+                | IrNodeKind::Balance { .. }
                 | IrNodeKind::Sampler { .. }
                 | IrNodeKind::Script { .. }
                 | IrNodeKind::AudioScript { .. }
@@ -2955,6 +3172,8 @@ mod tests {
                 | IrNodeKind::Silence
                 | IrNodeKind::Amplifier
                 | IrNodeKind::Mix
+                | IrNodeKind::SoftClip
+                | IrNodeKind::HardClamp
                 | IrNodeKind::Monitor => (false, false),
                 other => panic!("{other:?} is declared but this test does not know its shape"),
             };
@@ -2978,6 +3197,10 @@ mod tests {
                         | IrNodeKind::VelocityScaler { .. }
                         | IrNodeKind::Channel { .. }
                         | IrNodeKind::Mix
+                        | IrNodeKind::Balance { .. }
+                        | IrNodeKind::Trim { .. }
+                        | IrNodeKind::SoftClip
+                        | IrNodeKind::HardClamp
                         | IrNodeKind::Filter { .. }
                 ),
                 "{kind:?}"

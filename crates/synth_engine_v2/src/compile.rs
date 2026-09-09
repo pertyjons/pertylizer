@@ -2036,7 +2036,7 @@ fn lower(
 ///
 /// Three refusals live here, and each is the narrowest rule that is implementable now:
 ///
-/// - two playable nodes in the voice scope, which the rule above cannot tell apart because
+/// - two playable nodes in one island of the voice scope, which the rule above cannot tell apart because
 ///   `ExecutionScope::Voice` names a kind rather than an instance;
 /// - a note scope declaring no velocity destination, because the Phase 4 gate says a
 ///   fixed-velocity render cannot satisfy it and a typed velocity reaching nothing is that
@@ -2063,6 +2063,10 @@ fn bind_note_magnitudes(
         .iter()
         .map(|node| (node.id(), node.scope()))
         .collect();
+    // `P08-S002`: a note's destinations are its **island's** — the nodes of its scope it is
+    // connected to — so a whole project's instruments, each its own island in the one voice
+    // scope, are bound apart.
+    let islands = ir.note_islands();
     // The slot of each (node, control), indexed once: a destination is resolved by one
     // lookup rather than a search over the target table per destination, which an
     // independent review found quadratic in the node count for a scope of many pitch
@@ -2079,36 +2083,42 @@ fn bind_note_magnitudes(
             })
             .collect();
 
-    // Two playable nodes in one scope share one set of destinations, so playing either
+    // Two playable nodes in one island share one set of destinations, so playing either
     // would move the other's velocity. Checked over the note addresses, which is exactly
     // the set of playable nodes. The invariant states the rule over the voice scope — that
-    // is where two instruments land — and the check is over every scope because the reason
-    // is: the binding merges within a scope, whichever scope it is.
-    let mut played: Vec<(crate::ir::ExecutionScope, NodeId)> = Vec::new();
+    // is where two instruments land — and the check is over every scope's islands because
+    // the reason is: the binding merges within an island, whichever scope it is in.
+    let mut played: Vec<(u32, NodeId)> = Vec::new();
     for address in note_addresses {
-        let Some(scope) = scopes.get(&address.node).copied() else {
+        let (Some(scope), Some(island)) = (
+            scopes.get(&address.node).copied(),
+            islands.get(&address.node).copied(),
+        ) else {
             continue;
         };
-        if let Some((_, first)) = played.iter().find(|(held, _)| *held == scope) {
+        if let Some((_, first)) = played.iter().find(|(held, _)| *held == island) {
             return Err(CompileError::AmbiguousNoteScope {
                 first: *first,
                 second: address.node,
                 scope,
             });
         }
-        played.push((scope, address.node));
+        played.push((island, address.node));
     }
 
     for address in note_addresses {
-        let Some(scope) = scopes.get(&address.node).copied() else {
+        let (Some(scope), Some(island)) = (
+            scopes.get(&address.node).copied(),
+            islands.get(&address.node).copied(),
+        ) else {
             continue;
         };
         let start = note_magnitudes.len();
         let mut has_velocity = false;
-        // Every node of the scope, in the plan's declaration order, so the expansion a note
+        // Every node of the island, in the plan's declaration order, so the expansion a note
         // produces is the same list on every admission of one plan.
         for node in ir.nodes() {
-            if node.scope() != scope {
+            if islands.get(&node.id()).copied() != Some(island) {
                 continue;
             }
             let (Some(descriptor), Some(slot)) =

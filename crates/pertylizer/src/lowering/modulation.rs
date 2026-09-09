@@ -210,11 +210,11 @@ pub(super) fn modulation_target(
 /// The plan address a Mod Grid node computes to.
 ///
 /// Bit 31 set, the graph's identity in the next fifteen bits and the node's in the low
-/// sixteen, so it cannot meet a saved module's address — those keep bit 31 clear — nor the
-/// voice-output scaler at `0xFFFF_0000`, since a graph identity of `0x7FFF` is excluded. Both
-/// halves are persisted identities, never positions, so the address survives the pool being
-/// reordered. `None` when an identity does not fit, which the caller refuses by name rather
-/// than truncating into a collision.
+/// sixteen, so it cannot meet a saved module's address nor an inserted node's — every
+/// instrument slot keeps bit 31 clear (`identity`). Both halves are persisted identities,
+/// never positions, so the address survives the pool being reordered. `None` when an
+/// identity does not fit, which the caller refuses by name rather than truncating into a
+/// collision.
 pub(super) fn grid_node_address(graph: ModGraphId, node: ModNodeId) -> Option<NodeId> {
     const GRID: u32 = 0x8000_0000;
     if graph.0 >= 0x7FFF || node.0 > 0xFFFF {
@@ -934,8 +934,10 @@ fn hosted_lfo(
     )
 }
 
-/// Reserved beside the voice scaler, outside saved-module and Mod Grid address ranges.
+/// Reserved beside the instrument's voice scaler, outside saved-module and Mod Grid address
+/// ranges, and per instrument: a controller macro is that instrument's MIDI channel state.
 pub(super) const fn macro_node(
+    slot: super::identity::InstrumentSlot,
     source: synth_core::MacroSource,
 ) -> (NodeId, IrNodeKind, ExecutionScope) {
     use synth_core::MacroSource;
@@ -984,5 +986,5 @@ pub(super) const fn macro_node(
             ExecutionScope::Voice,
         ),
     };
-    (NodeId::new(0xFFFF_0000 | tag), kind, scope)
+    (slot.macro_source(tag), kind, scope)
 }
