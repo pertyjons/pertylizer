@@ -1598,9 +1598,12 @@ fn names_the_composition(rendered: &super::render::SmokeRender) -> bool {
     })
 }
 
-/// Two notes overlapping on one gate are refused rather than rendered wrongly.
+/// Two notes of **one key** overlapping on one gate are refused rather than rendered wrongly:
+/// a V2 release names the newest open note with its key, so the first note's off edge would
+/// release the second. Overlapping notes of different keys lower to two instances since
+/// `P08-S003` (`the_chain_runs_on_the_voice_sum_and_its_state_is_shared_across_voices`).
 #[test]
-fn overlapping_notes_on_one_gate_are_refused() {
+fn overlapping_notes_of_one_key_on_one_gate_are_refused() {
     let (modules, connections) = corpus_patch("sine");
     let saved = saved_instrument(modules, connections);
     let song = overlapping_song();
@@ -1617,7 +1620,7 @@ fn overlapping_notes_on_one_gate_are_refused() {
     assert_eq!(
         rendered.lowered_events,
         synth_engine_v2::quantities::EventCount::measured(0),
-        "one gate sounds one note; the second would end early and silently"
+        "one key sounds one note at a time; the first release would end the second"
     );
     assert!(
         rendered.diagnostics.iter().any(|d| {
@@ -2141,6 +2144,7 @@ fn the_instruments_strip_lowers_onto_its_mix_channel() {
         instrument(),
         &saved.patch.modules,
         &saved.patch.connections,
+        &[],
         synth_engine_v2::quantities::EventCount::NONE,
         Some(synth_engine_v2::quantities::NormalizedLevel::FULL),
         Some(super::graph::ChannelStrip {
@@ -4108,8 +4112,8 @@ fn an_instrument_diagnostic_names_the_instrument_rather_than_the_song() {
     // `ProjectSubject::Instrument::name` documents itself as the instrument's. An earlier
     // revision passed the **song's** name, so a diagnostic about an instrument named the
     // project; an independent review found it. The two names differ here on purpose.
-    // Two notes through the one gate raise an instrument-level diagnostic until Phase 6's
-    // allocator lowers them, which is what this test now reads it from.
+    // Two notes through the one island raise an instrument-level diagnostic — the release
+    // that may ring under a retriggered instance — which is what this test reads it from.
     let (modules, connections) = corpus_patch("sine");
     let saved = saved_instrument(modules, connections);
     let mut song = four_note_song();
@@ -4590,6 +4594,7 @@ fn lowered_performance_at(
         instrument(),
         modules,
         connections,
+        &[],
         peak,
         Some(NormalizedLevel::new(0.0).expect("a level")),
         // The channel `smoke_render` inserts for `saved_instrument`'s strip (`P08-S001`):
@@ -6411,6 +6416,7 @@ fn a_global_mod_grid_lfo_into_a_module_target_lowers_to_a_global_node_and_edges(
         instrument(),
         &modules,
         &connections,
+        &[],
         synth_engine_v2::quantities::EventCount::NONE,
         None,
         None,

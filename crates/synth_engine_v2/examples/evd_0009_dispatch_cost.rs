@@ -290,6 +290,7 @@ impl Hand {
                 ramps: &[],
                 samples: &[],
                 scripts: synth_engine_v2::script::ScriptResources::default(),
+                history: &mut [],
             },
         );
     }
@@ -315,6 +316,7 @@ impl Hand {
                 ramps: sine_ramp(),
                 samples: &[],
                 scripts: synth_engine_v2::script::ScriptResources::default(),
+                history: &mut [],
             },
         );
         filter(
@@ -329,6 +331,7 @@ impl Hand {
                 ramps: &[],
                 samples: &[],
                 scripts: synth_engine_v2::script::ScriptResources::default(),
+                history: &mut [],
             },
         );
         envelope(
@@ -343,6 +346,7 @@ impl Hand {
                 ramps: &[],
                 samples: &[],
                 scripts: synth_engine_v2::script::ScriptResources::default(),
+                history: &mut [],
             },
         );
         amplifier(
@@ -357,6 +361,7 @@ impl Hand {
                 ramps: &[],
                 samples: &[],
                 scripts: synth_engine_v2::script::ScriptResources::default(),
+                history: &mut [],
             },
         );
         // The plan's last operation, which the renderer performs and which a hand-written
@@ -474,6 +479,7 @@ impl Table {
                         ramps: &[],
                         samples: &[],
                         scripts: synth_engine_v2::script::ScriptResources::default(),
+                        history: &mut [],
                     },
                 );
             }

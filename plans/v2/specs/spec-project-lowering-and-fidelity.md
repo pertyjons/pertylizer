@@ -70,8 +70,8 @@ per-phase subset question rather than a contract.
    An outcome is `Faithful` only when its diagnostic set is empty (`LOWER-INV-002`), so a
    verdict waits for the **last** unrepresented capability, not for any one of them: a
    lowering that names Phase 8's amplifier pan stage, or the terminating node's stages, or
-   two notes through one gate, is as ineligible as one that named a velocity law. The render itself is unaffected
-   by any `Unrepresented` diagnostic and still happens.
+   two or more notes through one island, is as ineligible as one that named a velocity law.
+   The render itself is unaffected by any `Unrepresented` diagnostic and still happens.
 
    **History.** Until `P06-S004` this invariant carried a velocity clause: every lowering
    that placed a note raised one `Unrepresented` diagnostic for V1's two velocity
@@ -98,7 +98,10 @@ per-phase subset question rather than a contract.
    **Every saved field has a stated disposition, and something mechanical asks for it.** Two
    mechanisms, because the types live in two crates. `InstrumentState`, `SequencerTrack` and
    `GlobalProjectState` are destructured **exhaustively, without `..`**, so a new saved field
-   is a compile error at the disposition site; `TrackMode` is matched exhaustively for the same
+   is a compile error at the disposition site, and since `P08-S003` so are `Patch` and
+   `PatchSettings` in `render::patch_dispositions`, where `effect_chain_order` is the one
+   setting the arrangement render reads and `master_volume` and `octave_offset` are
+   measured inert offline; `TrackMode` is matched exhaustively for the same
    reason. `Song` and `Pattern` belong to `synth_sequencer` and expose their contents through
    accessors, so they cannot be destructured from here; `Note` and `PatternPlacement` could be,
    and are pinned the same way so that the four persisted lists sit in one test with a
@@ -143,7 +146,19 @@ per-phase subset question rather than a contract.
    timing; since `P08-S001` the instrument's volume, pan and mute lower onto its mix
    channel; since `P08-S002` the track's fader, pan and audibility lower onto a balance stage,
    the master volume onto the master trim, and the instrument's volume and pan lanes, the
-   track's fader, pan and mute lanes and the master volume lane to override writes. A
+   track's fader, pan and mute lanes and the master volume lane to override writes; since
+   `P08-S003` the patch's **insert chain** lowers — V1's distortion in its soft-clip mode
+   and V1's delay in its mono mode, in `effect_chain_order`'s order, as instrument-scope
+   nodes between the balance and the channel, where V1 runs its chain on the voice sum —
+   with every effect module named in the order exactly once by parsed identity: an
+   omitted, unknown, repeated or non-effect entry is **refused** naming the problem
+   (`CORPUS-0005-C1`; V1 appends an omitted module, which ADR-0021 part 2 forbids), a
+   distortion mode other than soft clip, a delay mode other than mono and a tempo-synced
+   time are refused naming the parameter, and every other effect type stays an unsupported
+   type. Instrument **oversampling** stays reported, under a Phase 8 label since
+   `P08-S003` decided against a rate island in this phase's slices: no corpus case
+   oversamples, and V1's island is the voice sum alone, so the chain, the channel and the
+   master are outside it either way. A
    placement's gain is **inert**: persisted, settable, and read by nothing that renders,
    measured by `placement_gain_is_inert_in_v1` in `offline_instrument_settings`, so it lowers
    to nothing and is not a mark.
@@ -159,7 +174,15 @@ per-phase subset question rather than a contract.
    plan declares one compiled producer of the project's peak simultaneous notes, floored at
    one and counting a note ending where another begins as overlapping, so the voice scope is
    instantiated once per note held at once across the project and a note lands on any free
-   instance. A track soloed anywhere silences every unsoloed track's notes before they are
+   instance. Since `P08-S003` two notes of **different** keys held at once on one instrument
+   lower to two instances of its island, which is what the corpus's dyad through a shared
+   insert chain measures, up to the instrument's voice count — V1's default, since any other
+   is refused — beyond which V1 steals a sounding voice and the lowering refuses by name, a
+   tie counted as held; two of **one** key stay refused by name, because a compiled release
+   names the newest open note with its key and the first note's off edge would release the
+   second. The mark that remains is the release: V1 keeps a voice per note through its
+   release while V2 frees a note's index at its off edge, so a later note may retrigger an
+   instance whose release still rings. A track soloed anywhere silences every unsoloed track's notes before they are
    lowered, as before; an instrument soloed anywhere starts every unsoloed instrument's
    channel muted, as V1's mix stage skips it — the lowering specification's solo-elsewhere
    question is closed by the whole project being the input. The tracks that play an
@@ -317,7 +340,11 @@ per-phase subset question rather than a contract.
    zero. A track-scoped instance, a track, master or channel-level
    target, a macro, transport, MIDI CC or audio-tap source, an injection into a hosted module,
    a cable into one, and a hosted module other than an LFO are refused by name. The corpus's
-   Mod Matrix case lowers, so three saved projects lower where `P04-R002` recorded two.
+   Mod Matrix case lowers, so three saved projects lower where `P04-R002` recorded two. The
+   corpus's insert-chain case lowers since `P08-S003` and renders under the roomier event
+   partition `P08-S002`'s tests select; under the engine's default session share it is
+   refused by name — its catch-up addresses number 29 against the share's 24 — so the
+   default-profile survey still counts three, and ADR-0054's reselection owns the fourth.
 
    **Where that stops, stated so it is a rule rather than a gap.** A stage is refused when V1
    installs it on a placement it walks and it has something to act with: a lane with a point

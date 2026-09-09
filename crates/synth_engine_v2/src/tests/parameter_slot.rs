@@ -634,10 +634,18 @@ fn the_slots_the_renderer_holds_are_charged_to_the_mutable_state_row() {
         (records + 1) * crate::node::ramp_table_bytes_per_record(),
         "the run table is one entry per record plus a terminator"
     );
+    // `SOUND-INV-033`: the history index sits beside the run table, one entry per record and
+    // a terminator; no kind here keeps history, so the slab itself is empty.
+    let history = renderer.history_bytes_held() as u64;
+    assert_eq!(
+        history,
+        (records + 1) * crate::node::history_table_bytes_per_record(),
+        "the history index is one entry per record plus a terminator, and no slab"
+    );
     assert_eq!(
         reported,
-        records * crate::node::state_bytes_per_node() + slot_term + table,
-        "the mutable row is one state record per scheduled record, the slots and the table"
+        records * crate::node::state_bytes_per_node() + slot_term + table + history,
+        "the mutable row is one state record per scheduled record, the slots and the tables"
     );
     assert!(state_only <= records * crate::node::state_bytes_per_node());
 }

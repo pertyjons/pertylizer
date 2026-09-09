@@ -23,6 +23,7 @@ use crate::plan::ControlRate;
 use crate::quantities::{
     ChannelLayout, CutoffFrequency, NormalizedLevel, Resonance, SampleRate, Seconds, SegmentFrames,
 };
+use crate::time::FrameCount;
 use crate::validate::{PortDirection, PortSpec};
 use kernels::{ControlIndex, Kernel, PreparedNode};
 
@@ -90,6 +91,12 @@ pub enum ParameterUnit {
     /// A duration in seconds; held at or above zero by the slot, since a segment cannot last
     /// a negative time (`P07-S002`).
     Seconds,
+    /// A delay's feedback in `[0, 0.95]`, V1's own domain, held there by the slot so no write
+    /// carries a loop to unity (`SOUND-INV-033`).
+    DelayFeedback,
+    /// A delay's time in `[0.001, 2]` seconds, V1's own domain, held there by the slot
+    /// (`SOUND-INV-033`).
+    DelayTime,
 }
 
 /// How long a parameter takes to reach a new resolved value — `SOUND-INV-024`'s
@@ -276,6 +283,10 @@ pub enum ParameterDefault {
     QualityFactor(crate::quantities::Resonance),
     /// A duration in seconds.
     Seconds(crate::quantities::Seconds),
+    /// A delay's feedback (`SOUND-INV-033`).
+    DelayFeedback(crate::quantities::DelayFeedback),
+    /// A delay's time (`SOUND-INV-033`).
+    DelayTime(crate::quantities::DelayTime),
 }
 
 impl ParameterDefault {
@@ -291,6 +302,8 @@ impl ParameterDefault {
             Self::Gate(_) => ParameterUnit::Gate,
             Self::QualityFactor(_) => ParameterUnit::QualityFactor,
             Self::Seconds(_) => ParameterUnit::Seconds,
+            Self::DelayFeedback(_) => ParameterUnit::DelayFeedback,
+            Self::DelayTime(_) => ParameterUnit::DelayTime,
         }
     }
 
@@ -306,6 +319,8 @@ impl ParameterDefault {
             Self::Gate(value) => value.as_f32(),
             Self::QualityFactor(value) => value.as_f32(),
             Self::Seconds(value) => value.as_f32(),
+            Self::DelayFeedback(value) => value.as_f32(),
+            Self::DelayTime(value) => value.as_f32(),
         }
     }
 
@@ -323,6 +338,10 @@ impl ParameterDefault {
             Self::Gate(value) => value,
             Self::QualityFactor(value) => crate::quantities::ParameterValue::from_resonance(value),
             Self::Seconds(value) => crate::quantities::ParameterValue::from_seconds(value),
+            Self::DelayFeedback(value) => {
+                crate::quantities::ParameterValue::from_delay_feedback(value)
+            }
+            Self::DelayTime(value) => crate::quantities::ParameterValue::from_delay_time(value),
         }
     }
 }
@@ -603,6 +622,7 @@ pub(crate) static MONITOR: NodeDeclaration = NodeDeclaration {
         data: TapData::Audio,
     }],
     prepare: prepare_monitor,
+    timing: stateless_timing,
     prepared_bytes: 0,
     state_bytes: 0,
 };
@@ -756,6 +776,178 @@ fn prepare_hardclamp(
     Ok(PreparedNode::HardClamp)
 }
 
+/// Prepare a distortion: its three authored levels and the rate its tone corner is derived at
+/// (`SOUND-INV-033`).
+fn prepare_distortion(
+    node: NodeId,
+    kind: IrNodeKind,
+    ctx: &PrepareContext<'_>,
+) -> Result<PreparedNode, CompileError> {
+    let IrNodeKind::Distortion { drive, tone, mix } = kind else {
+        return Err(declared_for_another_kind(node));
+    };
+    Ok(PreparedNode::Distortion {
+        drive,
+        tone,
+        mix,
+        rate: ctx.rate.as_f32(),
+    })
+}
+
+/// Prepare a delay: its five authored values, the rate, and the line length V1 keeps per side
+/// (`SOUND-INV-033`). Nothing to refuse: the feedback and the times arrive in their own
+/// types, whose domains are V1's, and the slot holds every later write to the same.
+fn prepare_delay(
+    node: NodeId,
+    kind: IrNodeKind,
+    ctx: &PrepareContext<'_>,
+) -> Result<PreparedNode, CompileError> {
+    let IrNodeKind::Delay {
+        time_left,
+        time_right,
+        feedback,
+        mix,
+        tone,
+    } = kind
+    else {
+        return Err(declared_for_another_kind(node));
+    };
+    Ok(PreparedNode::Delay {
+        time_left,
+        time_right,
+        feedback,
+        mix,
+        tone,
+        rate: ctx.rate.as_f32(),
+        line: delay_line_frames(ctx.rate),
+    })
+}
+
+/// The frames V1 keeps per delay side: `2 s` at the rate, truncated as V1 truncates it.
+///
+/// V1's own expression, `(MAX_DELAY_SECONDS * rate) as usize`, so a fractional-frame delay
+/// wraps at the same index on both engines. `as` because V1's is: the value is at most
+/// `2 × 192 000`, which every index type holds.
+#[allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    reason = "V1's own truncation, on a value bounded by the accepted sample rates"
+)]
+pub(crate) fn delay_line_frames(rate: SampleRate) -> usize {
+    (kernels::MAX_DELAY_SECONDS * rate.as_f32()) as usize
+}
+
+/// A distortion's timing (`SOUND-INV-033`): no latency, no history, and a tail of the
+/// frames its tone filter takes to decay by 60 dB at the authored tone — the one state it
+/// keeps, a one-pole whose coefficient is `e^(−2π f / rate)` for `f = 200 + tone² × 15000`.
+fn timing_distortion(kind: IrNodeKind, rate: SampleRate) -> NodeTiming {
+    let IrNodeKind::Distortion { tone, .. } = kind else {
+        return NodeTiming::UNDECLARED;
+    };
+    let p = f64::from(kernels::distortion_tone_coefficient(
+        tone.as_f32(),
+        rate.as_f32(),
+    ));
+    NodeTiming {
+        latency: FrameCount::ZERO,
+        tail: Some(FrameCount::new(one_pole_decay_frames(p))),
+        history: FrameCount::ZERO,
+    }
+}
+
+/// A delay's timing (`SOUND-INV-033`): no latency, a history of one line, and a tail of the
+/// frames its loop takes to decay by 60 dB at the authored values.
+///
+/// The rule is V2's own and it is stated so a test can falsify it. After the input stops
+/// the loop is `y = tanh(feedback × s)`, `s = (1 − p) × d + p × s'` per side and `d` a
+/// two-tap read of `y` a side's time ago, averaged over the sides; `tanh` and the two-tap
+/// read are magnitude contractions and the one-pole a convex combination, so the loop is
+/// majorised by the positive linear system with those coefficients, whose slowest mode is
+/// the real `r` in `(p, 1)` solving `feedback × (1 − p) / (1 − p / r) × (r^−L + r^−R) / 2 = 1`
+/// for the two sides' delays `L` and `R` in frames — found by bisection, since the left side
+/// falls from above one at `r → p` to `feedback` below one at `r → 1`. That root lies above
+/// `p`, so the filter's own decay is inside the mode's and needs no term of its own. The
+/// mode alone is not the whole transient, so the tail adds one traversal of the longer side:
+/// `ln 1000 / −ln r + max(L, R)`. **Checked, not proved tight**:
+/// `a_delay_decays_below_60_db_within_its_declared_tail` renders the loop from an impulse
+/// and from sustained input at the corpus's values, at a short dark loop where the filter's
+/// memory outlasts a traversal, and at V1's feedback ceiling; a mutation run showed the
+/// traversal term needed at those points and a filter-decay term not. The naive count of
+/// repeats, `⌈ln 1000 / −ln feedback⌉ × delay`, was falsified at the short dark loop by an
+/// independent read before this rule was written.
+fn timing_delay(kind: IrNodeKind, rate: SampleRate) -> NodeTiming {
+    let IrNodeKind::Delay {
+        time_left,
+        time_right,
+        feedback,
+        tone,
+        ..
+    } = kind
+    else {
+        return NodeTiming::UNDECLARED;
+    };
+    let line = delay_line_frames(rate);
+    let frames_of = |time: crate::quantities::DelayTime| {
+        // The kernel's own clamp, in the kernel's own arithmetic, then the frames the read
+        // reaches back: the two taps sit at the floor and the frame before.
+        let frames = (time.as_f32() * rate.as_f32()).min(line.saturating_sub(1) as f32);
+        f64::from(frames).ceil().max(1.0)
+    };
+    let (left, right) = (frames_of(time_left), frames_of(time_right));
+    let p = f64::from(kernels::delay_high_cut_coefficient(
+        tone.as_f32(),
+        rate.as_f32(),
+    ));
+    let feedback = f64::from(feedback.as_f32());
+    let mode = delay_loop_mode(feedback, p, left, right);
+    let asymptotic = if mode <= 0.0 {
+        0.0
+    } else {
+        (1_000.0_f64.ln() / -mode.ln()).ceil()
+    };
+    let transient = left.max(right);
+    #[allow(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        reason = "a ceiling of a finite positive count, held to u64 by the clamp"
+    )]
+    let tail = (asymptotic + transient).clamp(0.0, 1e15) as u64;
+    NodeTiming {
+        latency: FrameCount::ZERO,
+        tail: Some(FrameCount::new(tail)),
+        history: FrameCount::new(line as u64),
+    }
+}
+
+/// The slowest decay per frame of a delay loop's majorant, or zero where the loop has no
+/// feedback and its output is the one repeat.
+///
+/// Bisection over `(p, 1)` on `g(r) = feedback × (1 − p) / (1 − p / r) × (r^−L + r^−R) / 2`,
+/// which exceeds one as `r` approaches `p` from above and equals `feedback` at one; sixty
+/// halvings of the interval place `r` within `2^−60`, far below what a frame count reads.
+fn delay_loop_mode(feedback: f64, p: f64, left: f64, right: f64) -> f64 {
+    if feedback <= 0.0 {
+        return 0.0;
+    }
+    let g = |r: f64| {
+        let filter = (1.0 - p) / (1.0 - p / r);
+        feedback * filter * (r.powf(-left) + r.powf(-right)) / 2.0
+    };
+    let (mut low, mut high) = (p.max(0.0), 1.0_f64);
+    for _ in 0..60 {
+        let mid = (low + high) / 2.0;
+        if mid <= low || mid >= high {
+            break;
+        }
+        if g(mid) > 1.0 {
+            low = mid;
+        } else {
+            high = mid;
+        }
+    }
+    high
+}
+
 /// Prepare a sampler: its one zone, resolved against the plan's sample table (ADR-0026).
 ///
 /// The one-zone subset is enforced here by name — a map of two or more zones is refused as
@@ -906,6 +1098,10 @@ pub enum NodeKindId {
     SoftClip,
     /// V1's output clamp as an explicit sink policy (`SOUND-INV-032`).
     HardClamp,
+    /// V1's distortion insert, soft-clip mode (`P08-S003`, `SOUND-INV-033`).
+    Distortion,
+    /// V1's delay insert, mono mode, the first kind with a tail (`P08-S003`, `SOUND-INV-033`).
+    Delay,
     /// An amplifier driven by a control input.
     Amplifier,
     /// A low-pass filter.
@@ -920,6 +1116,87 @@ pub enum NodeKindId {
 #[must_use]
 pub fn kind_id(kind: IrNodeKind) -> Option<NodeKindId> {
     declaration(kind).map(|declared| declared.id)
+}
+
+/// What a kind imposes on time and keeps across it — the declaration's **latency**, **tail**
+/// and **history** fields, owed by Phase 5 to their first reader and given one by `P08-S003`
+/// (`SOUND-INV-033`).
+///
+/// A function of the kind's authored values and the stream's rate, so the resource report
+/// can state the figure before anything is prepared and the renderer can size its slab from
+/// the same one. Every count is in frames of plan time, independent of the host's block.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[must_use]
+pub struct NodeTiming {
+    /// The lookahead the kind imposes on every path through it: its output at frame `n`
+    /// answers its input at frame `n − latency`. Reported per node by the plan; summed along
+    /// paths and compensated by `P08-S005`, until which no declared kind declares one and
+    /// `no_declared_kind_declares_latency_until_p08_s005_compensates_it` holds them to zero.
+    pub latency: FrameCount,
+    /// How long the kind's output outlasts its audio input: the frames after the input
+    /// falls silent within which the kind's own rule says its output has decayed below
+    /// −60 dB of what it was — `Some(0)` for a kind whose output is a function of its
+    /// input frame, or which has no audio input to outlast; `None` for a kind that keeps
+    /// signal and has not stated its rule (the filter, the envelope, the sampler and the
+    /// scripts), which is owed to the first reader that needs a bound over such a kind.
+    /// The delay and the distortion state theirs (`timing_delay`, `timing_distortion`).
+    /// A stated tail is for the **authored** values; a write that moves a feedback or a time
+    /// moves the true tail, and the reader that needs a bound over every admitted write
+    /// takes it at the unit's ceiling.
+    pub tail: Option<FrameCount>,
+    /// The frames of signal the kind keeps between quanta — a delay line — which the renderer
+    /// allocates per scheduled step at the kind's output width and hands the kernel as
+    /// [`kernels::NodeIo::history`]. Charged to `mutable_state_bytes`.
+    pub history: FrameCount,
+}
+
+impl NodeTiming {
+    /// No latency, no tail, no history: a kind whose output is a function of its input frame,
+    /// or a source, which has no audio input to outlast.
+    pub const STATELESS: Self = Self {
+        latency: FrameCount::ZERO,
+        tail: Some(FrameCount::ZERO),
+        history: FrameCount::ZERO,
+    };
+
+    /// No latency and no history, and a tail the kind has not stated.
+    pub const UNDECLARED: Self = Self {
+        latency: FrameCount::ZERO,
+        tail: None,
+        history: FrameCount::ZERO,
+    };
+}
+
+/// A declared kind's timing, from its IR fields and the stream's rate.
+pub(crate) type TimingFn = fn(IrNodeKind, SampleRate) -> NodeTiming;
+
+/// The timing of a kind whose output is a per-frame function of its input, or a source.
+fn stateless_timing(_: IrNodeKind, _: SampleRate) -> NodeTiming {
+    NodeTiming::STATELESS
+}
+
+/// The timing of a kind that keeps signal in its state and has not stated a decay rule.
+fn undeclared_timing(_: IrNodeKind, _: SampleRate) -> NodeTiming {
+    NodeTiming::UNDECLARED
+}
+
+/// The frames a one-pole low-pass with coefficient `p` takes to decay by 60 dB: its state
+/// is multiplied by `p` per frame, so `n` frames leave `p^n`, and `n = ln 1000 / −ln p`.
+/// One frame where `p` is zero, where the state is gone at the next frame.
+fn one_pole_decay_frames(p: f64) -> u64 {
+    if p <= 0.0 {
+        return 1;
+    }
+    let frames = (1_000.0_f64.ln() / -p.ln()).ceil();
+    // `as`: a finite positive count; `p` below one bounds it, and a `p` at one is not a
+    // coefficient either kernel derives from a finite corner.
+    #[allow(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        reason = "a ceiling of a finite positive count, held to u64 by the clamp"
+    )]
+    let frames = frames.clamp(1.0, 1e15) as u64;
+    frames
 }
 
 /// What one node kind declares about itself, in one place.
@@ -972,6 +1249,10 @@ pub(crate) struct NodeDeclaration {
     pub(crate) prepared_bytes: u64,
     /// The mutable payload this kind is charged for, per node, in the resource report.
     pub(crate) state_bytes: u64,
+    /// The latency, tail and history the kind imposes, from its IR fields and the rate
+    /// (`SOUND-INV-033`): [`stateless_timing`] for a per-frame kind or a source,
+    /// [`undeclared_timing`] for a kind that keeps signal and has not stated its decay.
+    pub(crate) timing: TimingFn,
 }
 
 impl NodeDeclaration {
@@ -1039,6 +1320,7 @@ pub(crate) static SAW: NodeDeclaration = NodeDeclaration {
     note_control: None,
     taps: &[],
     prepare: prepare_saw,
+    timing: stateless_timing,
     prepared_bytes: size_of::<(
         f64,
         crate::quantities::Frequency,
@@ -1160,6 +1442,7 @@ pub(crate) static ENVELOPE: NodeDeclaration = NodeDeclaration {
     note_control: Some(kernels::ENVELOPE_GATE),
     taps: &[],
     prepare: prepare_envelope,
+    timing: undeclared_timing,
     prepared_bytes: size_of::<(
         Seconds,
         Seconds,
@@ -1216,6 +1499,7 @@ pub(crate) static SINE: NodeDeclaration = NodeDeclaration {
     note_control: None,
     taps: &[],
     prepare: prepare_sine,
+    timing: stateless_timing,
     prepared_bytes: size_of::<(
         f64,
         crate::quantities::Frequency,
@@ -1256,6 +1540,7 @@ pub(crate) static MOD_WHEEL: NodeDeclaration = NodeDeclaration {
     note_control: None,
     taps: &[],
     prepare: prepare_control_source,
+    timing: stateless_timing,
     prepared_bytes: size_of::<crate::controller::ControllerKind>() as u64,
     state_bytes: 0,
 };
@@ -1280,6 +1565,7 @@ pub(crate) static AFTERTOUCH: NodeDeclaration = NodeDeclaration {
     note_control: None,
     taps: &[],
     prepare: prepare_control_source,
+    timing: stateless_timing,
     prepared_bytes: size_of::<crate::controller::ControllerKind>() as u64,
     state_bytes: 0,
 };
@@ -1304,6 +1590,7 @@ pub(crate) static PITCH_BEND: NodeDeclaration = NodeDeclaration {
     note_control: None,
     taps: &[],
     prepare: prepare_control_source,
+    timing: stateless_timing,
     prepared_bytes: size_of::<crate::controller::ControllerKind>() as u64,
     state_bytes: 0,
 };
@@ -1328,6 +1615,7 @@ pub(crate) static MIDI_CC: NodeDeclaration = NodeDeclaration {
     note_control: None,
     taps: &[],
     prepare: prepare_control_source,
+    timing: stateless_timing,
     prepared_bytes: size_of::<crate::controller::ControllerKind>() as u64,
     state_bytes: 0,
 };
@@ -1354,6 +1642,7 @@ pub(crate) static NOTE_VELOCITY: NodeDeclaration = NodeDeclaration {
     note_control: None,
     taps: &[],
     prepare: prepare_control_source,
+    timing: stateless_timing,
     prepared_bytes: 0,
     state_bytes: 0,
 };
@@ -1380,6 +1669,7 @@ pub(crate) static NOTE_NUMBER: NodeDeclaration = NodeDeclaration {
     note_control: None,
     taps: &[],
     prepare: prepare_control_source,
+    timing: stateless_timing,
     prepared_bytes: 0,
     state_bytes: 0,
 };
@@ -1406,6 +1696,7 @@ pub(crate) static POLY_PRESSURE: NodeDeclaration = NodeDeclaration {
     note_control: None,
     taps: &[],
     prepare: prepare_control_source,
+    timing: stateless_timing,
     prepared_bytes: 0,
     state_bytes: 0,
 };
@@ -1432,6 +1723,7 @@ pub(crate) static RELEASE_VELOCITY: NodeDeclaration = NodeDeclaration {
     note_control: None,
     taps: &[],
     prepare: prepare_control_source,
+    timing: stateless_timing,
     prepared_bytes: 0,
     state_bytes: 0,
 };
@@ -1480,6 +1772,7 @@ pub(crate) static LFO: NodeDeclaration = NodeDeclaration {
     note_control: None,
     taps: &[],
     prepare: prepare_lfo,
+    timing: stateless_timing,
     prepared_bytes: size_of::<(
         f64,
         crate::ir::LfoWaveform,
@@ -1502,6 +1795,7 @@ pub(crate) static SILENCE: NodeDeclaration = NodeDeclaration {
     note_control: None,
     taps: &[],
     prepare: prepare_silence,
+    timing: stateless_timing,
     prepared_bytes: 0,
     state_bytes: 0,
 };
@@ -1517,6 +1811,7 @@ pub(crate) static CONSTANT: NodeDeclaration = NodeDeclaration {
     note_control: None,
     taps: &[],
     prepare: prepare_constant,
+    timing: stateless_timing,
     prepared_bytes: size_of::<crate::quantities::Amplitude>() as u64,
     state_bytes: 0,
 };
@@ -1532,6 +1827,7 @@ pub(crate) static IMPULSE: NodeDeclaration = NodeDeclaration {
     note_control: None,
     taps: &[],
     prepare: prepare_impulse,
+    timing: stateless_timing,
     prepared_bytes: size_of::<crate::time::PlanPosition>() as u64,
     state_bytes: 0,
 };
@@ -1565,6 +1861,7 @@ pub(crate) static AMPLIFIER: NodeDeclaration = NodeDeclaration {
     note_control: None,
     taps: &[],
     prepare: prepare_amplifier,
+    timing: stateless_timing,
     prepared_bytes: 0,
     state_bytes: 0,
 };
@@ -1581,6 +1878,7 @@ pub(crate) static GAIN: NodeDeclaration = NodeDeclaration {
     note_control: None,
     taps: &[],
     prepare: prepare_gain,
+    timing: stateless_timing,
     prepared_bytes: size_of::<crate::quantities::GainFactor>() as u64,
     state_bytes: 0,
 };
@@ -1627,6 +1925,7 @@ pub(crate) static FILTER: NodeDeclaration = NodeDeclaration {
     note_control: None,
     taps: &[],
     prepare: prepare_filter,
+    timing: undeclared_timing,
     prepared_bytes: size_of::<([f32; 3], CutoffFrequency, Resonance, f64)>() as u64,
     state_bytes: size_of::<(f32, f32, f32, f32, [f32; 3])>() as u64,
 };
@@ -1642,6 +1941,7 @@ static SCRIPT: NodeDeclaration = NodeDeclaration {
     note_control: None,
     taps: &[],
     prepare: prepare_script,
+    timing: undeclared_timing,
     prepared_bytes: size_of::<(crate::script::ScriptSlot, crate::script::ScriptSeed, f32)>() as u64,
     state_bytes: size_of::<(
         synth_core::script::RegisterFile,
@@ -1664,6 +1964,7 @@ static AUDIO_SCRIPT: NodeDeclaration = NodeDeclaration {
     note_control: None,
     taps: &[],
     prepare: prepare_audioscript,
+    timing: undeclared_timing,
     prepared_bytes: size_of::<(crate::script::ScriptSlot, crate::script::ScriptSeed, f32)>() as u64,
     state_bytes: size_of::<(
         synth_core::script::RegisterFile,
@@ -1686,6 +1987,7 @@ static NOTE_SCRIPT: NodeDeclaration = NodeDeclaration {
     note_control: None,
     taps: &[],
     prepare: prepare_notescript,
+    timing: undeclared_timing,
     prepared_bytes: size_of::<(crate::script::ScriptSlot, crate::script::ScriptSeed, f32)>() as u64,
     state_bytes: size_of::<(
         synth_core::script::RegisterFile,
@@ -1766,7 +2068,7 @@ fn prepare_script_program(
 /// the declarations are `static` rather than `const`: a `const` is materialised at each
 /// use and has no single address to compare — so a kind declared but left out here cannot
 /// be discovered, and one listed here but not resolvable cannot compile.
-static DECLARED: [&NodeDeclaration; 30] = [
+static DECLARED: [&NodeDeclaration; 32] = [
     &SCRIPT,
     &AUDIO_SCRIPT,
     &NOTE_SCRIPT,
@@ -1787,6 +2089,8 @@ static DECLARED: [&NodeDeclaration; 30] = [
     &TRIM,
     &SOFT_CLIP,
     &HARD_CLAMP,
+    &DISTORTION,
+    &DELAY,
     &SAMPLER,
     &LFO,
     &MOD_WHEEL,
@@ -1835,6 +2139,7 @@ pub(crate) static VELOCITY_SCALER: NodeDeclaration = NodeDeclaration {
     note_control: None,
     taps: &[],
     prepare: prepare_velocityscaler,
+    timing: stateless_timing,
     prepared_bytes: size_of::<NormalizedLevel>() as u64,
     state_bytes: size_of::<crate::quantities::NoteVelocity>() as u64,
 };
@@ -1917,6 +2222,7 @@ pub(crate) static CHANNEL: NodeDeclaration = NodeDeclaration {
     note_control: None,
     taps: &[],
     prepare: prepare_channel,
+    timing: stateless_timing,
     prepared_bytes: size_of::<(
         crate::quantities::Amplitude,
         crate::controller::BipolarLevel,
@@ -1941,6 +2247,7 @@ pub(crate) static MIX: NodeDeclaration = NodeDeclaration {
     note_control: None,
     taps: &[],
     prepare: prepare_mix,
+    timing: stateless_timing,
     prepared_bytes: 0,
     state_bytes: 0,
 };
@@ -1997,6 +2304,7 @@ pub(crate) static BALANCE: NodeDeclaration = NodeDeclaration {
     note_control: None,
     taps: &[],
     prepare: prepare_balance,
+    timing: stateless_timing,
     prepared_bytes: size_of::<(
         crate::quantities::Amplitude,
         crate::controller::BipolarLevel,
@@ -2030,6 +2338,7 @@ pub(crate) static TRIM: NodeDeclaration = NodeDeclaration {
     note_control: None,
     taps: &[],
     prepare: prepare_trim,
+    timing: stateless_timing,
     prepared_bytes: size_of::<crate::quantities::Amplitude>() as u64,
     state_bytes: 0,
 };
@@ -2048,6 +2357,7 @@ pub(crate) static SOFT_CLIP: NodeDeclaration = NodeDeclaration {
     note_control: None,
     taps: &[],
     prepare: prepare_softclip,
+    timing: stateless_timing,
     prepared_bytes: 0,
     state_bytes: 0,
 };
@@ -2065,8 +2375,156 @@ pub(crate) static HARD_CLAMP: NodeDeclaration = NodeDeclaration {
     note_control: None,
     taps: &[],
     prepare: prepare_hardclamp,
+    timing: stateless_timing,
     prepared_bytes: 0,
     state_bytes: 0,
+};
+
+/// V1's distortion insert in its soft-clip mode, declared once — `P08-S003`,
+/// `SOUND-INV-033`.
+///
+/// Stereo in and stereo out, three quantum-rate levels under the normalized law and none
+/// smoothed, because V1 applies a parameter change per block: the **drive**, the **tone** and
+/// the **mix**. In-place safe: every output sample is its own input sample through the law
+/// and the side's filter state. The byte attributions name the kernel's layouts: the three
+/// authored levels and the rate, and the two filter states with the tone and coefficient
+/// last read.
+pub(crate) static DISTORTION: NodeDeclaration = NodeDeclaration {
+    id: NodeKindId::Distortion,
+    name: "distortion",
+    kernel: kernels::DISTORTION,
+    ports: &[STEREO_AUDIO_IN, STEREO_AUDIO_OUT],
+    controls: &[
+        ControlSpec {
+            controller: false,
+            parameter: parameters::DISTORTION_DRIVE,
+            name: "drive",
+            default: ParameterDefault::NormalizedLevel(NormalizedLevel::ZERO),
+            law: ModulationLaw::NormalizedAdditive,
+            smoothing: Smoothing::None,
+            control: kernels::DISTORTION_DRIVE,
+            rate: ControlRate::Quantum,
+            magnitude: None,
+        },
+        ControlSpec {
+            controller: false,
+            parameter: parameters::DISTORTION_TONE,
+            name: "tone",
+            default: ParameterDefault::NormalizedLevel(NormalizedLevel::FULL),
+            law: ModulationLaw::NormalizedAdditive,
+            smoothing: Smoothing::None,
+            control: kernels::DISTORTION_TONE,
+            rate: ControlRate::Quantum,
+            magnitude: None,
+        },
+        ControlSpec {
+            controller: false,
+            parameter: parameters::DISTORTION_MIX,
+            name: "mix",
+            default: ParameterDefault::NormalizedLevel(NormalizedLevel::FULL),
+            law: ModulationLaw::NormalizedAdditive,
+            smoothing: Smoothing::None,
+            control: kernels::DISTORTION_MIX,
+            rate: ControlRate::Quantum,
+            magnitude: None,
+        },
+    ],
+    in_place_safe: true,
+    note_control: None,
+    taps: &[],
+    prepare: prepare_distortion,
+    timing: timing_distortion,
+    prepared_bytes: size_of::<(NormalizedLevel, NormalizedLevel, NormalizedLevel, f32)>() as u64,
+    state_bytes: size_of::<([f32; 2], f32, f32)>() as u64,
+};
+
+/// V1's delay insert in its mono mode, declared once — `P08-S003`, `SOUND-INV-033`.
+///
+/// Stereo in and stereo out, five quantum-rate controls and none smoothed: the two **times**
+/// in seconds under the physical additive law, and the **feedback**, **mix** and **tone**
+/// levels under the normalized law. The first kind that declares a **tail** and a
+/// **history**: [`timing_delay`] states both. In-place safe: an output frame is its own input
+/// frame and a read from the history, never from another frame of the input. The byte
+/// attributions name the kernel's layouts: the five authored values, the rate and the line
+/// length; and the write index, the two filter states, and the tone and coefficient last
+/// read — the lines themselves are the history, charged by [`history_bytes`].
+pub(crate) static DELAY: NodeDeclaration = NodeDeclaration {
+    id: NodeKindId::Delay,
+    name: "delay",
+    kernel: kernels::DELAY,
+    ports: &[STEREO_AUDIO_IN, STEREO_AUDIO_OUT],
+    controls: &[
+        ControlSpec {
+            controller: false,
+            parameter: parameters::DELAY_TIME_LEFT,
+            name: "time_left",
+            default: ParameterDefault::DelayTime(crate::quantities::DelayTime::MIN),
+            law: ModulationLaw::PhysicalLinearAdditive,
+            smoothing: Smoothing::None,
+            control: kernels::DELAY_TIME_LEFT,
+            rate: ControlRate::Quantum,
+            magnitude: None,
+        },
+        ControlSpec {
+            controller: false,
+            parameter: parameters::DELAY_TIME_RIGHT,
+            name: "time_right",
+            default: ParameterDefault::DelayTime(crate::quantities::DelayTime::MIN),
+            law: ModulationLaw::PhysicalLinearAdditive,
+            smoothing: Smoothing::None,
+            control: kernels::DELAY_TIME_RIGHT,
+            rate: ControlRate::Quantum,
+            magnitude: None,
+        },
+        ControlSpec {
+            controller: false,
+            parameter: parameters::DELAY_FEEDBACK,
+            name: "feedback",
+            default: ParameterDefault::DelayFeedback(crate::quantities::DelayFeedback::ZERO),
+            law: ModulationLaw::NormalizedAdditive,
+            smoothing: Smoothing::None,
+            control: kernels::DELAY_FEEDBACK,
+            rate: ControlRate::Quantum,
+            magnitude: None,
+        },
+        ControlSpec {
+            controller: false,
+            parameter: parameters::DELAY_MIX,
+            name: "mix",
+            default: ParameterDefault::NormalizedLevel(NormalizedLevel::ZERO),
+            law: ModulationLaw::NormalizedAdditive,
+            smoothing: Smoothing::None,
+            control: kernels::DELAY_MIX,
+            rate: ControlRate::Quantum,
+            magnitude: None,
+        },
+        ControlSpec {
+            controller: false,
+            parameter: parameters::DELAY_TONE,
+            name: "tone",
+            default: ParameterDefault::NormalizedLevel(NormalizedLevel::FULL),
+            law: ModulationLaw::NormalizedAdditive,
+            smoothing: Smoothing::None,
+            control: kernels::DELAY_TONE,
+            rate: ControlRate::Quantum,
+            magnitude: None,
+        },
+    ],
+    in_place_safe: true,
+    note_control: None,
+    taps: &[],
+    prepare: prepare_delay,
+    timing: timing_delay,
+    prepared_bytes: size_of::<(
+        crate::quantities::DelayTime,
+        crate::quantities::DelayTime,
+        crate::quantities::DelayFeedback,
+        NormalizedLevel,
+        NormalizedLevel,
+        f32,
+        usize,
+    )>() as u64,
+    state_bytes: size_of::<(usize, [f32; 2], f32, f32)>() as u64,
 };
 
 /// The one-zone sampler, declared once — ADR-0026, `P06-S005`.
@@ -2145,6 +2603,7 @@ pub(crate) static SAMPLER: NodeDeclaration = NodeDeclaration {
     note_control: None,
     taps: &[],
     prepare: prepare_sampler,
+    timing: undeclared_timing,
     prepared_bytes: size_of::<(
         crate::plan::SampleSlot,
         crate::sample::KeyRange,
@@ -2318,6 +2777,8 @@ pub(crate) fn declaration(kind: IrNodeKind) -> Option<&'static NodeDeclaration> 
         IrNodeKind::Trim { .. } => Some(&TRIM),
         IrNodeKind::SoftClip => Some(&SOFT_CLIP),
         IrNodeKind::HardClamp => Some(&HARD_CLAMP),
+        IrNodeKind::Distortion { .. } => Some(&DISTORTION),
+        IrNodeKind::Delay { .. } => Some(&DELAY),
         IrNodeKind::Sampler { .. } => Some(&SAMPLER),
         IrNodeKind::Filter { .. } => Some(&FILTER),
         IrNodeKind::Controller { kind } => Some(match kind {
@@ -2383,6 +2844,8 @@ pub(crate) fn descriptor(kind: IrNodeKind) -> Option<NodeDescriptor> {
         IrNodeKind::Trim { .. } => declared.map(NodeDeclaration::descriptor),
         IrNodeKind::SoftClip => declared.map(NodeDeclaration::descriptor),
         IrNodeKind::HardClamp => declared.map(NodeDeclaration::descriptor),
+        IrNodeKind::Distortion { .. } => declared.map(NodeDeclaration::descriptor),
+        IrNodeKind::Delay { .. } => declared.map(NodeDeclaration::descriptor),
         IrNodeKind::Sampler { .. } => declared.map(NodeDeclaration::descriptor),
         IrNodeKind::Controller { .. } | IrNodeKind::NoteSource { .. } => {
             declared.map(NodeDeclaration::descriptor)
@@ -2630,6 +3093,8 @@ pub fn prepared_payload_bytes(kind: IrNodeKind) -> u64 {
         IrNodeKind::Trim { .. } => return declared.map_or(0, |d| d.prepared_bytes),
         IrNodeKind::SoftClip => return declared.map_or(0, |d| d.prepared_bytes),
         IrNodeKind::HardClamp => return declared.map_or(0, |d| d.prepared_bytes),
+        IrNodeKind::Distortion { .. } => return declared.map_or(0, |d| d.prepared_bytes),
+        IrNodeKind::Delay { .. } => return declared.map_or(0, |d| d.prepared_bytes),
         IrNodeKind::Sampler { .. } => return declared.map_or(0, |d| d.prepared_bytes),
         IrNodeKind::Filter { .. } => return declared.map_or(0, |d| d.prepared_bytes),
         // The output node has no kernel, so it carries no prepared data of its own.
@@ -2659,12 +3124,45 @@ pub fn slot_payload_bytes(kind: IrNodeKind) -> u64 {
     declaration(kind).map_or(0, NodeDeclaration::slot_bytes)
 }
 
+/// The latency, tail and history `kind` declares at `rate` (`SOUND-INV-033`); none for the
+/// output node, which has no declaration.
+pub fn timing_of(kind: IrNodeKind, rate: SampleRate) -> NodeTiming {
+    declaration(kind).map_or(NodeTiming::STATELESS, |declared| {
+        (declared.timing)(kind, rate)
+    })
+}
+
+/// The bytes the renderer keeps for `kind`'s declared history at `rate`: its history frames at
+/// its output port's width. One count for the report row and the allocation.
+#[must_use]
+pub fn history_bytes(kind: IrNodeKind, rate: SampleRate) -> u64 {
+    let channels = declaration(kind).map_or(0, |declared| {
+        declared
+            .ports
+            .iter()
+            .find(|port| port.direction() == PortDirection::Output)
+            .map_or(0, |port| port.layout().channels() as u64)
+    });
+    timing_of(kind, rate)
+        .history
+        .as_u64()
+        .saturating_mul(channels)
+        .saturating_mul(size_of::<f32>() as u64)
+}
+
 /// The bytes the renderer keeps per scheduled record beside its state: the entry of the
 /// per-node run table that hands a kernel its quantum-rate buffers (`SOUND-INV-024`).
 /// One `usize` per record plus a terminator, which [`crate::ir::GraphIr::mutable_bytes`]
 /// charges with the records.
 #[must_use]
 pub const fn ramp_table_bytes_per_record() -> u64 {
+    size_of::<usize>() as u64
+}
+
+/// The bytes of the renderer's per-record history index — one start per scheduled record
+/// and a terminator, as the ramp table's (`SOUND-INV-033`).
+#[must_use]
+pub const fn history_table_bytes_per_record() -> u64 {
     size_of::<usize>() as u64
 }
 
@@ -2690,6 +3188,8 @@ pub fn state_payload_bytes(kind: IrNodeKind) -> u64 {
         IrNodeKind::Trim { .. } => return declared.map_or(0, |d| d.state_bytes),
         IrNodeKind::SoftClip => return declared.map_or(0, |d| d.state_bytes),
         IrNodeKind::HardClamp => return declared.map_or(0, |d| d.state_bytes),
+        IrNodeKind::Distortion { .. } => return declared.map_or(0, |d| d.state_bytes),
+        IrNodeKind::Delay { .. } => return declared.map_or(0, |d| d.state_bytes),
         IrNodeKind::Sampler { .. } => return declared.map_or(0, |d| d.state_bytes),
         IrNodeKind::Envelope { .. } => return declared.map_or(0, |d| d.state_bytes),
         IrNodeKind::Controller { .. } | IrNodeKind::NoteSource { .. } => {
@@ -2736,6 +3236,33 @@ mod tests {
     }
 
     /// Every kind this phase has, so a scan over them is a scan over all of them.
+    /// `SOUND-INV-033`: no declared kind imposes a latency until `P08-S005` sums and
+    /// compensates one, and each kind's tail is stated or honestly unstated — `Some(0)` for
+    /// a per-frame kind or a source, `None` for the kinds that keep signal without a rule.
+    #[test]
+    fn no_declared_kind_declares_latency_until_p08_s005_compensates_it() {
+        let rate = SampleRate::new(48_000.0).expect("a rate");
+        for kind in every_kind() {
+            let timing = timing_of(kind, rate);
+            assert_eq!(timing.latency, FrameCount::ZERO, "{kind:?}");
+            let expected_tail = match kind {
+                IrNodeKind::Filter { .. }
+                | IrNodeKind::Envelope { .. }
+                | IrNodeKind::Sampler { .. }
+                | IrNodeKind::Script { .. }
+                | IrNodeKind::AudioScript { .. }
+                | IrNodeKind::NoteScript { .. } => None,
+                IrNodeKind::Distortion { .. } | IrNodeKind::Delay { .. } => {
+                    Some(timing.tail.expect("stated"))
+                }
+                _ => Some(FrameCount::ZERO),
+            };
+            assert_eq!(timing.tail, expected_tail, "{kind:?}");
+            let keeps_history = matches!(kind, IrNodeKind::Delay { .. });
+            assert_eq!(timing.history > FrameCount::ZERO, keeps_history, "{kind:?}");
+        }
+    }
+
     #[test]
     fn every_declared_control_is_below_the_reserved_floor() {
         // ADR-0058 reserves two control indices to the render loop — a reset and a fade —
@@ -2836,6 +3363,18 @@ mod tests {
             },
             IrNodeKind::SoftClip,
             IrNodeKind::HardClamp,
+            IrNodeKind::Distortion {
+                drive: NormalizedLevel::ZERO,
+                tone: NormalizedLevel::FULL,
+                mix: NormalizedLevel::FULL,
+            },
+            IrNodeKind::Delay {
+                time_left: crate::quantities::DelayTime::MIN,
+                time_right: crate::quantities::DelayTime::MIN,
+                feedback: crate::quantities::DelayFeedback::ZERO,
+                mix: NormalizedLevel::ZERO,
+                tone: NormalizedLevel::FULL,
+            },
             IrNodeKind::Amplifier,
             IrNodeKind::Monitor,
             IrNodeKind::Envelope {
@@ -3125,6 +3664,11 @@ mod tests {
                     | (IrNodeKind::Trim { .. }, PreparedNode::Trim { .. })
                     | (IrNodeKind::SoftClip, PreparedNode::SoftClip)
                     | (IrNodeKind::HardClamp, PreparedNode::HardClamp)
+                    | (
+                        IrNodeKind::Distortion { .. },
+                        PreparedNode::Distortion { .. }
+                    )
+                    | (IrNodeKind::Delay { .. }, PreparedNode::Delay { .. })
                     | (IrNodeKind::Amplifier, PreparedNode::Amplifier)
                     | (IrNodeKind::Monitor, PreparedNode::Copy)
                     | (IrNodeKind::Filter { .. }, PreparedNode::Filter { .. })
@@ -3167,7 +3711,9 @@ mod tests {
                 | IrNodeKind::Script { .. }
                 | IrNodeKind::AudioScript { .. }
                 | IrNodeKind::NoteScript { .. }
-                | IrNodeKind::Lfo { .. } => (true, true),
+                | IrNodeKind::Lfo { .. }
+                | IrNodeKind::Distortion { .. }
+                | IrNodeKind::Delay { .. } => (true, true),
                 IrNodeKind::NoteSource { .. }
                 | IrNodeKind::Silence
                 | IrNodeKind::Amplifier
@@ -3201,6 +3747,8 @@ mod tests {
                         | IrNodeKind::Trim { .. }
                         | IrNodeKind::SoftClip
                         | IrNodeKind::HardClamp
+                        | IrNodeKind::Distortion { .. }
+                        | IrNodeKind::Delay { .. }
                         | IrNodeKind::Filter { .. }
                 ),
                 "{kind:?}"
@@ -3295,9 +3843,10 @@ mod tests {
                     ParameterUnit::NormalizedLevel => ModulationLaw::NormalizedAdditive,
                     ParameterUnit::BipolarLevel => ModulationLaw::BipolarAdditive,
                     ParameterUnit::Gate => ModulationLaw::ThresholdedBoolean,
-                    ParameterUnit::QualityFactor | ParameterUnit::Seconds => {
-                        ModulationLaw::PhysicalLinearAdditive
-                    }
+                    ParameterUnit::QualityFactor
+                    | ParameterUnit::Seconds
+                    | ParameterUnit::DelayTime => ModulationLaw::PhysicalLinearAdditive,
+                    ParameterUnit::DelayFeedback => ModulationLaw::NormalizedAdditive,
                 };
                 assert_eq!(
                     spec.law,

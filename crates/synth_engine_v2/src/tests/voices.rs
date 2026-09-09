@@ -364,6 +364,7 @@ fn prepared_data_is_shared_and_state_is_per_instance() {
     assert_eq!(
         renderer.slot_bytes_held() as u64
             + renderer.ramp_table_bytes_held() as u64
+            + renderer.history_bytes_held() as u64
             + node_records as u64 * crate::node::state_bytes_per_node(),
         mutable_four,
         "preparation holds what the mutable row charges"

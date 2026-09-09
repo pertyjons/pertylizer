@@ -12,10 +12,10 @@
 //! anticipate them.
 
 use crate::quantities::{
-    Amplitude, BusCount, CostRatio, CutoffFrequency, EventCount, Frequency, GainFactor,
-    HeldNoteCount, InstructionCount, NodeCount, NormalizedLevel, PhaseOffset, PreparedBytes,
-    RecordCount, Resonance, ScriptWorkPerQuantum, Seconds, SendCount, SlotCount, VoiceCount,
-    WritesPerNote,
+    Amplitude, BusCount, CostRatio, CutoffFrequency, DelayFeedback, DelayTime, EventCount,
+    Frequency, GainFactor, HeldNoteCount, InstructionCount, NodeCount, NormalizedLevel,
+    PhaseOffset, PreparedBytes, RecordCount, Resonance, SampleRate, ScriptWorkPerQuantum, Seconds,
+    SendCount, SlotCount, VoiceCount, WritesPerNote,
 };
 use crate::sample::{PlayDirection, PlayMode, PreparedSample, SampleMap, SampleMapRef};
 use crate::time::{FrameCount, PlanPosition};
@@ -354,6 +354,49 @@ pub enum IrNodeKind {
     /// every sample held to `[−1, 1]`, per side, with no control. Selected by the lowerer
     /// for parity and declinable, so float headroom is preserved offline unless asked for.
     HardClamp,
+    /// V1's distortion insert in its soft-clip mode as an explicit node (`P08-S003`,
+    /// `SOUND-INV-033`): each sample driven by `1 + drive² × 50`, shaped by V1's rational
+    /// `tanh`, passed through a one-pole tone filter whose corner is `200 + tone² × 15000` Hz,
+    /// and blended with the dry sample by the mix. Stereo in and out; the tone filter keeps
+    /// one state per side. Three quantum-rate controls, none smoothed, because V1 applies a
+    /// parameter change per block.
+    ///
+    /// V1's other modes — hard clip, tube, foldback, bitcrush, variable — are not carried:
+    /// the lowerer refuses them by name, and a later corpus case that needs one adds it as
+    /// its own law rather than as a mode this kernel selects between (`SOUND-INV-013`).
+    Distortion {
+        /// The drive, `0` clean through `1` at `51×` gain.
+        drive: NormalizedLevel,
+        /// The tone, `0` darkest through `1` at a 15.2 kHz corner.
+        tone: NormalizedLevel,
+        /// The dry/wet mix, `0` dry through `1` wet.
+        mix: NormalizedLevel,
+    },
+    /// V1's delay insert in its mono mode as an explicit node (`P08-S003`, `SOUND-INV-033`):
+    /// one line per side, `2 s` long at the stream's rate, read at each side's own time by
+    /// V1's two-tap interpolation, fed back through a one-pole high cut at `200 + tone × 19800`
+    /// Hz, the two sides' dry input and filtered feedback each averaged to mono and written
+    /// through a `tanh` soft limit into both lines, and each side's output the dry sample
+    /// blended with its own unfiltered read by the mix. The first declared kind with a
+    /// **tail** and a **history**: its output outlasts its input by the frames the feedback
+    /// path takes to attenuate the loudest repeat by 60 dB, and the renderer keeps two lines
+    /// of frames for it between quanta.
+    ///
+    /// V1's stereo and ping-pong modes and its tempo-synced time are not carried; the lowerer
+    /// refuses each by name.
+    Delay {
+        /// The left side's delay time, in V1's own domain of `0.001..=2` s.
+        time_left: DelayTime,
+        /// The right side's delay time.
+        time_right: DelayTime,
+        /// The feedback, in V1's own domain of `0..=0.95`, so the repeats decay and the tail
+        /// the kind declares exists.
+        feedback: DelayFeedback,
+        /// The dry/wet mix.
+        mix: NormalizedLevel,
+        /// The feedback high cut, `0` at a 200 Hz corner through `1` at 20 kHz.
+        tone: NormalizedLevel,
+    },
     /// A one-zone sampler on the prepared map/zone contract (ADR-0026).
     ///
     /// The map it consumes is one of the plan's, named by reference for the reason a node
@@ -672,6 +715,22 @@ pub mod parameters {
     /// A trim's level, a linear amplitude under the decibel law (`SOUND-INV-032`).
     /// Quantum-rate.
     pub const TRIM_LEVEL: ParameterId = ParameterId::new(0);
+    /// A distortion's drive, a level in `[0, 1]` (`SOUND-INV-033`). Quantum-rate.
+    pub const DISTORTION_DRIVE: ParameterId = ParameterId::new(0);
+    /// A distortion's tone, a level in `[0, 1]`. Quantum-rate.
+    pub const DISTORTION_TONE: ParameterId = ParameterId::new(1);
+    /// A distortion's dry/wet mix, a level in `[0, 1]`. Quantum-rate.
+    pub const DISTORTION_MIX: ParameterId = ParameterId::new(2);
+    /// A delay's left time, in seconds (`SOUND-INV-033`). Quantum-rate.
+    pub const DELAY_TIME_LEFT: ParameterId = ParameterId::new(0);
+    /// A delay's right time, in seconds. Quantum-rate.
+    pub const DELAY_TIME_RIGHT: ParameterId = ParameterId::new(1);
+    /// A delay's feedback, a level in `[0, 1]`. Quantum-rate.
+    pub const DELAY_FEEDBACK: ParameterId = ParameterId::new(2);
+    /// A delay's dry/wet mix, a level in `[0, 1]`. Quantum-rate.
+    pub const DELAY_MIX: ParameterId = ParameterId::new(3);
+    /// A delay's feedback high cut, a level in `[0, 1]`. Quantum-rate.
+    pub const DELAY_TONE: ParameterId = ParameterId::new(4);
 }
 
 /// One node in the IR.
@@ -1737,7 +1796,7 @@ impl GraphIr {
     /// through this row rather than as a count of their own, and the renderer allocates
     /// exactly this much. The attribution stays the node whose state payload is widest; a
     /// slot belongs to its node and is charged with it.
-    pub fn mutable_bytes(&self, inserted: u64) -> (PreparedBytes, IrObject) {
+    pub fn mutable_bytes(&self, inserted: u64, rate: SampleRate) -> (PreparedBytes, IrObject) {
         // The attribution walks the payloads; the total is over **state** records, which is
         // what the renderer allocates one of per voice instance (`P06-S001`).
         let (_, dominant) = self.aggregate_bytes(
@@ -1760,18 +1819,51 @@ impl GraphIr {
         });
         // The per-node run table of `SOUND-INV-024`'s buffers: one entry per state record
         // and a terminator, sized exactly as preparation sizes it.
-        let table = records
-            .saturating_add(1)
-            .saturating_mul(crate::node::ramp_table_bytes_per_record());
+        let table = records.saturating_add(1).saturating_mul(
+            crate::node::ramp_table_bytes_per_record()
+                .saturating_add(crate::node::history_table_bytes_per_record()),
+        );
+        // The history a kind declares (`SOUND-INV-033`): the frames of signal it keeps between
+        // quanta, which the renderer allocates once per scheduled step of it — per instance
+        // where the node is in the voice scope — at its output port's width. A function of
+        // the kind and the rate, so the row can be stated before anything is prepared and
+        // the renderer's slab is sized by the same figure; `a_delays_history_is_charged_as_the_
+        // renderer_allocates_it` holds the two equal.
+        let history = self.nodes.iter().fold(0_u64, |total, node| {
+            let per_instance = crate::node::history_bytes(node.kind(), rate);
+            let instances = if node.scope() == ExecutionScope::Voice {
+                voices
+            } else {
+                1
+            };
+            total.saturating_add(per_instance.saturating_mul(instances))
+        });
         (
             PreparedBytes::measured(
                 records
                     .saturating_mul(crate::node::state_bytes_per_node())
                     .saturating_add(slots)
-                    .saturating_add(table),
+                    .saturating_add(table)
+                    .saturating_add(history),
             ),
             dominant,
         )
+    }
+
+    /// The longest tail any node of this plan declares at `rate` (`SOUND-INV-033`): `Some`
+    /// of the maximum where every kernel-bearing node states one, `None` where any keeps
+    /// signal without a stated rule — a plan with a filter or an envelope today — so a
+    /// reader gets "unknown" rather than a bound that omits a kind.
+    #[must_use]
+    pub fn declared_tail(&self, rate: SampleRate) -> Option<crate::time::FrameCount> {
+        self.nodes
+            .iter()
+            .filter(|node| node.kind().is_source())
+            .try_fold(crate::time::FrameCount::ZERO, |longest, node| {
+                crate::node::timing_of(node.kind(), rate)
+                    .tail
+                    .map(|tail| longest.max(tail))
+            })
     }
 
     /// How many voice instances the plan renders: one per identity index of its note
@@ -2412,7 +2504,7 @@ mod tests {
     #[test]
     fn memory_aggregates_name_the_node_that_dominates_them() {
         let ir = sine_plan();
-        let (mutable, dominant) = ir.mutable_bytes(0);
+        let (mutable, dominant) = ir.mutable_bytes(0, SampleRate::new(48_000.0).expect("a rate"));
         assert!(mutable.get() > 0, "the sine carries phase between quanta");
         assert_eq!(
             dominant,

@@ -709,6 +709,10 @@ impl LatencyAccounting {
 pub struct ReportedQuantities {
     script_instructions_per_quantum: ScriptWorkPerQuantum,
     script_work_contributor: IrObject,
+    /// The longest tail any node declares at the plan's rate (`SOUND-INV-033`): `Some` where
+    /// every kernel-bearing node states one, `None` where any keeps signal without a stated
+    /// rule. A quantity, not a limit: nothing refuses on it yet.
+    declared_tail: Option<FrameCount>,
 }
 
 impl ReportedQuantities {
@@ -716,11 +720,18 @@ impl ReportedQuantities {
     pub const fn new(
         script_instructions_per_quantum: ScriptWorkPerQuantum,
         script_work_contributor: IrObject,
+        declared_tail: Option<FrameCount>,
     ) -> Self {
         Self {
             script_instructions_per_quantum,
             script_work_contributor,
+            declared_tail,
         }
+    }
+
+    /// The longest declared tail, or `None` where a node has not stated one.
+    pub const fn declared_tail(&self) -> Option<FrameCount> {
+        self.declared_tail
     }
 
     /// Script instructions evaluated per quantum across the plan.

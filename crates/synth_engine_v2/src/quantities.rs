@@ -718,6 +718,105 @@ impl std::fmt::Display for NormalizedLevel {
     }
 }
 
+/// A delay's feedback, in `[0, 0.95]` (`SOUND-INV-033`).
+///
+/// V1's own domain for the quantity, held at V1's boundary on every write
+/// (`Delay::set_param` clamps into `0.0..=0.95`), and adopted here as the type's rather than
+/// stated once at preparation: the slot holds a composed value to it too, so no override,
+/// modulation or lane can carry a delay's loop to unity, where its repeats would never
+/// decay and the tail it declares would not exist. Separate from [`NormalizedLevel`], which
+/// admits `1`.
+#[derive(Debug, Clone, Copy, PartialEq, PartialOrd)]
+#[must_use]
+pub struct DelayFeedback(f32);
+
+impl DelayFeedback {
+    /// No feedback: one repeat.
+    pub const ZERO: Self = Self(0.0);
+
+    /// V1's ceiling.
+    pub const MAX: Self = Self(0.95);
+
+    /// A feedback. Must be finite and within `[0, 0.95]`.
+    pub fn new(feedback: f32) -> Result<Self, QuantityError> {
+        if !feedback.is_finite() {
+            return Err(QuantityError::NotFinite {
+                quantity: "DelayFeedback",
+                value: feedback,
+            });
+        }
+        if !(Self::ZERO.0..=Self::MAX.0).contains(&feedback) {
+            return Err(QuantityError::OutsideInterval {
+                quantity: "DelayFeedback",
+                value: feedback,
+                minimum: Self::ZERO.0,
+                maximum: Self::MAX.0,
+            });
+        }
+        Ok(Self(feedback))
+    }
+
+    /// The raw feedback.
+    pub const fn as_f32(self) -> f32 {
+        self.0
+    }
+}
+
+impl std::fmt::Display for DelayFeedback {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+/// A delay's time in seconds, in `[0.001, 2]` (`SOUND-INV-033`).
+///
+/// V1's own domain, held at V1's boundary on every write and adopted as the type's for the
+/// reason [`DelayFeedback`]'s is: the slot holds a composed value to it, so a lane cannot
+/// carry a delay to zero, where V1's read-before-write line would return a sample a whole
+/// line old rather than the current one, nor past the line's length. Separate from
+/// [`Seconds`], which admits zero and has no ceiling.
+#[derive(Debug, Clone, Copy, PartialEq, PartialOrd)]
+#[must_use]
+pub struct DelayTime(f32);
+
+impl DelayTime {
+    /// V1's floor, one millisecond.
+    pub const MIN: Self = Self(0.001);
+
+    /// V1's ceiling, the line's length.
+    pub const MAX: Self = Self(2.0);
+
+    /// A delay time. Must be finite and within `[0.001, 2]`.
+    pub fn new(seconds: f32) -> Result<Self, QuantityError> {
+        if !seconds.is_finite() {
+            return Err(QuantityError::NotFinite {
+                quantity: "DelayTime",
+                value: seconds,
+            });
+        }
+        if !(Self::MIN.0..=Self::MAX.0).contains(&seconds) {
+            return Err(QuantityError::OutsideInterval {
+                quantity: "DelayTime",
+                value: seconds,
+                minimum: Self::MIN.0,
+                maximum: Self::MAX.0,
+            });
+        }
+        Ok(Self(seconds))
+    }
+
+    /// The raw time, in seconds.
+    pub const fn as_f32(self) -> f32 {
+        self.0
+    }
+}
+
+impl std::fmt::Display for DelayTime {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{} s", self.0)
+    }
+}
+
 /// A duration in seconds.
 ///
 /// The unit an authored envelope segment is written in. It is **not** a position: this
@@ -863,6 +962,16 @@ impl ParameterValue {
     /// A validated bipolar value is finite.
     pub const fn from_bipolar(value: crate::controller::BipolarLevel) -> Self {
         Self(value.as_f32())
+    }
+
+    /// A validated delay feedback is finite (`SOUND-INV-033`).
+    pub const fn from_delay_feedback(feedback: DelayFeedback) -> Self {
+        Self(feedback.as_f32())
+    }
+
+    /// A validated delay time is finite (`SOUND-INV-033`).
+    pub const fn from_delay_time(time: DelayTime) -> Self {
+        Self(time.as_f32())
     }
     /// Zero.
     pub const ZERO: Self = Self(0.0);

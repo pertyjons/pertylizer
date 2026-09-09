@@ -265,6 +265,7 @@ Ornament.spacing_curve
 # ParamValue: the value a `ModuleState` parameter holds, read by `graph::lower_voice_patch`
 ParamValue.sample_id
 
+# Patch and PatchSettings: destructured exhaustively in `render::patch_dispositions`; `effect_chain_order` is read by `graph::lower_instrument_into` (P08-S003)
 Patch.author
 Patch.color
 Patch.connections

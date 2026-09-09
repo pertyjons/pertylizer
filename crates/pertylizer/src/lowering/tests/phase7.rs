@@ -75,6 +75,7 @@ fn authoring() -> GraphIr {
         instrument(),
         &modules,
         &connections,
+        &[],
         EventCount::measured(2),
         None,
         None,

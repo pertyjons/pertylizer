@@ -74,6 +74,7 @@ fn run(
         ramps: &ramps,
         samples: &[],
         scripts: crate::script::ScriptResources::default(),
+        history: &mut [],
     };
     lfo(prepared, state, &mut io);
     out
@@ -170,6 +171,7 @@ fn the_rate_is_read_per_frame_from_the_ramps() {
         ramps: &ramps,
         samples: &[],
         scripts: crate::script::ScriptResources::default(),
+        history: &mut [],
     };
     lfo(&prepared, &mut state, &mut io);
     assert!(
@@ -413,6 +415,7 @@ fn stealing_voice_from(builder: crate::ir::GraphIrBuilder) -> CompiledPlan {
     assert_eq!(
         renderer.slot_bytes_held() as u64
             + renderer.ramp_table_bytes_held() as u64
+            + renderer.history_bytes_held() as u64
             + u64::from(renderer.prepared_record_count().get())
                 * crate::node::state_bytes_per_node(),
         reported,

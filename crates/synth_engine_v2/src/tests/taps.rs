@@ -153,6 +153,7 @@ fn the_monitor_kernel_passes_its_input_through_in_every_input_state() {
             ramps: &[],
             samples: &[],
             scripts: crate::script::ScriptResources::default(),
+            history: &mut [],
         };
         monitor(&PreparedNode::Copy, &mut NodeState::Stateless, &mut io);
         out

@@ -498,3 +498,102 @@ fn global_glide_time_reaches_the_offline_renderer() {
         "a 400 ms glide must not render like no glide at all"
     );
 }
+
+/// `P08-S003`: the patch's own master volume is the GUI's patch-bridge setting, not the
+/// arrangement render's, which reads the project's `global.master_volume`. Measured inert
+/// so the lowerer's disposition of `PatchSettings::master_volume` rests on a render rather
+/// than a reading of the engine.
+#[test]
+fn patch_master_volume_is_inert_in_the_offline_renderer() {
+    assert!(
+        !renders_differ(
+            |_| {},
+            |instrument| instrument.patch.settings.master_volume = synth_core::Gain::new(0.1),
+        ),
+        "the patch's master volume must not reach the arrangement render"
+    );
+}
+
+/// `P08-S003`: the patch's octave offset transposes the keyboard and the preview, never a
+/// placed note. Measured inert for the same reason.
+#[test]
+fn patch_octave_offset_is_inert_in_the_offline_renderer() {
+    assert!(
+        !renders_differ(
+            |_| {},
+            |instrument| instrument.patch.settings.octave_offset = -2,
+        ),
+        "the patch's octave offset must not reach the arrangement render"
+    );
+}
+
+/// `P08-S003`, `CORPUS-0005-P4`: the insert order is authored data the render follows — the
+/// same two inserts in the other order are another render.
+#[test]
+fn effect_chain_order_reaches_the_offline_renderer() {
+    let with_inserts = |instrument: &mut InstrumentState, order: &[&str]| {
+        instrument.patch.add_module(
+            ModuleBuilder::new(1, ModuleType::Distortion)
+                .param_choice("type", "soft_clip")
+                .param_f("drive", 0.7)
+                .param_f("tone", 0.8)
+                .param_f("mix", 1.0)
+                .build(),
+        );
+        instrument.patch.add_module(
+            ModuleBuilder::new(1, ModuleType::Delay)
+                .param_choice("mode", "mono")
+                .param_f("time_left", 0.25)
+                .param_f("time_right", 0.25)
+                .param_f("feedback", 0.45)
+                .param_f("mix", 0.5)
+                .param_f("tone", 0.4)
+                .param_f("tempo_sync", 0.0)
+                .build(),
+        );
+        instrument.patch.settings.effect_chain_order =
+            order.iter().map(|o| (*o).to_owned()).collect();
+    };
+    assert!(
+        renders_differ(
+            |instrument| with_inserts(instrument, &["dst-1", "dly-1"]),
+            |instrument| with_inserts(instrument, &["dly-1", "dst-1"]),
+        ),
+        "the insert order must reach the arrangement render"
+    );
+}
+
+/// `P08-S003`: V1 applies a saved module's keys in their map's order, so a delay's `time`
+/// link macro is applied before `time_left` and `time_right` and a side's own key wins —
+/// the reading `graph::delay_time` lowers by. Measured: `time 0.5` beside `time_left 0.1`
+/// renders as `time_left 0.1, time_right 0.5`, and not as both sides at `0.5`.
+#[test]
+fn delay_time_macro_yields_to_the_side_key_in_the_offline_renderer() {
+    let with_delay = |instrument: &mut InstrumentState, params: &[(&str, f32)]| {
+        let mut builder = ModuleBuilder::new(1, ModuleType::Delay)
+            .param_choice("mode", "mono")
+            .param_f("feedback", 0.45)
+            .param_f("mix", 0.5)
+            .param_f("tone", 0.4)
+            .param_f("tempo_sync", 0.0);
+        for (key, value) in params {
+            builder = builder.param_f(key, *value);
+        }
+        instrument.patch.add_module(builder.build());
+        instrument.patch.settings.effect_chain_order = vec!["dly-1".to_string()];
+    };
+    assert!(
+        !renders_differ(
+            |instrument| with_delay(instrument, &[("time", 0.5), ("time_left", 0.1)]),
+            |instrument| with_delay(instrument, &[("time_left", 0.1), ("time_right", 0.5)]),
+        ),
+        "the side's own key is applied after the macro"
+    );
+    assert!(
+        renders_differ(
+            |instrument| with_delay(instrument, &[("time", 0.5), ("time_left", 0.1)]),
+            |instrument| with_delay(instrument, &[("time_left", 0.5), ("time_right", 0.5)]),
+        ),
+        "and the macro alone would have set both sides"
+    );
+}

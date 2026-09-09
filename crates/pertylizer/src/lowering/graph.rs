@@ -130,6 +130,7 @@ pub fn lower_voice_patch(
         instrument,
         modules,
         connections,
+        &[],
         events_per_quantum,
         None,
         None,
@@ -316,10 +317,15 @@ pub(super) struct InstrumentLowering {
 /// The one-instrument form: the saved output module is the plan's output, the plan declares
 /// one compiled producer of one note, and there is no master. A whole project lowers through
 /// [`lower_instrument_into`] and the master `render::smoke_render_project` places.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the one-instrument form takes each of the project's stages it lowers by name"
+)]
 pub fn lower_voice_patch_with(
     instrument: InstrumentId,
     modules: &[ModuleState],
     connections: &[ConnectionState],
+    effect_chain_order: &[String],
     events_per_quantum: EventCount,
     velocity_amp_sensitivity: Option<NormalizedLevel>,
     channel: Option<ChannelStrip>,
@@ -331,6 +337,7 @@ pub fn lower_voice_patch_with(
         instrument,
         modules,
         connections,
+        effect_chain_order,
         InstrumentStages {
             velocity: velocity_amp_sensitivity,
             track: None,
@@ -459,11 +466,16 @@ pub(super) fn voice_tuning() -> Result<PreparedTuning, synth_engine_v2::tuning::
     clippy::too_many_lines,
     reason = "one walk over one saved patch, stage by stage"
 )]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "one walk over one saved patch and its insert order, stage by stage"
+)]
 pub(super) fn lower_instrument_into(
     graph: &mut GraphAccumulator,
     instrument: InstrumentId,
     modules: &[ModuleState],
     connections: &[ConnectionState],
+    effect_chain_order: &[String],
     stages: InstrumentStages,
     modulators: &SongModulators,
     sink: Sink,
@@ -626,6 +638,34 @@ pub(super) fn lower_instrument_into(
         }
         chain.push(id);
     }
+    // The patch's own inserts (`P08-S003`), in the order the patch authors, on the voice
+    // sum: V1 runs its effect chain once per instrument between the summed voices and the
+    // channel stage, so each is one node in the **instrument** scope, addressed as the
+    // module it is. A refused order or insert stops the instrument; the chain is still
+    // walked so every refusal is named.
+    match lower_insert_chain(
+        instrument,
+        modules,
+        effect_chain_order,
+        &identities,
+        &mut diagnostics,
+    ) {
+        Some(inserts) => {
+            for (id, kind) in inserts {
+                if !place(
+                    graph,
+                    id,
+                    kind,
+                    ExecutionScope::InstrumentInstance,
+                    &mut diagnostics,
+                ) {
+                    refused = true;
+                }
+                chain.push(id);
+            }
+        }
+        None => refused = true,
+    }
     if let Some(channel) = stages.channel {
         let id = slot.channel();
         if !place(
@@ -685,6 +725,13 @@ pub(super) fn lower_instrument_into(
             continue;
         };
 
+        // An effect module is an insert, not a voice node: V1 never walks it as part of the
+        // voice graph, and `lower_insert_chain` above lowers it in the order's order
+        // (`P08-S003`). A cable into or out of one is refused in `lower_connection`, as V1's
+        // effect descriptors declare no ports.
+        if module.module_type.is_effect() {
+            continue;
+        }
         // A Mod Matrix is no node: it lowers to the modulation edges its slots describe
         // (`P07-S003`), resolved below once every module has an address.
         if module.module_type == ModuleType::ModMatrix {
@@ -937,6 +984,249 @@ pub(super) fn lower_instrument_into(
         diagnostics,
         refused: false,
     }
+}
+
+/// The patch's insert chain, in the order `patch.settings.effect_chain_order` authors it
+/// (`P08-S003`, `CORPUS-0005-P4`), or `None` with every refusal recorded.
+///
+/// The rule, stated so it is a rule rather than a gap: every module whose type
+/// `is_effect()` must appear in the order exactly once, and every entry must parse, name a
+/// module of the patch and be an effect. Entries and modules compare by **parsed**
+/// identity, as cables do — `dst-01` and `dst-1` are one module — so a repeat spelled two
+/// ways is a repeat. What V1 does with an incomplete order is to append the unnamed
+/// modules with a warning, which makes the rendered order partly V1's choice; ADR-0021
+/// part 2 forbids admission from changing authored topology to make it fit, and
+/// `CORPUS-0005-C1` records the refusal. A visualizer module is neither an effect nor a
+/// voice node and is refused as an unsupported type where the voice loop reaches it.
+fn lower_insert_chain(
+    instrument: InstrumentId,
+    modules: &[ModuleState],
+    order: &[String],
+    identities: &ResolvedIdentities,
+    diagnostics: &mut Vec<LoweringDiagnostic>,
+) -> Option<Vec<(NodeId, IrNodeKind)>> {
+    let mut refused = false;
+    let refuse = |problem: String, diagnostics: &mut Vec<LoweringDiagnostic>| {
+        diagnostics.push(LoweringDiagnostic::refused(
+            ProjectSubject::InsertChain { instrument },
+            LoweringReason::InsertOrder { problem },
+        ));
+        true
+    };
+    let effects: Vec<(ModuleId, &ModuleState)> = modules
+        .iter()
+        .filter(|module| module.module_type.is_effect())
+        .filter_map(|module| module.id.parse::<ModuleId>().ok().map(|id| (id, module)))
+        .collect();
+    let mut placed: Vec<ModuleId> = Vec::with_capacity(order.len());
+    let mut lowered = Vec::with_capacity(order.len());
+    for entry in order {
+        let Ok(id) = entry.parse::<ModuleId>() else {
+            refused |= refuse(
+                format!("the insert order names {entry:?}, which is not a module identity"),
+                diagnostics,
+            );
+            continue;
+        };
+        let Some((_, module)) = effects.iter().find(|(effect, _)| *effect == id) else {
+            refused |= refuse(
+                format!("the insert order names {id}, which is not an effect module of the patch"),
+                diagnostics,
+            );
+            continue;
+        };
+        if placed.contains(&id) {
+            refused |= refuse(format!("the insert order names {id} twice"), diagnostics);
+            continue;
+        }
+        placed.push(id);
+        let Some(node) = identities.node_for(id) else {
+            refused |= refuse(format!("{id} has no address"), diagnostics);
+            continue;
+        };
+        match lower_insert(instrument, id, module, diagnostics) {
+            Some(kind) => lowered.push((node, kind)),
+            None => refused = true,
+        }
+    }
+    for (id, _) in &effects {
+        if !placed.contains(id) {
+            refused |= refuse(
+                format!(
+                    "{id} is an effect module the insert order omits; V1 appends it with a \
+                     warning and V2 refuses (CORPUS-0005-C1)"
+                ),
+                diagnostics,
+            );
+        }
+    }
+    if refused { None } else { Some(lowered) }
+}
+
+/// The node kind one saved insert lowers to (`P08-S003`), or `None` with the refusal
+/// recorded. One kind with V1's law at a time, as the corpus demands them
+/// (`SOUND-INV-033`): the distortion in its soft-clip mode and the delay in its mono mode;
+/// every other mode, and every other effect type, is refused by name.
+fn lower_insert(
+    instrument: InstrumentId,
+    id: ModuleId,
+    module: &ModuleState,
+    diagnostics: &mut Vec<LoweringDiagnostic>,
+) -> Option<IrNodeKind> {
+    let subject = || ProjectSubject::Module {
+        instrument,
+        module: id,
+    };
+    let parameter = |key: &str| ProjectSubject::Parameter {
+        instrument,
+        module: id,
+        parameter: key.to_owned(),
+    };
+    // V1's own declaration of the effect: the source of every default and every clamp.
+    let Some((_, declarations)) = crate::module_factory::create_effect(module.module_type) else {
+        diagnostics.push(LoweringDiagnostic::refused(
+            subject(),
+            LoweringReason::UnsupportedModuleType {
+                module_type: module.module_type,
+            },
+        ));
+        return None;
+    };
+    let level = |key: &str, diagnostics: &mut Vec<LoweringDiagnostic>| {
+        let value = v1_value(module, &declarations, key, &parameter, diagnostics)?;
+        quantity(NormalizedLevel::new(value), parameter(key), diagnostics)
+    };
+    match module.module_type {
+        ModuleType::Distortion => {
+            // `bit_depth` is read by V1's bitcrush mode alone; consumed so a non-finite one
+            // is still refused, and inert under the one mode carried.
+            if !audit_parameters(
+                module,
+                &declarations,
+                &["type", "drive", "tone", "mix", "bit_depth"],
+                &parameter,
+                diagnostics,
+            ) {
+                return None;
+            }
+            let mode =
+                choice_or_declared_default(module, &declarations, "type", &parameter, diagnostics)?;
+            if mode != synth_core::DistortionMode::SoftClip.id() {
+                diagnostics.push(LoweringDiagnostic::refused(
+                    parameter("type"),
+                    LoweringReason::OwnedByLaterPhase {
+                        capability: "a distortion mode other than soft clip, whose law V2 has \
+                                     not carried",
+                        owner: "Phase 8, with the corpus case that needs the mode",
+                    },
+                ));
+                return None;
+            }
+            let drive = level("drive", diagnostics)?;
+            let tone = level("tone", diagnostics)?;
+            let mix = level("mix", diagnostics)?;
+            Some(IrNodeKind::Distortion { drive, tone, mix })
+        }
+        ModuleType::Delay => {
+            if !audit_parameters(
+                module,
+                &declarations,
+                &[
+                    "mode",
+                    "time",
+                    "time_left",
+                    "time_right",
+                    "feedback",
+                    "mix",
+                    "tone",
+                    "tempo_sync",
+                    "sync_division",
+                ],
+                &parameter,
+                diagnostics,
+            ) {
+                return None;
+            }
+            let mode =
+                choice_or_declared_default(module, &declarations, "mode", &parameter, diagnostics)?;
+            if mode != synth_core::DelayMode::Mono.id() {
+                diagnostics.push(LoweringDiagnostic::refused(
+                    parameter("mode"),
+                    LoweringReason::OwnedByLaterPhase {
+                        capability: "a stereo or ping-pong delay mode, whose law V2 has not \
+                                     carried",
+                        owner: "Phase 8, with the corpus case that needs the mode",
+                    },
+                ));
+                return None;
+            }
+            // A synced time is a function of the song's tempo, and of its tempo map where it
+            // has one; refused rather than resolved at one tempo. `sync_division` is read by
+            // V1 only when synced, so it is consumed and inert here.
+            let synced = v1_value(module, &declarations, "tempo_sync", &parameter, diagnostics)?;
+            if synced != 0.0 {
+                diagnostics.push(LoweringDiagnostic::refused(
+                    parameter("tempo_sync"),
+                    LoweringReason::OwnedByLaterPhase {
+                        capability: "a tempo-synced delay time, which follows the song's tempo",
+                        owner: "Phase 8, with a tempo-following insert time",
+                    },
+                ));
+                return None;
+            }
+            let time_left =
+                delay_time(module, &declarations, "time_left", &parameter, diagnostics)?;
+            let time_right =
+                delay_time(module, &declarations, "time_right", &parameter, diagnostics)?;
+            let feedback = v1_value(module, &declarations, "feedback", &parameter, diagnostics)?;
+            let feedback = quantity(
+                synth_engine_v2::quantities::DelayFeedback::new(feedback),
+                parameter("feedback"),
+                diagnostics,
+            )?;
+            let mix = level("mix", diagnostics)?;
+            let tone = level("tone", diagnostics)?;
+            Some(IrNodeKind::Delay {
+                time_left,
+                time_right,
+                feedback,
+                mix,
+                tone,
+            })
+        }
+        other => {
+            diagnostics.push(LoweringDiagnostic::refused(
+                subject(),
+                LoweringReason::UnsupportedModuleType { module_type: other },
+            ));
+            None
+        }
+    }
+}
+
+/// One side's delay time as V1 resolves it at load: the side's own key where the patch
+/// saves one, else the `time` link macro where it saves that — V1 applies a module's saved
+/// keys in their map's order, `time` before `time_left` and `time_right`, so the side's key
+/// wins where both exist — else V1's declared default for the side. Each is clamped into
+/// V1's own range by `v1_value`, which is the type's domain.
+fn delay_time(
+    module: &ModuleState,
+    declarations: &ModuleDescriptor,
+    side: &str,
+    parameter: &impl Fn(&str) -> ProjectSubject,
+    diagnostics: &mut Vec<LoweringDiagnostic>,
+) -> Option<synth_engine_v2::quantities::DelayTime> {
+    let key = if module.parameters.contains_key(side) || !module.parameters.contains_key("time") {
+        side
+    } else {
+        "time"
+    };
+    let seconds = v1_value(module, declarations, key, parameter, diagnostics)?;
+    quantity(
+        synth_engine_v2::quantities::DelayTime::new(seconds),
+        parameter(side),
+        diagnostics,
+    )
 }
 
 /// The node kind and execution scope one saved module lowers to.

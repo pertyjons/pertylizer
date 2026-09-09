@@ -327,7 +327,7 @@ fn a_widened_signal_is_copied_by_a_scheduled_kernel() {
 fn a_declared_kind_appears_in_the_registry_only_by_deferring_to_its_declaration() {
     // The variant as it is spelled in a pattern — fieldless kinds have no `{ .. }` — and
     // the declaration constant it forwards to.
-    const DECLARED: [(&str, &str); 22] = [
+    const DECLARED: [(&str, &str); 24] = [
         ("Script { .. }", "SCRIPT"),
         ("AudioScript { .. }", "AUDIO_SCRIPT"),
         ("NoteScript { .. }", "NOTE_SCRIPT"),
@@ -340,6 +340,8 @@ fn a_declared_kind_appears_in_the_registry_only_by_deferring_to_its_declaration(
         ("Trim { .. }", "TRIM"),
         ("SoftClip", "SOFT_CLIP"),
         ("HardClamp", "HARD_CLAMP"),
+        ("Distortion { .. }", "DISTORTION"),
+        ("Delay { .. }", "DELAY"),
         ("Sampler { .. }", "SAMPLER"),
         ("Envelope { .. }", "ENVELOPE"),
         ("Sine { .. }", "SINE"),
@@ -357,15 +359,16 @@ fn a_declared_kind_appears_in_the_registry_only_by_deferring_to_its_declaration(
         .unwrap_or_else(|e| panic!("cannot read {}: {e}", path.display()));
     // Production code only: the test module names kinds freely.
     let production = source.split("#[cfg(test)]").next().unwrap_or("");
-    // Each kind's own `prepare_<kind>` function, by line range: the one place a declared
-    // kind's variant may be destructured into a fact, because that function *is* the
-    // declaration's preparation entry. A range runs from the signature to the first bare
-    // `}` at column zero, so an exemption cannot leak into another function — and it is
-    // keyed by the kind's name, so one kind's variant inside another kind's preparation
-    // is caught. The registry's `prepare` itself gets no exemption: it forwards.
+    // Each kind's own `prepare_<kind>` and `timing_<kind>` functions, by line range: the two
+    // places a declared kind's variant may be destructured into a fact, because each *is* an
+    // entry of the declaration — its preparation, and since `P08-S003` its timing
+    // (`SOUND-INV-033`). A range runs from the signature to the first bare `}` at column
+    // zero, so an exemption cannot leak into another function — and it is keyed by the
+    // kind's name, so one kind's variant inside another kind's entry is caught. The
+    // registry's `prepare` and `timing_of` themselves get no exemption: they forward.
     let lines: Vec<&str> = production.lines().collect();
-    let prepare_range = |name: &str| -> Option<std::ops::RangeInclusive<usize>> {
-        let signature = format!("fn prepare_{}(", name.to_ascii_lowercase());
+    let entry_range = |prefix: &str, name: &str| -> Option<std::ops::RangeInclusive<usize>> {
+        let signature = format!("fn {prefix}{}(", name.to_ascii_lowercase());
         let start = lines.iter().position(|line| line.starts_with(&signature))?;
         let end = lines
             .iter()
@@ -406,7 +409,9 @@ fn a_declared_kind_appears_in_the_registry_only_by_deferring_to_its_declaration(
             // exemption is by **position** — inside that function — not by what the line
             // says: an earlier revision accepted any line mentioning `PreparedNode::`, which
             // a trailing comment could supply, and an independent review found it.
-            let prepares = prepare_range(name).is_some_and(|range| range.contains(&index));
+            let prepares = entry_range("prepare_", name)
+                .is_some_and(|range| range.contains(&index))
+                || entry_range("timing_", name).is_some_and(|range| range.contains(&index));
             let field_forward = trimmed
                 .strip_prefix(field_prefix.as_str())
                 .and_then(|rest| rest.strip_suffix("),"))
@@ -533,6 +538,18 @@ fn discovery_and_validation_describe_the_same_ports() {
             },
             NodeKindId::SoftClip => IrNodeKind::SoftClip,
             NodeKindId::HardClamp => IrNodeKind::HardClamp,
+            NodeKindId::Distortion => IrNodeKind::Distortion {
+                drive: synth_engine_v2::quantities::NormalizedLevel::ZERO,
+                tone: synth_engine_v2::quantities::NormalizedLevel::FULL,
+                mix: synth_engine_v2::quantities::NormalizedLevel::FULL,
+            },
+            NodeKindId::Delay => IrNodeKind::Delay {
+                time_left: synth_engine_v2::quantities::DelayTime::MIN,
+                time_right: synth_engine_v2::quantities::DelayTime::MIN,
+                feedback: synth_engine_v2::quantities::DelayFeedback::ZERO,
+                mix: synth_engine_v2::quantities::NormalizedLevel::ZERO,
+                tone: synth_engine_v2::quantities::NormalizedLevel::FULL,
+            },
             NodeKindId::Sampler => IrNodeKind::Sampler {
                 map: synth_engine_v2::sample::SampleMapRef::new(0),
                 level: Amplitude::UNITY,
@@ -566,7 +583,7 @@ fn discovery_and_validation_describe_the_same_ports() {
     let entries = catalog();
     assert_eq!(
         entries.len(),
-        30,
+        32,
         "every kind but the output node is discoverable"
     );
     for entry in entries {

@@ -306,7 +306,11 @@ fn build_report(
             LatencyContributor::RenderQuantumCarry,
             FrameCount::QUANTUM,
         ),
-        ReportedQuantities::new(script_work, script_contributor),
+        ReportedQuantities::new(
+            script_work,
+            script_contributor,
+            ir.declared_tail(profile.capabilities().sample_rate()),
+        ),
         profile.capabilities().source(),
     )
 }
@@ -553,7 +557,8 @@ fn build_rows(
     } else {
         node_contributor
     };
-    let (mutable_bytes, mutable_contributor) = ir.mutable_bytes(inserted_records);
+    let (mutable_bytes, mutable_contributor) =
+        ir.mutable_bytes(inserted_records, capabilities.sample_rate());
     let (peak_fan_out, fan_out_contributor) = ir.peak_fan_out();
     // The same count the prepared and mutable rows are over: a node with a kernel, plus
     // whatever the compiler inserted. The renderer allocates one state — and one control
@@ -1244,6 +1249,7 @@ struct Lowered {
     /// no plan-shaped exception to that.
     fault: Option<CompileError>,
     prepared_nodes: Vec<PreparedNode>,
+    node_timings: Vec<(NodeId, crate::node::NodeTiming)>,
     parameter_targets: Vec<ParameterTarget>,
     parameter_addresses: Vec<ParameterAddress>,
     taps: Vec<crate::plan::TapTarget>,
@@ -1302,6 +1308,7 @@ impl Lowered {
             self.ops,
             self.regions,
             self.prepared_nodes,
+            self.node_timings,
             self.parameter_targets,
             self.parameter_addresses,
             self.taps,
@@ -1335,6 +1342,8 @@ impl Lowered {
 struct Lowering {
     ops: Vec<PlanOp>,
     prepared_nodes: Vec<PreparedNode>,
+    /// Each authored node's declared timing at the stream's rate (`SOUND-INV-033`).
+    node_timings: Vec<(NodeId, crate::node::NodeTiming)>,
     /// One width per virtual buffer, in samples: `c * Q` for a signal of `c` channels.
     ///
     /// ADR-0041 clause 2. Lowering is where a signal's channel count is known — it comes
@@ -1440,6 +1449,7 @@ fn lower(
     let mut state = Lowering {
         ops: Vec::new(),
         prepared_nodes: Vec::new(),
+        node_timings: Vec::new(),
         widths: Vec::new(),
         inserted: 0,
         states: 0,
@@ -1627,6 +1637,9 @@ fn lower(
         }
         // One prepared record, whatever the instance count: shared, never cloned.
         let prepared_slot = state.prepare(prepared);
+        // The declaration's timing at this rate, kept per node for the diagnostics reader
+        // (`SOUND-INV-033`); the walk is in ascending identity, so the table is too.
+        state.node_timings.push((*id, node::timing_of(kind, rate)));
         // ADR-0041 clause 5: the channel count is a property of the port, so the width of
         // the region the node writes comes from the port table rather than from the
         // stream. Every authored kind declares a mono output today; asking the port is
@@ -2010,6 +2023,7 @@ fn lower(
         inserted: state.inserted,
         fault,
         prepared_nodes: state.prepared_nodes,
+        node_timings: state.node_timings,
         instance_groups,
         sum_groups,
         parameter_targets,

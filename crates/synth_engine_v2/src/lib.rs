@@ -153,4 +153,8 @@ mod sampler_tests;
 #[path = "tests/modulation.rs"]
 mod modulation_tests;
 
+#[cfg(test)]
+#[path = "tests/inserts.rs"]
+mod insert_tests;
+
 pub mod authored;

@@ -130,13 +130,27 @@ struct Span {
     velocity: NoteVelocity,
 }
 
-/// Every note this instrument's tracks place, in absolute song ticks, refusing two on one
-/// gate at once.
+/// Every note this instrument's tracks place, in absolute song ticks, refusing two of one
+/// key on one gate at once.
 ///
 /// Shared by the event lowering and the event-peak calculation, so the two cannot disagree
 /// about which notes the plan contains — the peak is what admission is told, and telling it
 /// about a different set than the renderer receives is how a plan is admitted for a load it
 /// does not carry.
+///
+/// Two overlapping notes of **different** keys lower since `P08-S003`: each note-on takes
+/// its own identity index and with it its own instance of the instrument's island
+/// (`P06-S001`, `P08-S002`), and the plan declares the project's peak concurrency, so the
+/// second note is a second voice as it is in V1 — which is what `CORPUS-0005`'s dyad through
+/// a shared insert chain measures. Two limits stay refused by name. Two overlapping notes of
+/// **one** key: a V2 release names the newest open note on the slot with its key, so the
+/// first note's off edge would release the second, where V1 releases its own voice. And
+/// more notes held at once than the instrument's **voices**: V1 steals a sounding voice
+/// there, which this lowerer does not declare, while V2 would instantiate every note. The
+/// limit is V1's default voice count, because `instrument_state_dispositions` refuses any
+/// other; a tie — a note ending at the tick another begins — is counted as held, as the
+/// plan's declared peak counts it. An independent read of the first form found the voice
+/// limit missing and the same-key scan quadratic.
 ///
 /// Returns `None` when a refusal was recorded.
 fn note_spans(
@@ -144,19 +158,51 @@ fn note_spans(
     song: &Song,
     diagnostics: &mut Vec<LoweringDiagnostic>,
 ) -> Option<Vec<Span>> {
+    use std::cmp::Reverse;
+    use std::collections::{BTreeMap, BinaryHeap};
     let spans = note_spans_unchecked(instrument, song, diagnostics)?;
-    // One gate, so one note at a time. Sorted by start, any span beginning before its
-    // predecessor ends is an overlap.
-    for window in spans.windows(2) {
-        if window[1].start < window[0].end {
+    let voices = crate::project::default_instrument_state()
+        .max_voices
+        .as_usize();
+    // Sorted by start, so one sweep sees every overlap: the latest end per key answers the
+    // same-key rule, and a heap of open ends answers the voice limit, each note popping the
+    // ends before its start and pushing its own.
+    let mut latest_end_by_key: BTreeMap<KeyIdentity, u64> = BTreeMap::new();
+    let mut open: BinaryHeap<Reverse<u64>> = BinaryHeap::new();
+    for later in &spans {
+        let subject = || ProjectSubject::Note {
+            pattern: later.pattern,
+            note: later.note,
+        };
+        if latest_end_by_key
+            .get(&later.key)
+            .is_some_and(|end| *end > later.start)
+        {
             diagnostics.push(LoweringDiagnostic::refused(
-                ProjectSubject::Note {
-                    pattern: window[1].pattern,
-                    note: window[1].note,
-                },
+                subject(),
                 LoweringReason::OwnedByLaterPhase {
-                    capability: "two notes sounding at once through one gate",
-                    owner: "Phase 6, with voice allocation",
+                    capability: "two notes sounding at once through one gate at one key, \
+                                 whose releases V2 names by key and cannot tell apart",
+                    owner: "Phase 9, with a release that names its own occurrence",
+                },
+            ));
+            return None;
+        }
+        latest_end_by_key
+            .entry(later.key)
+            .and_modify(|end| *end = (*end).max(later.end))
+            .or_insert(later.end);
+        while open.peek().is_some_and(|Reverse(end)| *end < later.start) {
+            open.pop();
+        }
+        open.push(Reverse(later.end));
+        if open.len() > voices {
+            diagnostics.push(LoweringDiagnostic::refused(
+                subject(),
+                LoweringReason::OwnedByLaterPhase {
+                    capability: "more notes held at once than the instrument's voices, where \
+                                 V1 steals a sounding voice and V2 would play every note",
+                    owner: "the slice that lowers V1's stealing strategy onto ADR-0058's policy",
                 },
             ));
             return None;
@@ -1606,14 +1652,15 @@ pub(super) fn lower_project_performance(
         // V1's product of the two and the marker this site raised — "V1's two velocity
         // sensitivities and how they compose" — is discharged. `P04-R001` closes with it.
 
-        // A second difference, and it is **not** the overlap this lowerer refuses. Overlapping
-        // gates are refused above; what remains is that V1 gives each note its own voice, so a
-        // release can still ring under the next one, while V2 has a single gate the next note
-        // retriggers. The diagnostic names that **shape** rather than asserting a ringing
-        // release in any particular arrangement: whether one actually rings depends on the
-        // envelope's release against the gap, which this lowerer does not compute — an
-        // independent review caught the stronger wording. Raised once per instrument,
-        // because it is a property of the single gate.
+        // A second difference, and it is **not** an overlap of gates, which lower since
+        // `P08-S003`. What remains is that V1 gives each note its own voice through its
+        // release, while V2 frees a note's identity index at its off edge and counts the
+        // plan's instances over open gates, so a later note may take an instance whose release
+        // still rings and retrigger it. The diagnostic names that **shape** rather than
+        // asserting a ringing release in any particular arrangement: whether one actually
+        // rings depends on the envelope's release against the gap, which this lowerer does not
+        // compute — an independent review caught the stronger wording. Raised once per
+        // instrument, because it is a property of how the instances are counted.
         if spans.len() > 1 {
             diagnostics.push(LoweringDiagnostic::unrepresented(
                 ProjectSubject::Instrument {
@@ -1621,9 +1668,10 @@ pub(super) fn lower_project_performance(
                     name: instrument.name.to_owned(),
                 },
                 LoweringReason::OwnedByLaterPhase {
-                    capability: "two or more notes through one gate, where V1 allocates a \
-                                 voice per note and lets a release ring under the next while \
-                                 V2 retriggers its one gate and cuts it",
+                    capability: "two or more notes through one island, where V1 keeps a \
+                                 voice per note through its release while V2 frees a note's \
+                                 index at its off edge and a later note may retrigger an \
+                                 instance whose release still rings",
                     owner: "Phase 6, with the voice allocator",
                 },
             ));

@@ -23,8 +23,8 @@
 
 use crate::plan::{BufferRegion, InputBinding, NodeStep, SampleSlot};
 use crate::quantities::{
-    Amplitude, ChannelLayout, CutoffFrequency, Frequency, GainFactor, KeyIdentity, NormalizedLevel,
-    NoteVelocity, ParameterValue, Resonance, Seconds, SegmentFrames,
+    Amplitude, ChannelLayout, CutoffFrequency, DelayFeedback, DelayTime, Frequency, GainFactor,
+    KeyIdentity, NormalizedLevel, NoteVelocity, ParameterValue, Resonance, Seconds, SegmentFrames,
 };
 use crate::sample::{
     KeyRange, LoopRegion, PlayMode, PlaybackRegion, PreparedSample, SUSTAIN_FADE_FRAMES,
@@ -165,6 +165,10 @@ pub const TRIM: Kernel = Kernel(trim);
 pub const SOFT_CLIP: Kernel = Kernel(soft_clip);
 /// V1's output clamp's kernel (`SOUND-INV-032`).
 pub const HARD_CLAMP: Kernel = Kernel(hard_clamp);
+/// V1's distortion insert, soft-clip mode (`SOUND-INV-033`).
+pub const DISTORTION: Kernel = Kernel(distortion);
+/// V1's delay insert, mono mode (`SOUND-INV-033`).
+pub const DELAY: Kernel = Kernel(delay);
 /// The low-frequency oscillator's kernel (`SOUND-INV-027`).
 pub const LFO: Kernel = Kernel(lfo);
 /// The bounded, prepared YAMS VM.
@@ -344,6 +348,37 @@ pub enum PreparedNode {
     SoftClip,
     /// V1's output clamp: nothing is prepared, the bounds are full scale.
     HardClamp,
+    /// V1's distortion in its soft-clip mode: the three authored levels and the rate its
+    /// tone corner is derived at (`SOUND-INV-033`).
+    Distortion {
+        /// The authored drive, the base its slot starts from.
+        drive: NormalizedLevel,
+        /// The authored tone.
+        tone: NormalizedLevel,
+        /// The authored mix.
+        mix: NormalizedLevel,
+        /// The stream's rate, for the tone filter's coefficient.
+        rate: f32,
+    },
+    /// V1's delay in its mono mode: the five authored values, the rate, and the frames V1
+    /// keeps per side (`SOUND-INV-033`).
+    Delay {
+        /// The authored left time.
+        time_left: DelayTime,
+        /// The authored right time.
+        time_right: DelayTime,
+        /// The authored feedback.
+        feedback: DelayFeedback,
+        /// The authored mix.
+        mix: NormalizedLevel,
+        /// The authored tone, the feedback high cut.
+        tone: NormalizedLevel,
+        /// The stream's rate, for the times and the high cut's coefficient.
+        rate: f32,
+        /// The frames per side, V1's `2 s` at the rate truncated as V1 truncates it — the
+        /// history the renderer hands the kernel holds two of these.
+        line: usize,
+    },
     /// A two-pole low-pass, as the four coefficients its integrators read.
     ///
     /// The corner frequency and the quality factor are **gone** by this point: they were
@@ -438,6 +473,29 @@ pub enum NodeState {
     Balance {
         /// Whether the mute was held at the end of the last quantum.
         muted: bool,
+    },
+    /// A distortion's tone filter, one state per side, and the tone and coefficient last
+    /// read, so the coefficient is re-derived only where the tone moves (`SOUND-INV-033`).
+    Distortion {
+        /// The one-pole state per side.
+        filters: [f32; 2],
+        /// The tone last read from its slot.
+        tone: f32,
+        /// The coefficient in force, that tone's.
+        coef: f32,
+    },
+    /// A delay's write index into its history, its feedback filter per side, and the tone
+    /// and coefficient last read (`SOUND-INV-033`). The lines themselves are the history the
+    /// renderer keeps and hands the kernel per quantum.
+    Delay {
+        /// The frame the next input is written at, in both lines.
+        write: usize,
+        /// The feedback high cut's one-pole state per side.
+        filters: [f32; 2],
+        /// The tone last read from its slot.
+        tone: f32,
+        /// The coefficient in force, that tone's.
+        coef: f32,
     },
     /// An LFO's place in its period, in `[0, 1)` (`SOUND-INV-027`). Its rate and depth are
     /// quantum-rate slots and are read from the ramps, so nothing else is kept.
@@ -632,6 +690,17 @@ impl NodeState {
             PreparedNode::Channel { muted, .. } => Self::Channel { muted: *muted },
             PreparedNode::Mix => Self::Stateless,
             PreparedNode::Balance { muted, .. } => Self::Balance { muted: *muted },
+            PreparedNode::Distortion { tone, rate, .. } => Self::Distortion {
+                filters: [0.0; 2],
+                tone: tone.as_f32(),
+                coef: distortion_tone_coefficient(tone.as_f32(), *rate),
+            },
+            PreparedNode::Delay { tone, rate, .. } => Self::Delay {
+                write: 0,
+                filters: [0.0; 2],
+                tone: tone.as_f32(),
+                coef: delay_high_cut_coefficient(tone.as_f32(), *rate),
+            },
             PreparedNode::Trim { .. } | PreparedNode::SoftClip | PreparedNode::HardClamp => {
                 Self::Stateless
             }
@@ -713,8 +782,23 @@ impl NodeState {
             | Self::Sum { .. }
             | Self::Lfo { .. }
             | Self::Script { .. }
+            | Self::Distortion { .. }
+            | Self::Delay { .. }
             | Self::Stateless => None,
         }
+    }
+}
+
+/// The frames of history a prepared record's kernel keeps between quanta, at its output
+/// width (`SOUND-INV-033`): the delay's line, and nothing for every other record. Read
+/// once, at preparation, to size the renderer's history slab; the declaration's timing
+/// states the same figure through the same line length, and
+/// `a_delays_history_is_charged_as_the_renderer_allocates_it` holds the two equal.
+#[must_use]
+pub fn history_frames(prepared: &PreparedNode) -> usize {
+    match prepared {
+        PreparedNode::Delay { line, .. } => *line,
+        _ => 0,
     }
 }
 
@@ -799,6 +883,29 @@ pub(crate) fn authored_value(
         },
         PreparedNode::Trim { level } => match control {
             TRIM_LEVEL => Some(ParameterValue::from_amplitude(*level)),
+            _ => None,
+        },
+        PreparedNode::Distortion {
+            drive, tone, mix, ..
+        } => match control {
+            DISTORTION_DRIVE => Some(ParameterValue::from_level(*drive)),
+            DISTORTION_TONE => Some(ParameterValue::from_level(*tone)),
+            DISTORTION_MIX => Some(ParameterValue::from_level(*mix)),
+            _ => None,
+        },
+        PreparedNode::Delay {
+            time_left,
+            time_right,
+            feedback,
+            mix,
+            tone,
+            ..
+        } => match control {
+            DELAY_TIME_LEFT => Some(ParameterValue::saturating(time_left.as_f32())),
+            DELAY_TIME_RIGHT => Some(ParameterValue::saturating(time_right.as_f32())),
+            DELAY_FEEDBACK => Some(ParameterValue::saturating(feedback.as_f32())),
+            DELAY_MIX => Some(ParameterValue::from_level(*mix)),
+            DELAY_TONE => Some(ParameterValue::from_level(*tone)),
             _ => None,
         },
         PreparedNode::SoftClip | PreparedNode::HardClamp => None,
@@ -935,6 +1042,22 @@ pub const BALANCE_PAN: ControlIndex = ControlIndex::new(1);
 pub const BALANCE_MUTE: ControlIndex = ControlIndex::new(2);
 /// A trim's level, quantum-rate, read per frame from its ramp (`SOUND-INV-032`).
 pub const TRIM_LEVEL: ControlIndex = ControlIndex::new(0);
+/// A distortion's drive (`SOUND-INV-033`).
+pub const DISTORTION_DRIVE: ControlIndex = ControlIndex::new(0);
+/// A distortion's tone.
+pub const DISTORTION_TONE: ControlIndex = ControlIndex::new(1);
+/// A distortion's mix.
+pub const DISTORTION_MIX: ControlIndex = ControlIndex::new(2);
+/// A delay's left time (`SOUND-INV-033`).
+pub const DELAY_TIME_LEFT: ControlIndex = ControlIndex::new(0);
+/// A delay's right time.
+pub const DELAY_TIME_RIGHT: ControlIndex = ControlIndex::new(1);
+/// A delay's feedback.
+pub const DELAY_FEEDBACK: ControlIndex = ControlIndex::new(2);
+/// A delay's mix.
+pub const DELAY_MIX: ControlIndex = ControlIndex::new(3);
+/// A delay's feedback high cut.
+pub const DELAY_TONE: ControlIndex = ControlIndex::new(4);
 
 /// What one of a kernel's inputs turned out to be.
 ///
@@ -998,6 +1121,11 @@ pub struct NodeIo<'a> {
     /// segment's value at that frame, and its last frame reads exactly the target. Indexed
     /// through [`ramp_of`], which is how a kernel with one such control names it.
     pub ramps: &'a [f32],
+    /// The signal this node keeps between quanta, at its output width — the history its
+    /// kind declared (`SOUND-INV-033`), allocated once per scheduled step by the renderer
+    /// and handed back to the same step every quantum. Empty for every kind that declares
+    /// none, which is every kind but the delay today.
+    pub history: &'a mut [f32],
     /// The plan's prepared samples, indexed by a prepared record's [`SampleSlot`]
     /// (ADR-0026). Read through one index; the frames sit behind an `Arc` the plan holds.
     pub samples: &'a [PreparedSample],
@@ -1137,6 +1265,7 @@ pub fn bind<'a>(
         position,
         controls,
         ramps,
+        history: resources.history,
         samples: resources.samples,
         scripts: resources.scripts,
     })
@@ -2164,6 +2293,274 @@ pub fn hard_clamp(_prepared: &PreparedNode, _state: &mut NodeState, io: &mut Nod
     }
 }
 
+/// V1's line length per delay side, in seconds (`SOUND-INV-033`).
+pub const MAX_DELAY_SECONDS: f32 = 2.0;
+
+/// V1's drive law's scale: the drive squared times this, plus one, is the gain.
+const DRIVE_SCALE: f32 = 50.0;
+
+/// V1's rational `tanh` (`fast_tanh`), term for term: clamped past `±3`, and the Padé form
+/// `x (27 + x²) / (27 + 9 x²)` within. The distortion's law, and not the delay's, which
+/// limits its feedback write with `f32::tanh` — the two are kept distinct so each kernel's
+/// bits are V1's (`SOUND-INV-013`).
+fn rational_tanh(x: f32) -> f32 {
+    if x < -3.0 {
+        return -1.0;
+    }
+    if x > 3.0 {
+        return 1.0;
+    }
+    let x2 = x * x;
+    x * (27.0 + x2) / (27.0 + 9.0 * x2)
+}
+
+/// V1's one-pole coefficient for a corner at `hertz`: `e^(−2π f / rate)`, in `f32` as V1's
+/// `Hertz::to_exp_coeff` forms it.
+fn exp_coefficient(hertz: f32, rate: f32) -> f32 {
+    (-core::f32::consts::TAU * hertz / rate).exp()
+}
+
+/// The distortion's tone coefficient at `tone`: V1's corner `200 + tone² × 15000` Hz through
+/// [`exp_coefficient`]. Public to the crate so the declaration's timing states the decay
+/// the kernel renders.
+pub(crate) fn distortion_tone_coefficient(tone: f32, rate: f32) -> f32 {
+    exp_coefficient(200.0 + tone * tone * 15_000.0, rate)
+}
+
+/// The delay's feedback high-cut coefficient at `tone`: V1's corner `200 + tone × 19800` Hz,
+/// spelled as V1 spells it, through [`exp_coefficient`].
+pub(crate) fn delay_high_cut_coefficient(tone: f32, rate: f32) -> f32 {
+    exp_coefficient(200.0 + tone * (20_000.0 - 200.0), rate)
+}
+
+/// One input sample of a stereo stage, from whichever of the three input states the arena
+/// bound: a distinct region, the output's own slot, or nothing.
+fn stage_input(source: InputBuffer<'_>, out: &[f32], index: usize) -> f32 {
+    match source {
+        InputBuffer::Patched(source) => source.get(index).copied().unwrap_or(0.0),
+        InputBuffer::InPlace => out.get(index).copied().unwrap_or(0.0),
+        InputBuffer::Unpatched => 0.0,
+    }
+}
+
+/// V1's distortion insert in its soft-clip mode as a node (`SOUND-INV-033`), term for term:
+/// per sample, the input times `1 + drive² × 50`, through V1's rational `tanh`, through the
+/// side's one-pole tone filter as V1 writes it — `y × (1 − coef) + state × coef` — and
+/// blended with the dry sample as `dry × (1 − mix) + wet × mix`. The coefficient is
+/// re-derived only where the tone moves; a sample-positioned reset clears the filters.
+pub fn distortion(prepared: &PreparedNode, state: &mut NodeState, io: &mut NodeIo<'_>) {
+    let PreparedNode::Distortion {
+        drive: authored_drive,
+        tone: authored_tone,
+        mix: authored_mix,
+        rate,
+    } = prepared
+    else {
+        return;
+    };
+    let NodeState::Distortion {
+        filters,
+        tone,
+        coef,
+    } = state
+    else {
+        return;
+    };
+    let (drives, tones, mixes) = (
+        ramp_of(io.ramps, 0),
+        ramp_of(io.ramps, 1),
+        ramp_of(io.ramps, 2),
+    );
+    let channels = io.channels.channels().max(1);
+    let frames = io.out.len() / channels;
+    let source = io.inputs[0];
+    let mut states = *filters;
+    let (mut last_tone, mut coefficient) = (*tone, *coef);
+    let mut due = 0_usize;
+    for frame in 0..frames {
+        while let Some(control) = io.controls.get(due) {
+            if control.offset.as_usize() != frame {
+                break;
+            }
+            due += 1;
+            if matches!(control.control, ControlIndex::RESET) {
+                states = [0.0; 2];
+            }
+        }
+        let drive = control_at(drives, frame, authored_drive.as_f32());
+        let wanted_tone = control_at(tones, frame, authored_tone.as_f32());
+        let mix = control_at(mixes, frame, authored_mix.as_f32());
+        if wanted_tone != last_tone {
+            last_tone = wanted_tone;
+            coefficient = distortion_tone_coefficient(wanted_tone, *rate);
+        }
+        let gain = 1.0 + drive * drive * DRIVE_SCALE;
+        for channel in 0..channels {
+            let index = frame * channels + channel;
+            let dry = stage_input(source, io.out, index);
+            let shaped = rational_tanh(dry * gain);
+            let filtered = match states.get_mut(channel.min(1)) {
+                Some(filter) => {
+                    *filter = shaped * (1.0 - coefficient) + *filter * coefficient;
+                    *filter
+                }
+                None => shaped,
+            };
+            if let Some(sample) = io.out.get_mut(index) {
+                *sample = dry * (1.0 - mix) + filtered * mix;
+            }
+        }
+    }
+    *filters = states;
+    *tone = last_tone;
+    *coef = coefficient;
+}
+
+/// V1's two-tap read of a delay line, term for term (`BufferIndex::read_interpolated`): the
+/// read position `write − delay` wrapped into the line in `f32`, its floor and the frame
+/// after as the two taps, and their weighted sum by the fraction.
+fn read_delayed(line: &[f32], write: usize, delay: f32) -> f32 {
+    if line.is_empty() {
+        return 0.0;
+    }
+    let len = line.len();
+    let read_pos = (write as f32 - delay).rem_euclid(len as f32);
+    let idx0 = (read_pos as usize) % len;
+    let idx1 = (idx0 + 1) % len;
+    let frac = read_pos - read_pos.floor();
+    line.get(idx0).copied().unwrap_or(0.0) * (1.0 - frac)
+        + line.get(idx1).copied().unwrap_or(0.0) * frac
+}
+
+/// V1's one-pole as `FilterState::one_pole` writes it: `input + (state − input) × coef`.
+/// Not the distortion's form, which V1 spells differently; the two round apart.
+fn feedback_low_pass(state: &mut f32, input: f32, coef: f32) -> f32 {
+    *state = input + (*state - input) * coef;
+    *state
+}
+
+/// V1's delay insert in its mono mode as a node (`SOUND-INV-033`), term for term.
+///
+/// Per frame: each side is read from its own line at its own time — the time in frames
+/// held to the line's last frame, as V1 holds it — and that read is the side's wet sample;
+/// each read is filtered by the feedback high cut; the two dry samples and the two filtered
+/// reads are each averaged to mono, the feedback applied, the sum limited by `f32::tanh`
+/// and written into **both** lines at the write index; the index advances; and each side's
+/// output is its dry sample blended with its own **unfiltered** read by the mix. The two
+/// lines are the halves of the history the renderer keeps for this step. A
+/// sample-positioned reset — a stolen voice's, where the node runs in the voice scope —
+/// zeroes both lines, both filters and the index; an instrument-scope delay is not in any
+/// instance group and never receives one.
+pub fn delay(prepared: &PreparedNode, state: &mut NodeState, io: &mut NodeIo<'_>) {
+    let PreparedNode::Delay {
+        time_left: authored_left,
+        time_right: authored_right,
+        feedback: authored_feedback,
+        mix: authored_mix,
+        tone: authored_tone,
+        rate,
+        line,
+    } = prepared
+    else {
+        return;
+    };
+    let NodeState::Delay {
+        write,
+        filters,
+        tone,
+        coef,
+    } = state
+    else {
+        return;
+    };
+    let len = *line;
+    let channels = io.channels.channels().max(1);
+    let frames = io.out.len() / channels;
+    let source = io.inputs[0];
+    let Some((left_line, rest)) = io.history.split_at_mut_checked(len) else {
+        return;
+    };
+    let Some(right_line) = rest.get_mut(..len) else {
+        return;
+    };
+    if len == 0 {
+        return;
+    }
+    let (lefts, rights, feedbacks, mixes, tones) = (
+        ramp_of(io.ramps, 0),
+        ramp_of(io.ramps, 1),
+        ramp_of(io.ramps, 2),
+        ramp_of(io.ramps, 3),
+        ramp_of(io.ramps, 4),
+    );
+    let last = (len - 1) as f32;
+    let mut position = *write;
+    let mut states = *filters;
+    let (mut last_tone, mut coefficient) = (*tone, *coef);
+    let mut due = 0_usize;
+    for frame in 0..frames {
+        while let Some(control) = io.controls.get(due) {
+            if control.offset.as_usize() != frame {
+                break;
+            }
+            due += 1;
+            if matches!(control.control, ControlIndex::RESET) {
+                left_line.fill(0.0);
+                right_line.fill(0.0);
+                states = [0.0; 2];
+                position = 0;
+            }
+        }
+        let time_left = control_at(lefts, frame, authored_left.as_f32());
+        let time_right = control_at(rights, frame, authored_right.as_f32());
+        let feedback = control_at(feedbacks, frame, authored_feedback.as_f32());
+        let mix = control_at(mixes, frame, authored_mix.as_f32());
+        let wanted_tone = control_at(tones, frame, authored_tone.as_f32());
+        if wanted_tone != last_tone {
+            last_tone = wanted_tone;
+            coefficient = delay_high_cut_coefficient(wanted_tone, *rate);
+        }
+        let delay_left = (time_left * *rate).min(last);
+        let delay_right = (time_right * *rate).min(last);
+        let index = frame * channels;
+        let dry_left = stage_input(source, io.out, index);
+        let dry_right = if channels > 1 {
+            stage_input(source, io.out, index + 1)
+        } else {
+            dry_left
+        };
+        let delayed_left = read_delayed(left_line, position, delay_left);
+        let delayed_right = read_delayed(right_line, position, delay_right);
+        let (fed_left, fed_right) = (
+            feedback_low_pass(&mut states[0], delayed_left, coefficient),
+            feedback_low_pass(&mut states[1], delayed_right, coefficient),
+        );
+        let mono_in = (dry_left + dry_right) * 0.5;
+        let mono_fed = (fed_left + fed_right) * 0.5;
+        let written = (mono_in + mono_fed * feedback).tanh();
+        if let Some(slot) = left_line.get_mut(position) {
+            *slot = written;
+        }
+        if let Some(slot) = right_line.get_mut(position) {
+            *slot = written;
+        }
+        position = (position + 1) % len;
+        let dry_amount = 1.0 - mix;
+        if let Some(sample) = io.out.get_mut(index) {
+            *sample = dry_left * dry_amount + delayed_left * mix;
+        }
+        if channels > 1
+            && let Some(sample) = io.out.get_mut(index + 1)
+        {
+            *sample = dry_right * dry_amount + delayed_right * mix;
+        }
+    }
+    *write = position;
+    *filters = states;
+    *tone = last_tone;
+    *coef = coefficient;
+}
+
 /// One voice instance's output added into the voice sum (`P06-S001`).
 ///
 /// The compiler inserts one of these per instance after the first, whose output is copied
@@ -2566,9 +2963,12 @@ pub const SOURCE_VALUE: ControlIndex = ControlIndex::new(0);
 /// Stateless control-source kernel.
 pub const CONTROL_SOURCE: Kernel = Kernel(control_source);
 
-/// Immutable resources borrowed by every kernel invocation.
-#[derive(Debug, Clone, Copy, Default)]
+/// What a kernel borrows beside the arena: the plan's immutable tables, and the one mutable
+/// thing that is neither arena nor state — the step's history (`SOUND-INV-033`).
+#[derive(Debug, Default)]
 pub struct NodeResources<'a> {
     pub samples: &'a [PreparedSample],
     pub scripts: crate::script::ScriptResources<'a>,
+    /// The step's slice of the renderer's history slab, empty for a kind that keeps none.
+    pub history: &'a mut [f32],
 }

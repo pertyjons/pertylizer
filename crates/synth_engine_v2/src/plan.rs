@@ -977,6 +977,10 @@ pub struct CompiledPlan {
     regions: Vec<BufferRegion>,
     prepared_scripts: Vec<crate::script::PreparedScript>,
     prepared_nodes: Vec<PreparedNode>,
+    /// Each authored node's declared latency, tail and history at the plan's rate, in
+    /// ascending node identity (`SOUND-INV-033`) — the diagnostics reader of the
+    /// declaration's timing fields.
+    node_timings: Vec<(crate::ir::NodeId, crate::node::NodeTiming)>,
     parameter_targets: Vec<ParameterTarget>,
     parameter_addresses: Vec<ParameterAddress>,
     /// `SOUND-INV-022`'s taps, derived from the nodes' declarations; indexed by [`TapSlot`].
@@ -1079,6 +1083,7 @@ impl CompiledPlan {
         ops: Vec<PlanOp>,
         regions: Vec<BufferRegion>,
         prepared_nodes: Vec<PreparedNode>,
+        node_timings: Vec<(crate::ir::NodeId, crate::node::NodeTiming)>,
         parameter_targets: Vec<ParameterTarget>,
         parameter_addresses: Vec<ParameterAddress>,
         taps: Vec<TapTarget>,
@@ -1111,6 +1116,7 @@ impl CompiledPlan {
             regions,
             prepared_scripts: Vec::new(),
             prepared_nodes,
+            node_timings,
             parameter_targets,
             parameter_addresses,
             taps,
@@ -1256,6 +1262,32 @@ impl CompiledPlan {
     /// stay parallel without either of them being a count the other trusts.
     pub fn prepared_nodes(&self) -> &[PreparedNode] {
         &self.prepared_nodes
+    }
+
+    /// Every authored node's declared timing at this plan's rate, in ascending node identity
+    /// (`SOUND-INV-033`): what a node's kind imposes on its path and keeps across quanta.
+    pub fn node_timings(&self) -> &[(crate::ir::NodeId, crate::node::NodeTiming)] {
+        &self.node_timings
+    }
+
+    /// One node's declared timing, or `None` for a node the plan does not hold.
+    #[must_use]
+    pub fn timing_of(&self, node: crate::ir::NodeId) -> Option<crate::node::NodeTiming> {
+        self.node_timings
+            .iter()
+            .find(|(id, _)| *id == node)
+            .map(|(_, timing)| *timing)
+    }
+
+    /// The longest tail any node declares, or `None` where any node keeps signal without a
+    /// stated rule (`SOUND-INV-033`); the plan-level reader of the declaration's tail.
+    #[must_use]
+    pub fn declared_tail(&self) -> Option<FrameCount> {
+        self.node_timings
+            .iter()
+            .try_fold(FrameCount::ZERO, |longest, (_, timing)| {
+                timing.tail.map(|tail| longest.max(tail))
+            })
     }
 
     /// Where each parameter slot lands.

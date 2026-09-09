@@ -99,6 +99,13 @@ pub enum ProjectSubject {
     },
     /// The master effect chain.
     MasterChain,
+    /// One instrument's insert chain as `patch.settings.effect_chain_order` describes it
+    /// (`P08-S003`): the subject of a refusal about the order itself rather than about one
+    /// of the modules it names.
+    InsertChain {
+        /// The instrument whose patch authors the order.
+        instrument: InstrumentId,
+    },
     /// One pooled Mod Grid graph, as one running instance of it (`P07-S003`).
     ///
     /// A track-scoped graph runs once per assigned track; the instance is what V1's builder
@@ -173,6 +180,18 @@ pub enum LoweringReason {
         capability: &'static str,
         /// Which phase owns supplying it.
         owner: &'static str,
+    },
+    /// The patch's insert order does not describe its effect modules exactly once each
+    /// (`P08-S003`): an entry that names no module, one that is not an effect of the patch,
+    /// one named twice, or an effect module the order omits.
+    ///
+    /// V1 recovers from the last by appending the module with a warning, so the rendered
+    /// order is partly V1's choice; under ADR-0021 part 2 admission never changes authored
+    /// topology to make it fit, and `CORPUS-0005-C1` records the refusal. A refusal, not a
+    /// later phase's obligation: the field is authored data.
+    InsertOrder {
+        /// What is wrong with the order, naming the entry or the module.
+        problem: String,
     },
     /// Two automation lanes write one target at one sample (`P07-S002b`).
     ///

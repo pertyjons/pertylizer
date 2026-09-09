@@ -1257,7 +1257,10 @@ being budgeted in the profile.
 
 - **"Parameter and control slots"** are not separate budgets. A parameter slot is prepared memory belonging to its node
   and a control slot is a buffer, so both are admitted through `prepared_immutable_bytes`, `mutable_state_bytes`, and
-  `max_nodes` rather than through a count of their own. A separate count would have to be kept in step with the node
+  `max_nodes` rather than through a count of their own. A kind's declared **history** — a delay's
+  lines (`SOUND-INV-033`) — is its node's mutable memory too, charged to `mutable_state_bytes` at
+  the kind's output width per scheduled step, with the renderer's per-record index, from the one
+  figure the renderer sizes its slab by. A separate count would have to be kept in step with the node
   budget by hand, which is the `LIMIT-0023`/`LIMIT-0041` failure mode HOST-INV-017 exists to prevent.
 - **The script-work aggregate** — instructions times scope times polyphony — is computed and reported, with no
   threshold, until Phase 7 can justify one. See [*Scripts*](#scripts) for why a field with an unset value was the wrong

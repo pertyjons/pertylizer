@@ -622,6 +622,11 @@ pub struct PreparedRenderer {
     /// Where each node's run of buffers starts, plus a terminator — the slice a kernel is
     /// handed as its ramps, in its declaration's control order.
     ramp_starts: Vec<usize>,
+    /// The signal each step's kernel keeps between quanta (`SOUND-INV-033`): one slab, each
+    /// step's slice at `history_starts[node]..history_starts[node + 1]`, sized from the
+    /// prepared record's declared history at the step's output width.
+    history: Vec<f32>,
+    history_starts: Vec<usize>,
     /// Whether a modulation lands on each row (`SOUND-INV-027`). A marked row advances its
     /// segment in the pre-pass, once its last edge has been composed, rather than ahead of
     /// it; an unmarked row advances before the pre-pass as before.
@@ -809,6 +814,29 @@ impl PreparedRenderer {
             }
         }
         let ramp_buffers = vec![0.0_f32; running];
+        // The history slab (`SOUND-INV-033`): per scheduled step, the frames its prepared
+        // record declares at its output width, laid out step by step with a terminator, as
+        // the ramps are. A voice-scope delay keeps one line per instance, which is what one
+        // slice per **step** rather than per record gives it.
+        let mut history_starts = vec![0_usize; records.saturating_add(1)];
+        let mut history_running = 0_usize;
+        for op in plan.ops() {
+            if let PlanOp::Node(step) = op
+                && let Some(prepared) = plan.prepared_nodes().get(step.prepared().index())
+            {
+                let node = step.node().index();
+                let frames = crate::node::kernels::history_frames(prepared);
+                let samples = frames.saturating_mul(step.out_layout().channels());
+                if let Some(start) = history_starts.get_mut(node) {
+                    *start = history_running;
+                }
+                history_running = history_running.saturating_add(samples);
+                if let Some(next) = history_starts.get_mut(node.saturating_add(1)) {
+                    *next = history_running;
+                }
+            }
+        }
+        let history = vec![0.0_f32; history_running];
         // `SOUND-INV-027`: which rows the pre-pass composes, from the steps the lowering
         // built, so the two advance sites cannot both advance one row.
         let mut modulated = vec![false; parameter_slots.len()];
@@ -898,6 +926,8 @@ impl PreparedRenderer {
             parameter_slots,
             ramp_buffers,
             ramp_offsets,
+            history,
+            history_starts,
             ramp_starts,
             modulated,
             prepass_resets,
@@ -1022,6 +1052,15 @@ impl PreparedRenderer {
     #[cfg(test)]
     pub(crate) fn ramp_table_bytes_held(&self) -> usize {
         self.ramp_starts.len().saturating_mul(size_of::<usize>())
+    }
+
+    /// The bytes the history slab and its index hold (`SOUND-INV-033`).
+    #[cfg(test)]
+    pub(crate) fn history_bytes_held(&self) -> usize {
+        self.history
+            .len()
+            .saturating_mul(size_of::<f32>())
+            .saturating_add(self.history_starts.len().saturating_mul(size_of::<usize>()))
     }
 
     /// The render clock: input frames consumed so far.

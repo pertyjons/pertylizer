@@ -266,9 +266,11 @@ fn instrument_state_dispositions(
         velocity_filter_sensitivity: _,
         // Ducking driven by another instrument, which needs the mixer Phase 8 owns.
         sidechain_source_id,
-        // Represented: this is what the voice graph is lowered from.
-        patch: _,
+        // Represented: this is what the voice graph and, since `P08-S003`, the insert chain
+        // are lowered from. Its own fields are dispositioned below.
+        patch,
     } = saved;
+    patch_dispositions(patch);
 
     let subject = || ProjectSubject::Instrument {
         instrument: *id,
@@ -366,12 +368,67 @@ fn instrument_state_dispositions(
             LoweringReason::OwnedByLaterPhase {
                 capability: "instrument oversampling, which changes the anti-aliasing of \
                              everything the voice does",
-                owner: "Phase 5, with the node and parameter model",
+                // `P08-S003` decided: not a rate island in this phase's slices, because no
+                // corpus case oversamples and the master plan places rate islands after the
+                // whole-plan path is stable. V1's island is the voice sum alone — voices
+                // rendered at the higher rate and decimated by an 11-tap half-band FIR — so
+                // the insert chain, the channel and the master are outside it either way.
+                owner: "Phase 8, as a rate island; unreached by the corpus, so unbuilt",
             },
         ));
     }
 
     Continue::Yes
+}
+
+/// Every saved patch field and every saved patch setting, with its disposition stated once,
+/// by the same exhaustive destructuring `instrument_state_dispositions` uses — a new field
+/// in either type is a compile error here.
+///
+/// None of the settings but the insert order reaches the offline arrangement render:
+/// `patch.settings.effect_chain_order` is what `project_apply` installs the instrument's
+/// effects from and what `P08-S003` lowers; the rest are read by the GUI's patch bridge
+/// (`master_volume`, `glide_time`, `canvas_size`), the keyboard and the preview
+/// (`octave_offset`) or nothing (`bpm`). Two are measured inert offline by
+/// `patch_master_volume_is_inert_in_the_offline_renderer` and
+/// `patch_octave_offset_is_inert_in_the_offline_renderer` in
+/// `tests/offline_instrument_settings.rs`; the project's own `global.master_volume` and
+/// `global.glide_time` are what the render reads, and both are dispositioned in
+/// `project_diagnostics` and `master_trim`.
+fn patch_dispositions(patch: &crate::patch::Patch) {
+    let crate::patch::Patch {
+        // Metadata. Never reaches audio in either engine.
+        name: _,
+        author: _,
+        version: _,
+        description: _,
+        color: _,
+        notes: _,
+        tags: _,
+        // GUI grouping of modules on the canvas; no reader in either render path.
+        groups: _,
+        // Represented: the voice graph and the inserts are lowered from these.
+        modules: _,
+        connections: _,
+        settings,
+    } = patch;
+    let crate::patch::PatchSettings {
+        // The GUI's patch bridge sends this as the engine's master volume when a patch is
+        // opened in the editor; the arrangement render reads `global.master_volume`.
+        master_volume: _,
+        // The patch's suggested tempo; nothing in either render path reads it.
+        bpm: _,
+        // The keyboard's and the preview's transposition; the arrangement's notes are placed
+        // by the song and never shifted by it.
+        octave_offset: _,
+        // The GUI's patch bridge sends this as the engine's glide time when a patch is opened;
+        // the arrangement render reads `global.glide_time`.
+        glide_time: _,
+        // Canvas geometry.
+        canvas_size: _,
+        // Read by `lower_instrument_into` (`P08-S003`): the insert chain's order.
+        effect_chain_order: _,
+    } = settings;
 }
 
 /// The instrument's fader, pan and mute as the mix channel's authored bases (`P08-S001`),
@@ -734,6 +791,7 @@ pub fn smoke_render_project(
             p.saved.id,
             &p.saved.patch.modules,
             &p.saved.patch.connections,
+            &p.saved.patch.settings.effect_chain_order,
             stages,
             &p.modulators,
             Sink::Node(MASTER_MIX),

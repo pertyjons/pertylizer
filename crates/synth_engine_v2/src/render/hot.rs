@@ -1348,6 +1348,18 @@ impl PreparedRenderer {
                         continue;
                     };
                     let ramps = self.ramp_buffers.get(ramp_start..ramp_end).unwrap_or(&[]);
+                    // The step's own slice of the history slab (`SOUND-INV-033`), resolved
+                    // as the ramps are: two more disjoint fields of one renderer.
+                    let (Some(history_start), Some(history_end)) = (
+                        self.history_starts.get(node).copied(),
+                        self.history_starts.get(node + 1).copied(),
+                    ) else {
+                        continue;
+                    };
+                    let history = self
+                        .history
+                        .get_mut(history_start..history_end)
+                        .unwrap_or(&mut []);
                     let Some(mut io) = kernels::bind(
                         &mut self.buffers,
                         self.plan.regions(),
@@ -1356,6 +1368,7 @@ impl PreparedRenderer {
                         gates,
                         ramps,
                         kernels::NodeResources {
+                            history,
                             samples: self.plan.prepared_samples(),
                             scripts: crate::script::ScriptResources {
                                 programs: self.plan.prepared_scripts(),

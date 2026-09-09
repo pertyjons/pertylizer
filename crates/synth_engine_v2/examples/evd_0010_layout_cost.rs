@@ -704,6 +704,7 @@ impl Planar {
                 ramps: sine_ramp(),
                 samples: &[],
                 scripts: synth_engine_v2::script::ScriptResources::default(),
+                history: &mut [],
             },
         );
         call_filter(
@@ -718,6 +719,7 @@ impl Planar {
                 ramps: &[],
                 samples: &[],
                 scripts: synth_engine_v2::script::ScriptResources::default(),
+                history: &mut [],
             },
         );
         call_envelope(
@@ -732,6 +734,7 @@ impl Planar {
                 ramps: &[],
                 samples: &[],
                 scripts: synth_engine_v2::script::ScriptResources::default(),
+                history: &mut [],
             },
         );
         let (out, control) = two(&mut self.arena, self.left, self.control_left);
@@ -747,6 +750,7 @@ impl Planar {
                 ramps: &[],
                 samples: &[],
                 scripts: synth_engine_v2::script::ScriptResources::default(),
+                history: &mut [],
             },
         );
         // The widening, into the slot the envelope has finished with.
@@ -763,6 +767,7 @@ impl Planar {
                 ramps: &[],
                 samples: &[],
                 scripts: synth_engine_v2::script::ScriptResources::default(),
+                history: &mut [],
             },
         );
         // The queued gate edge is consumed by this quantum and by no later one, which is
@@ -784,6 +789,7 @@ impl Planar {
                 ramps: sine_ramp(),
                 samples: &[],
                 scripts: synth_engine_v2::script::ScriptResources::default(),
+                history: &mut [],
             },
         );
         let (out, source) = two(&mut self.arena, self.right, self.left);
@@ -799,6 +805,7 @@ impl Planar {
                 ramps: &[],
                 samples: &[],
                 scripts: synth_engine_v2::script::ScriptResources::default(),
+                history: &mut [],
             },
         );
         call_filter(
@@ -813,6 +820,7 @@ impl Planar {
                 ramps: &[],
                 samples: &[],
                 scripts: synth_engine_v2::script::ScriptResources::default(),
+                history: &mut [],
             },
         );
         call_filter(
@@ -827,6 +835,7 @@ impl Planar {
                 ramps: &[],
                 samples: &[],
                 scripts: synth_engine_v2::script::ScriptResources::default(),
+                history: &mut [],
             },
         );
         call_envelope(
@@ -841,6 +850,7 @@ impl Planar {
                 ramps: &[],
                 samples: &[],
                 scripts: synth_engine_v2::script::ScriptResources::default(),
+                history: &mut [],
             },
         );
         let (out, control) = two(&mut self.arena, self.left, self.control_left);
@@ -856,6 +866,7 @@ impl Planar {
                 ramps: &[],
                 samples: &[],
                 scripts: synth_engine_v2::script::ScriptResources::default(),
+                history: &mut [],
             },
         );
         let (out, control) = two(&mut self.arena, self.right, self.control_left);
@@ -871,6 +882,7 @@ impl Planar {
                 ramps: &[],
                 samples: &[],
                 scripts: synth_engine_v2::script::ScriptResources::default(),
+                history: &mut [],
             },
         );
         self.write_carry();
@@ -898,6 +910,7 @@ impl Planar {
                 ramps: sine_ramp(),
                 samples: &[],
                 scripts: synth_engine_v2::script::ScriptResources::default(),
+                history: &mut [],
             },
         );
         let (out, source) = two(&mut self.arena, self.right, self.left);
@@ -913,6 +926,7 @@ impl Planar {
                 ramps: &[],
                 samples: &[],
                 scripts: synth_engine_v2::script::ScriptResources::default(),
+                history: &mut [],
             },
         );
         call_filter(
@@ -927,6 +941,7 @@ impl Planar {
                 ramps: &[],
                 samples: &[],
                 scripts: synth_engine_v2::script::ScriptResources::default(),
+                history: &mut [],
             },
         );
         call_filter(
@@ -941,6 +956,7 @@ impl Planar {
                 ramps: &[],
                 samples: &[],
                 scripts: synth_engine_v2::script::ScriptResources::default(),
+                history: &mut [],
             },
         );
         call_envelope(
@@ -955,6 +971,7 @@ impl Planar {
                 ramps: &[],
                 samples: &[],
                 scripts: synth_engine_v2::script::ScriptResources::default(),
+                history: &mut [],
             },
         );
         let (out, control) = two(&mut self.arena, self.left, self.control_left);
@@ -970,6 +987,7 @@ impl Planar {
                 ramps: &[],
                 samples: &[],
                 scripts: synth_engine_v2::script::ScriptResources::default(),
+                history: &mut [],
             },
         );
         call_envelope(
@@ -984,6 +1002,7 @@ impl Planar {
                 ramps: &[],
                 samples: &[],
                 scripts: synth_engine_v2::script::ScriptResources::default(),
+                history: &mut [],
             },
         );
         let (out, control) = two(&mut self.arena, self.right, self.control_right);
@@ -999,6 +1018,7 @@ impl Planar {
                 ramps: &[],
                 samples: &[],
                 scripts: synth_engine_v2::script::ScriptResources::default(),
+                history: &mut [],
             },
         );
         self.write_carry();
@@ -1173,6 +1193,7 @@ impl Interleaved {
                 ramps: sine_ramp(),
                 samples: &[],
                 scripts: synth_engine_v2::script::ScriptResources::default(),
+                history: &mut [],
             },
         );
         call_filter(
@@ -1187,6 +1208,7 @@ impl Interleaved {
                 ramps: &[],
                 samples: &[],
                 scripts: synth_engine_v2::script::ScriptResources::default(),
+                history: &mut [],
             },
         );
         call_envelope(
@@ -1201,6 +1223,7 @@ impl Interleaved {
                 ramps: &[],
                 samples: &[],
                 scripts: synth_engine_v2::script::ScriptResources::default(),
+                history: &mut [],
             },
         );
         let (out, control) = two(&mut self.arena, self.mono, self.control_left);
@@ -1216,6 +1239,7 @@ impl Interleaved {
                 ramps: &[],
                 samples: &[],
                 scripts: synth_engine_v2::script::ScriptResources::default(),
+                history: &mut [],
             },
         );
         let (out, source) = two(&mut self.arena, self.stereo, self.mono);
@@ -1231,6 +1255,7 @@ impl Interleaved {
                 ramps: &[],
                 samples: &[],
                 scripts: synth_engine_v2::script::ScriptResources::default(),
+                history: &mut [],
             },
         );
         self.write_carry();
@@ -1253,6 +1278,7 @@ impl Interleaved {
                 ramps: sine_ramp(),
                 samples: &[],
                 scripts: synth_engine_v2::script::ScriptResources::default(),
+                history: &mut [],
             },
         );
         let (out, source) = two(&mut self.arena, self.stereo, self.mono);
@@ -1268,6 +1294,7 @@ impl Interleaved {
                 ramps: &[],
                 samples: &[],
                 scripts: synth_engine_v2::script::ScriptResources::default(),
+                history: &mut [],
             },
         );
         filter_interleaved(
@@ -1282,6 +1309,7 @@ impl Interleaved {
                 ramps: &[],
                 samples: &[],
                 scripts: synth_engine_v2::script::ScriptResources::default(),
+                history: &mut [],
             },
         );
         call_envelope(
@@ -1296,6 +1324,7 @@ impl Interleaved {
                 ramps: &[],
                 samples: &[],
                 scripts: synth_engine_v2::script::ScriptResources::default(),
+                history: &mut [],
             },
         );
         let (out, control) = two(&mut self.arena, self.stereo, self.control_left);
@@ -1311,6 +1340,7 @@ impl Interleaved {
                 ramps: &[],
                 samples: &[],
                 scripts: synth_engine_v2::script::ScriptResources::default(),
+                history: &mut [],
             },
         );
         self.write_carry();
@@ -1333,6 +1363,7 @@ impl Interleaved {
                 ramps: sine_ramp(),
                 samples: &[],
                 scripts: synth_engine_v2::script::ScriptResources::default(),
+                history: &mut [],
             },
         );
         let (out, source) = two(&mut self.arena, self.stereo, self.mono);
@@ -1348,6 +1379,7 @@ impl Interleaved {
                 ramps: &[],
                 samples: &[],
                 scripts: synth_engine_v2::script::ScriptResources::default(),
+                history: &mut [],
             },
         );
         filter_interleaved_split(
@@ -1362,6 +1394,7 @@ impl Interleaved {
                 ramps: &[],
                 samples: &[],
                 scripts: synth_engine_v2::script::ScriptResources::default(),
+                history: &mut [],
             },
         );
         call_envelope(
@@ -1376,6 +1409,7 @@ impl Interleaved {
                 ramps: &[],
                 samples: &[],
                 scripts: synth_engine_v2::script::ScriptResources::default(),
+                history: &mut [],
             },
         );
         call_envelope(
@@ -1390,6 +1424,7 @@ impl Interleaved {
                 ramps: &[],
                 samples: &[],
                 scripts: synth_engine_v2::script::ScriptResources::default(),
+                history: &mut [],
             },
         );
         let (out, left, right) = three(
@@ -1410,6 +1445,7 @@ impl Interleaved {
                 ramps: &[],
                 samples: &[],
                 scripts: synth_engine_v2::script::ScriptResources::default(),
+                history: &mut [],
             },
         );
         self.write_carry();

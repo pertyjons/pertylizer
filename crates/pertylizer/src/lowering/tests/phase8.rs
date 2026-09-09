@@ -275,6 +275,7 @@ fn the_chain_is_v1s_order_into_one_master() {
         instrument(),
         &modules,
         &connections,
+        &[],
         stages,
         &super::super::modulation::SongModulators::default(),
         Sink::Node(MASTER_MIX),
@@ -726,4 +727,676 @@ fn concurrency_is_counted_over_sample_positions_not_ticks() {
     );
     assert!(rendered.is_audible(), "{:?}", rendered.diagnostics);
     assert_eq!(rendered.lowered_events, EventCount::measured(4));
+}
+
+// ---------------------------------------------------------------------------------------
+// `P08-S003` — inserts: the first native effects with latency and tail.
+// ---------------------------------------------------------------------------------------
+
+/// The corpus's insert-chain project, `CORPUS-0005`: distortion into delay on a held fifth.
+fn corpus_inserts() -> crate::project::ProjectFile {
+    corpus_project("instrument-inserts")
+}
+
+/// One track on instrument 0 playing `(tick, pitch, duration)` notes.
+fn notes_song(notes: &[(u32, u8, u32)]) -> synth_sequencer::Song {
+    let mut song = synth_sequencer::Song::new("inserts");
+    song.default_tempo = synth_core::Bpm::new(120.0);
+    let pattern = song.create_pattern(Duration(3840));
+    let track = song.create_track("track");
+    song.track_mut(track).expect("resolves").instrument =
+        synth_engine::instrument::InstrumentId::new(0);
+    {
+        let pattern = song.pattern_mut(pattern).expect("resolves");
+        for (tick, pitch, duration) in notes {
+            let id = pattern.add_note(
+                PatternTick(*tick),
+                Pitch::new(*pitch).expect("a keyboard position"),
+                Velocity::new(0.8),
+            );
+            if let Some(note) = pattern.note_mut(id) {
+                note.duration = Some(Duration(*duration));
+            }
+        }
+    }
+    assert!(song.place_pattern(pattern, track, Tick::ZERO));
+    song
+}
+
+/// The corpus project with only the named inserts kept, in that order.
+fn corpus_with_inserts(kept: &[&str]) -> crate::project::ProjectFile {
+    let mut project = corpus_inserts();
+    let patch = &mut project.instruments[0].patch;
+    patch
+        .modules
+        .retain(|m| !m.module_type.is_effect() || kept.contains(&m.id.as_str()));
+    patch.settings.effect_chain_order = kept.iter().map(|k| (*k).to_owned()).collect();
+    project
+}
+
+fn render_project(
+    project: &crate::project::ProjectFile,
+    song: &synth_sequencer::Song,
+    tail: u64,
+    policy: OutputPolicy,
+) -> crate::lowering::render::SmokeRender {
+    smoke_render_project(
+        &project.instruments,
+        song,
+        &project.global,
+        project_profile(),
+        FrameCount::new(tail),
+        policy,
+    )
+}
+
+fn rms(samples: &[f32]) -> f64 {
+    (samples
+        .iter()
+        .map(|s| f64::from(*s) * f64::from(*s))
+        .sum::<f64>()
+        / samples.len().max(1) as f64)
+        .sqrt()
+}
+
+/// The corpus's insert chain lowers and renders — under the roomier event partition
+/// `P08-S002` needed for a whole project, which one instrument with two inserts now needs
+/// too: its catch-up addresses number 29 against the engine's default share of 24, so the
+/// default profile refuses the plan by name and ADR-0054's reselection owns the gap.
+#[test]
+fn the_corpus_insert_chain_lowers_and_renders_and_the_default_share_refuses_it_by_name() {
+    let project = corpus_inserts();
+    let rendered = render_project(&project, &project.song, 96_000, OutputPolicy::Parity);
+    assert!(
+        !rendered
+            .diagnostics
+            .iter()
+            .any(|d| d.severity() == Severity::Refused),
+        "{:?}",
+        rendered.diagnostics
+    );
+    assert!(rendered.is_audible());
+    assert!(
+        !rendered.diagnostics.iter().any(|d| matches!(
+            d.subject(),
+            ProjectSubject::InsertChain { .. }
+        ) || matches!(
+            (d.subject(), d.reason()),
+            (ProjectSubject::Module { module, .. }, _) if module.module_type.is_effect()
+        )),
+        "nothing about the inserts is marked: {:?}",
+        rendered.diagnostics
+    );
+
+    let default = smoke_render_project(
+        &project.instruments,
+        &project.song,
+        &project.global,
+        harness_profile(),
+        FrameCount::new(4_800),
+        OutputPolicy::Parity,
+    );
+    assert!(default.samples.is_empty());
+    assert!(
+        default.diagnostics.iter().any(|d| matches!(
+            (d.severity(), d.subject(), d.reason()),
+            (Severity::Refused, ProjectSubject::Project, LoweringReason::UnsupportedParameterValue { value })
+                if value.contains("session_event_share exceeded: 29 events requested, 24 events available")
+        )),
+        "{:?}",
+        default.diagnostics
+    );
+}
+
+/// The inserts sit between the balance and the channel, in the order's order, in the
+/// instrument scope, with V1's values as their authored bases.
+#[test]
+fn inserts_sit_between_the_balance_and_the_channel_in_the_orders_order() {
+    use super::super::graph::{GraphAccumulator, InstrumentStages, Sink, lower_instrument_into};
+    let project = corpus_inserts();
+    let patch = &project.instruments[0].patch;
+    let mut graph = GraphAccumulator::default();
+    let slot = InstrumentSlot::of(instrument()).expect("fits");
+    let stages = InstrumentStages {
+        velocity: Some(synth_engine_v2::quantities::NormalizedLevel::FULL),
+        track: Some(super::super::graph::TrackStage {
+            level: synth_engine_v2::quantities::Amplitude::UNITY,
+            pan: synth_engine_v2::controller::BipolarLevel::ZERO,
+            muted: false,
+        }),
+        channel: Some(super::super::graph::ChannelStrip {
+            fader: synth_engine_v2::quantities::Amplitude::UNITY,
+            pan: synth_engine_v2::controller::BipolarLevel::ZERO,
+            muted: false,
+        }),
+        soft_clip: true,
+    };
+    let lowered = lower_instrument_into(
+        &mut graph,
+        instrument(),
+        &patch.modules,
+        &patch.connections,
+        &patch.settings.effect_chain_order,
+        stages,
+        &super::super::modulation::SongModulators::default(),
+        Sink::Node(MASTER_MIX),
+    );
+    assert!(!lowered.refused, "{:?}", lowered.diagnostics);
+    for (id, kind, scope) in [
+        (MASTER_MIX, IrNodeKind::Mix, ExecutionScope::Global),
+        (MASTER_OUTPUT, IrNodeKind::Output, ExecutionScope::Global),
+    ] {
+        graph.node(id, kind, scope).expect("free");
+    }
+    graph.connect(
+        (MASTER_MIX, synth_engine_v2::ir::PortId::FIRST),
+        (MASTER_OUTPUT, synth_engine_v2::ir::PortId::FIRST),
+        synth_engine_v2::ir::SignalDomain::Audio,
+    );
+    let ir = graph
+        .build(
+            super::super::graph::voice_tuning().expect("prepares"),
+            super::super::graph::plan_declarations(HeldNoteCount::measured(1), EventCount::NONE),
+        )
+        .expect("builds");
+    let dst = lowered
+        .identities
+        .node_for("dst-1".parse().expect("parses"))
+        .expect("addressed");
+    let dly = lowered
+        .identities
+        .node_for("dly-1".parse().expect("parses"))
+        .expect("addressed");
+    let chain = [
+        slot.balance(),
+        dst,
+        dly,
+        slot.channel(),
+        slot.soft_clip(),
+        MASTER_MIX,
+    ];
+    for pair in chain.windows(2) {
+        assert!(
+            ir.edges()
+                .iter()
+                .any(|edge| edge.from().0 == pair[0] && edge.to().0 == pair[1]),
+            "{} must feed {}",
+            pair[0],
+            pair[1]
+        );
+    }
+    let node = |id| ir.node(id).expect("present");
+    assert_eq!(node(dst).scope(), ExecutionScope::InstrumentInstance);
+    assert_eq!(node(dly).scope(), ExecutionScope::InstrumentInstance);
+    let level = |v: f32| synth_engine_v2::quantities::NormalizedLevel::new(v).expect("a level");
+    assert_eq!(
+        node(dst).kind(),
+        IrNodeKind::Distortion {
+            drive: level(0.7),
+            tone: level(0.8),
+            mix: level(1.0),
+        }
+    );
+    assert_eq!(
+        node(dly).kind(),
+        IrNodeKind::Delay {
+            time_left: synth_engine_v2::quantities::DelayTime::new(0.25).expect("in range"),
+            time_right: synth_engine_v2::quantities::DelayTime::new(0.25).expect("in range"),
+            feedback: synth_engine_v2::quantities::DelayFeedback::new(0.45).expect("in range"),
+            mix: level(0.5),
+            tone: level(0.4),
+        }
+    );
+}
+
+/// The order describes the patch's effects exactly once each, by parsed identity
+/// (`CORPUS-0005-C1`, ADR-0021): an omitted effect, an unknown entry, a repeat spelled two
+/// ways, a voice module and a non-identity are each refused naming the problem.
+#[test]
+fn an_insert_order_that_does_not_describe_the_effects_exactly_once_is_refused_by_name() {
+    for (order, expected) in [
+        (
+            vec!["dst-1"],
+            "dly-1 is an effect module the insert order omits",
+        ),
+        (
+            vec!["dst-1", "dly-1", "rev-3"],
+            "rev-3, which is not an effect module of the patch",
+        ),
+        (vec!["dst-1", "dst-01", "dly-1"], "dst-1 twice"),
+        (
+            vec!["dst-1", "dly-1", "osc-1"],
+            "osc-1, which is not an effect module of the patch",
+        ),
+        (
+            vec!["dst-1", "dly-1", "banana"],
+            "\"banana\", which is not a module identity",
+        ),
+        (vec![], "is an effect module the insert order omits"),
+    ] {
+        let mut project = corpus_inserts();
+        project.instruments[0].patch.settings.effect_chain_order =
+            order.iter().map(|o| (*o).to_owned()).collect();
+        let rendered = render_project(&project, &project.song, 4_800, OutputPolicy::Parity);
+        assert!(rendered.samples.is_empty(), "{order:?}");
+        assert!(
+            rendered.diagnostics.iter().any(|d| matches!(
+                (d.severity(), d.subject(), d.reason()),
+                (Severity::Refused, ProjectSubject::InsertChain { .. }, LoweringReason::InsertOrder { problem })
+                    if problem.contains(expected)
+            )),
+            "{order:?}: expected {expected:?}, got {:?}",
+            rendered.diagnostics
+        );
+    }
+}
+
+/// A mode V2 has not carried — a distortion type other than soft clip, a delay mode other
+/// than mono, a tempo-synced time — is refused naming the parameter.
+#[test]
+fn an_insert_mode_v2_has_not_carried_is_refused_by_name() {
+    for (module, key, value, expected) in [
+        (
+            "dst-1",
+            "type",
+            ParamValue::Choice("hard_clip".to_owned()),
+            "distortion mode",
+        ),
+        (
+            "dly-1",
+            "mode",
+            ParamValue::Choice("ping_pong".to_owned()),
+            "delay mode",
+        ),
+        (
+            "dly-1",
+            "tempo_sync",
+            ParamValue::Float(1.0),
+            "tempo-synced",
+        ),
+    ] {
+        let mut project = corpus_inserts();
+        let saved = project.instruments[0]
+            .patch
+            .modules
+            .iter_mut()
+            .find(|m| m.id == module)
+            .expect("the corpus has it");
+        saved.parameters.insert(key.to_owned(), value);
+        let rendered = render_project(&project, &project.song, 4_800, OutputPolicy::Parity);
+        assert!(rendered.samples.is_empty(), "{module}.{key}");
+        assert!(
+            rendered.diagnostics.iter().any(|d| matches!(
+                (d.severity(), d.subject(), d.reason()),
+                (Severity::Refused, ProjectSubject::Parameter { parameter, .. }, LoweringReason::OwnedByLaterPhase { capability, .. })
+                    if parameter == key && capability.contains(expected)
+            )),
+            "{module}.{key}: {:?}",
+            rendered.diagnostics
+        );
+    }
+    // And an effect V2 has no kind for at all is refused as an unsupported type.
+    let mut project = corpus_inserts();
+    let mut reverb = crate::patch::ModuleState {
+        id: "rev-1".to_owned(),
+        module_type: ModuleType::Reverb,
+        position: crate::patch::Position::new(0.0, 0.0),
+        description: String::new(),
+        parameters: std::collections::BTreeMap::new(),
+        scripts: std::collections::BTreeMap::new(),
+    };
+    reverb
+        .parameters
+        .insert("mix".to_owned(), ParamValue::Float(0.3));
+    project.instruments[0].patch.modules.push(reverb);
+    project.instruments[0]
+        .patch
+        .settings
+        .effect_chain_order
+        .push("rev-1".to_owned());
+    let rendered = render_project(&project, &project.song, 4_800, OutputPolicy::Parity);
+    assert!(rendered.diagnostics.iter().any(|d| matches!(
+        (d.severity(), d.reason()),
+        (
+            Severity::Refused,
+            LoweringReason::UnsupportedModuleType {
+                module_type: ModuleType::Reverb
+            }
+        )
+    )));
+}
+
+/// V1's `time` link macro, as V1 loads it: a side without its own key takes the macro, a side
+/// with one keeps it — `time` sorts before `time_left` in the saved map, so the side's key is
+/// applied last. `delay_time_macro_yields_to_the_side_key_in_the_offline_renderer` measures
+/// that order on V1; this holds the lowerer to the same reading.
+#[test]
+fn a_delays_time_macro_applies_where_a_side_key_is_absent() {
+    use super::super::graph::{GraphAccumulator, InstrumentStages, Sink, lower_instrument_into};
+    let lowered_delay = |edit: &dyn Fn(&mut std::collections::BTreeMap<String, ParamValue>)| {
+        let mut project = corpus_inserts();
+        let patch = &mut project.instruments[0].patch;
+        let delay = patch
+            .modules
+            .iter_mut()
+            .find(|m| m.id == "dly-1")
+            .expect("the corpus has it");
+        edit(&mut delay.parameters);
+        let mut graph = GraphAccumulator::default();
+        let lowered = lower_instrument_into(
+            &mut graph,
+            instrument(),
+            &patch.modules,
+            &patch.connections,
+            &patch.settings.effect_chain_order,
+            InstrumentStages::default(),
+            &super::super::modulation::SongModulators::default(),
+            Sink::OwnOutput,
+        );
+        assert!(!lowered.refused, "{:?}", lowered.diagnostics);
+        let node = lowered
+            .identities
+            .node_for("dly-1".parse().expect("parses"))
+            .expect("addressed");
+        let ir = graph
+            .build(
+                super::super::graph::voice_tuning().expect("prepares"),
+                super::super::graph::plan_declarations(
+                    HeldNoteCount::measured(1),
+                    EventCount::NONE,
+                ),
+            )
+            .expect("builds");
+        match ir.node(node).expect("present").kind() {
+            IrNodeKind::Delay {
+                time_left,
+                time_right,
+                ..
+            } => (time_left.as_f32(), time_right.as_f32()),
+            other => panic!("{other:?}"),
+        }
+    };
+    // Only the macro: both sides take it.
+    assert_eq!(
+        lowered_delay(&|p| {
+            p.remove("time_left");
+            p.remove("time_right");
+            p.insert("time".to_owned(), ParamValue::Float(0.5));
+        }),
+        (0.5, 0.5)
+    );
+    // The macro and one side: the side keeps its own, the other takes the macro.
+    assert_eq!(
+        lowered_delay(&|p| {
+            p.remove("time_right");
+            p.insert("time".to_owned(), ParamValue::Float(0.5));
+        }),
+        (0.25, 0.5)
+    );
+    // Neither: V1's declared defaults per side, which differ.
+    assert_eq!(
+        lowered_delay(&|p| {
+            p.remove("time_left");
+            p.remove("time_right");
+        }),
+        (0.375, 0.5)
+    );
+}
+
+/// `CORPUS-0005-P4`: the chain runs in the order's order — the reverse is another signal.
+#[test]
+fn reversing_the_insert_order_renders_other_bits() {
+    let project = corpus_inserts();
+    let forward = render_project(&project, &project.song, 48_000, OutputPolicy::Parity);
+    let mut reversed = corpus_inserts();
+    reversed.instruments[0]
+        .patch
+        .settings
+        .effect_chain_order
+        .reverse();
+    let backward = render_project(&reversed, &reversed.song, 48_000, OutputPolicy::Parity);
+    assert!(forward.is_audible() && backward.is_audible());
+    assert_ne!(forward.samples, backward.samples);
+    let difference: Vec<f32> = forward
+        .samples
+        .iter()
+        .zip(&backward.samples)
+        .map(|(a, b)| a - b)
+        .collect();
+    assert!(
+        rms(&difference) > 0.1 * rms(&forward.samples),
+        "the reversal is a different signal, not a rounding"
+    );
+}
+
+/// `CORPUS-0005-P1` and `P2`, each isolated as the corpus isolates them: with the distortion
+/// alone the dyad rendered whole differs from the two notes rendered apart and summed,
+/// because the chain shapes the **sum** of the voices; with the delay alone likewise, because
+/// the two notes share one line and meet in the `tanh` on its feedback write; and with no
+/// insert the two renders agree to rounding — the null control that proves both notes sound
+/// and the rest of the chain is linear under the headroom policy.
+#[test]
+fn the_chain_runs_on_the_voice_sum_and_its_state_is_shared_across_voices() {
+    let dyad = notes_song(&[(0, 48, 720), (0, 55, 720)]);
+    let low = notes_song(&[(0, 48, 720)]);
+    let high = notes_song(&[(0, 55, 720)]);
+    let measure = |kept: &[&str]| {
+        let project = corpus_with_inserts(kept);
+        let whole = render_project(&project, &dyad, 48_000, OutputPolicy::Headroom);
+        let a = render_project(&project, &low, 48_000, OutputPolicy::Headroom);
+        let b = render_project(&project, &high, 48_000, OutputPolicy::Headroom);
+        assert!(
+            whole.is_audible() && a.is_audible() && b.is_audible(),
+            "{kept:?}"
+        );
+        assert_eq!(whole.samples.len(), a.samples.len());
+        assert_eq!(whole.samples.len(), b.samples.len());
+        let summed: Vec<f32> = a
+            .samples
+            .iter()
+            .zip(&b.samples)
+            .map(|(x, y)| x + y)
+            .collect();
+        let difference: Vec<f32> = whole
+            .samples
+            .iter()
+            .zip(&summed)
+            .map(|(w, s)| w - s)
+            .collect();
+        rms(&difference) / rms(&whole.samples)
+    };
+    let null = measure(&[]);
+    let distortion_only = measure(&["dst-1"]);
+    let delay_only = measure(&["dly-1"]);
+    assert!(null < 1e-5, "the empty chain is linear to rounding: {null}");
+    assert!(
+        distortion_only > 1e-2,
+        "the distortion shapes the sum, not each voice: {distortion_only}"
+    );
+    assert!(
+        delay_only > 1e-4,
+        "the delay's line is shared, not per voice: {delay_only}"
+    );
+}
+
+/// Overlapping notes of distinct keys lower up to the instrument's voice count — V1's default
+/// eight — and one more is refused naming the note, because V1 steals there and V2 would play
+/// every note; a tie counts as held. Found by an independent read of the lifted overlap rule.
+#[test]
+fn more_notes_held_at_once_than_the_instruments_voices_are_refused_by_name() {
+    let project = corpus_with_inserts(&["dst-1", "dly-1"]);
+    let chord = |count: u8| {
+        let notes: Vec<(u32, u8, u32)> = (0..count).map(|i| (0, 48 + i, 720)).collect();
+        notes_song(&notes)
+    };
+    let eight = render_project(&project, &chord(8), 4_800, OutputPolicy::Parity);
+    assert!(
+        !eight
+            .diagnostics
+            .iter()
+            .any(|d| d.severity() == Severity::Refused),
+        "{:?}",
+        eight.diagnostics
+    );
+    assert!(eight.is_audible());
+    let nine = render_project(&project, &chord(9), 4_800, OutputPolicy::Parity);
+    assert!(nine.samples.is_empty());
+    assert!(
+        nine.diagnostics.iter().any(|d| matches!(
+            (d.severity(), d.subject(), d.reason()),
+            (Severity::Refused, ProjectSubject::Note { .. }, LoweringReason::OwnedByLaterPhase { capability, .. })
+                if capability.contains("more notes held at once than the instrument's voices")
+        )),
+        "{:?}",
+        nine.diagnostics
+    );
+    // A ninth note starting at the tick the first ends is still held at that tick.
+    let mut notes: Vec<(u32, u8, u32)> = (0..8).map(|i| (0, 48 + i, 720)).collect();
+    notes.push((720, 60, 720));
+    let tie = render_project(&project, &notes_song(&notes), 4_800, OutputPolicy::Parity);
+    assert!(
+        tie.samples.is_empty(),
+        "a tie counts as held, as the declared peak counts it"
+    );
+}
+
+/// `CORPUS-0005-P3`: the delay's repeats outlast the notes that produced them — the render
+/// past the last note's release is signal with the delay and silence without it.
+#[test]
+fn the_delays_state_outlives_the_notes_that_produced_it() {
+    // One short note at 2 s: released by 2.35 s with the corpus's 0.1 s release.
+    let song = notes_song(&[(1920, 60, 240)]);
+    let with = render_project(
+        &corpus_with_inserts(&["dly-1"]),
+        &song,
+        96_000,
+        OutputPolicy::Parity,
+    );
+    let without = render_project(
+        &corpus_with_inserts(&[]),
+        &song,
+        96_000,
+        OutputPolicy::Parity,
+    );
+    assert!(with.is_audible() && without.is_audible());
+    let from = 2 * (2.6 * 48_000.0) as usize;
+    let to = 2 * (3.5 * 48_000.0) as usize;
+    assert!(without.samples.len() >= to && with.samples.len() >= to);
+    assert!(
+        without.samples[from..to].iter().all(|s| *s == 0.0),
+        "without the delay the release has ended"
+    );
+    assert!(
+        with.samples[from..to].iter().any(|s| s.abs() > 1e-4),
+        "the delay's repeats continue past the release"
+    );
+}
+
+/// V2's two insert kinds against V1's own modules, run over the same widened input: the
+/// oracle is `synth_modules::effects::{Delay, Distortion}` itself, not a transcription.
+#[test]
+fn v2s_delay_and_distortion_are_v1s_modules_bit_for_bit() {
+    use synth_core::{DelayMode, DelayParam, DistortionParam, Param, ProcessContext};
+    use synth_engine_v2::ir::{ExecutionScope, GraphIr, NodeId, PortId, SignalDomain};
+    use synth_engine_v2::offline::render_offline;
+    use synth_engine_v2::time::PlanPosition;
+
+    const SOURCE: NodeId = NodeId::new(1);
+    const INSERT: NodeId = NodeId::new(2);
+    const OUTPUT: NodeId = NodeId::new(3);
+    const FRAMES: u64 = 65_536;
+    let rate = 48_000.0_f32;
+    let level = |v: f32| synth_engine_v2::quantities::NormalizedLevel::new(v).expect("a level");
+    let source = IrNodeKind::Sine {
+        frequency: synth_engine_v2::quantities::Frequency::new(220.0).expect("finite"),
+        amplitude: synth_engine_v2::quantities::Amplitude::new(0.8).expect("finite"),
+    };
+    let render = |insert: Option<IrNodeKind>| {
+        let mut builder = GraphIr::builder()
+            .node(SOURCE, source, ExecutionScope::Global)
+            .node(OUTPUT, IrNodeKind::Output, ExecutionScope::Global);
+        match insert {
+            Some(kind) => {
+                builder = builder
+                    .node(INSERT, kind, ExecutionScope::Global)
+                    .connect(
+                        (SOURCE, PortId::FIRST),
+                        (INSERT, PortId::FIRST),
+                        SignalDomain::Audio,
+                    )
+                    .connect(
+                        (INSERT, PortId::FIRST),
+                        (OUTPUT, PortId::FIRST),
+                        SignalDomain::Audio,
+                    );
+            }
+            None => {
+                builder = builder.connect(
+                    (SOURCE, PortId::FIRST),
+                    (OUTPUT, PortId::FIRST),
+                    SignalDomain::Audio,
+                );
+            }
+        }
+        let ir = builder.build().expect("readable");
+        let plan = compile(&ir, &RenderConfig::new(harness_profile()))
+            .into_plan()
+            .expect("admits");
+        render_offline(plan, FrameCount::new(FRAMES), PlanPosition::ZERO, &[]).expect("renders")
+    };
+    let input = render(None);
+    let context = ProcessContext {
+        sample_rate: synth_core::SampleRate::new(rate),
+        samples: synth_core::SampleCount::new(FRAMES as usize),
+        ..Default::default()
+    };
+    let bits = |v: &[f32]| v.iter().map(|s| s.to_bits()).collect::<Vec<_>>();
+
+    let (mut v1, _) = crate::module_factory::create_effect(ModuleType::Delay).expect("V1 has it");
+    v1.set_sample_rate(synth_core::SampleRate::new(rate));
+    for param in [
+        Param::Delay(DelayParam::Mode(DelayMode::Mono)),
+        Param::Delay(DelayParam::TimeLeft(synth_core::Seconds::new(0.25))),
+        Param::Delay(DelayParam::TimeRight(synth_core::Seconds::new(0.1234))),
+        Param::Delay(DelayParam::Feedback(synth_core::NormalizedValue::new(0.45))),
+        Param::Delay(DelayParam::Mix(synth_core::NormalizedValue::new(0.5))),
+        Param::Delay(DelayParam::Damping(synth_core::NormalizedValue::new(0.4))),
+        Param::Delay(DelayParam::TempoSync(false)),
+    ] {
+        v1.set_param(param);
+    }
+    let mut expected = vec![0.0_f32; input.len()];
+    v1.process(&input, &mut expected, &context);
+    let v2 = render(Some(IrNodeKind::Delay {
+        time_left: synth_engine_v2::quantities::DelayTime::new(0.25).expect("in range"),
+        time_right: synth_engine_v2::quantities::DelayTime::new(0.1234).expect("in range"),
+        feedback: synth_engine_v2::quantities::DelayFeedback::new(0.45).expect("in range"),
+        mix: level(0.5),
+        tone: level(0.4),
+    }));
+    assert_eq!(bits(&v2), bits(&expected), "delay");
+    assert_ne!(bits(&v2), bits(&input));
+
+    let (mut v1, _) =
+        crate::module_factory::create_effect(ModuleType::Distortion).expect("V1 has it");
+    v1.set_sample_rate(synth_core::SampleRate::new(rate));
+    for param in [
+        Param::Distortion(DistortionParam::Mode(synth_core::DistortionMode::SoftClip)),
+        Param::Distortion(DistortionParam::Drive(synth_core::NormalizedValue::new(
+            0.7,
+        ))),
+        Param::Distortion(DistortionParam::Tone(synth_core::NormalizedValue::new(0.8))),
+        Param::Distortion(DistortionParam::Mix(synth_core::NormalizedValue::new(1.0))),
+    ] {
+        v1.set_param(param);
+    }
+    let mut expected = vec![0.0_f32; input.len()];
+    v1.process(&input, &mut expected, &context);
+    let v2 = render(Some(IrNodeKind::Distortion {
+        drive: level(0.7),
+        tone: level(0.8),
+        mix: level(1.0),
+    }));
+    assert_eq!(bits(&v2), bits(&expected), "distortion");
+    assert_ne!(bits(&v2), bits(&input));
 }

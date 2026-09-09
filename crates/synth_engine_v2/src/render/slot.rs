@@ -284,6 +284,10 @@ impl ParameterUnit {
                     value
                 }
             }
+            // V1's own domains for a delay's loop and time (`SOUND-INV-033`), held on
+            // every composed value so no write reaches a loop at unity or a zero delay.
+            Self::DelayFeedback => value.clamp(0.0, 0.95),
+            Self::DelayTime => value.clamp(0.001, 2.0),
             Self::Hertz | Self::LinearAmplitude | Self::Gate | Self::QualityFactor => value,
         }
     }

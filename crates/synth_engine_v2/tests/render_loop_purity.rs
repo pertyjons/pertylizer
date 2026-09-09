@@ -744,6 +744,11 @@ fn every_call_the_render_loop_makes_is_inside_the_checked_region() {
         // `Option::map` over a `Copy` payload, in the three helpers that turn an event
         // payload into the node, control and value a sample-positioned change moves.
         "map",
+        // `f32::rem_euclid`, in the delay's two-tap read (`SOUND-INV-033`): V1's own wrap of
+        // a read position into its line, one remainder and one conditional add on values
+        // the kernel owns. It allocates nothing, locks nothing and cannot panic — a zero
+        // divisor is a `NaN`, and the line's length is checked non-empty before the read.
+        "rem_euclid",
         // `Option::and_then` in the two helpers that resolve a note edge's node and control.
         // A note-off carries only an occurrence, so resolving it is itself fallible, and the
         // slot lookup that follows is fallible too — chaining is what keeps both bounds

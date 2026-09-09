@@ -469,6 +469,18 @@ catalog! {
     IrNodeKind::Trim { level: level(1.0) } => IrNodeKind::Trim { .. },
     IrNodeKind::SoftClip => IrNodeKind::SoftClip,
     IrNodeKind::HardClamp => IrNodeKind::HardClamp,
+    IrNodeKind::Distortion {
+        drive: synth_engine_v2::quantities::NormalizedLevel::ZERO,
+        tone: synth_engine_v2::quantities::NormalizedLevel::FULL,
+        mix: synth_engine_v2::quantities::NormalizedLevel::FULL,
+    } => IrNodeKind::Distortion { .. },
+    IrNodeKind::Delay {
+        time_left: synth_engine_v2::quantities::DelayTime::MIN,
+        time_right: synth_engine_v2::quantities::DelayTime::MIN,
+        feedback: synth_engine_v2::quantities::DelayFeedback::ZERO,
+        mix: synth_engine_v2::quantities::NormalizedLevel::ZERO,
+        tone: synth_engine_v2::quantities::NormalizedLevel::FULL,
+    } => IrNodeKind::Delay { .. },
     IrNodeKind::Sampler {
         map: synth_engine_v2::sample::SampleMapRef::new(0),
         level: level(1.0),
@@ -527,6 +539,8 @@ fn every_kernel_admits_exactly_one_channel_on_every_port() {
                 | IrNodeKind::Trim { .. }
                 | IrNodeKind::SoftClip
                 | IrNodeKind::HardClamp
+                | IrNodeKind::Distortion { .. }
+                | IrNodeKind::Delay { .. }
         ) {
             ChannelLayout::Stereo
         } else {

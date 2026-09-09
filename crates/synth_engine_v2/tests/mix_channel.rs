@@ -648,6 +648,8 @@ fn a_channel_and_a_sum_admit_exactly_two_channels_on_every_port() {
                 | NodeKindId::Trim
                 | NodeKindId::SoftClip
                 | NodeKindId::HardClamp
+                | NodeKindId::Distortion
+                | NodeKindId::Delay
         );
         if !two {
             continue;
@@ -665,6 +667,18 @@ fn a_channel_and_a_sum_admit_exactly_two_channels_on_every_port() {
                 },
                 NodeKindId::SoftClip => IrNodeKind::SoftClip,
                 NodeKindId::HardClamp => IrNodeKind::HardClamp,
+                NodeKindId::Distortion => IrNodeKind::Distortion {
+                    drive: synth_engine_v2::quantities::NormalizedLevel::ZERO,
+                    tone: synth_engine_v2::quantities::NormalizedLevel::FULL,
+                    mix: synth_engine_v2::quantities::NormalizedLevel::FULL,
+                },
+                NodeKindId::Delay => IrNodeKind::Delay {
+                    time_left: synth_engine_v2::quantities::DelayTime::MIN,
+                    time_right: synth_engine_v2::quantities::DelayTime::MIN,
+                    feedback: synth_engine_v2::quantities::DelayFeedback::ZERO,
+                    mix: synth_engine_v2::quantities::NormalizedLevel::ZERO,
+                    tone: synth_engine_v2::quantities::NormalizedLevel::FULL,
+                },
                 _ => IrNodeKind::Mix,
             };
             for port in ports(sample, layout) {
