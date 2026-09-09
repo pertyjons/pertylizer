@@ -6576,3 +6576,5 @@ fn each_mod_matrix_macro_lowers_once_at_v1s_target_scale_and_in_its_scope() {
         assert_eq!(ids.len(), ir.nodes().len());
     }
 }
+
+mod phase7;

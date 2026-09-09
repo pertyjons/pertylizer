@@ -1500,18 +1500,30 @@ YAMS Audio:   per-sample audio processing
 
 ### Exit gate
 
-- [ ] A time-varying Control YAMS program produces sample-identical output under multiple host-callback partitions;
-      a constant-output fixture alone is not cadence evidence.
-- [ ] Audio YAMS remains bounded and allocation-free at maximum configured block
-      size and voice count.
-- [ ] A missing, cyclic, or scope-invalid binding is rejected by the compiler
-      with a source-level diagnostic.
-- [ ] Automation of a YAMS local parameter uses the same parameter pipeline as a
-      native module.
-- [ ] Removing or renaming a script parameter cannot silently retarget an
-      automation lane.
-- [ ] Mod Matrix, Mod Grid, and YAMS contributions have one documented combine
-      order.
+- [x] A time-varying Control YAMS program produces sample-identical output under multiple host-callback partitions;
+      a constant-output fixture alone is not cadence evidence — held by
+      `tests/scripts.rs` on a stateful quantum counter under one-frame and
+      irregular partitions, and under a project seed by `tests/determinism.rs`.
+- [x] Audio YAMS remains bounded and allocation-free at maximum configured block
+      size and voice count — the counting allocator armed before the first
+      render at both maxima, the work counted independently, the VM in the
+      purity scan.
+- [x] A missing, cyclic, or scope-invalid binding is rejected by the compiler
+      with a source-level diagnostic — each refusal carries the authored span,
+      in the Control, Audio and Note domains.
+- [x] Automation of a YAMS local parameter uses the same parameter pipeline as a
+      native module — a local knob is a declared control in the one slot type.
+- [x] Removing or renaming a script parameter cannot silently retarget an
+      automation lane — a lane targets the stable local key and is orphaned
+      with a diagnostic otherwise.
+- [x] Mod Matrix, Mod Grid, and YAMS contributions have one documented combine
+      order — a saved Mod Matrix slot, a saved Mod Grid target and a Control
+      script into one cutoff render as the plain graph driven by the sum in
+      the law's units, then the law, an override replacing only the base
+      (`lowering::tests::phase7`).
+
+The gate is reviewed in [REV-P07](reviews/phase-07-exit-review.md). The seed clause
+Phase 6 carried as `P06-R001` closes here.
 
 ## Phase 8: Mixer, channels, buses, effects, and latency
 

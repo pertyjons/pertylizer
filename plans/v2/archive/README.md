@@ -50,7 +50,10 @@ archive/
 ├── phase-05/
 │   ├── INDEX.md
 │   └── slices.md
-└── phase-06/
+├── phase-06/
+│   ├── INDEX.md
+│   └── slices.md
+└── phase-07/
     ├── INDEX.md
     └── slices.md
 ```

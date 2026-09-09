@@ -8,9 +8,10 @@
 //! run to run, across every host block partition, through the offline render, and through
 //! the live boundary — and the report's counts agree with the renders.
 //!
-//! What it does not hold is a **project seed**: nothing in V2 consumes randomness, no node
-//! kind has a seed, and what a seed is belongs to Phase 7's ADR-0008. The exit review
-//! carries that clause as a named residual rather than claiming it.
+//! P07-S008 closes P06-R001 with per-voice Control and Audio randomness. The same
+//! seed is held across fresh compilation, partitions, offline and simulated live
+//! rendering; a different seed must change actual samples. Authored Note uses
+//! its exclusive finite-source tests in `authored::tests`.
 
 mod common;
 use synth_engine_v2::identity::ProducerId;
@@ -129,7 +130,19 @@ fn live_declarations() -> PlanDeclarations {
 /// A pitched voice — sine through an envelope-driven amplifier — so a note's key, its
 /// instance and its steal are all audible in the samples.
 fn voice(declarations: PlanDeclarations) -> CompiledPlan {
-    let ir = GraphIr::builder()
+    seeded_voice(declarations, None)
+}
+
+fn seeded_voice(declarations: PlanDeclarations, seed: Option<u64>) -> CompiledPlan {
+    use synth_engine_v2::{
+        ir::{ModulationDepth, ModulationUnit, parameters},
+        script::{
+            ProjectSeed, ScriptBinding, ScriptChannel, ScriptIdentity, ScriptSource, ScriptStateId,
+        },
+    };
+    const CONTROL: NodeId = NodeId::new(5);
+    const AUDIO: NodeId = NodeId::new(6);
+    let mut builder = GraphIr::builder()
         .node(
             SOURCE,
             IrNodeKind::Sine {
@@ -161,13 +174,49 @@ fn voice(declarations: PlanDeclarations) -> CompiledPlan {
             (AMPLIFIER, synth_engine_v2::node::AMPLIFIER_CONTROL),
             SignalDomain::Control,
         )
+        .tuning(ExecutionScope::Voice, common::twelve_tet())
+        .declaring(declarations);
+    let final_source = if let Some(seed) = seed {
+        let rate = common::rate(48_000.0);
+        let control = ScriptIdentity::new(CONTROL, ScriptStateId::new(10), ProjectSeed::new(seed))
+            .compile_control("out = rand(-1, 1)", rate, &[])
+            .expect("Control program");
+        let audio = ScriptIdentity::new(AUDIO, ScriptStateId::new(11), ProjectSeed::new(seed))
+            .compile_audio(
+                "out = in * (0.75 + rand() * 0.25)",
+                rate,
+                ChannelLayout::Mono,
+                &[ScriptBinding {
+                    input: synth_script::compile::SourceInput::AudioIn(
+                        synth_core::script::AudioInputChannel::Left,
+                    ),
+                    source: ScriptSource::AudioSignal {
+                        node: AMPLIFIER,
+                        port: PortId::FIRST,
+                        layout: ChannelLayout::Mono,
+                        channel: ScriptChannel::Left,
+                    },
+                }],
+            )
+            .expect("Audio program");
+        builder = builder
+            .script(control, ExecutionScope::Voice)
+            .script(audio, ExecutionScope::Voice)
+            .modulate(
+                (CONTROL, PortId::FIRST),
+                (SOURCE, parameters::SINE_FREQUENCY),
+                ModulationDepth::new(ModulationUnit::Semitones, 3.0).expect("depth"),
+            );
+        AUDIO
+    } else {
+        AMPLIFIER
+    };
+    let ir = builder
         .connect(
-            (AMPLIFIER, PortId::FIRST),
+            (final_source, PortId::FIRST),
             (OUTPUT, PortId::FIRST),
             SignalDomain::Audio,
         )
-        .tuning(ExecutionScope::Voice, common::twelve_tet())
-        .declaring(declarations)
         .build()
         .expect("a readable plan");
     common::admit(&ir, common::profile(TOTAL as u64, ChannelLayout::Mono))
@@ -410,4 +459,47 @@ fn the_live_boundary_under_stealing_pressure_is_bit_identical_run_to_run_and_to_
     let (again, released_again) = render_live(&live_plan);
     assert_same(&again, &live, "a second live run");
     assert_eq!(released_again, released_after_steal);
+}
+
+#[test]
+fn fixed_project_seed_survives_stealing_recompile_partitions_offline_and_live() {
+    let plan = seeded_voice(compiled_declarations(), Some(91));
+    let (expected, steals) = render_compiled(&plan, &WHOLE);
+    assert_eq!(steals, 3);
+    assert!(expected.iter().filter(|sample| **sample != 0.0).count() > TOTAL / 2);
+    for partition in [
+        &WHOLE[..],
+        &BLOCKS_256[..],
+        &BLOCKS_64[..],
+        &IRREGULAR[..],
+        &vec![1; TOTAL][..],
+    ] {
+        let fresh = seeded_voice(compiled_declarations(), Some(91));
+        let (actual, count) = render_compiled(&fresh, partition);
+        assert_eq!(count, steals);
+        assert_same(&actual, &expected, "seeded compiled partition");
+    }
+    let offline = render_offline(&plan);
+    assert_same(
+        &offline[..TOTAL - Q as usize],
+        &expected[Q as usize..],
+        "seeded offline priming",
+    );
+    let fresh = seeded_voice(compiled_declarations(), Some(91));
+    assert_same(&render_offline(&fresh), &offline, "fresh seeded offline");
+    for _ in 0..2 {
+        let live = seeded_voice(live_declarations(), Some(91));
+        let (actual, released) = render_live(&live);
+        assert_eq!(released, u64::try_from(steals).expect("count fits"));
+        assert_same(&actual, &expected, "seeded simulated live");
+    }
+    let changed = seeded_voice(compiled_declarations(), Some(92));
+    assert!(
+        render_compiled(&changed, &WHOLE)
+            .0
+            .iter()
+            .zip(&expected)
+            .any(|(a, b)| a.to_bits() != b.to_bits()),
+        "the seed changes actual sound"
+    );
 }

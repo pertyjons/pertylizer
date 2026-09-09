@@ -31,7 +31,7 @@ accepted exit review. `NOW.md` owns task activity within an active phase.
 | [4](master-plan.md#phase-4-current-project-lowering-and-offline-ab-path) | Current-project lowering and bounded V2 render | Complete | 3 |
 | [5](master-plan.md#phase-5-declarative-node-and-parameter-api) | Declarative node and parameter API | Complete | 4 |
 | [6](master-plan.md#phase-6-polyphony-and-instrument-runtime) | Polyphony and instrument runtime | Complete | 5 |
-| [7](master-plan.md#phase-7-yams-mod-grid-and-unified-modulation) | YAMS, Mod Grid, and unified modulation | Active | 6 |
+| [7](master-plan.md#phase-7-yams-mod-grid-and-unified-modulation) | YAMS, Mod Grid, and unified modulation | Complete | 6 |
 | [8](master-plan.md#phase-8-mixer-channels-buses-effects-and-latency) | Mixer, channels, buses, effects, and latency | Not started | 7 |
 | [9](master-plan.md#phase-9-live-integration-and-immutable-plan-swapping) | Live integration and immutable plan swapping | Not started | 8 |
 | [10A](master-plan.md#phase-10a-canonical-project-model-and-stable-identity) | Canonical project model and stable identity | Not started | 0B |
