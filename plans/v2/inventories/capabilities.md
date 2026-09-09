@@ -4,7 +4,7 @@
 |---------------|------------|
 | Status        | Active     |
 | Phase         | 00B        |
-| Last reviewed | 2026-08-12 |
+| Last reviewed | 2026-09-09 (project-action subset only) |
 
 This ledger covers every shipped or externally consumed capability and assigns it a deliberate V2 disposition.
 
@@ -40,13 +40,14 @@ subsystems.
 
 Entries use `CAP-NNNN` identifiers. Next free identifier: `CAP-0509`.
 
-Passes 1 and 2 were a **surface census**; pass 3 added the per-item enumeration the master plan requires. No entry in
-this ledger has a disposition yet.
+Passes 1 and 2 were a **surface census**; pass 3 added the per-item enumeration the master plan requires.
+The [2026-09-09 project-action inspection](#project-actions-2026-09-09) assigns `Migrate` to seven existing
+capabilities: `CAP-0048` through `CAP-0053`, and `CAP-0055`. All other dispositions remain open.
 
 **Status rule.** The [register vocabulary](README.md) defines `Classified` as required fields *and* disposition filled
-with supporting evidence. Because no disposition has been assigned, **no entry here may be `Classified`**, however well
-understood it is. Entries whose facts are settled but whose disposition is open stay `Discovered` or `Investigating`.
-Assigning dispositions is the remaining work of P00B-T002, not a documentation formality.
+with supporting evidence. The seven inspected rows meet that classification threshold, not migration verification.
+Entries whose disposition is open stay `Discovered` or `Investigating`. `Verified` requires the named migration
+checks to pass; source inspection alone does not establish implemented V2 behavior. P00B-T002 remains incomplete.
 
 ### MCP protocol surface (219 tools)
 
@@ -128,17 +129,19 @@ the view that owns it and is not an app-level capability.
 
 | ID       | Surface      | Capability                                                                                       | Reachable from                                                                     | Disposition | V2 owner/replacement | Evidence                                                      | Status        |
 |----------|--------------|--------------------------------------------------------------------------------------------------|------------------------------------------------------------------------------------|-------------|----------------------|---------------------------------------------------------------|---------------|
-| CAP-0048 | GUI action   | `New` project — `Cmd/Ctrl+N`                                                                     | Menu and shortcut, one dispatch table (`gui/shortcuts.rs`)                         |             |                      |                                                               | Discovered    |
-| CAP-0049 | GUI action   | `Open` project — `Cmd/Ctrl+O`                                                                    | Same                                                                               |             |                      |                                                               | Discovered    |
-| CAP-0050 | GUI action   | `Save` — `Cmd/Ctrl+S`, prompts for a path when the project has none                              | Same                                                                               |             |                      | Carries the layout overlay (`STATE-0027`)                     | Discovered    |
-| CAP-0051 | GUI action   | `Save As` — `Shift+Cmd/Ctrl+S`                                                                   | Same                                                                               |             |                      | Moves the path a recovery snapshot is keyed by (`STATE-0057`) | Discovered    |
-| CAP-0052 | GUI action   | `Undo` — `Cmd/Ctrl+Z`                                                                            | Same                                                                               |             |                      | 60 action variants; see `LIMIT-0063`, `IDN-0027`              | Discovered    |
-| CAP-0053 | GUI action   | `Redo` — `Shift+Cmd/Ctrl+Z`                                                                      | Same                                                                               |             |                      |                                                               | Discovered    |
-| CAP-0054 | GUI action   | `Toggle playback` — `Space`, gated so it never fires while text is focused                       | Same                                                                               |             |                      |                                                               | Discovered    |
-| CAP-0055 | GUI workflow | Recovery offer at startup — decides which document the session opens in, before any other dialog | `gui/egui_backend/dialog_flow.rs`, only when a snapshot supersedes the manual save |             |                      | See `STATE-0054`; ADR-0024                                    | Investigating |
+| CAP-0048 | GUI action | `New` project — Cmd/Ctrl+N | Default `gui-egui` build: File menu and `handle_app_shortcuts` → `request_new_project` | Migrate | Application Core document lifecycle over Project Core; core lifecycle in 10A–10C; frontend confirmation in 11 | [New/Open trace](#new-and-open); `STATE-0058`, `STATE-0059` | Classified |
+| CAP-0049 | GUI action | `Open` project — Cmd/Ctrl+O, including smart-open dispatch | Default `gui-egui` build: File menu and shortcut → `request_open_project`; Home Open also reaches the same file-dialog mode | Migrate | Project I/O decode/convert/validate; Application Core open; core work in 10A–10D; frontend path picker in 11 | [New/Open trace](#new-and-open); current-project format conversion belongs to 10D | Classified |
+| CAP-0050 | GUI action | `Save` — Cmd/Ctrl+S; requests a path for an untitled project | Default `gui-egui` build: File menu and shortcut → `save_current_project` → `save_current_project_outcome` | Migrate | Application Core save coordinator over a canonical Project Core snapshot; Project I/O writer (10C/10D); GUI adapter (11) | [Save trace](#save-and-save-as); `STATE-0027`, `STATE-0031`, `STATE-0032`, `STATE-0058` | Classified |
+| CAP-0051 | GUI action | `Save As` — Shift+Cmd/Ctrl+S; select a new output path | Default `gui-egui` build: File menu and shortcut → `open_save_project_as_dialog` → SaveProject file-dialog result | Migrate | Application Core save coordination and recovery association; Project I/O (10C/10D); frontend path picker (11) | [Save trace](#save-and-save-as); `STATE-0057` | Classified |
+| CAP-0052 | GUI action | `Undo` — Cmd/Ctrl+Z; reverse the last recorded edit | Default `gui-egui` build: Edit menu (enabled by `can_undo`) and shortcut → `execute_undo` | Migrate | Application Core history over canonical operations (10B/10C); representation remains ADR-0015; GUI adapter in 11 | [History trace](#undo-and-redo); `STATE-0058`, `STATE-0059`, `IDN-0027` | Classified |
+| CAP-0053 | GUI action | `Redo` — Shift+Cmd/Ctrl+Z; reapply the last undone edit | Default `gui-egui` build: Edit menu (enabled by `can_redo`) and shortcut → `execute_redo` | Migrate | Application Core history over canonical operations (10B/10C); representation remains ADR-0015; GUI adapter in 11 | [History trace](#undo-and-redo); `STATE-0058`, `STATE-0059` | Classified |
+| CAP-0054 | GUI action | `Toggle playback` — `Space`, gated so it never fires while text is focused | Default GUI build: application shortcut dispatcher → `toggle_playback` |  |  |  | Discovered |
+| CAP-0055 | GUI workflow | Startup recovery offer: recover or discard a retained unsaved project snapshot | Default `gui-egui` build: `SynthApp::new` → `check_for_recoverable_work`; `show_dialogs` draws the pending offer first | Migrate | Application Core recovery/save coordination (10C), Project I/O assets (10D), runtime-session scheduling; frontend prompt in 11 | [Recovery trace](#startup-recovery); `STATE-0054`, `STATE-0057`; recording-take commit is separate (ADR-0024) | Classified |
 
-`AppShortcut::ALL` is a closed 7-element table and the same source renders the menu binding it dispatches, so this
-enumeration is complete for app-level actions by construction rather than by search.
+`AppShortcut::ALL` enumerates seven application shortcuts at the inspected revision. The File menu uses
+`AppShortcut` bindings for New/Open/Save/Save As; the Edit menu invokes the same undo/redo handlers but hardcodes
+its shortcut labels. The table is not an exhaustive GUI-action census: view-local commands, other menu entries
+and the startup workflow have separate entry points. `CAP-0054` is outside this project-action slice.
 
 ## Per-item enumerations
 
@@ -656,6 +659,139 @@ reviewed, but Phase 9 still owns durable lifecycle and UI diagnostics.
 
 Next free identifier after this section: `CAP-0509`.
 
+## Project actions 2026-09-09
+
+This is one bounded slice of **P00B-T002**, inspected at `cf2edf5b`. It classifies six document/history
+shortcuts and the startup recovery offer, not the whole capability inventory. `Migrate` retains the user-facing
+capability under the existing [Application Core](../architecture/application-core.md) and
+[Project Core](../architecture/project-core.md) ownership targets. It does not require copying V1's engine commands,
+GUI mirrors, history representation, file encoding or failure behavior into V2. No ADR is accepted here.
+
+### Method and acceptance boundary
+
+Start with the six document/history entries in `AppShortcut::ALL`, follow the keyboard and menu dispatch to each handler,
+then read its state mutation and success/failure/cancellation branches. For recovery, start at app construction
+and follow the store selection, prompt and restore/discard handlers. Inspect the callees rather than relying on
+comments or the existence of a type. The source links below are relative to this checkout; the recorded revision
+pins the observations if later code changes.
+
+A row is classifiable only when a shipped entry point reaches the named behavior, its proposed owner follows
+the existing architecture, and the unresolved implementation checks have an owner. A missing dispatch, a callee
+that cannot perform the claimed action, or an owner inconsistent with the roadmap falsifies that classification.
+Those defects block acceptance; optional implementation detail does not. This is **source-inspection evidence**:
+no GUI interaction, filesystem failure injection, engine execution or migration test was run for these observations.
+Existing tests named below were read, not executed. The rows are `Classified`, never `Verified`.
+
+### New and Open
+
+`CAP-0048` and `CAP-0049` are reachable with the default `gui-egui` feature in
+[Cargo.toml](../../../crates/pertylizer/Cargo.toml). In
+[egui_backend.rs](../../../crates/pertylizer/src/gui/egui_backend.rs), `menu_file` and `handle_app_shortcuts`
+call `request_new_project` and `request_open_project`. Both check `is_dirty`; a dirty document arms a
+`PendingAction` rather than immediately replacing it. The shortcut gate and shifted-binding precedence live in
+[shortcuts.rs](../../../crates/pertylizer/src/gui/shortcuts.rs). Home's Open button has its own dispatch to the
+same OpenProject dialog mode; Recent Projects uses `load_recent_project` behind its own dirty check.
+
+In [project_flow.rs](../../../crates/pertylizer/src/gui/egui_backend/project_flow.rs),
+`show_unsaved_changes_dialog` distinguishes save success, failure and a deferred path request. Save success runs
+the pending action; an awaiting-path save retains it; failure or Cancel drops it. Don't Save calls `mark_saved`
+and proceeds. `reset_to_new_project` clears history, invokes the project reset, rebuilds UI state and clears the
+project path. The file-dialog result in
+[dialog_flow.rs](../../../crates/pertylizer/src/gui/egui_backend/dialog_flow.rs) calls `project::load_file` and
+dispatches project JSON, a standalone patch or a bundle. Project loading clears the sample library before apply;
+bundle loading supplies embedded samples before apply. A patch is loaded into the active instrument, not opened
+as a new whole-project document. These are branches of the existing smart-open surface, not three new CAP entries.
+
+**Failure boundary:** `apply_and_refresh_project` clears history before calling
+[project_apply::apply_project](../../../crates/pertylizer/src/project_apply.rs). It logs an apply error and
+still refreshes UI mirrors; its return type cannot report that error to the open handler, which can then mark the
+project saved and report a successful load. Reset similarly logs a failure and continues. Thus read/decode errors
+are surfaced, but the inspection does **not** establish atomic project replacement or preservation of the previous
+document on apply failure. Phase 10B/10C owns operation failure and revision handling; 10D owns decoding/conversion.
+
+### Save and Save As
+
+`CAP-0050` calls `save_current_project_outcome` in `project_flow.rs`: a known path goes to a write; an untitled
+project opens the SaveProject dialog and returns `AwaitingPath`. `CAP-0051` always opens that dialog. Its result
+handler in `dialog_flow.rs` performs the write and clears a deferred pending action on cancellation or failure;
+only a reported successful write executes the pending action. Direct-save failure returns `Failed`.
+
+Both write paths use `create_project_from_app`, which calls `build_project_from_engine` and then overlays active
+instrument selection and GUI metadata through `overlay_ui_metadata`. Module positions, groups and canvas size
+therefore come from the frontend at save time; see the ownership rows `STATE-0027`, `STATE-0031` and `STATE-0032`
+in [state-ownership.md](state-ownership.md). These links identify data owners, not a re-verification of every
+historical behavior claim in that ledger.
+
+The handlers use [project::normalize_project_path](../../../crates/pertylizer/src/project.rs) and select
+`ProjectFile::save` or [bundle::save_bundle](../../../crates/pertylizer/src/bundle.rs) according to whether the
+sample library is nonempty. Both writers call the atomic I/O helper. After reported success, the GUI updates the
+current path, calls `mark_saved` and updates recent projects. `mark_saved` captures a clean baseline and calls
+`retire_recovery_snapshot`, which attempts retirement under both the current and previously snapshotted paths.
+This covers Save As association changes in the code, not a tested race guarantee.
+
+**Failure boundary:** sample-library lock failures can select a plain-project write; no claim of sample-complete
+save under those failures follows from writer success. The GUI captures its baseline after writing; this is not
+V2's revision-pinned save receipt. Phase 10A owns canonical snapshots, 10C owns save/dirty/recovery coordination,
+and 10D owns format conversion and asset integrity. Choosing a V2 format or Save As identity/fork rule is outside this slice.
+
+### Undo and Redo
+
+`CAP-0052` and `CAP-0053` reach `execute_undo` and `execute_redo` in
+[undo_flow.rs](../../../crates/pertylizer/src/gui/egui_backend/undo_flow.rs). The Edit menu enables each button
+from `can_undo`/`can_redo`; the shortcuts call the same handlers and an empty stack yields no action. Undo first
+refreshes a top-of-stack effect-addition snapshot, then obtains the inverse from
+[UndoManager::undo](../../../crates/pertylizer/src/undo.rs). Redo obtains the original action from
+`UndoManager::redo`. Both call `apply_undo_action`, whose branches mutate song/UI/sample state or send engine
+commands. This is the reachable GUI history mechanism, not evidence that every GUI or MCP mutation is undoable.
+
+`UndoManager` moves an entry between stacks **before** the application handler executes it. The handler returns
+no common success receipt. `is_dirty` in `egui_backend.rs` uses history position first, then the untracked-mutation
+latch and revision comparison; it does not simply equate equal stack depths with equal documents. The existing
+`undoing_every_edit_returns_to_the_saved_position` and
+`a_new_edit_after_undoing_past_the_save_is_not_the_saved_position` tests exercise the manager's position model,
+not end-to-end undo application or error rollback. Phase 10B/10C owns canonical operations, history and failure
+semantics. ADR-0015 remains the open representation question; no particular inverse-command design is mandated.
+
+### Startup recovery
+
+`CAP-0055` starts at `SynthApp::new` calling `check_for_recoverable_work`. In
+[autosave_flow.rs](../../../crates/pertylizer/src/gui/egui_backend/autosave_flow.rs), that calls
+[RecoveryStore::find_recoverable](../../../crates/pertylizer/src/recovery.rs), which prunes and selects the newest
+eligible snapshot. `supersedes_manual_save` compares snapshot time to the manual file's modification time;
+untitled snapshots and snapshots whose manual file is missing or unreadable are also eligible. `show_dialogs`
+draws the pending recovery offer before other dialogs. Opening the store can fail and disable autosave with a log.
+
+The per-frame `tick_autosave` checks dirty state, the pending recovery offer, the attempt interval, the last
+snapshotted revision and whether a write is already in flight. Capture uses `create_project_from_app`; a worker
+writes the snapshot and optional sample library. `poll_autosave` consumes its result without marking the manual
+project saved. `accept_recovery` chooses bundle or plain loading, restores the original project path and marks
+the result dirty after reported success. `decline_recovery` attempts to delete the snapshot. The existing
+`a_snapshot_round_trips` and `a_snapshot_of_a_project_with_samples_keeps_the_samples` tests exercise store payloads;
+they do not exercise the GUI prompt, all metadata, in-flight retirement or failed project application.
+
+**Failure boundary:** recovery inherits the apply-error propagation limit above; the prompt is cleared after
+Recover even when loading reports an error. Snapshot retirement does not wait for `in_flight`, so this inspection
+does not establish that a worker cannot recreate a just-retired snapshot. These are verification targets, not
+runtime reproductions or fixes in this slice. Phase 10C owns recovery coordination; 10D owns its document/assets.
+`STATE-0054`/`STATE-0057` identify the runtime-session state. ADR-0024's recording-take commit semantics are a
+different capability and do not determine whether this project-recovery offer migrates.
+
+### Migration checks still owed
+
+The [roadmap](../ROADMAP.md) already assigns these implementation boundaries. The checks below state what would
+falsify successful migration of this subset; none has passed here and none closes P00B-T004/T005 or Phase 0B.
+
+| Capabilities | Owner | Observable check before `Verified` |
+|---|---|---|
+| CAP-0048, CAP-0049 | 10B/10C lifecycle; 10D conversion; 11 GUI | Invoke through direct Application operations and the GUI adapter; dirty confirmation, deferred save, cancel and save failure must not accidentally replace the document. Inject open/apply failure and verify the reported effect and resulting revision agree with the state actually retained. Exercise project, patch and bundle branches under their explicit conversion dispositions. |
+| CAP-0050, CAP-0051 | 10C save/history; 10D format/assets; 11 GUI | Save and reopen the captured canonical revision with editor metadata and samples intact. A later edit stays dirty; a failed write reports failure and does not advance the saved revision. Save As updates its destination/recovery association only on success. Exercise an in-flight autosave across save, Save As and discard. |
+| CAP-0052, CAP-0053 | 10B operations; 10C history; 11 GUI | Undo/redo recorded edits through the canonical operation boundary; compare snapshots and stable references. Divergent edits at equal history depth must remain distinct. Inject operation failure and verify history, effect and revision stay consistent under the selected failure contract. |
+| CAP-0055 | 10C recovery; 10D assets; 11 GUI | Recover a sample-bearing snapshot with metadata, assets and original save association intact and still dirty; test discard, unreadable/corrupt input and failed apply. Assert a pending offer is not overwritten and an in-flight worker cannot resurrect work after its retirement under the selected recovery contract. |
+
+Remaining P00B-T002 work includes every other capability disposition and the incomplete per-action GUI census.
+MCP/CLI/OSC behavior, live transport (`CAP-0054`), Phase 8 mixing/effects and public-facade decisions were not audited.
+The source traces above are supporting inventory evidence, not the complete workflow or round-trip evidence tasks.
+
 ## Audit passes
 
 | Date       | Source revision | Discovery method                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  | Coverage/result                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       | Evidence                           |
@@ -663,6 +799,7 @@ Next free identifier after this section: `CAP-0509`.
 | 2026-08-12 | `dd69b657`      | MCP tools counted by parsing `#[tool(...)]` attributes and their following `async fn` in `crates/synth_mcp/src/server/tools/*.rs` and `server.rs` (219 unique, per-module breakdown recorded above). `EngineCommand`/`EngineEvent`/`ModuleType` counted with a brace-depth-aware top-level variant parser. Built-in patches counted from `pub use …::patch_*` in `crates/pertylizer/src/patches/mod.rs`. Group templates read from `categorized_group_templates()`. CLI read from `crates/pertylizer/src/main.rs`. OSC addresses counted in `crates/synth_osc_protocol/src/lib.rs`. GUI surfaces enumerated by module listing, **not** by action. | 47 entries; all four seeds reproduce. Known gaps: GUI capabilities are listed per view rather than per action/menu/shortcut, so no GUI *action* is yet individually classified; no entry has a disposition; per-item rows for the 219 tools, 76 commands, 75 module types, and 68 patches are pass-2 work.                                                                                                                                                                                                                                                                                                                            | Pending `EVD` record for P00B-T002 |
 | 2026-08-12 | `dd69b657`      | `AppShortcut::ALL` read from `gui/shortcuts.rs` (a closed 7-element table that also renders the menu); MCP annotation attributes counted by `rg -o` over `read_only_hint`/`destructive_hint`/`idempotent_hint`; `dialog_flow.rs` read for the startup ordering.                                                                                                                                                                                                                                                                                                                                                                                   | 8 entries added (`CAP-0048`..`CAP-0055`); `CAP-0011` upgraded to `Classified` once the read/mutate split was separated — annotation coverage turned out to be complete. Gaps remained deliberate at that pass: no entry yet had a disposition, and CAP-0017's external use was unknown. Current correction: CAP-0017 is a public Rust surface even without a workspace caller, and proposed ADR-0039 supplies an explicit disposition for independent review. | Pending `EVD` record for P00B-T002 |
 | 2026-08-25 | `c075ef10` | The shipping CPAL 0.18.1 output/input callbacks at this revision and the candidate CPAL 0.18.2 registry source identified by the updated `Cargo.lock` checksum were read. Every 0.18.2 `ErrorKind` was enumerated, and the stderr-only baseline consumer was traced before this change replaced it with an atomic handoff. | Added `CAP-0508`. The category labels preserve CPAL 0.18.2's richer distinction; the replacement callback path is allocation-, lock-, and logging-free, while non-real-time GUI/MCP polling surfaces coalesced diagnostics and the row leaves durable structured delivery as Phase 9 work. | `Cargo.lock`; `cpal_backend.rs`; EVD-0016; independent uncommitted review |
+| 2026-09-09 | `cf2edf5b` | Followed six document/history shortcuts and their menu handlers, plus startup recovery, into GUI project/dialog/history/autosave flows and their project/store callees; read the named existing tests without running them. | Seven rows (`CAP-0048`–`CAP-0053`, `CAP-0055`) assigned `Migrate` and `Classified`; V2 owners and pending checks named. Corrected the all-menu-bindings claim and separated project recovery from recording-take semantics. Other rows retain their previous status; P00B-T002 remains incomplete. | [Source inspection and limits](#project-actions-2026-09-09) |
 
 Completion requires each discovered entry to have reachability, disposition, V2 ownership, and verification. Matching
 the seed counts alone is insufficient.
