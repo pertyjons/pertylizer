@@ -1177,6 +1177,9 @@ pub struct AutomationTargets {
     envelope: Option<(NodeId, ModuleDescriptor)>,
     /// The instrument's mix channel, when one was inserted.
     channel: Option<NodeId>,
+    /// The channel's post-fader sends (`P08-S004`), which carry the channel's fader and pan
+    /// again and so take every write the channel's take.
+    post_fader_sends: Vec<NodeId>,
     /// The instrument's balance stage and the tracks whose control it carries.
     balance: Option<(NodeId, Vec<TrackId>)>,
 }
@@ -1198,6 +1201,7 @@ impl AutomationTargets {
             filter: first(ModuleType::Filter),
             envelope: first(ModuleType::Envelope),
             channel: None,
+            post_fader_sends: Vec::new(),
             balance: None,
         }
     }
@@ -1205,6 +1209,13 @@ impl AutomationTargets {
     /// With the instrument's mix channel, where its volume and pan lanes land.
     pub fn with_channel(mut self, channel: NodeId) -> Self {
         self.channel = Some(channel);
+        self
+    }
+
+    /// With the channel's post-fader sends, which its volume and pan lanes fan out to
+    /// (`P08-S004`): V1 forms each tap's gain from the channel's current fader and pan.
+    pub fn with_post_fader_sends(mut self, sends: Vec<NodeId>) -> Self {
+        self.post_fader_sends = sends;
         self
     }
 
@@ -1280,42 +1291,53 @@ impl AutomationTargets {
         &self,
         param: AutoInstrumentParam,
         value: NormalizedValue,
-    ) -> Result<Option<(NodeId, ParameterId, ParameterValue, Restore)>, String> {
+    ) -> Result<Vec<(NodeId, ParameterId, ParameterValue, Restore)>, String> {
         // V1's channel state, set directly: `set_volume(Gain::new(value))` and
-        // `set_pan(BipolarValue::new(value × 2 − 1))`, and never restored.
+        // `set_pan(BipolarValue::new(value × 2 − 1))`, and never restored. The channel's
+        // post-fader sends read the same state (`P08-S004`), so the write fans out to each.
         match param {
             AutoInstrumentParam::Volume => {
                 let Some(channel) = self.channel else {
-                    return Ok(None);
+                    return Ok(Vec::new());
                 };
                 let level = synth_engine_v2::quantities::Amplitude::new(value.as_f32())
                     .map_err(|error| error.to_string())?;
-                return Ok(Some((
-                    channel,
-                    parameters::CHANNEL_FADER,
-                    ParameterValue::from_amplitude(level),
-                    Restore::Never,
-                )));
+                let value = ParameterValue::from_amplitude(level);
+                let mut writes = vec![(channel, parameters::CHANNEL_FADER, value, Restore::Never)];
+                for send in &self.post_fader_sends {
+                    writes.push((
+                        *send,
+                        parameters::POST_FADER_SEND_FADER,
+                        value,
+                        Restore::Never,
+                    ));
+                }
+                return Ok(writes);
             }
             AutoInstrumentParam::Pan => {
                 let Some(channel) = self.channel else {
-                    return Ok(None);
+                    return Ok(Vec::new());
                 };
                 let pan = synth_engine_v2::controller::BipolarLevel::new(
                     BipolarValue::new(value.as_f32() * 2.0 - 1.0).as_f32(),
                 )
                 .map_err(|error| error.to_string())?;
-                return Ok(Some((
-                    channel,
-                    parameters::CHANNEL_PAN,
-                    ParameterValue::from_bipolar(pan),
-                    Restore::Never,
-                )));
+                let value = ParameterValue::from_bipolar(pan);
+                let mut writes = vec![(channel, parameters::CHANNEL_PAN, value, Restore::Never)];
+                for send in &self.post_fader_sends {
+                    writes.push((
+                        *send,
+                        parameters::POST_FADER_SEND_PAN,
+                        value,
+                        Restore::Never,
+                    ));
+                }
+                return Ok(writes);
             }
             _ => {}
         }
         let Some((kind, _, key)) = crate::mod_grid_build::instrument_param_module(param) else {
-            return Ok(None);
+            return Ok(Vec::new());
         };
         let resolved = match kind {
             ModuleType::Filter => self.filter.as_ref(),
@@ -1323,7 +1345,7 @@ impl AutomationTargets {
             _ => None,
         };
         let Some((node, declarations)) = resolved else {
-            return Ok(None);
+            return Ok(Vec::new());
         };
         // V1's own range and curve: the descriptor's `denormalize`, which clamps the lane's
         // value into `[0, 1]` and maps it as the widget does — logarithmic for the corner,
@@ -1366,9 +1388,9 @@ impl AutomationTargets {
                     .map(ParameterValue::from_level)
                     .map_err(|error| error.to_string())?,
             ),
-            AutoInstrumentParam::Volume | AutoInstrumentParam::Pan => return Ok(None),
+            AutoInstrumentParam::Volume | AutoInstrumentParam::Pan => return Ok(Vec::new()),
         };
-        Ok(Some((*node, parameter, value, Restore::AtSongEnd)))
+        Ok(vec![(*node, parameter, value, Restore::AtSongEnd)])
     }
 
     /// The write a track lane's emission becomes on this instrument's balance stage.
@@ -1785,14 +1807,17 @@ pub(super) fn lower_project_performance(
             LaneTarget::Instrument(id, param) => instruments
                 .iter()
                 .find(|instrument| instrument.id == id)
-                .map_or(Ok(None), |instrument| {
+                .map_or(Ok(Vec::new()), |instrument| {
                     instrument.targets.override_value(param, write.value)
                 }),
             LaneTarget::Track(track, param) => instruments
                 .iter()
                 .find(|instrument| instrument.targets.carries(track))
-                .map_or(Ok(None), |instrument| {
-                    instrument.targets.track_value(param, write.value)
+                .map_or(Ok(Vec::new()), |instrument| {
+                    instrument
+                        .targets
+                        .track_value(param, write.value)
+                        .map(|write| write.into_iter().collect())
                 }),
             // V1's `apply_global_automation`: `value.clamp(0.0, 2.0)`, set and never
             // restored.
@@ -1801,21 +1826,22 @@ pub(super) fn lower_project_performance(
                     write.value.as_f32().clamp(0.0, 2.0),
                 )
                 .map(|level| {
-                    Some((
+                    vec![(
                         trim,
                         parameters::TRIM_LEVEL,
                         ParameterValue::from_amplitude(level),
                         Restore::Never,
-                    ))
+                    )]
                 })
                 .map_err(|error| error.to_string()),
-                None => Ok(None),
+                None => Ok(Vec::new()),
             },
         };
-        let (node, parameter, value, restore) = match resolved {
-            // V1's no-op: no module of the type, so the lane is inert there and here.
-            Ok(None) => continue,
-            Ok(Some(resolved)) => resolved,
+        // One emission may land on several nodes (`P08-S004`): the channel's fader and every
+        // post-fader send's copy of it. An empty list is V1's no-op: no module of the type,
+        // so the lane is inert there and here.
+        let writes = match resolved {
+            Ok(writes) => writes,
             Err(value) => {
                 diagnostics.push(LoweringDiagnostic::refused(
                     subject(),
@@ -1824,44 +1850,46 @@ pub(super) fn lower_project_performance(
                 return refused(diagnostics);
             }
         };
-        // Every lowered kind declares its targets as controls, so a plan that compiled
-        // addresses each; a refusal here rather than a skip, so a declaration that narrows
-        // is found rather than silenced.
-        let Some(slot) = plan.resolve_parameter(node, parameter) else {
-            diagnostics.push(LoweringDiagnostic::refused(
-                subject(),
-                LoweringReason::UnsupportedParameterValue {
-                    value: format!(
-                        "{} addresses a control the plan does not declare",
-                        write.target.display_name()
-                    ),
-                },
-            ));
-            return refused(diagnostics);
-        };
-        events.push(OfflineEvent::new(
-            SampleTime::new(write.position),
-            CompiledPayload::SetParameter { slot, value },
-        ));
-        if restore == Restore::AtSongEnd && !touched.iter().any(|(known, _)| *known == slot) {
-            // The compiled base is the prepared value, which is the authored one.
-            let Some(base) = plan
-                .parameter_targets()
-                .get(slot.index())
-                .map(|target| target.base)
-            else {
+        for (node, parameter, value, restore) in writes {
+            // Every lowered kind declares its targets as controls, so a plan that compiled
+            // addresses each; a refusal here rather than a skip, so a declaration that
+            // narrows is found rather than silenced.
+            let Some(slot) = plan.resolve_parameter(node, parameter) else {
                 diagnostics.push(LoweringDiagnostic::refused(
                     subject(),
                     LoweringReason::UnsupportedParameterValue {
                         value: format!(
-                            "{} resolves to a slot the plan's target table does not hold",
+                            "{} addresses a control the plan does not declare",
                             write.target.display_name()
                         ),
                     },
                 ));
                 return refused(diagnostics);
             };
-            touched.push((slot, base));
+            events.push(OfflineEvent::new(
+                SampleTime::new(write.position),
+                CompiledPayload::SetParameter { slot, value },
+            ));
+            if restore == Restore::AtSongEnd && !touched.iter().any(|(known, _)| *known == slot) {
+                // The compiled base is the prepared value, which is the authored one.
+                let Some(base) = plan
+                    .parameter_targets()
+                    .get(slot.index())
+                    .map(|target| target.base)
+                else {
+                    diagnostics.push(LoweringDiagnostic::refused(
+                        subject(),
+                        LoweringReason::UnsupportedParameterValue {
+                            value: format!(
+                                "{} resolves to a slot the plan's target table does not hold",
+                                write.target.display_name()
+                            ),
+                        },
+                    ));
+                    return refused(diagnostics);
+                };
+                touched.push((slot, base));
+            }
         }
     }
     // V1 clears every transient override when its transport stops, and the offline

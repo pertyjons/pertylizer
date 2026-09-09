@@ -67,6 +67,7 @@ use synth_engine_v2::ir::{
     ExecutionScope, GraphIr, IrNodeKind, NodeId, NoteProducerDeclaration, PlanDeclarations, PortId,
     SignalDomain,
 };
+
 use synth_engine_v2::quantities::{
     Amplitude, CutoffFrequency, EventCount, Frequency, HeldNoteCount, NormalizedLevel, Resonance,
     Seconds,
@@ -173,11 +174,30 @@ pub struct TrackStage {
     pub muted: bool,
 }
 
+/// One send from an instrument's channel into a bus (`P08-S004`, `SOUND-INV-034`).
+///
+/// What V1's `apply_send_tap` taps per resolved send: the channel's signal before its fader
+/// times the level, or the channel's gain composed with the level, and nothing at all from
+/// a channel that is not audible. Lowered as a `Send` or a `PostFaderSend` in the channel's
+/// scope, reading what the strip reads and entering the bus's entry sum.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ChannelSend {
+    /// The target bus's entry sum.
+    pub entry: NodeId,
+    /// The saved send level, a linear amplitude in `0..1`.
+    pub level: synth_engine_v2::quantities::Amplitude,
+    /// V1's tap point: before the fader, or after it with the channel's gain.
+    pub pre_fader: bool,
+    /// Whether the send starts muted — the channel's own mute or its solo elsewhere, since
+    /// V1 taps nothing from a channel that is not audible.
+    pub muted: bool,
+}
+
 /// The stages the lowerer inserts between an instrument's terminating module and the plan,
 /// in V1's order: the velocity stage, the track's balance, the instrument's channel, and V1's
 /// channel-stage clipper. Each is present where the caller says so and absent otherwise, and
-/// each present stage feeds the next present one.
-#[derive(Debug, Clone, Copy, PartialEq, Default)]
+/// each present stage feeds the next present one. The sends tap beside the channel.
+#[derive(Debug, Clone, PartialEq, Default)]
 pub struct InstrumentStages {
     /// V1's voice-output velocity stage (ADR-0059), from the instrument's saved sensitivity.
     pub velocity: Option<NormalizedLevel>,
@@ -187,6 +207,8 @@ pub struct InstrumentStages {
     pub channel: Option<ChannelStrip>,
     /// V1's channel-stage soft clipper (`P08-S002`), under the parity output policy.
     pub soft_clip: bool,
+    /// The channel's sends (`P08-S004`), each reading what the channel reads.
+    pub sends: Vec<ChannelSend>,
 }
 
 /// Where an instrument's signal ends.
@@ -343,6 +365,7 @@ pub fn lower_voice_patch_with(
             track: None,
             channel,
             soft_clip: false,
+            sends: Vec::new(),
         },
         modulators,
         Sink::OwnOutput,
@@ -572,6 +595,9 @@ pub(super) fn lower_instrument_into(
 
     let mut refused = false;
     let mut edges: Vec<(NodeId, NodeId, ConnectionState)> = Vec::new();
+    // The cable into the output module's source, which is what the strip reads where no
+    // stage precedes it, and so what its sends read (`SOUND-INV-034`).
+    let mut terminating: Option<(NodeId, PortId)> = None;
     // An address two nodes claim is an inconsistency between two lowerings — a Mod Grid
     // node read by two instruments under two kinds, say — refused by name rather than
     // overwritten.
@@ -666,6 +692,12 @@ pub(super) fn lower_instrument_into(
         }
         None => refused = true,
     }
+    // The strip, the clipper and the sends share the channel's tagged scope, which is how a
+    // send says whose send it is (`SOUND-INV-034`).
+    let channel_scope = ExecutionScope::Channel(slot.channel_tag());
+    // What the strip reads: the stage before it, once the chain is known, else the cable
+    // into the output module, recorded where that cable is routed below.
+    let strip_reads_stage = stages.channel.map(|_| chain.last().copied());
     if let Some(channel) = stages.channel {
         let id = slot.channel();
         if !place(
@@ -676,7 +708,7 @@ pub(super) fn lower_instrument_into(
                 pan: channel.pan,
                 muted: channel.muted,
             },
-            ExecutionScope::Channel,
+            channel_scope,
             &mut diagnostics,
         ) {
             refused = true;
@@ -689,12 +721,26 @@ pub(super) fn lower_instrument_into(
             graph,
             id,
             IrNodeKind::SoftClip,
-            ExecutionScope::Channel,
+            channel_scope,
             &mut diagnostics,
         ) {
             refused = true;
         }
         chain.push(id);
+    }
+    if !stages.sends.is_empty() && stages.channel.is_none() {
+        diagnostics.push(LoweringDiagnostic::refused(
+            ProjectSubject::Instrument {
+                instrument,
+                name: String::new(),
+            },
+            LoweringReason::UnsupportedParameterValue {
+                value: "a send on an instrument lowered without its channel, which is what \
+                        the send taps beside"
+                    .to_owned(),
+            },
+        ));
+        refused = true;
     }
     // Where the chain ends: the saved output module as the plan's output, or the caller's
     // node, in which case the saved output module lowers to no node of its own.
@@ -848,7 +894,10 @@ pub(super) fn lower_instrument_into(
                 // ADR-0059: the cable into the output enters the first inserted stage
                 // instead, and the stages feed each other and the end below.
                 let to = match into_output {
-                    Some(stage) if Some(to.0) == output_node => (stage, PortId::FIRST),
+                    Some(stage) if Some(to.0) == output_node => {
+                        terminating = Some(from);
+                        (stage, PortId::FIRST)
+                    }
                     _ => to,
                 };
                 edges.push((from.0, to.0, connection.clone()));
@@ -864,6 +913,58 @@ pub(super) fn lower_instrument_into(
             graph.connect(
                 (pair[0], PortId::FIRST),
                 (pair[1], PortId::FIRST),
+                SignalDomain::Audio,
+            );
+        }
+    }
+    // The sends (`P08-S004`): each reads what the strip reads — the stage before the strip,
+    // else the terminating module's own output port — and enters its bus's entry. A
+    // post-fader send carries the strip's fader, pan and mute beside its level, forming V1's
+    // gain in V1's order (`SOUND-INV-034`); a pre-fader send carries the level and the mute.
+    if let (Some(strip_reads), Some(channel)) = (strip_reads_stage, stages.channel) {
+        let source = match strip_reads {
+            Some(stage) => Some((stage, PortId::FIRST)),
+            None => terminating,
+        };
+        for (k, send) in stages.sends.iter().enumerate() {
+            let Some(source) = source else {
+                diagnostics.push(LoweringDiagnostic::refused(
+                    ProjectSubject::Instrument {
+                        instrument,
+                        name: String::new(),
+                    },
+                    LoweringReason::UnsupportedParameterValue {
+                        value: "a send on a channel that reads no cable".to_owned(),
+                    },
+                ));
+                refused = true;
+                break;
+            };
+            let Ok(k) = u16::try_from(k) else {
+                refused = true;
+                break;
+            };
+            let id = slot.send(k);
+            let kind = if send.pre_fader {
+                IrNodeKind::Send {
+                    level: send.level,
+                    muted: send.muted,
+                }
+            } else {
+                IrNodeKind::PostFaderSend {
+                    fader: channel.fader,
+                    pan: channel.pan,
+                    muted: send.muted,
+                    level: send.level,
+                }
+            };
+            if !place(graph, id, kind, channel_scope, &mut diagnostics) {
+                refused = true;
+            }
+            graph.connect(source, (id, PortId::FIRST), SignalDomain::Audio);
+            graph.connect(
+                (id, PortId::FIRST),
+                (send.entry, PortId::FIRST),
                 SignalDomain::Audio,
             );
         }
@@ -1044,7 +1145,16 @@ fn lower_insert_chain(
             refused |= refuse(format!("{id} has no address"), diagnostics);
             continue;
         };
-        match lower_insert(instrument, id, module, diagnostics) {
+        let subject = || ProjectSubject::Module {
+            instrument,
+            module: id,
+        };
+        let parameter = |key: &str| ProjectSubject::Parameter {
+            instrument,
+            module: id,
+            parameter: key.to_owned(),
+        };
+        match lower_insert(&subject, &parameter, module, diagnostics) {
             Some(kind) => lowered.push((node, kind)),
             None => refused = true,
         }
@@ -1067,21 +1177,15 @@ fn lower_insert_chain(
 /// recorded. One kind with V1's law at a time, as the corpus demands them
 /// (`SOUND-INV-033`): the distortion in its soft-clip mode and the delay in its mono mode;
 /// every other mode, and every other effect type, is refused by name.
-fn lower_insert(
-    instrument: InstrumentId,
-    id: ModuleId,
+///
+/// The subjects are the caller's, because an insert is an instrument's or a return bus's
+/// (`P08-S004`) and the diagnostic names the project object either way.
+pub(super) fn lower_insert(
+    subject: &dyn Fn() -> ProjectSubject,
+    parameter: &dyn Fn(&str) -> ProjectSubject,
     module: &ModuleState,
     diagnostics: &mut Vec<LoweringDiagnostic>,
 ) -> Option<IrNodeKind> {
-    let subject = || ProjectSubject::Module {
-        instrument,
-        module: id,
-    };
-    let parameter = |key: &str| ProjectSubject::Parameter {
-        instrument,
-        module: id,
-        parameter: key.to_owned(),
-    };
     // V1's own declaration of the effect: the source of every default and every clamp.
     let Some((_, declarations)) = crate::module_factory::create_effect(module.module_type) else {
         diagnostics.push(LoweringDiagnostic::refused(

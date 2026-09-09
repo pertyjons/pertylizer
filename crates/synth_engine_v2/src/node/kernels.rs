@@ -161,6 +161,10 @@ pub const MIX: Kernel = Kernel(mix);
 pub const BALANCE: Kernel = Kernel(balance);
 /// The trim's kernel (`SOUND-INV-032`).
 pub const TRIM: Kernel = Kernel(trim);
+/// The send's kernel (`SOUND-INV-034`).
+pub const SEND: Kernel = Kernel(send);
+/// V1's post-fader channel send's kernel (`SOUND-INV-034`).
+pub const POST_FADER_SEND: Kernel = Kernel(post_fader_send);
 /// V1's channel-stage soft clipper's kernel (`SOUND-INV-032`).
 pub const SOFT_CLIP: Kernel = Kernel(soft_clip);
 /// V1's output clamp's kernel (`SOUND-INV-032`).
@@ -344,6 +348,25 @@ pub enum PreparedNode {
         /// The base the level slot starts from.
         level: Amplitude,
     },
+    /// A send's authored level and mute (`SOUND-INV-034`).
+    Send {
+        /// The base the level slot starts from.
+        level: Amplitude,
+        /// Whether the mute starts held.
+        muted: bool,
+    },
+    /// A post-fader send's authored bases (`SOUND-INV-034`): the channel's fader, pan and
+    /// mute, and the send's level.
+    PostFaderSend {
+        /// The base the fader slot starts from.
+        fader: Amplitude,
+        /// The base the pan slot starts from.
+        pan: crate::controller::BipolarLevel,
+        /// Whether the mute starts held.
+        muted: bool,
+        /// The base the level slot starts from.
+        level: Amplitude,
+    },
     /// V1's soft clipper: nothing is prepared, the law has no parameter.
     SoftClip,
     /// V1's output clamp: nothing is prepared, the bounds are full scale.
@@ -462,6 +485,18 @@ pub enum NodeState {
     Scaled {
         /// The velocity last written, applied to every sample.
         velocity: NoteVelocity,
+    },
+    /// A send's mute, held between quanta (`SOUND-INV-034`); its level is a quantum-rate
+    /// slot read from the ramp.
+    Send {
+        /// Whether the mute was held at the end of the last quantum.
+        muted: bool,
+    },
+    /// A post-fader send's mute, held between quanta (`SOUND-INV-034`); its fader, pan and
+    /// level are quantum-rate slots read from the ramps.
+    PostFaderSend {
+        /// Whether the mute was held at the end of the last quantum.
+        muted: bool,
     },
     /// A mix channel's mute, held between quanta (`SOUND-INV-031`). Its fader and pan are
     /// quantum-rate slots read from the ramps, so nothing else is kept.
@@ -704,6 +739,8 @@ impl NodeState {
             PreparedNode::Trim { .. } | PreparedNode::SoftClip | PreparedNode::HardClamp => {
                 Self::Stateless
             }
+            PreparedNode::Send { muted, .. } => Self::Send { muted: *muted },
+            PreparedNode::PostFaderSend { muted, .. } => Self::PostFaderSend { muted: *muted },
             PreparedNode::Controller { .. } | PreparedNode::NoteSource => Self::Stateless,
             PreparedNode::Lfo { .. } => Self::Lfo { phase: 0.0 },
             PreparedNode::Sampler { .. } => Self::Sampler {
@@ -755,6 +792,22 @@ impl NodeState {
             },
             Self::Channel { muted } => match control {
                 CHANNEL_MUTE => Some(if *muted {
+                    ParameterValue::ONE
+                } else {
+                    ParameterValue::ZERO
+                }),
+                _ => None,
+            },
+            Self::Send { muted } => match control {
+                SEND_MUTE => Some(if *muted {
+                    ParameterValue::ONE
+                } else {
+                    ParameterValue::ZERO
+                }),
+                _ => None,
+            },
+            Self::PostFaderSend { muted } => match control {
+                POST_FADER_SEND_MUTE => Some(if *muted {
                     ParameterValue::ONE
                 } else {
                     ParameterValue::ZERO
@@ -883,6 +936,31 @@ pub(crate) fn authored_value(
         },
         PreparedNode::Trim { level } => match control {
             TRIM_LEVEL => Some(ParameterValue::from_amplitude(*level)),
+            _ => None,
+        },
+        PreparedNode::Send { level, muted } => match control {
+            SEND_LEVEL => Some(ParameterValue::from_amplitude(*level)),
+            SEND_MUTE => Some(if *muted {
+                ParameterValue::ONE
+            } else {
+                ParameterValue::ZERO
+            }),
+            _ => None,
+        },
+        PreparedNode::PostFaderSend {
+            fader,
+            pan,
+            muted,
+            level,
+        } => match control {
+            POST_FADER_SEND_FADER => Some(ParameterValue::from_amplitude(*fader)),
+            POST_FADER_SEND_PAN => Some(ParameterValue::from_bipolar(*pan)),
+            POST_FADER_SEND_MUTE => Some(if *muted {
+                ParameterValue::ONE
+            } else {
+                ParameterValue::ZERO
+            }),
+            POST_FADER_SEND_LEVEL => Some(ParameterValue::from_amplitude(*level)),
             _ => None,
         },
         PreparedNode::Distortion {
@@ -1042,6 +1120,18 @@ pub const BALANCE_PAN: ControlIndex = ControlIndex::new(1);
 pub const BALANCE_MUTE: ControlIndex = ControlIndex::new(2);
 /// A trim's level, quantum-rate, read per frame from its ramp (`SOUND-INV-032`).
 pub const TRIM_LEVEL: ControlIndex = ControlIndex::new(0);
+/// A send's level, quantum-rate, read per frame from its ramp (`SOUND-INV-034`).
+pub const SEND_LEVEL: ControlIndex = ControlIndex::new(0);
+/// A send's mute, sample-positioned: held from the frame it lands on.
+pub const SEND_MUTE: ControlIndex = ControlIndex::new(1);
+/// A post-fader send's fader, the channel's, quantum-rate (`SOUND-INV-034`).
+pub const POST_FADER_SEND_FADER: ControlIndex = ControlIndex::new(0);
+/// A post-fader send's pan, the channel's, quantum-rate.
+pub const POST_FADER_SEND_PAN: ControlIndex = ControlIndex::new(1);
+/// A post-fader send's mute, the channel's, sample-positioned.
+pub const POST_FADER_SEND_MUTE: ControlIndex = ControlIndex::new(2);
+/// A post-fader send's level, quantum-rate; the third ramp, after the fader's and the pan's.
+pub const POST_FADER_SEND_LEVEL: ControlIndex = ControlIndex::new(3);
 /// A distortion's drive (`SOUND-INV-033`).
 pub const DISTORTION_DRIVE: ControlIndex = ControlIndex::new(0);
 /// A distortion's tone.
@@ -2220,6 +2310,118 @@ pub fn balance(_prepared: &PreparedNode, state: &mut NodeState, io: &mut NodeIo<
 /// V1's master stage multiplies each side by the one master volume it read for the
 /// callback; this is the same multiplication, at quantum grain.
 pub fn trim(_prepared: &PreparedNode, _state: &mut NodeState, io: &mut NodeIo<'_>) {
+    scale_by_level(io);
+}
+
+/// A send (`SOUND-INV-034`): every sample times the level, read per frame from its ramp, and
+/// zero while the mute is held.
+///
+/// V1's `apply_send_tap` multiplies the tapped signal by the send level it read for the
+/// block, and taps nothing from a channel that is not audible; this is the same
+/// multiplication at quantum grain, with the mute applied at the frame its control lands
+/// on, as every sample-positioned control is.
+pub fn send(_prepared: &PreparedNode, state: &mut NodeState, io: &mut NodeIo<'_>) {
+    let NodeState::Send { muted } = state else {
+        return;
+    };
+    let level = ramp_of(io.ramps, 0);
+    let channels = io.channels.channels().max(1);
+    let frames = io.out.len() / channels;
+    let source = io.inputs[0];
+    let mut held = *muted;
+    let mut due = 0_usize;
+    for frame in 0..frames {
+        while let Some(control) = io.controls.get(due) {
+            if control.offset.as_usize() != frame {
+                break;
+            }
+            due += 1;
+            if matches!(control.control, SEND_MUTE) {
+                held = control.value.as_f32() > 0.0;
+            }
+        }
+        let gain = if held {
+            0.0
+        } else {
+            level.get(frame).or(level.last()).copied().unwrap_or(1.0)
+        };
+        for channel in 0..channels {
+            let index = frame * channels + channel;
+            let input = match source {
+                InputBuffer::Patched(source) => source.get(index).copied().unwrap_or(0.0),
+                InputBuffer::InPlace => io.out.get(index).copied().unwrap_or(0.0),
+                InputBuffer::Unpatched => 0.0,
+            };
+            if let Some(sample) = io.out.get_mut(index) {
+                *sample = input * gain;
+            }
+        }
+    }
+    *muted = held;
+}
+
+/// V1's post-fader channel send (`SOUND-INV-034`): every frame scaled per side by the
+/// channel's gain times the send level, formed in V1's order, and zero while the mute is
+/// held.
+///
+/// The law is V1's `mix_channel_busses` and `apply_send_tap`, term for term: the pan
+/// coefficient times the fader is the side's gain, that gain times the level is what the
+/// sample is multiplied by. The three products round in that order, which is why this is a
+/// kind of its own rather than a channel feeding a send. The fader, the pan and the level
+/// are read per frame from their ramps, the level from the third; the mute is applied at
+/// the frame its control lands on. Channel `0` takes the left gain and every further
+/// channel the right, which is correct for the one layout the port table admits.
+pub fn post_fader_send(_prepared: &PreparedNode, state: &mut NodeState, io: &mut NodeIo<'_>) {
+    let NodeState::PostFaderSend { muted } = state else {
+        return;
+    };
+    let fader = ramp_of(io.ramps, 0);
+    let pan = ramp_of(io.ramps, 1);
+    let level = ramp_of(io.ramps, 2);
+    let channels = io.channels.channels().max(1);
+    let frames = io.out.len() / channels;
+    let source = io.inputs[0];
+    let mut held = *muted;
+    let mut due = 0_usize;
+    for frame in 0..frames {
+        while let Some(control) = io.controls.get(due) {
+            if control.offset.as_usize() != frame {
+                break;
+            }
+            due += 1;
+            if matches!(control.control, POST_FADER_SEND_MUTE) {
+                held = control.value.as_f32() > 0.0;
+            }
+        }
+        let volume = fader.get(frame).or(fader.last()).copied().unwrap_or(1.0);
+        let position = pan.get(frame).or(pan.last()).copied().unwrap_or(0.0);
+        let amount = level.get(frame).or(level.last()).copied().unwrap_or(1.0);
+        let angle = (position + 1.0) * core::f32::consts::FRAC_PI_4;
+        let left_gain = angle.cos() * volume;
+        let right_gain = angle.sin() * volume;
+        let (left, right) = if held {
+            (0.0, 0.0)
+        } else {
+            (left_gain * amount, right_gain * amount)
+        };
+        for channel in 0..channels {
+            let index = frame * channels + channel;
+            let input = match source {
+                InputBuffer::Patched(source) => source.get(index).copied().unwrap_or(0.0),
+                InputBuffer::InPlace => io.out.get(index).copied().unwrap_or(0.0),
+                InputBuffer::Unpatched => 0.0,
+            };
+            let gain = if channel == 0 { left } else { right };
+            if let Some(sample) = io.out.get_mut(index) {
+                *sample = input * gain;
+            }
+        }
+    }
+    *muted = held;
+}
+
+/// Every sample times the node's one quantum-rate level, read per frame from its ramp.
+fn scale_by_level(io: &mut NodeIo<'_>) {
     let level = ramp_of(io.ramps, 0);
     let channels = io.channels.channels().max(1);
     let frames = io.out.len() / channels;

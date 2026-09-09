@@ -2160,7 +2160,7 @@ fn the_instruments_strip_lowers_onto_its_mix_channel() {
         .expect("one channel at the reserved address");
     assert_eq!(
         channel.scope(),
-        synth_engine_v2::ir::ExecutionScope::Channel
+        synth_engine_v2::ir::ExecutionScope::Channel(slot().channel_tag())
     );
     match channel.kind() {
         IrNodeKind::Channel { fader, pan, muted } => {
@@ -2316,6 +2316,7 @@ fn a_non_finite_render_is_not_audible() {
         diagnostics: Vec::new(),
         lowered_events: synth_engine_v2::quantities::EventCount::NONE,
         lowered_frames: FrameCount::new(0),
+        report: None,
     };
     assert!(
         !poisoned.is_audible(),
@@ -2327,6 +2328,7 @@ fn a_non_finite_render_is_not_audible() {
         diagnostics: Vec::new(),
         lowered_events: synth_engine_v2::quantities::EventCount::NONE,
         lowered_frames: FrameCount::new(0),
+        report: None,
     };
     assert!(real.is_audible());
 }
@@ -2512,8 +2514,10 @@ fn a_refused_lowering_does_not_fall_through_to_the_render() {
 ///
 /// The assertion is on the exact set rather than on a count, so it fails in both directions:
 /// a project that becomes eligible is as much a change to `P04-R002` as one that stops being.
+/// The fourth arrived with EVD-0021 (`P08-S004`): the corpus insert case's catch-up addresses
+/// exceeded the first provisional session share and fit the reselected one.
 #[test]
-fn exactly_three_saved_projects_in_the_repository_lower_to_a_plan() {
+fn exactly_four_saved_projects_in_the_repository_lower_to_a_plan() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
 
     let mut eligible: Vec<String> = Vec::new();
@@ -2598,13 +2602,15 @@ fn exactly_three_saved_projects_in_the_repository_lower_to_a_plan() {
     assert_eq!(
         eligible,
         vec![
+            "instrument-inserts".to_owned(),
             "mod-matrix".to_owned(),
             "subtractive-voice".to_owned(),
             "tempo-map-arrangement".to_owned()
         ],
-        "P04-R002 recorded two eligible saved projects where the gate asked three, and \
-         P07-S003 made the corpus's Mod Matrix case the third; this is the measurement behind \
-         that number. A change here is a change to that record."
+        "P04-R002 recorded two eligible saved projects where the gate asked three, P07-S003 \
+         made the corpus's Mod Matrix case the third, and EVD-0021's session share admitted \
+         the insert case as the fourth; this is the measurement behind that number. A change \
+         here is a change to that record."
     );
 }
 
@@ -2639,7 +2645,8 @@ fn a_disabled_send_does_not_refuse_the_project() {
         rendered.diagnostics
     );
 
-    // Enabling it is what V2 cannot represent.
+    // Enabled, it names a return the song does not declare: V1 drops such a send silently
+    // each block, and V2 refuses it by name (`P08-S004`).
     for track in song.tracks_mut() {
         for send in &mut track.sends {
             send.enabled = true;
@@ -2657,11 +2664,12 @@ fn a_disabled_send_does_not_refuse_the_project() {
             d.severity() == Severity::Refused
                 && matches!(
                     d.reason(),
-                    LoweringReason::OwnedByLaterPhase { capability, .. }
-                        if capability.contains("send into a return bus")
+                    LoweringReason::UnresolvedEndpoint { spelling }
+                        if spelling.contains("which the song does not declare")
                 )
         }),
-        "an active send routes audio V2 has nowhere to put"
+        "a send into an undeclared return is refused by name: {:?}",
+        rendered.diagnostics
     );
 }
 
@@ -6890,8 +6898,9 @@ fn a_mod_grid_node_address_cannot_meet_a_saved_modules_or_the_scalers() {
     let highest = grid_node_address(ModGraphId::new(0x7FFE), ModNodeId::new(0xFFFF)).expect("fits");
     assert!(lowest < highest);
     // Every address below the grid's: every instrument slot's modules and inserted stages,
-    // and the master's, keep bit 31 clear. The highest instrument is the last one that fits.
-    let last = synth_engine::instrument::InstrumentId::new(126);
+    // the buses' and the master's, keep bit 31 clear. The highest instrument is the last one
+    // that fits below the bus slot (`P08-S004`).
+    let last = synth_engine::instrument::InstrumentId::new(125);
     for id in [instrument(), last] {
         let slot = InstrumentSlot::of(id).expect("fits");
         let resolved = ResolvedIdentities::resolve(id, &corpus_modules()).expect("resolves");
@@ -6919,10 +6928,43 @@ fn a_mod_grid_node_address_cannot_meet_a_saved_modules_or_the_scalers() {
         assert!(master < lowest);
         assert!(master > InstrumentSlot::of(last).expect("fits").macro_source(6));
     }
-    // One past the last slot is refused by name, not folded into the master's addresses.
+    // One past the last slot is refused by name, not folded into the buses' or the master's
+    // addresses; and a bus's nodes sit between the last instrument's and the master's.
+    for past in [126, 127] {
+        assert!(matches!(
+            InstrumentSlot::of(synth_engine::instrument::InstrumentId::new(past)),
+            Err(super::identity::IdentityError::InstrumentOutOfRange { .. })
+        ));
+    }
+    let bus = super::identity::BusSlot::of(synth_sequencer::ReturnBusId::new(255)).expect("fits");
+    let delay = synth_engine::ModuleId {
+        module_type: ModuleType::Delay,
+        instance: 255,
+    };
+    for node in [
+        bus.entry(),
+        bus.strip(),
+        bus.soft_clip(),
+        bus.send(0).expect("fits"),
+        bus.module(delay).expect("fits"),
+    ] {
+        assert!(node < lowest);
+        assert!(node < MASTER_MIX, "{node} sorts below the master");
+        assert!(
+            node > InstrumentSlot::of(last).expect("fits").send(u16::MAX),
+            "{node} sorts above every instrument's node"
+        );
+    }
     assert!(matches!(
-        InstrumentSlot::of(synth_engine::instrument::InstrumentId::new(127)),
-        Err(super::identity::IdentityError::InstrumentOutOfRange { .. })
+        super::identity::BusSlot::of(synth_sequencer::ReturnBusId::new(256)),
+        Err(super::identity::IdentityError::BusOutOfRange { .. })
+    ));
+    assert!(matches!(
+        bus.module(synth_engine::ModuleId {
+            module_type: ModuleType::Delay,
+            instance: 256,
+        }),
+        Err(super::identity::IdentityError::BusModuleOutOfRange { .. })
     ));
     // Two instruments' modules never meet, and the six macro tags never meet a stage.
     let other = ResolvedIdentities::resolve(
@@ -7047,5 +7089,7 @@ fn each_mod_matrix_macro_lowers_once_at_v1s_target_scale_and_in_its_scope() {
     }
 }
 
+mod buses;
+mod evidence;
 mod phase7;
 mod phase8;

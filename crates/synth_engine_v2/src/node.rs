@@ -752,6 +752,42 @@ fn prepare_trim(
     Ok(PreparedNode::Trim { level })
 }
 
+/// Prepare a send: its level and mute, as authored (`SOUND-INV-034`).
+fn prepare_send(
+    node: NodeId,
+    kind: IrNodeKind,
+    _: &PrepareContext<'_>,
+) -> Result<PreparedNode, CompileError> {
+    let IrNodeKind::Send { level, muted } = kind else {
+        return Err(declared_for_another_kind(node));
+    };
+    Ok(PreparedNode::Send { level, muted })
+}
+
+/// Prepare a post-fader send: the channel's fader, pan and mute and its own level, as
+/// authored (`SOUND-INV-034`).
+fn prepare_postfadersend(
+    node: NodeId,
+    kind: IrNodeKind,
+    _: &PrepareContext<'_>,
+) -> Result<PreparedNode, CompileError> {
+    let IrNodeKind::PostFaderSend {
+        fader,
+        pan,
+        muted,
+        level,
+    } = kind
+    else {
+        return Err(declared_for_another_kind(node));
+    };
+    Ok(PreparedNode::PostFaderSend {
+        fader,
+        pan,
+        muted,
+        level,
+    })
+}
+
 /// Prepare a soft clipper: nothing, its law has no parameter (`SOUND-INV-032`).
 fn prepare_softclip(
     node: NodeId,
@@ -1094,6 +1130,12 @@ pub enum NodeKindId {
     Balance,
     /// A trim: one declared level over one stereo signal (`SOUND-INV-032`).
     Trim,
+    /// A send: one declared level and a mute over one tapped stereo signal, into a bus
+    /// (`SOUND-INV-034`).
+    Send,
+    /// V1's post-fader channel send: the channel's gain times the level, in V1's order
+    /// (`SOUND-INV-034`).
+    PostFaderSend,
     /// V1's channel-stage soft clipper, explicit (`SOUND-INV-032`).
     SoftClip,
     /// V1's output clamp as an explicit sink policy (`SOUND-INV-032`).
@@ -2068,7 +2110,7 @@ fn prepare_script_program(
 /// the declarations are `static` rather than `const`: a `const` is materialised at each
 /// use and has no single address to compare — so a kind declared but left out here cannot
 /// be discovered, and one listed here but not resolvable cannot compile.
-static DECLARED: [&NodeDeclaration; 32] = [
+static DECLARED: [&NodeDeclaration; 34] = [
     &SCRIPT,
     &AUDIO_SCRIPT,
     &NOTE_SCRIPT,
@@ -2087,6 +2129,8 @@ static DECLARED: [&NodeDeclaration; 32] = [
     &MIX,
     &BALANCE,
     &TRIM,
+    &SEND,
+    &POST_FADER_SEND,
     &SOFT_CLIP,
     &HARD_CLAMP,
     &DISTORTION,
@@ -2341,6 +2385,130 @@ pub(crate) static TRIM: NodeDeclaration = NodeDeclaration {
     timing: stateless_timing,
     prepared_bytes: size_of::<crate::quantities::Amplitude>() as u64,
     state_bytes: 0,
+};
+
+/// The send, declared once — `P08-S004`, `SOUND-INV-034`.
+///
+/// Stereo in and stereo out and two controls: the **level**, a linear amplitude under the
+/// decibel law, quantum-rate and unsmoothed — V1 reads a send's level once per block and
+/// multiplies the tapped signal by it in `apply_send_tap`, so a step at quantum grain is
+/// parity — and the **mute**, a thresholded boolean, sample-positioned, which is V1 tapping
+/// nothing from a channel that is not audible. V1's pre-fader channel tap and its bus tap;
+/// the post-fader channel tap is its own kind because its arithmetic is. The tap point and
+/// the target are cables rather than fields, and the scope's tag says whose send it is;
+/// the compiler holds the shape (`validate::mixer_scopes`). In-place safe for the reason
+/// the trim is. The byte attributions name the kernel's layouts: the authored level and
+/// mute, and the held mute.
+pub(crate) static SEND: NodeDeclaration = NodeDeclaration {
+    id: NodeKindId::Send,
+    name: "send",
+    kernel: kernels::SEND,
+    ports: &[STEREO_AUDIO_IN, STEREO_AUDIO_OUT],
+    controls: &[
+        ControlSpec {
+            controller: false,
+            parameter: parameters::SEND_LEVEL,
+            name: "level",
+            default: ParameterDefault::LinearAmplitude(crate::quantities::Amplitude::UNITY),
+            law: ModulationLaw::DecibelAdditive,
+            smoothing: Smoothing::None,
+            control: kernels::SEND_LEVEL,
+            rate: ControlRate::Quantum,
+            magnitude: None,
+        },
+        ControlSpec {
+            controller: false,
+            parameter: parameters::SEND_MUTE,
+            name: "mute",
+            default: ParameterDefault::Gate(crate::quantities::ParameterValue::ZERO),
+            law: ModulationLaw::ThresholdedBoolean,
+            smoothing: Smoothing::None,
+            control: kernels::SEND_MUTE,
+            rate: ControlRate::Sample,
+            magnitude: None,
+        },
+    ],
+    in_place_safe: true,
+    note_control: None,
+    taps: &[],
+    prepare: prepare_send,
+    timing: stateless_timing,
+    prepared_bytes: size_of::<(crate::quantities::Amplitude, bool)>() as u64,
+    state_bytes: size_of::<bool>() as u64,
+};
+
+/// V1's post-fader channel send, declared once — `P08-S004`, `SOUND-INV-034`.
+///
+/// Stereo in and stereo out and four controls: the channel's **fader**, **pan** and **mute**,
+/// with the mix channel's laws and rates, and the send's **level**, a linear amplitude under
+/// the decibel law, quantum-rate and unsmoothed. Per frame the kernel forms each side's gain
+/// as V1's `apply_send_tap` forms it — the pan coefficient times the fader, **then** times
+/// the level — and multiplies the signal the channel reads by that; a channel followed by a
+/// send would round the other way. In-place safe for the reason the channel is. The byte
+/// attributions name the kernel's layouts: the four authored bases, and the held mute.
+pub(crate) static POST_FADER_SEND: NodeDeclaration = NodeDeclaration {
+    id: NodeKindId::PostFaderSend,
+    name: "post-fader send",
+    kernel: kernels::POST_FADER_SEND,
+    ports: &[STEREO_AUDIO_IN, STEREO_AUDIO_OUT],
+    controls: &[
+        ControlSpec {
+            controller: false,
+            parameter: parameters::POST_FADER_SEND_FADER,
+            name: "fader",
+            default: ParameterDefault::LinearAmplitude(crate::quantities::Amplitude::UNITY),
+            law: ModulationLaw::DecibelAdditive,
+            smoothing: Smoothing::None,
+            control: kernels::POST_FADER_SEND_FADER,
+            rate: ControlRate::Quantum,
+            magnitude: None,
+        },
+        ControlSpec {
+            controller: false,
+            parameter: parameters::POST_FADER_SEND_PAN,
+            name: "pan",
+            default: ParameterDefault::BipolarLevel(crate::controller::BipolarLevel::ZERO),
+            law: ModulationLaw::BipolarAdditive,
+            smoothing: Smoothing::None,
+            control: kernels::POST_FADER_SEND_PAN,
+            rate: ControlRate::Quantum,
+            magnitude: None,
+        },
+        ControlSpec {
+            controller: false,
+            parameter: parameters::POST_FADER_SEND_MUTE,
+            name: "mute",
+            default: ParameterDefault::Gate(crate::quantities::ParameterValue::ZERO),
+            law: ModulationLaw::ThresholdedBoolean,
+            smoothing: Smoothing::None,
+            control: kernels::POST_FADER_SEND_MUTE,
+            rate: ControlRate::Sample,
+            magnitude: None,
+        },
+        ControlSpec {
+            controller: false,
+            parameter: parameters::POST_FADER_SEND_LEVEL,
+            name: "level",
+            default: ParameterDefault::LinearAmplitude(crate::quantities::Amplitude::UNITY),
+            law: ModulationLaw::DecibelAdditive,
+            smoothing: Smoothing::None,
+            control: kernels::POST_FADER_SEND_LEVEL,
+            rate: ControlRate::Quantum,
+            magnitude: None,
+        },
+    ],
+    in_place_safe: true,
+    note_control: None,
+    taps: &[],
+    prepare: prepare_postfadersend,
+    timing: stateless_timing,
+    prepared_bytes: size_of::<(
+        crate::quantities::Amplitude,
+        crate::controller::BipolarLevel,
+        bool,
+        crate::quantities::Amplitude,
+    )>() as u64,
+    state_bytes: size_of::<bool>() as u64,
 };
 
 /// V1's soft clipper, declared once — `P08-S002`, `SOUND-INV-032`.
@@ -2775,6 +2943,8 @@ pub(crate) fn declaration(kind: IrNodeKind) -> Option<&'static NodeDeclaration> 
         IrNodeKind::Mix => Some(&MIX),
         IrNodeKind::Balance { .. } => Some(&BALANCE),
         IrNodeKind::Trim { .. } => Some(&TRIM),
+        IrNodeKind::Send { .. } => Some(&SEND),
+        IrNodeKind::PostFaderSend { .. } => Some(&POST_FADER_SEND),
         IrNodeKind::SoftClip => Some(&SOFT_CLIP),
         IrNodeKind::HardClamp => Some(&HARD_CLAMP),
         IrNodeKind::Distortion { .. } => Some(&DISTORTION),
@@ -2842,6 +3012,8 @@ pub(crate) fn descriptor(kind: IrNodeKind) -> Option<NodeDescriptor> {
         IrNodeKind::Mix => declared.map(NodeDeclaration::descriptor),
         IrNodeKind::Balance { .. } => declared.map(NodeDeclaration::descriptor),
         IrNodeKind::Trim { .. } => declared.map(NodeDeclaration::descriptor),
+        IrNodeKind::Send { .. } => declared.map(NodeDeclaration::descriptor),
+        IrNodeKind::PostFaderSend { .. } => declared.map(NodeDeclaration::descriptor),
         IrNodeKind::SoftClip => declared.map(NodeDeclaration::descriptor),
         IrNodeKind::HardClamp => declared.map(NodeDeclaration::descriptor),
         IrNodeKind::Distortion { .. } => declared.map(NodeDeclaration::descriptor),
@@ -3091,6 +3263,8 @@ pub fn prepared_payload_bytes(kind: IrNodeKind) -> u64 {
         IrNodeKind::Mix => return declared.map_or(0, |d| d.prepared_bytes),
         IrNodeKind::Balance { .. } => return declared.map_or(0, |d| d.prepared_bytes),
         IrNodeKind::Trim { .. } => return declared.map_or(0, |d| d.prepared_bytes),
+        IrNodeKind::Send { .. } => return declared.map_or(0, |d| d.prepared_bytes),
+        IrNodeKind::PostFaderSend { .. } => return declared.map_or(0, |d| d.prepared_bytes),
         IrNodeKind::SoftClip => return declared.map_or(0, |d| d.prepared_bytes),
         IrNodeKind::HardClamp => return declared.map_or(0, |d| d.prepared_bytes),
         IrNodeKind::Distortion { .. } => return declared.map_or(0, |d| d.prepared_bytes),
@@ -3186,6 +3360,8 @@ pub fn state_payload_bytes(kind: IrNodeKind) -> u64 {
         IrNodeKind::Mix => return declared.map_or(0, |d| d.state_bytes),
         IrNodeKind::Balance { .. } => return declared.map_or(0, |d| d.state_bytes),
         IrNodeKind::Trim { .. } => return declared.map_or(0, |d| d.state_bytes),
+        IrNodeKind::Send { .. } => return declared.map_or(0, |d| d.state_bytes),
+        IrNodeKind::PostFaderSend { .. } => return declared.map_or(0, |d| d.state_bytes),
         IrNodeKind::SoftClip => return declared.map_or(0, |d| d.state_bytes),
         IrNodeKind::HardClamp => return declared.map_or(0, |d| d.state_bytes),
         IrNodeKind::Distortion { .. } => return declared.map_or(0, |d| d.state_bytes),
@@ -3359,6 +3535,16 @@ mod tests {
                 muted: false,
             },
             IrNodeKind::Trim {
+                level: Amplitude::UNITY,
+            },
+            IrNodeKind::Send {
+                level: Amplitude::UNITY,
+                muted: false,
+            },
+            IrNodeKind::PostFaderSend {
+                fader: Amplitude::UNITY,
+                pan: crate::controller::BipolarLevel::ZERO,
+                muted: false,
                 level: Amplitude::UNITY,
             },
             IrNodeKind::SoftClip,
@@ -3662,6 +3848,11 @@ mod tests {
                     | (IrNodeKind::Mix, PreparedNode::Mix)
                     | (IrNodeKind::Balance { .. }, PreparedNode::Balance { .. })
                     | (IrNodeKind::Trim { .. }, PreparedNode::Trim { .. })
+                    | (IrNodeKind::Send { .. }, PreparedNode::Send { .. })
+                    | (
+                        IrNodeKind::PostFaderSend { .. },
+                        PreparedNode::PostFaderSend { .. }
+                    )
                     | (IrNodeKind::SoftClip, PreparedNode::SoftClip)
                     | (IrNodeKind::HardClamp, PreparedNode::HardClamp)
                     | (
@@ -3706,6 +3897,8 @@ mod tests {
                 IrNodeKind::Filter { .. }
                 | IrNodeKind::VelocityScaler { .. }
                 | IrNodeKind::Channel { .. }
+                | IrNodeKind::Send { .. }
+                | IrNodeKind::PostFaderSend { .. }
                 | IrNodeKind::Balance { .. }
                 | IrNodeKind::Sampler { .. }
                 | IrNodeKind::Script { .. }
@@ -3745,6 +3938,8 @@ mod tests {
                         | IrNodeKind::Mix
                         | IrNodeKind::Balance { .. }
                         | IrNodeKind::Trim { .. }
+                        | IrNodeKind::Send { .. }
+                        | IrNodeKind::PostFaderSend { .. }
                         | IrNodeKind::SoftClip
                         | IrNodeKind::HardClamp
                         | IrNodeKind::Distortion { .. }

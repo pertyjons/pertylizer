@@ -36,6 +36,7 @@
 //! marked [`diagnostics::Fidelity::UnsupportedScope`] and the A/B path refuses to compare it
 //! for parity. That refusal is the fails-closed mechanism the phase-exit rule requires.
 
+pub mod buses;
 pub mod diagnostics;
 pub mod graph;
 pub mod identity;

@@ -43,6 +43,7 @@ use synth_engine_v2::time::{FrameCount, PlanPosition};
 use synth_engine_v2::ir::{ExecutionScope, IrNodeKind, PortId, SignalDomain};
 use synth_engine_v2::quantities::Amplitude;
 
+use super::buses::{bus_slots, instrument_sends, lower_buses, send_nodes, summation_order_marks};
 use super::diagnostics::{Fidelity, LoweringDiagnostic, LoweringReason, ProjectSubject, Severity};
 use super::graph::{
     ChannelStrip, GraphAccumulator, InstrumentStages, Sink, lower_instrument_into,
@@ -57,36 +58,15 @@ use crate::patch::InstrumentState;
 
 /// What the project as a whole asks for that V2 cannot do.
 ///
-/// Read from `global` and the song's buses rather than from the instrument, and that is the
-/// point: an earlier revision looked only at the instrument's voice patch, so a project with a
-/// reverb on a return bus and a compressor on the master lowered as if neither existed. A
-/// survey of every saved project in the repository found it — `sends-returns-master` counted
-/// as eligible for a subset that cannot render either stage.
-fn project_diagnostics(
-    instruments: &[InstrumentState],
-    song: &synth_sequencer::Song,
-    global: &crate::project::GlobalProjectState,
-) -> Vec<LoweringDiagnostic> {
+/// Read from `global` rather than from the instrument, and that is the point: an earlier
+/// revision looked only at the instrument's voice patch, so a project with a compressor on
+/// the master lowered as if it did not exist. A survey of every saved project in the
+/// repository found it — `sends-returns-master` counted as eligible for a subset that cannot
+/// render the stage. The return buses and the sends into them lower since `P08-S004`, in
+/// `buses`; the summation-order marks are theirs too, since the returns are terms of the
+/// same sums.
+fn project_diagnostics(global: &crate::project::GlobalProjectState) -> Vec<LoweringDiagnostic> {
     let mut diagnostics = Vec::new();
-
-    // V1 sums its instruments into the master in the order the project lists them; V2 sums
-    // the master's cables in ascending identity (`SOUND-INV-008`), which is the instruments'
-    // identity order. A float sum of three or more terms depends on its order, so a project
-    // whose list is not in identity order is a marked difference, not a translation. Two
-    // terms sum the same either way.
-    let in_identity_order = instruments
-        .windows(2)
-        .all(|pair| pair[0].id.as_u64() < pair[1].id.as_u64());
-    if instruments.len() >= 3 && !in_identity_order {
-        diagnostics.push(LoweringDiagnostic::unrepresented(
-            ProjectSubject::Project,
-            LoweringReason::OwnedByLaterPhase {
-                capability: "three or more instruments saved out of identity order, which V1 \
-                             sums in list order and V2 in identity order",
-                owner: "the first A/B consumer, under the corpus's intentional-correction class",
-            },
-        ));
-    }
 
     // Every saved project-global field, dispositioned once, by the same mechanism as
     // `instrument_state_dispositions`: destructured **without `..`**, so a field added to
@@ -103,8 +83,11 @@ fn project_diagnostics(
         octave_offset: _,
         // Reported below: an expression stage V2 does not apply.
         glide_time,
-        // Refused below, effect by effect: a second signal path and a stage on everything.
-        return_bus_effects,
+        // Lowered in `buses::lower_buses` (`P08-S004`): each return's chain through the
+        // same insert lowering as an instrument's, an effect type V2 has not carried refused
+        // there by name.
+        return_bus_effects: _,
+        // Refused below, effect by effect: a stage on everything, owed to `P08-S007`.
         master_effects,
     } = global;
 
@@ -117,46 +100,6 @@ fn project_diagnostics(
                 module_type: effect.module_type,
             },
         ));
-    }
-
-    // A return bus is a second signal path. V2 renders one graph into one output.
-    for bus in return_bus_effects {
-        for effect in &bus.effects {
-            diagnostics.push(LoweringDiagnostic::refused(
-                ProjectSubject::ReturnBus {
-                    bus: synth_sequencer::ReturnBusId::new(bus.id),
-                },
-                LoweringReason::UnsupportedModuleType {
-                    module_type: effect.module_type,
-                },
-            ));
-        }
-    }
-
-    // A send routes a track's audio to one of those buses, so it is the same absence seen
-    // from the track's side. Reported separately because it is the object the user drew.
-    for track in song.tracks() {
-        // A send that contributes nothing is not routing V2 has to refuse. Two ways to
-        // contribute nothing, and both are documented V1 behaviour: a **disabled** send is a
-        // non-destructive bypass that keeps its level and tap point, and a send at **zero
-        // level** is multiplied by that zero. Refusing either would reject a dry project for
-        // settings that do not sound, while an acoustically identical one passed.
-        let sends_audio = track
-            .sends
-            .iter()
-            .any(|send| send.enabled && send.level != synth_core::NormalizedValue::MIN);
-        if sends_audio {
-            diagnostics.push(LoweringDiagnostic::refused(
-                ProjectSubject::Track {
-                    track: track.id,
-                    name: track.name.clone(),
-                },
-                LoweringReason::OwnedByLaterPhase {
-                    capability: "a send into a return bus",
-                    owner: "Phase 8, with the mixer and bus model",
-                },
-            ));
-        }
     }
 
     // A Mod Grid graph is a control-rate modulator V1's offline renderer installs before the
@@ -591,6 +534,15 @@ pub struct SmokeRender {
     /// Independent of the render, so a tempo change is observable here even when the render
     /// was refused for an unrelated reason.
     pub lowered_frames: FrameCount,
+    /// What admission reported about the plan's resources, where the lowering reached
+    /// admission at all (`P08-S004`, EVD-0021).
+    ///
+    /// The report is produced whether admission succeeded or failed (`HOST-INV-006`), so a
+    /// refusal by admission carries its rows here beside the diagnostic that names the
+    /// field. `None` is a lowering that never built a plan to admit. A survey reads the
+    /// session row's requested amount from it, which is how ADR-0054's reselection of that
+    /// share is measured rather than inferred from refusal messages.
+    pub report: Option<synth_engine_v2::report::ResourceReport>,
 }
 
 impl SmokeRender {
@@ -646,6 +598,7 @@ fn refused(diagnostics: Vec<LoweringDiagnostic>) -> SmokeRender {
         diagnostics,
         lowered_events: EventCount::NONE,
         lowered_frames: FrameCount::new(0),
+        report: None,
     }
 }
 
@@ -668,7 +621,7 @@ pub fn smoke_render_project(
     policy: OutputPolicy,
 ) -> SmokeRender {
     let sample_rate = profile.capabilities().sample_rate();
-    let mut diagnostics = project_diagnostics(instruments, song, global);
+    let mut diagnostics = project_diagnostics(global);
     let stop = |diagnostics: &[LoweringDiagnostic]| {
         diagnostics
             .iter()
@@ -680,6 +633,12 @@ pub fn smoke_render_project(
     let Some(master_level) = master_trim(global, &mut diagnostics) else {
         return refused(diagnostics);
     };
+    // Every return the song declares, addressed before any instrument's sends name one
+    // (`P08-S004`).
+    let Some(slots) = bus_slots(song, &mut diagnostics) else {
+        return refused(diagnostics);
+    };
+    diagnostics.extend(summation_order_marks(instruments, song, &slots, policy));
 
     // Every instrument's dispositions first, so a project is refused with every
     // instrument's reasons rather than the first's alone.
@@ -692,6 +651,7 @@ pub fn smoke_render_project(
         amp_sensitivity: synth_engine_v2::quantities::NormalizedLevel,
         playing: Option<super::performance::PlayingTracks>,
         modulators: super::modulation::SongModulators,
+        sends: Vec<super::graph::ChannelSend>,
     }
     let mut prepared: Vec<Prepared<'_>> = Vec::with_capacity(instruments.len());
     for saved in instruments {
@@ -732,12 +692,24 @@ pub fn smoke_render_project(
         let Ok(playing) = playing_tracks(saved.id, song, &mut diagnostics) else {
             continue;
         };
+        // Its sends, from the tracks assigned to it (`P08-S004`), muted where V1 taps nothing.
+        let Some(sends) = instrument_sends(
+            saved,
+            song,
+            &slots,
+            profile.limits().mixing().max_sends_per_channel(),
+            strip.muted,
+            &mut diagnostics,
+        ) else {
+            continue;
+        };
         prepared.push(Prepared {
             saved,
             strip,
             amp_sensitivity,
             playing,
             modulators,
+            sends,
         });
     }
     if stop(&diagnostics) || prepared.iter().any(|p| p.modulators.refused) {
@@ -785,6 +757,7 @@ pub fn smoke_render_project(
             track: p.playing.as_ref().map(|playing| playing.stage),
             channel: Some(p.strip),
             soft_clip: policy == OutputPolicy::Parity,
+            sends: p.sends.clone(),
         };
         let outcome = lower_instrument_into(
             &mut graph,
@@ -802,8 +775,14 @@ pub fn smoke_render_project(
             continue;
         }
         let slot = outcome.identities.slot();
-        let mut targets =
-            AutomationTargets::resolve(&outcome.identities).with_channel(slot.channel());
+        let post_fader_sends: Vec<NodeId> = send_nodes(slot, &p.sends)
+            .into_iter()
+            .filter(|(_, pre_fader)| !pre_fader)
+            .map(|(node, _)| node)
+            .collect();
+        let mut targets = AutomationTargets::resolve(&outcome.identities)
+            .with_channel(slot.channel())
+            .with_post_fader_sends(post_fader_sends);
         if let Some(playing) = &p.playing {
             targets = targets.with_balance(slot.balance(), playing.tracks.clone());
         }
@@ -819,6 +798,20 @@ pub fn smoke_render_project(
         });
     }
     if refused_any {
+        return refused(diagnostics);
+    }
+    // The returns (`P08-S004`): each its entry, its chain, its strip and its clipper under
+    // the parity policy, into the master unless another return is soloed, and its
+    // bus-to-bus sends.
+    if lower_buses(
+        &mut graph,
+        song,
+        global,
+        policy,
+        &slots,
+        MASTER_MIX,
+        &mut diagnostics,
+    ) {
         return refused(diagnostics);
     }
 
@@ -916,6 +909,7 @@ pub fn smoke_render_project(
     }
 
     let outcome = compile(&ir, &RenderConfig::new(profile));
+    let report = Some(outcome.report().clone());
     let plan = match outcome.into_plan() {
         Ok(plan) => plan,
         Err(error) => {
@@ -925,7 +919,10 @@ pub fn smoke_render_project(
                     value: error.to_string(),
                 },
             ));
-            return refused(diagnostics);
+            return SmokeRender {
+                report,
+                ..refused(diagnostics)
+            };
         }
     };
 
@@ -958,6 +955,7 @@ pub fn smoke_render_project(
             diagnostics,
             lowered_events,
             lowered_frames,
+            report,
         };
     }
     let requested = performance.frames.as_u64().saturating_add(tail.as_u64());
@@ -977,6 +975,7 @@ pub fn smoke_render_project(
             diagnostics,
             lowered_events,
             lowered_frames,
+            report,
         };
     }
 
@@ -990,6 +989,7 @@ pub fn smoke_render_project(
             diagnostics,
             lowered_events,
             lowered_frames,
+            report,
         },
         Err(error) => {
             diagnostics.push(LoweringDiagnostic::refused(
@@ -1003,6 +1003,7 @@ pub fn smoke_render_project(
                 diagnostics,
                 lowered_events,
                 lowered_frames,
+                report,
             }
         }
     }

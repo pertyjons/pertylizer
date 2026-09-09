@@ -14,7 +14,7 @@ use common::{OUTPUT, SOURCE, profile};
 use synth_engine_v2::compile::{RenderConfig, compile};
 use synth_engine_v2::diagnostics::{CompileError, CompileWarning};
 use synth_engine_v2::ir::{
-    EdgeId, ExecutionScope, GraphIr, IrNodeKind, NodeId, PortId, SignalDomain,
+    ChannelTag, EdgeId, ExecutionScope, GraphIr, IrNodeKind, NodeId, PortId, SignalDomain,
 };
 use synth_engine_v2::offline::render_offline;
 use synth_engine_v2::quantities::{
@@ -467,6 +467,13 @@ catalog! {
         muted: false,
     } => IrNodeKind::Balance { .. },
     IrNodeKind::Trim { level: level(1.0) } => IrNodeKind::Trim { .. },
+    IrNodeKind::Send { level: level(1.0), muted: false } => IrNodeKind::Send { .. },
+    IrNodeKind::PostFaderSend {
+        fader: level(1.0),
+        pan: synth_engine_v2::controller::BipolarLevel::ZERO,
+        muted: false,
+        level: level(1.0),
+    } => IrNodeKind::PostFaderSend { .. },
     IrNodeKind::SoftClip => IrNodeKind::SoftClip,
     IrNodeKind::HardClamp => IrNodeKind::HardClamp,
     IrNodeKind::Distortion {
@@ -537,6 +544,8 @@ fn every_kernel_admits_exactly_one_channel_on_every_port() {
                 | IrNodeKind::Mix
                 | IrNodeKind::Balance { .. }
                 | IrNodeKind::Trim { .. }
+                | IrNodeKind::Send { .. }
+                | IrNodeKind::PostFaderSend { .. }
                 | IrNodeKind::SoftClip
                 | IrNodeKind::HardClamp
                 | IrNodeKind::Distortion { .. }
@@ -590,7 +599,7 @@ fn a_stereo_output_into_a_narrower_port_is_refused_as_a_layout_mismatch() {
                 pan: synth_engine_v2::controller::BipolarLevel::ZERO,
                 muted: false,
             },
-            ExecutionScope::Channel,
+            ExecutionScope::Channel(ChannelTag::FIRST),
         )
         .node(OUTPUT, IrNodeKind::Output, ExecutionScope::Global)
         .connect(

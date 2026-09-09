@@ -97,6 +97,22 @@ pub enum ProjectSubject {
         /// being passed where the other belongs.
         bus: ReturnBusId,
     },
+    /// One effect in one return bus's chain (`P08-S004`).
+    ReturnBusModule {
+        /// The bus the song declares.
+        bus: ReturnBusId,
+        /// The effect, by its persisted identity within the chain.
+        module: ModuleId,
+    },
+    /// One parameter of one effect in one return bus's chain (`P08-S004`).
+    ReturnBusParameter {
+        /// The bus the song declares.
+        bus: ReturnBusId,
+        /// The owning effect.
+        module: ModuleId,
+        /// The parameter's saved key.
+        parameter: String,
+    },
     /// The master effect chain.
     MasterChain,
     /// One instrument's insert chain as `patch.settings.effect_chain_order` describes it

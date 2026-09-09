@@ -474,14 +474,48 @@ fn inserted_records_upper_bound(ir: &GraphIr, profile: &HostProfile) -> u64 {
     widening.saturating_add(summed).saturating_add(into_inputs)
 }
 
-/// The mix channels a plan compiles: its `Channel` nodes (`SOUND-INV-031`).
+/// The mix channels a plan compiles: its `Channel` nodes in a channel scope
+/// (`SOUND-INV-031`); a strip in a bus scope is a bus's (`SOUND-INV-034`).
 pub(crate) fn compiled_channels(ir: &GraphIr) -> crate::quantities::MixChannelCount {
     let count = ir
         .nodes()
         .iter()
-        .filter(|node| matches!(node.kind(), IrNodeKind::Channel { .. }))
+        .filter(|node| {
+            matches!(node.kind(), IrNodeKind::Channel { .. })
+                && matches!(node.scope(), crate::ir::ExecutionScope::Channel(_))
+        })
         .count();
     crate::quantities::MixChannelCount::measured(u32::try_from(count).unwrap_or(u32::MAX))
+}
+
+/// The buses a plan compiles: its `Channel` nodes in a bus scope (`SOUND-INV-034`).
+pub(crate) fn compiled_buses(ir: &GraphIr) -> crate::quantities::BusCount {
+    let count = ir
+        .nodes()
+        .iter()
+        .filter(|node| {
+            matches!(node.kind(), IrNodeKind::Channel { .. })
+                && matches!(node.scope(), crate::ir::ExecutionScope::Bus(_))
+        })
+        .count();
+    crate::quantities::BusCount::measured(u32::try_from(count).unwrap_or(u32::MAX))
+}
+
+/// The most sends any one channel or bus of the plan has (`SOUND-INV-034`): the send nodes
+/// of each tagged scope, pre-fader and post-fader together, as V1's per-channel list holds
+/// both (`LIMIT-0024`).
+pub(crate) fn sends_on_the_busiest_channel(ir: &GraphIr) -> crate::quantities::SendCount {
+    let mut per_scope: HashMap<crate::ir::ExecutionScope, u32> = HashMap::new();
+    for node in ir.nodes() {
+        if matches!(
+            node.kind(),
+            IrNodeKind::Send { .. } | IrNodeKind::PostFaderSend { .. }
+        ) {
+            let count = per_scope.entry(node.scope()).or_insert(0);
+            *count = count.saturating_add(1);
+        }
+    }
+    crate::quantities::SendCount::measured(per_scope.values().copied().max().unwrap_or(0))
 }
 
 /// The voice-scope nodes whose output is read by a node outside the voice scope, each once,
@@ -832,15 +866,17 @@ fn build_rows(
         ResourceAmount::MixChannels(limits.mixing().max_mix_channels()),
         IrObject::Plan,
     ));
+    // `SOUND-INV-034`: the buses are the plan's bus strips and a channel's sends are the
+    // send nodes of its tagged scope, both counted from the IR as the channels are.
     rows.push(ResourceRow::new(
         ResourceField::MaxBuses,
-        ResourceAmount::Buses(declarations.buses),
+        ResourceAmount::Buses(compiled_buses(ir)),
         ResourceAmount::Buses(limits.mixing().max_buses()),
         IrObject::Plan,
     ));
     rows.push(ResourceRow::new(
         ResourceField::MaxSendsPerChannel,
-        ResourceAmount::Sends(declarations.max_sends_on_any_channel),
+        ResourceAmount::Sends(sends_on_the_busiest_channel(ir)),
         ResourceAmount::Sends(limits.mixing().max_sends_per_channel()),
         IrObject::Plan,
     ));
@@ -1256,6 +1292,10 @@ struct Lowered {
     tap_addresses: Vec<crate::plan::TapAddress>,
     /// The mix channels, in ascending node identity (`SOUND-INV-031`).
     channels: Vec<crate::plan::ChannelRecord>,
+    /// The buses, in ascending strip identity (`SOUND-INV-034`).
+    buses: Vec<crate::plan::BusRecord>,
+    /// The sends, in ascending node identity (`SOUND-INV-034`).
+    sends: Vec<crate::plan::SendRecord>,
     note_targets: Vec<NoteTarget>,
     note_addresses: Vec<NoteAddress>,
     note_magnitudes: Vec<NoteMagnitudeTarget>,
@@ -1314,6 +1354,8 @@ impl Lowered {
             self.taps,
             self.tap_addresses,
             self.channels,
+            self.buses,
+            self.sends,
             self.note_targets,
             self.note_addresses,
             self.note_magnitudes,
@@ -1494,6 +1536,16 @@ fn lower(
         .map(|conversion| (conversion.edge, conversion.conversion))
         .collect();
     let mut channels: Vec<crate::plan::ChannelRecord> = Vec::new();
+    // `SOUND-INV-034`: the bus strips and the sends, with their slots, resolved into
+    // records once every identity is minted below.
+    let mut bus_strips: Vec<(NodeId, crate::ir::BusTag, [ParameterSlot; 3])> = Vec::new();
+    let mut send_nodes: Vec<(
+        NodeId,
+        crate::ir::ExecutionScope,
+        bool,
+        ParameterSlot,
+        ParameterSlot,
+    )> = Vec::new();
     let mut slots: HashMap<NodeId, BufferSlot> = HashMap::with_capacity(ir.nodes().len());
     // The node's place in the *state* tables, which is what a note target addresses. Kept
     // beside the buffer slots rather than derived from them: they are two numberings, and
@@ -1869,28 +1921,60 @@ fn lower(
             });
         }
         // `SOUND-INV-031`: a channel record with the slots its three controls compile to;
-        // its identity is minted below, once every channel is known.
+        // its identity is minted below, once every channel is known. `SOUND-INV-034`: the
+        // same strip in a bus scope is the bus's, and a send keeps its level's slot.
+        let slot_of = |parameter: crate::ir::ParameterId| {
+            parameter_addresses
+                .iter()
+                .rev()
+                .find(|address| address.node == *id && address.parameter == parameter)
+                .map(|address| address.slot)
+        };
         if matches!(kind, IrNodeKind::Channel { .. }) {
-            let slot_of = |parameter: crate::ir::ParameterId| {
-                parameter_addresses
-                    .iter()
-                    .rev()
-                    .find(|address| address.node == *id && address.parameter == parameter)
-                    .map(|address| address.slot)
-            };
             match (
                 slot_of(crate::ir::parameters::CHANNEL_FADER),
                 slot_of(crate::ir::parameters::CHANNEL_PAN),
                 slot_of(crate::ir::parameters::CHANNEL_MUTE),
+                scopes.get(id).copied(),
             ) {
-                (Some(fader), Some(pan), Some(mute)) => {
+                (Some(fader), Some(pan), Some(mute), Some(crate::ir::ExecutionScope::Bus(tag))) => {
+                    bus_strips.push((*id, tag, [fader, pan, mute]));
+                }
+                (
+                    Some(fader),
+                    Some(pan),
+                    Some(mute),
+                    Some(crate::ir::ExecutionScope::Channel(tag)),
+                ) => {
                     channels.push(crate::plan::ChannelRecord {
                         id: crate::plan::ChannelId::new(plan_id, channels.len()),
+                        tag,
                         node: *id,
                         fader,
                         pan,
                         mute,
                     });
+                }
+                _ => fault = fault.or(Some(CompileError::DestinationWithoutSlot { node: *id })),
+            }
+        }
+        let send_slots = match kind {
+            IrNodeKind::Send { .. } => Some((
+                slot_of(crate::ir::parameters::SEND_LEVEL),
+                slot_of(crate::ir::parameters::SEND_MUTE),
+                false,
+            )),
+            IrNodeKind::PostFaderSend { .. } => Some((
+                slot_of(crate::ir::parameters::POST_FADER_SEND_LEVEL),
+                slot_of(crate::ir::parameters::POST_FADER_SEND_MUTE),
+                true,
+            )),
+            _ => None,
+        };
+        if let Some((level, mute, post_fader)) = send_slots {
+            match (level, mute, scopes.get(id).copied()) {
+                (Some(level), Some(mute), Some(scope)) => {
+                    send_nodes.push((*id, scope, post_fader, level, mute));
                 }
                 _ => fault = fault.or(Some(CompileError::DestinationWithoutSlot { node: *id })),
             }
@@ -1999,6 +2083,81 @@ fn lower(
     for (index, record) in channels.iter_mut().enumerate() {
         record.id = crate::plan::ChannelId::new(plan_id, index);
     }
+    // `SOUND-INV-034`: a bus's identity is its position among the plan's buses in ascending
+    // strip identity, for the reason a channel's is; its entry is the one sum of its scope,
+    // which validation held to exactly one. A send's record names whose it is by its scope's
+    // tag, where it taps by its kind and scope, and the bus it enters by its one cable's
+    // target — every one a fact validation checked, resolved here to the minted identities.
+    bus_strips.sort_by_key(|(strip, _, _)| *strip);
+    let entry_of: HashMap<crate::ir::ExecutionScope, NodeId> = ir
+        .nodes()
+        .iter()
+        .filter(|node| {
+            matches!(node.kind(), IrNodeKind::Mix)
+                && matches!(node.scope(), crate::ir::ExecutionScope::Bus(_))
+        })
+        .map(|node| (node.scope(), node.id()))
+        .collect();
+    let mut buses: Vec<crate::plan::BusRecord> = Vec::with_capacity(bus_strips.len());
+    for (index, (strip, tag, [fader, pan, mute])) in bus_strips.iter().copied().enumerate() {
+        match entry_of.get(&crate::ir::ExecutionScope::Bus(tag)).copied() {
+            Some(entry) => buses.push(crate::plan::BusRecord {
+                id: crate::plan::BusId::new(plan_id, index),
+                tag,
+                entry,
+                strip,
+                fader,
+                pan,
+                mute,
+            }),
+            None => fault = fault.or(Some(CompileError::DestinationWithoutSlot { node: strip })),
+        }
+    }
+    let channel_by_tag: HashMap<crate::ir::ChannelTag, crate::plan::ChannelId> = channels
+        .iter()
+        .map(|record| (record.tag, record.id))
+        .collect();
+    let bus_by_tag: HashMap<crate::ir::BusTag, crate::plan::BusId> =
+        buses.iter().map(|record| (record.tag, record.id)).collect();
+    send_nodes.sort_by_key(|(node, _, _, _, _)| *node);
+    let mut sends: Vec<crate::plan::SendRecord> = Vec::with_capacity(send_nodes.len());
+    for (node, scope, post_fader, level, mute) in send_nodes {
+        let from = match scope {
+            crate::ir::ExecutionScope::Channel(tag) => channel_by_tag
+                .get(&tag)
+                .copied()
+                .map(crate::plan::SendSource::Channel),
+            crate::ir::ExecutionScope::Bus(tag) => bus_by_tag
+                .get(&tag)
+                .copied()
+                .map(crate::plan::SendSource::Bus),
+            _ => None,
+        };
+        let into = ir
+            .edges()
+            .iter()
+            .find(|edge| edge.from().0 == node)
+            .and_then(|edge| match ir.scope_of(edge.to().0) {
+                Some(crate::ir::ExecutionScope::Bus(tag)) => bus_by_tag.get(&tag).copied(),
+                _ => None,
+            });
+        let tap = if post_fader || matches!(scope, crate::ir::ExecutionScope::Bus(_)) {
+            crate::plan::SendTap::PostFader
+        } else {
+            crate::plan::SendTap::PreFader
+        };
+        match (from, into) {
+            (Some(from), Some(into)) => sends.push(crate::plan::SendRecord {
+                node,
+                from,
+                tap,
+                into,
+                level,
+                mute,
+            }),
+            _ => fault = fault.or(Some(CompileError::DestinationWithoutSlot { node })),
+        }
+    }
 
     // ADR-0005: lowering emits one buffer per value; the arena decides which of them
     // share storage, once, here. The render loop reads slot indices and learns nothing
@@ -2031,6 +2190,8 @@ fn lower(
         taps,
         tap_addresses,
         channels,
+        buses,
+        sends,
         note_targets,
         note_addresses,
         note_magnitudes,

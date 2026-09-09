@@ -717,6 +717,9 @@ impl ChannelId {
 pub struct ChannelRecord {
     /// The channel's identity.
     pub id: ChannelId,
+    /// The builder's tag for the channel's scope (`SOUND-INV-034`), under which its sends
+    /// were placed.
+    pub tag: crate::ir::ChannelTag,
     /// The node it was compiled from.
     pub node: NodeId,
     /// Its fader's slot.
@@ -724,6 +727,96 @@ pub struct ChannelRecord {
     /// Its pan's slot.
     pub pan: ParameterSlot,
     /// Its mute's slot.
+    pub mute: ParameterSlot,
+}
+
+/// The identity of one bus in one plan (`SOUND-INV-034`).
+///
+/// Minted by the compiler, one per bus strip in ascending strip node identity, and carried
+/// with the plan it names, as a [`ChannelId`] is. A send, a meter or a sidechain keys a bus
+/// by this and never by a saved return's identity.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[must_use]
+pub struct BusId {
+    plan: PlanId,
+    index: usize,
+}
+
+impl BusId {
+    /// An identity. Crate-private for the reason [`ParameterSlot::new`] is.
+    pub(crate) const fn new(plan: PlanId, index: usize) -> Self {
+        Self { plan, index }
+    }
+
+    /// Which plan this bus belongs to.
+    pub const fn plan(self) -> PlanId {
+        self.plan
+    }
+
+    /// The bus's position among the plan's buses, in ascending strip identity.
+    pub const fn index(self) -> usize {
+        self.index
+    }
+}
+
+/// One bus the plan compiled (`SOUND-INV-034`): its entry sum, its strip, and the slots the
+/// strip's three controls occupy.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[must_use]
+pub struct BusRecord {
+    /// The bus's identity.
+    pub id: BusId,
+    /// The builder's tag for the bus's scope.
+    pub tag: crate::ir::BusTag,
+    /// The sum its sends enter.
+    pub entry: NodeId,
+    /// The strip: its fader, pan and mute.
+    pub strip: NodeId,
+    /// The strip's fader slot.
+    pub fader: ParameterSlot,
+    /// The strip's pan slot.
+    pub pan: ParameterSlot,
+    /// The strip's mute slot.
+    pub mute: ParameterSlot,
+}
+
+/// Whose send a send is (`SOUND-INV-034`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[must_use]
+pub enum SendSource {
+    /// A mix channel's.
+    Channel(ChannelId),
+    /// A bus's.
+    Bus(BusId),
+}
+
+/// Where a send taps its source (`SOUND-INV-034`), as V1 names its two tap points.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[must_use]
+pub enum SendTap {
+    /// Before the fader: the signal the strip reads, times the level.
+    PreFader,
+    /// After the fader: a channel's gain composed with the level, or a bus's clipped output
+    /// times the level.
+    PostFader,
+}
+
+/// One send the plan compiled (`SOUND-INV-034`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[must_use]
+pub struct SendRecord {
+    /// The node it was compiled from.
+    pub node: NodeId,
+    /// Whose send it is.
+    pub from: SendSource,
+    /// Where it taps.
+    pub tap: SendTap,
+    /// The bus it enters.
+    pub into: BusId,
+    /// Its level's slot.
+    pub level: ParameterSlot,
+    /// Its mute's slot — the send's own on a `Send`, the channel's copy on a
+    /// `PostFaderSend`.
     pub mute: ParameterSlot,
 }
 
@@ -987,6 +1080,10 @@ pub struct CompiledPlan {
     taps: Vec<TapTarget>,
     tap_addresses: Vec<TapAddress>,
     channels: Vec<ChannelRecord>,
+    /// The buses, in ascending strip identity (`SOUND-INV-034`).
+    buses: Vec<BusRecord>,
+    /// The sends, in ascending node identity (`SOUND-INV-034`).
+    sends: Vec<SendRecord>,
     note_targets: Vec<NoteTarget>,
     note_addresses: Vec<NoteAddress>,
     /// Every note target's magnitude writes, flattened.
@@ -1089,6 +1186,8 @@ impl CompiledPlan {
         taps: Vec<TapTarget>,
         tap_addresses: Vec<TapAddress>,
         channels: Vec<ChannelRecord>,
+        buses: Vec<BusRecord>,
+        sends: Vec<SendRecord>,
         note_targets: Vec<NoteTarget>,
         note_addresses: Vec<NoteAddress>,
         note_magnitudes: Vec<NoteMagnitudeTarget>,
@@ -1122,6 +1221,8 @@ impl CompiledPlan {
             taps,
             tap_addresses,
             channels,
+            buses,
+            sends,
             note_targets,
             note_addresses,
             note_magnitudes,
@@ -1334,6 +1435,18 @@ impl CompiledPlan {
     /// Admission counted them against `max_mix_channels`.
     pub fn channels(&self) -> &[ChannelRecord] {
         &self.channels
+    }
+
+    /// The buses the plan compiled, in ascending strip identity (`SOUND-INV-034`).
+    /// Admission counted them against `max_buses`.
+    pub fn buses(&self) -> &[BusRecord] {
+        &self.buses
+    }
+
+    /// The sends the plan compiled, in ascending node identity (`SOUND-INV-034`). Admission
+    /// counted each channel's against `max_sends_per_channel`.
+    pub fn sends(&self) -> &[SendRecord] {
+        &self.sends
     }
 
     pub fn tap_addresses(&self) -> &[TapAddress] {

@@ -1,0 +1,56 @@
+Subject: 233a9252e9dac6718c2ba59fe2719a33f30dc459
+Parent: b919b88ecac8aa3dca76679e593de813a7ab439f
+Initial worktree: clean
+Recorded UTC: 2026-09-09T21:13:55+00:00
+
+rustc 1.98.0 (88d9e12ae 2026-08-18)
+binary: rustc
+commit-hash: 88d9e12ae178fab0fb5cc050a94da85685d449ea
+commit-date: 2026-08-18
+host: x86_64-unknown-linux-gnu
+release: 1.98.0
+LLVM version: 22.1.8
+Linux 7.1.13-200.fc44.x86_64 x86_64
+Model name:                              13th Gen Intel(R) Core(TM) i7-13700H
+No CPU affinity or governor control; other desktop work may run. Nothing is timed.
+
+Control and consequence:
+test lowering::tests::evidence::evd_0021_session_share_high_water_over_every_saved_project ... ignored, EVD-0021's survey; run with --ignored --nocapture to reproduce its table
+test lowering::tests::evidence::a_plan_with_no_writable_control_requests_one_session_event ... ok
+test lowering::tests::evidence::the_selected_session_share_admits_every_project_the_survey_measured_below_it ... ok
+test result: ok. 2 passed; 0 failed; 1 ignored; 0 measured; 870 filtered out; finished in 0.08s
+
+Survey:
+| Project | Reaches a plan | Session request | First refusal |
+| instrument-inserts | true | 29 |  |
+| keyboard-panner-stereo | false | — | UnsupportedModuleType { module_type: KeyboardPanner } |
+| mod-matrix | true | 23 |  |
+| polyphonic-voice-stealing | false | — | OwnedByLaterPhase { capability: "a voice-allocation setting — the mode, the stealing strategy or the voice cou |
+| sends-returns-master | false | — | UnsupportedModuleType { module_type: Compressor } |
+| shared-instrument-tracks | false | — | OwnedByLaterPhase { capability: "an instrument shared by two tracks with differing track controls, which V1 ap |
+| subtractive-voice | true | 21 |  |
+| tempo-map-arrangement | true | 21 |  |
+| yams-audio-script | false | — | UnsupportedModuleType { module_type: AudioScript } |
+| yams-control | false | — | UnsupportedModuleType { module_type: Script } |
+| Chrome & Graph Teaching Demo | false | — | OwnedByLaterPhase { capability: "a track-scoped Mod Grid graph, which runs once per assigned track against tha |
+| Classic Amiga module | false | — | UnknownPort { port: "fm" } |
+| Escape from Stockholm | false | — | UnsupportedParameterValue { value: "pulse" } |
+| Expression & Note-Processor Demo | false | — | UnsupportedModuleType { module_type: EnsembleChorus } |
+| Karu Sydän — Suomalainen Tango | false | — | UnsupportedModuleType { module_type: Eq } |
+| Nemesis_the_Warlock | false | — | UnsupportedModuleType { module_type: Distortion } |
+| Neon Horizon | false | — | UnsupportedModuleType { module_type: Mixer } |
+| Neuro F#m 174-extended | false | — | UnsupportedModuleType { module_type: Eq } |
+| Ornament Demo | false | — | UnsupportedParameterValue { value: "triangle" } |
+| Oxygene Dreams (80s Techno) | false | — | UnknownPort { port: "fm" } |
+| Sidechain Demo | false | — | OwnedByLaterPhase { capability: "a sidechain source, which ducks this instrument on what another one plays", o |
+| Synth Pop a la Codex | false | — | OwnedByLaterPhase { capability: "an instrument shared by two tracks with differing track controls, which V1 ap |
+| YAMS AudioScript Wavefolder | false | — | UnsupportedModuleType { module_type: EnsembleChorus } |
+| YAMS Script Demo | false | — | OwnedByLaterPhase { capability: "a Mod Matrix slot driven by a YAMS control script, whose output replaces the  |
+| YAMS Script Lab | false | — | UnsupportedParameterValue { value: "pulse" } |
+| all-modules-reference | false | — | UnsupportedParameterValue { value: "Bool(false)" } |
+| echoing | false | — | UnsupportedModuleType { module_type: Sampler } |
+| oxygene-dreams-2-fixed | false | — | UnsupportedModuleType { module_type: Eq } |
+| synthetic: one instrument, one post-fader send, one delayed return | true | 33 |  |
+| synthetic: two instruments, two sends, two delayed returns | true | 64 |  |
+high-water: 64 (synthetic: two instruments, two sends, two delayed returns) over 30 projects
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 872 filtered out; finished in 0.15s

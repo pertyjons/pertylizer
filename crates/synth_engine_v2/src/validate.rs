@@ -482,12 +482,16 @@ pub(crate) fn validate(ir: &GraphIr, stream: ChannelLayout) -> Result<Validated,
         if node.scope() == crate::ir::ExecutionScope::Voice
             && matches!(
                 node.kind(),
-                crate::ir::IrNodeKind::Channel { .. } | crate::ir::IrNodeKind::Mix
+                crate::ir::IrNodeKind::Channel { .. }
+                    | crate::ir::IrNodeKind::Mix
+                    | crate::ir::IrNodeKind::Send { .. }
+                    | crate::ir::IrNodeKind::PostFaderSend { .. }
             )
         {
             return Err(CompileError::MixerNodeInVoiceScope { node: node.id() });
         }
     }
+    mixer_scopes(ir)?;
     modulations(ir, &index)?;
     fan_in(ir, &index)?;
     let order = topological_order(&index)?;
@@ -505,8 +509,8 @@ pub(crate) fn validate(ir: &GraphIr, stream: ChannelLayout) -> Result<Validated,
 pub(crate) const fn scope_depth(scope: ExecutionScope) -> u8 {
     match scope {
         ExecutionScope::Global => 0,
-        ExecutionScope::Bus => 1,
-        ExecutionScope::Channel => 2,
+        ExecutionScope::Bus(_) => 1,
+        ExecutionScope::Channel(_) => 2,
         ExecutionScope::InstrumentInstance => 3,
         ExecutionScope::Voice => 4,
     }
@@ -705,6 +709,161 @@ fn fan_in(ir: &GraphIr, index: &Index<'_>) -> Result<(), CompileError> {
                 edges: count,
                 first,
                 second: second.unwrap_or(first),
+            });
+        }
+    }
+    Ok(())
+}
+
+/// `SOUND-INV-034`: the mixer's tagged scopes, held to the shape the plan's records read.
+///
+/// A `Channel` node is a mix channel's strip in a `Channel(tag)` scope or a bus's strip in a
+/// `Bus(tag)` scope, and nowhere else; each tagged scope holds one strip. A `Bus(tag)` scope
+/// holds exactly one `Mix`, its **entry**, where sends land. A send is in a tagged scope —
+/// that is how it says whose send it is — and reads V1's tap point for that scope: a
+/// channel's send reads the signal the strip reads, a bus's send reads the strip or the
+/// clipper the strip feeds; a post-fader send, which forms the channel's gain itself, is a
+/// channel's alone. Its one cable out enters a bus's entry. Everything a record needs is
+/// therefore declared by the builder and checked here, rather than inferred from a walk
+/// that could attribute a send two ways — an independent consultation showed a send between
+/// two chained channels reading as either's.
+fn mixer_scopes(ir: &GraphIr) -> Result<(), CompileError> {
+    use crate::ir::IrNodeKind;
+    use std::collections::BTreeMap;
+
+    let mut strips: BTreeMap<ExecutionScope, Vec<NodeId>> = BTreeMap::new();
+    let mut entries: BTreeMap<ExecutionScope, Vec<NodeId>> = BTreeMap::new();
+    let mut sends: Vec<(NodeId, ExecutionScope)> = Vec::new();
+    for node in ir.nodes() {
+        let scope = node.scope();
+        let tagged = matches!(scope, ExecutionScope::Channel(_) | ExecutionScope::Bus(_));
+        match node.kind() {
+            IrNodeKind::Channel { .. } => {
+                if !tagged {
+                    return Err(CompileError::ChannelOutsideChannelScope {
+                        node: node.id(),
+                        scope,
+                    });
+                }
+                strips.entry(scope).or_default().push(node.id());
+            }
+            IrNodeKind::Mix => {
+                if let ExecutionScope::Bus(_) = scope {
+                    entries.entry(scope).or_default().push(node.id());
+                }
+            }
+            IrNodeKind::Send { .. } => {
+                if !tagged {
+                    return Err(CompileError::SendOutsideMixerScope {
+                        node: node.id(),
+                        scope,
+                    });
+                }
+                sends.push((node.id(), scope));
+            }
+            IrNodeKind::PostFaderSend { .. } => match scope {
+                ExecutionScope::Channel(_) => sends.push((node.id(), scope)),
+                ExecutionScope::Bus(_) => {
+                    return Err(CompileError::PostFaderSendOnBus { node: node.id() });
+                }
+                _ => {
+                    return Err(CompileError::SendOutsideMixerScope {
+                        node: node.id(),
+                        scope,
+                    });
+                }
+            },
+            _ => {}
+        }
+    }
+    for (scope, list) in &strips {
+        if let [first, second, ..] = list.as_slice() {
+            return Err(CompileError::ScopeWithTwoStrips {
+                scope: *scope,
+                first: *first,
+                second: *second,
+            });
+        }
+    }
+    for (scope, list) in &entries {
+        if let [first, second, ..] = list.as_slice() {
+            return Err(CompileError::BusWithTwoEntries {
+                scope: *scope,
+                first: *first,
+                second: *second,
+            });
+        }
+        if let Some(entry) = list.first()
+            && !strips.contains_key(scope)
+        {
+            return Err(CompileError::ScopeWithoutStrip {
+                scope: *scope,
+                node: *entry,
+            });
+        }
+    }
+    for (scope, list) in &strips {
+        if let (ExecutionScope::Bus(_), Some(strip)) = (scope, list.first())
+            && !entries.contains_key(scope)
+        {
+            return Err(CompileError::BusWithoutEntry {
+                scope: *scope,
+                strip: *strip,
+            });
+        }
+    }
+
+    // The one source behind each input port, and every cable leaving each node, indexed
+    // once: the sends are few, the edges may not be.
+    let mut source_of: HashMap<(NodeId, PortId), NodeId> = HashMap::new();
+    let mut leaving: HashMap<NodeId, Vec<&crate::ir::IrEdge>> = HashMap::new();
+    for edge in ir.edges() {
+        source_of.entry(edge.to()).or_insert(edge.from().0);
+        leaving.entry(edge.from().0).or_default().push(edge);
+    }
+    let kind_of: HashMap<NodeId, IrNodeKind> = ir
+        .nodes()
+        .iter()
+        .map(|node| (node.id(), node.kind()))
+        .collect();
+    for (send, scope) in sends {
+        let Some(strip) = strips.get(&scope).and_then(|list| list.first().copied()) else {
+            return Err(CompileError::ScopeWithoutStrip { scope, node: send });
+        };
+        let tapped = source_of.get(&(send, PortId::FIRST)).copied();
+        let legal = match scope {
+            // V1's channel taps read the signal the channel stage reads.
+            ExecutionScope::Channel(_) => {
+                tapped.is_some() && tapped == source_of.get(&(strip, PortId::FIRST)).copied()
+            }
+            // V1's bus tap reads the return's clipped output: the strip where no clipper is
+            // placed, else the clipper the strip feeds.
+            ExecutionScope::Bus(_) => tapped.is_some_and(|tapped| {
+                tapped == strip
+                    || (matches!(kind_of.get(&tapped), Some(IrNodeKind::SoftClip))
+                        && ir.scope_of(tapped) == Some(scope)
+                        && source_of.get(&(tapped, PortId::FIRST)).copied() == Some(strip))
+            }),
+            _ => false,
+        };
+        if !legal {
+            return Err(CompileError::SendTapMismatch { node: send, strip });
+        }
+        let cables = leaving.get(&send).map_or(&[][..], Vec::as_slice);
+        let into_bus = match cables {
+            [one] => {
+                let target = one.to().0;
+                matches!(kind_of.get(&target), Some(IrNodeKind::Mix))
+                    && matches!(ir.scope_of(target), Some(ExecutionScope::Bus(_)))
+            }
+            _ => false,
+        };
+        if !into_bus {
+            return Err(CompileError::SendNotIntoBus {
+                node: send,
+                cables: crate::quantities::EdgeCount::measured(
+                    u32::try_from(cables.len()).unwrap_or(u32::MAX),
+                ),
             });
         }
     }

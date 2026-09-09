@@ -10,8 +10,8 @@ mod common;
 
 use common::{OUTPUT, SOURCE, profile};
 use synth_engine_v2::ir::{
-    ExecutionScope, GraphIr, IrNodeKind, NodeId, PlanDeclarations, PortId, SignalDomain,
-    StealingPolicy, parameters,
+    ChannelTag, ExecutionScope, GraphIr, IrNodeKind, NodeId, PlanDeclarations, PortId,
+    SignalDomain, StealingPolicy, parameters,
 };
 use synth_engine_v2::node::AMPLIFIER_CONTROL;
 use synth_engine_v2::offline::{OfflineEvent, render_offline};
@@ -91,8 +91,43 @@ fn staged(source: IrNodeKind, stages: &[(NodeId, IrNodeKind, ExecutionScope)]) -
         .expect("a staged source is a readable plan")
 }
 
+/// The stereo harness profile with a 512-quantum block and twice the default scratch budget.
+///
+/// The block is the harness's, so a whole render can be one call; its event scratch is the
+/// per-quantum cap times the quanta a call spans, and at the cap EVD-0021 reselected
+/// (`P08-S004`) 513 quanta of it pass the 16 MiB default a 4 096-frame host sits well under.
+/// The budget is raised for this block alone rather than the block shrunk, so every render
+/// below stays a single call as the digests in the slice's commit were measured.
+fn harness() -> HostProfile {
+    use synth_engine_v2::profile::{MemoryLimits, RenderLimits};
+    use synth_engine_v2::quantities::PreparedBytes;
+    let base = profile(FRAMES, ChannelLayout::Stereo);
+    let defaults = RenderLimits::engine_defaults(base.capabilities()).expect("defaults");
+    let memory = defaults.memory();
+    let memory = MemoryLimits::new(
+        memory.prepared_immutable_bytes(),
+        memory.mutable_state_bytes(),
+        PreparedBytes::limit(32 * 1024 * 1024).expect("positive"),
+    )
+    .expect("a larger scratch budget");
+    let limits = RenderLimits::new(
+        defaults.stream(),
+        defaults.graph(),
+        defaults.voices(),
+        defaults.events(),
+        defaults.observation(),
+        defaults.mixing(),
+        memory,
+        defaults.script(),
+        defaults.recording(),
+        defaults.cost(),
+    )
+    .expect("consistent limits");
+    HostProfile::new(base.capabilities(), limits).expect("a consistent profile")
+}
+
 fn admit(ir: &GraphIr) -> CompiledPlan {
-    common::admit(ir, profile(FRAMES, ChannelLayout::Stereo))
+    common::admit(ir, harness())
 }
 
 fn admit_at(ir: &GraphIr, host: HostProfile) -> CompiledPlan {
@@ -407,7 +442,7 @@ fn ring_out(
                     pan: synth_engine_v2::controller::BipolarLevel::ZERO,
                     muted: false,
                 },
-                ExecutionScope::Channel,
+                ExecutionScope::Channel(ChannelTag::FIRST),
             ),
             (SECOND, insert, ExecutionScope::Global),
         ],
@@ -559,7 +594,7 @@ fn declared_timing_is_visible_per_node_and_the_plans_tail_is_the_longest_stated_
     );
     let outcome = synth_engine_v2::compile::compile(
         &ir,
-        &synth_engine_v2::compile::RenderConfig::new(profile(FRAMES, ChannelLayout::Stereo)),
+        &synth_engine_v2::compile::RenderConfig::new(harness()),
     );
     let reported = outcome.report().reported().declared_tail();
     let plan = outcome.into_plan().expect("admits");

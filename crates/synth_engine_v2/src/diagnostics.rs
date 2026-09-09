@@ -44,6 +44,88 @@ pub enum CompileError {
         /// The node.
         node: crate::ir::NodeId,
     },
+    /// A `Channel` node outside a tagged channel or bus scope (`SOUND-INV-034`): a strip is
+    /// a mix channel's or a bus's, and the scope's tag is what says which.
+    #[error(
+        "{node} is a channel strip in {scope:?}; a strip is in a Channel(tag) or Bus(tag) scope"
+    )]
+    ChannelOutsideChannelScope {
+        /// The node.
+        node: crate::ir::NodeId,
+        /// Where it was placed.
+        scope: crate::ir::ExecutionScope,
+    },
+    /// Two strips in one tagged scope (`SOUND-INV-034`): a channel or a bus has one.
+    #[error("{scope:?} holds two channel strips, {first} and {second}; a tagged scope holds one")]
+    ScopeWithTwoStrips {
+        /// The scope.
+        scope: crate::ir::ExecutionScope,
+        /// The first strip.
+        first: crate::ir::NodeId,
+        /// The second.
+        second: crate::ir::NodeId,
+    },
+    /// A tagged scope with a send or an entry and no strip (`SOUND-INV-034`).
+    #[error("{node} is in {scope:?}, which holds no channel strip for it to belong to")]
+    ScopeWithoutStrip {
+        /// The scope.
+        scope: crate::ir::ExecutionScope,
+        /// The send or entry that needed a strip.
+        node: crate::ir::NodeId,
+    },
+    /// A bus scope whose strip has no entry sum for sends to land in (`SOUND-INV-034`).
+    #[error("{scope:?} holds the strip {strip} and no sum for its sends to enter")]
+    BusWithoutEntry {
+        /// The scope.
+        scope: crate::ir::ExecutionScope,
+        /// The strip.
+        strip: crate::ir::NodeId,
+    },
+    /// Two sums in one bus scope (`SOUND-INV-034`): a bus has one entry.
+    #[error("{scope:?} holds two sums, {first} and {second}; a bus has one entry")]
+    BusWithTwoEntries {
+        /// The scope.
+        scope: crate::ir::ExecutionScope,
+        /// The first sum.
+        first: crate::ir::NodeId,
+        /// The second.
+        second: crate::ir::NodeId,
+    },
+    /// A send outside a tagged channel or bus scope (`SOUND-INV-034`): whose send it is, is
+    /// its scope's tag, so a send has to be in one.
+    #[error(
+        "{node} is a send in {scope:?}; a send is in the Channel(tag) or Bus(tag) scope it belongs to"
+    )]
+    SendOutsideMixerScope {
+        /// The node.
+        node: crate::ir::NodeId,
+        /// Where it was placed.
+        scope: crate::ir::ExecutionScope,
+    },
+    /// A post-fader send in a bus scope (`SOUND-INV-034`): V1's bus tap is the return's
+    /// clipped output times the level, which the plain send is.
+    #[error("{node} is a post-fader send in a bus scope; a bus's send reads its clipped output")]
+    PostFaderSendOnBus {
+        /// The node.
+        node: crate::ir::NodeId,
+    },
+    /// A send that does not read its scope's tap point (`SOUND-INV-034`): a channel's send
+    /// reads what the strip reads, a bus's send reads the strip or the clipper it feeds.
+    #[error("{node} does not read the tap point of the strip {strip} it is scoped to")]
+    SendTapMismatch {
+        /// The send.
+        node: crate::ir::NodeId,
+        /// Its scope's strip.
+        strip: crate::ir::NodeId,
+    },
+    /// A send whose one cable out does not enter a bus's entry sum (`SOUND-INV-034`).
+    #[error("{node} sends through {cables} into something other than one bus's entry sum")]
+    SendNotIntoBus {
+        /// The send.
+        node: crate::ir::NodeId,
+        /// How many cables leave it.
+        cables: crate::quantities::EdgeCount,
+    },
     /// An occurrence source outside voice scope would share one value across notes.
     #[error("{node} declares a per-note source in {scope:?}, which is not a voice scope")]
     NoteSourceOutsideVoice {

@@ -12,10 +12,10 @@
 //! anticipate them.
 
 use crate::quantities::{
-    Amplitude, BusCount, CostRatio, CutoffFrequency, DelayFeedback, DelayTime, EventCount,
-    Frequency, GainFactor, HeldNoteCount, InstructionCount, NodeCount, NormalizedLevel,
-    PhaseOffset, PreparedBytes, RecordCount, Resonance, SampleRate, ScriptWorkPerQuantum, Seconds,
-    SendCount, SlotCount, VoiceCount, WritesPerNote,
+    Amplitude, CostRatio, CutoffFrequency, DelayFeedback, DelayTime, EventCount, Frequency,
+    GainFactor, HeldNoteCount, InstructionCount, NodeCount, NormalizedLevel, PhaseOffset,
+    PreparedBytes, RecordCount, Resonance, SampleRate, ScriptWorkPerQuantum, Seconds, SlotCount,
+    VoiceCount, WritesPerNote,
 };
 use crate::sample::{PlayDirection, PlayMode, PreparedSample, SampleMap, SampleMapRef};
 use crate::time::{FrameCount, PlanPosition};
@@ -73,6 +73,23 @@ typed_id!(
     "modulation",
     "A modulation edge's stable identity (`SOUND-INV-027`)."
 );
+typed_id!(
+    ChannelTag,
+    u16,
+    "channel",
+    "The builder's grouping key for one mix channel's nodes (`SOUND-INV-034`): its strip, \
+     its clipper and its sends carry one tag, which is how a send declares the channel it \
+     taps. A key, never an identity: the compiler mints the channel's `ChannelId` from the \
+     strip's node identity."
+);
+typed_id!(
+    BusTag,
+    u16,
+    "bus",
+    "The builder's grouping key for one bus's nodes (`SOUND-INV-034`): its entry sum, its \
+     inserts, its strip, its clipper and its sends carry one tag. A key, never an identity: \
+     the compiler mints the bus's `BusId` from the strip's node identity."
+);
 typed_id!(ProgramId, u32, "program", "A script program's identity.");
 
 /// What kind of signal crosses an edge.
@@ -104,14 +121,17 @@ impl std::fmt::Display for SignalDomain {
 }
 
 /// Where in the scope hierarchy a node runs.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum ExecutionScope {
     /// Once per plan.
     Global,
-    /// Once per bus.
-    Bus,
-    /// Once per channel or track.
-    Channel,
+    /// Once, as part of the bus the tag names (`SOUND-INV-034`): the bus's entry sum, its
+    /// inserts, its strip, its clipper and its sends all carry one tag, and the compiler
+    /// reads the bus's shape from the tag rather than from a walk.
+    Bus(BusTag),
+    /// Once, as part of the channel the tag names: the channel's strip, its clipper and its
+    /// sends all carry one tag, which is how a send declares whose send it is.
+    Channel(ChannelTag),
     /// Once per instrument instance.
     InstrumentInstance,
     /// Once per voice.
@@ -342,6 +362,41 @@ pub enum IrNodeKind {
     /// volume, which V1 applies as one gain per callback.
     Trim {
         /// The authored level.
+        level: Amplitude,
+    },
+    /// A send (`P08-S004`, `SOUND-INV-034`): one tapped stereo signal scaled by one declared
+    /// level — a linear amplitude under the decibel law, quantum-rate and unsmoothed, V1's
+    /// send level read once per block — and silenced by a mute, sample-positioned, which is
+    /// V1 tapping nothing from a channel that is not audible.
+    ///
+    /// V1's **pre-fader** channel tap (`src × level`) and its **bus** tap (the return's
+    /// clipped output times the level). Whose send it is, is its scope: a `Channel(tag)` send
+    /// reads the signal its channel's strip reads, a `Bus(tag)` send reads its bus's strip or
+    /// the clipper that strip feeds, and its one cable out enters a bus's entry sum — the
+    /// compiler holds it to that shape and admits the count against `max_sends_per_channel`.
+    Send {
+        /// The authored level.
+        level: Amplitude,
+        /// Whether the send starts muted.
+        muted: bool,
+    },
+    /// V1's **post-fader** channel tap (`P08-S004`, `SOUND-INV-034`): the channel's own gain —
+    /// V1's constant-power pan coefficient times the fader — times the send level, formed in
+    /// V1's order and applied to the signal the channel reads. Not a channel followed by a
+    /// send: V1 forms `src × (gain × level)`, and `(src × gain) × level` differs in the last
+    /// bit, which an independent consultation showed on a sample.
+    ///
+    /// Its fader, pan and mute are the channel's, carried again on this node so a writer
+    /// that moves the channel's moves these; the lowerer fans a lane out to both. A
+    /// `Channel(tag)` node, reading the signal its channel's strip reads.
+    PostFaderSend {
+        /// The channel's fader, a linear amplitude.
+        fader: Amplitude,
+        /// The channel's pan.
+        pan: crate::controller::BipolarLevel,
+        /// Whether the channel starts muted.
+        muted: bool,
+        /// The authored send level.
         level: Amplitude,
     },
     /// V1's channel-stage soft clipper as an explicit node (`P08-S002`, `SOUND-INV-032`):
@@ -715,6 +770,19 @@ pub mod parameters {
     /// A trim's level, a linear amplitude under the decibel law (`SOUND-INV-032`).
     /// Quantum-rate.
     pub const TRIM_LEVEL: ParameterId = ParameterId::new(0);
+    /// A send's level, a linear amplitude under the decibel law (`SOUND-INV-034`).
+    /// Quantum-rate.
+    pub const SEND_LEVEL: ParameterId = ParameterId::new(0);
+    /// A send's mute, a thresholded boolean. Sample-positioned.
+    pub const SEND_MUTE: ParameterId = ParameterId::new(1);
+    /// A post-fader send's fader, the channel's (`SOUND-INV-034`). Quantum-rate.
+    pub const POST_FADER_SEND_FADER: ParameterId = ParameterId::new(0);
+    /// A post-fader send's pan, the channel's. Quantum-rate.
+    pub const POST_FADER_SEND_PAN: ParameterId = ParameterId::new(1);
+    /// A post-fader send's mute, the channel's. Sample-positioned.
+    pub const POST_FADER_SEND_MUTE: ParameterId = ParameterId::new(2);
+    /// A post-fader send's level, a linear amplitude under the decibel law. Quantum-rate.
+    pub const POST_FADER_SEND_LEVEL: ParameterId = ParameterId::new(3);
     /// A distortion's drive, a level in `[0, 1]` (`SOUND-INV-033`). Quantum-rate.
     pub const DISTORTION_DRIVE: ParameterId = ParameterId::new(0);
     /// A distortion's tone, a level in `[0, 1]`. Quantum-rate.
@@ -962,10 +1030,6 @@ pub struct PlanDeclarations {
     pub note_producers: Vec<NoteProducerDeclaration>,
     /// Notes held at once across the plan.
     pub held_notes: HeldNoteCount,
-    /// Buses.
-    pub buses: BusCount,
-    /// The most sends any one channel has.
-    pub max_sends_on_any_channel: SendCount,
     /// Events the plan is known to place in one quantum.
     ///
     /// **Compiled work, and admitted against `compiled_event_share`.** Statically knowable
@@ -1067,8 +1131,6 @@ impl Default for PlanDeclarations {
             // partition that the plan never asked for.
             note_producers: Vec::new(),
             held_notes: HeldNoteCount::NONE,
-            buses: BusCount::NONE,
-            max_sends_on_any_channel: SendCount::NONE,
             events_per_quantum: EventCount::NONE,
             note_expansion_per_tick: EventCount::NONE,
             scheduled_events_in_flight: EventCount::NONE,

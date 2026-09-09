@@ -15,7 +15,7 @@ use crate::lowering::identity::{
 use crate::lowering::render::{OutputPolicy, smoke_render_project};
 
 /// The corpus patch as a second instrument, by identity, with its own strip.
-fn instrument_with(id: u64, volume: f32) -> crate::patch::InstrumentState {
+pub(super) fn instrument_with(id: u64, volume: f32) -> crate::patch::InstrumentState {
     let (modules, connections) = corpus_patch("sine");
     let mut saved = saved_instrument(modules, connections);
     saved.id = synth_engine::instrument::InstrumentId::new(id);
@@ -26,7 +26,7 @@ fn instrument_with(id: u64, volume: f32) -> crate::patch::InstrumentState {
 
 /// `four_note_song` for instrument 0, plus a second track for instrument `second` whose one
 /// note overlaps the first instrument's first note, so the project holds two notes at once.
-fn two_instrument_song(second: u64) -> synth_sequencer::Song {
+pub(super) fn two_instrument_song(second: u64) -> synth_sequencer::Song {
     let mut song = four_note_song();
     let track = song.create_track("second");
     song.track_mut(track).expect("resolves").instrument =
@@ -49,11 +49,12 @@ fn two_instrument_song(second: u64) -> synth_sequencer::Song {
 
 /// The harness profile with eight times the engine's default event partition.
 ///
-/// The engine's default `session_event_share` is 24, and ADR-0051's catch-up charges one
-/// row per parameter address in the plan: one lowered instrument's addresses fit and two do
-/// not, so a whole project needs the roomier partition ADR-0054 reselects. Everything but
-/// the events group is the default.
-fn project_profile() -> HostProfile {
+/// ADR-0051's catch-up charges one row per parameter address in the plan, and the engine's
+/// first provisional `session_event_share` (24) admitted one lowered instrument's addresses
+/// and not two. EVD-0021 reselected it (`P08-S004`), and the survey behind that record is
+/// measured under this partition so that admission cannot censor what it counts; the
+/// fixtures keep it for the same reason. Everything but the events group is the default.
+pub(super) fn project_profile() -> HostProfile {
     project_profile_at(harness_profile())
 }
 
@@ -99,14 +100,14 @@ fn project_profile_at(base: HostProfile) -> HostProfile {
     HostProfile::new(base.capabilities(), limits).expect("a consistent profile")
 }
 
-fn unity_master() -> crate::project::GlobalProjectState {
+pub(super) fn unity_master() -> crate::project::GlobalProjectState {
     crate::project::GlobalProjectState {
         master_volume: synth_core::Gain::UNITY,
         ..Default::default()
     }
 }
 
-fn render(
+pub(super) fn render(
     instruments: &[crate::patch::InstrumentState],
     song: &synth_sequencer::Song,
     global: &crate::project::GlobalProjectState,
@@ -122,7 +123,7 @@ fn render(
     )
 }
 
-fn peak(samples: &[f32]) -> f32 {
+pub(super) fn peak(samples: &[f32]) -> f32 {
     samples.iter().fold(0.0_f32, |peak, s| peak.max(s.abs()))
 }
 
@@ -269,6 +270,7 @@ fn the_chain_is_v1s_order_into_one_master() {
             muted: false,
         }),
         soft_clip: true,
+        sends: Vec::new(),
     };
     let lowered = lower_instrument_into(
         &mut graph,
@@ -334,8 +336,14 @@ fn the_chain_is_v1s_order_into_one_master() {
         ExecutionScope::Voice,
         "V1 applies the track control per voice"
     );
-    assert_eq!(scope_of(slot.channel()), ExecutionScope::Channel);
-    assert_eq!(scope_of(slot.soft_clip()), ExecutionScope::Channel);
+    assert_eq!(
+        scope_of(slot.channel()),
+        ExecutionScope::Channel(slot.channel_tag())
+    );
+    assert_eq!(
+        scope_of(slot.soft_clip()),
+        ExecutionScope::Channel(slot.channel_tag())
+    );
     match ir.node(slot.balance()).map(|node| node.kind()) {
         Some(IrNodeKind::Balance { level, pan, muted }) => {
             assert_eq!(level.as_f32(), 0.5);
@@ -734,12 +742,12 @@ fn concurrency_is_counted_over_sample_positions_not_ticks() {
 // ---------------------------------------------------------------------------------------
 
 /// The corpus's insert-chain project, `CORPUS-0005`: distortion into delay on a held fifth.
-fn corpus_inserts() -> crate::project::ProjectFile {
+pub(super) fn corpus_inserts() -> crate::project::ProjectFile {
     corpus_project("instrument-inserts")
 }
 
 /// One track on instrument 0 playing `(tick, pitch, duration)` notes.
-fn notes_song(notes: &[(u32, u8, u32)]) -> synth_sequencer::Song {
+pub(super) fn notes_song(notes: &[(u32, u8, u32)]) -> synth_sequencer::Song {
     let mut song = synth_sequencer::Song::new("inserts");
     song.default_tempo = synth_core::Bpm::new(120.0);
     let pattern = song.create_pattern(Duration(3840));
@@ -764,7 +772,7 @@ fn notes_song(notes: &[(u32, u8, u32)]) -> synth_sequencer::Song {
 }
 
 /// The corpus project with only the named inserts kept, in that order.
-fn corpus_with_inserts(kept: &[&str]) -> crate::project::ProjectFile {
+pub(super) fn corpus_with_inserts(kept: &[&str]) -> crate::project::ProjectFile {
     let mut project = corpus_inserts();
     let patch = &mut project.instruments[0].patch;
     patch
@@ -774,7 +782,7 @@ fn corpus_with_inserts(kept: &[&str]) -> crate::project::ProjectFile {
     project
 }
 
-fn render_project(
+pub(super) fn render_project(
     project: &crate::project::ProjectFile,
     song: &synth_sequencer::Song,
     tail: u64,
@@ -790,7 +798,7 @@ fn render_project(
     )
 }
 
-fn rms(samples: &[f32]) -> f64 {
+pub(super) fn rms(samples: &[f32]) -> f64 {
     (samples
         .iter()
         .map(|s| f64::from(*s) * f64::from(*s))
@@ -799,12 +807,12 @@ fn rms(samples: &[f32]) -> f64 {
         .sqrt()
 }
 
-/// The corpus's insert chain lowers and renders — under the roomier event partition
-/// `P08-S002` needed for a whole project, which one instrument with two inserts now needs
-/// too: its catch-up addresses number 29 against the engine's default share of 24, so the
-/// default profile refuses the plan by name and ADR-0054's reselection owns the gap.
+/// The corpus's insert chain lowers and renders, under the roomier event partition and,
+/// since EVD-0021 reselected the session share (`P08-S004`), under the engine's default
+/// profile too: its catch-up addresses number 29, which the first provisional share of 24
+/// refused by name and the reselected share admits.
 #[test]
-fn the_corpus_insert_chain_lowers_and_renders_and_the_default_share_refuses_it_by_name() {
+fn the_corpus_insert_chain_lowers_and_renders_under_the_default_share_too() {
     let project = corpus_inserts();
     let rendered = render_project(&project, &project.song, 96_000, OutputPolicy::Parity);
     assert!(
@@ -836,15 +844,24 @@ fn the_corpus_insert_chain_lowers_and_renders_and_the_default_share_refuses_it_b
         FrameCount::new(4_800),
         OutputPolicy::Parity,
     );
-    assert!(default.samples.is_empty());
-    assert!(
-        default.diagnostics.iter().any(|d| matches!(
-            (d.severity(), d.subject(), d.reason()),
-            (Severity::Refused, ProjectSubject::Project, LoweringReason::UnsupportedParameterValue { value })
-                if value.contains("session_event_share exceeded: 29 events requested, 24 events available")
-        )),
-        "{:?}",
-        default.diagnostics
+    assert!(default.is_audible(), "{:?}", default.diagnostics);
+    assert_eq!(
+        default.samples,
+        rendered.samples[..default.samples.len()],
+        "the share changes no sample; the longer render only adds tail"
+    );
+    let session = default
+        .report
+        .as_ref()
+        .and_then(|report| report.row(synth_engine_v2::report::ResourceField::SessionEventShare))
+        .expect("the session row");
+    assert_eq!(
+        session.requested(),
+        synth_engine_v2::report::ResourceAmount::Events(EventCount::measured(29))
+    );
+    assert_eq!(
+        session.available(),
+        synth_engine_v2::report::ResourceAmount::Events(EventCount::limit(128).expect("positive"))
     );
 }
 
@@ -870,6 +887,7 @@ fn inserts_sit_between_the_balance_and_the_channel_in_the_orders_order() {
             muted: false,
         }),
         soft_clip: true,
+        sends: Vec::new(),
     };
     let lowered = lower_instrument_into(
         &mut graph,

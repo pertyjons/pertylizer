@@ -36,8 +36,12 @@
 //!
 //! - bit 31 set is a **Mod Grid node**, global to the song (`modulation::grid_node_address`);
 //! - bits 24–30 are the **instrument slot**, the instrument's persisted identity itself,
-//!   which must therefore be below [`InstrumentSlot::MASTER`] — a project naming a higher
+//!   which must therefore be below [`InstrumentSlot::BUS`] — a project naming a higher
 //!   identity is refused by name rather than folded into another's addresses;
+//! - the slot [`InstrumentSlot::BUS`] is every **return bus** (`P08-S004`): bits 8–15 are
+//!   the bus's persisted identity, below 256 or refused by name, and the low eight bits its
+//!   inserted stage or its effect's instance under the module-type field, so two buses'
+//!   nodes never meet each other's nor an instrument's;
 //! - bits 16–22 are the **module type**, whose seventy-odd variants never reach `0xFF`, so
 //!   a module-type field of `0xFF` marks a node the lowerer **inserts** for that instrument
 //!   — the velocity scaler, the balance stage, the channel, the clipper, the macro sources —
@@ -54,7 +58,8 @@ use std::collections::BTreeMap;
 use synth_core::ModuleType;
 use synth_engine::ModuleId;
 use synth_engine::instrument::InstrumentId;
-use synth_engine_v2::ir::NodeId;
+use synth_engine_v2::ir::{BusTag, ChannelTag, NodeId};
+use synth_sequencer::ReturnBusId;
 use thiserror::Error;
 
 use crate::patch::ModuleState;
@@ -114,6 +119,28 @@ pub enum IdentityError {
         /// How many identities do.
         limit: u64,
     },
+
+    /// A return bus's persisted identity lies outside the address space's bus field
+    /// (`P08-S004`), refused for the reason an instrument's is.
+    #[error("return {bus} lies outside the addressable range of {limit} buses")]
+    BusOutOfRange {
+        /// The identity that does not fit.
+        bus: ReturnBusId,
+        /// How many identities do.
+        limit: u64,
+    },
+
+    /// A return-bus effect's instance number lies outside the eight bits a bus's module
+    /// address keeps for it (`P08-S004`).
+    #[error("return {bus}'s effect {id} lies outside the addressable range of {limit} instances")]
+    BusModuleOutOfRange {
+        /// The bus.
+        bus: ReturnBusId,
+        /// The effect that does not fit.
+        id: ModuleId,
+        /// How many instances do.
+        limit: u64,
+    },
 }
 
 /// One instrument's place in the plan's address space: its persisted identity, checked to fit.
@@ -124,6 +151,8 @@ pub struct InstrumentSlot(u8);
 impl InstrumentSlot {
     /// The slot the master nodes share; no instrument may take it.
     pub const MASTER: Self = Self(0x7F);
+    /// The slot every return bus shares (`P08-S004`); no instrument may take it.
+    pub const BUS: Self = Self(0x7E);
 
     /// Where the instrument field sits in a [`NodeId`].
     const SHIFT: u32 = 24;
@@ -132,7 +161,7 @@ impl InstrumentSlot {
 
     /// An instrument's slot, or the refusal naming it.
     pub fn of(instrument: InstrumentId) -> Result<Self, IdentityError> {
-        let limit = u64::from(Self::MASTER.0);
+        let limit = u64::from(Self::BUS.0);
         match u8::try_from(instrument.as_u64()) {
             Ok(slot) if u64::from(slot) < limit => Ok(Self(slot)),
             _ => Err(IdentityError::InstrumentOutOfRange { instrument, limit }),
@@ -176,6 +205,100 @@ impl InstrumentSlot {
     /// One of V1's six Mod Matrix macro sources (`P07-S004`), by its one-based tag.
     pub const fn macro_source(self, tag: u16) -> NodeId {
         self.inserted(0x10 + tag)
+    }
+
+    /// The instrument's `k`th lowered send (`P08-S004`), pre-fader or post-fader alike.
+    pub const fn send(self, k: u16) -> NodeId {
+        self.inserted(0x20_u16.saturating_add(k))
+    }
+
+    /// The tag of the channel's scope: the strip, its clipper and its sends carry it
+    /// (`SOUND-INV-034`).
+    pub const fn channel_tag(self) -> ChannelTag {
+        ChannelTag::new(self.0 as u16)
+    }
+}
+
+/// One return bus's place in the plan's address space (`P08-S004`): its persisted identity,
+/// checked to fit the eight-bit bus field of the shared bus slot.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[must_use]
+pub struct BusSlot(u8);
+
+impl BusSlot {
+    /// Where the bus field sits in a [`NodeId`].
+    const SHIFT: u32 = 8;
+    /// The first send's tag; the entry, the strip and the clipper take the tags below it.
+    const SEND_TAGS: u8 = 0x10;
+
+    /// A bus's slot, or the refusal naming it.
+    pub fn of(bus: ReturnBusId) -> Result<Self, IdentityError> {
+        u8::try_from(bus.0)
+            .map(Self)
+            .map_err(|_| IdentityError::BusOutOfRange {
+                bus,
+                limit: u64::from(u8::MAX) + 1,
+            })
+    }
+
+    /// The bus the slot was resolved from.
+    pub const fn id(self) -> ReturnBusId {
+        ReturnBusId(self.0 as u16)
+    }
+
+    /// The tag of the bus's scope: every node of the bus carries it (`SOUND-INV-034`).
+    pub const fn tag(self) -> BusTag {
+        BusTag::new(self.0 as u16)
+    }
+
+    /// The address of a node the lowerer inserts for this bus, by tag.
+    const fn inserted(self, tag: u8) -> NodeId {
+        NodeId::new(
+            ((InstrumentSlot::BUS.0 as u32) << InstrumentSlot::SHIFT)
+                | InstrumentSlot::INSERTED
+                | ((self.0 as u32) << Self::SHIFT)
+                | tag as u32,
+        )
+    }
+
+    /// The entry sum the sends into this bus enter.
+    pub const fn entry(self) -> NodeId {
+        self.inserted(0)
+    }
+
+    /// The strip: V1's return fader, pan and mute.
+    pub const fn strip(self) -> NodeId {
+        self.inserted(1)
+    }
+
+    /// V1's soft clipper on the return's output, under the parity policy.
+    pub const fn soft_clip(self) -> NodeId {
+        self.inserted(2)
+    }
+
+    /// The bus's `k`th lowered bus-to-bus send, or `None` past the tags the field holds.
+    pub const fn send(self, k: u8) -> Option<NodeId> {
+        match Self::SEND_TAGS.checked_add(k) {
+            Some(tag) => Some(self.inserted(tag)),
+            None => None,
+        }
+    }
+
+    /// The address of one of this bus's saved effects, or the refusal naming it.
+    pub fn module(self, id: ModuleId) -> Result<NodeId, IdentityError> {
+        let Ok(instance) = u8::try_from(id.instance) else {
+            return Err(IdentityError::BusModuleOutOfRange {
+                bus: self.id(),
+                id,
+                limit: u64::from(u8::MAX) + 1,
+            });
+        };
+        Ok(NodeId::new(
+            ((InstrumentSlot::BUS.0 as u32) << InstrumentSlot::SHIFT)
+                | ((id.module_type as u32) << 16)
+                | ((self.0 as u32) << Self::SHIFT)
+                | u32::from(instance),
+        ))
     }
 }
 

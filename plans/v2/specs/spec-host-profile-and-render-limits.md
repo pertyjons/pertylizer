@@ -315,8 +315,9 @@ open owner is a starting point recorded honestly, not a rule invented here.
     should be stated in seconds instead, and the question is recorded as unresolved rather than answered here.
 
     **Destination occupancy is not a duration budget.** `max_events_per_quantum` retains its event unit and one
-    profile-selected value within an epoch; it is not rescaled with rate. ADR-0054 keeps the current unevidenced 256
-    provisional until staged producer measurements and the pre-live Phase 9 selection. A musical plan's requested
+    profile-selected value within an epoch; it is not rescaled with rate. ADR-0054 keeps the current cap — 360 since
+    EVD-0021 raised the session share, 256 before — provisional until staged producer measurements and the pre-live
+    Phase 9 selection. A musical plan's requested
     `EventCount` is recomputed at the prepared rate
     because a 64-frame window spans different musical time there. A lower rate may therefore make the same project
     request more events and fail admission. This case is explicitly outside the invariant's first sentence: it is
@@ -966,11 +967,11 @@ recorded here so the entry's closure has a visible successor.
 
 | Field | Type | Default | Basis | Replaces | Revisit |
 |-------|------|---------|-------|----------|---------|
-| `max_events_per_quantum` | `EventCount` | 256, provisional | **Chosen and unevidenced**, not carried over: `LIMIT-0014`'s constant is an egress ring size, while V1's real per-block buffer has no cap. ADR-0054 stages reselection from real producer occupancy; fitting within 256 does not waive it | `LIMIT-0075` — the unbounded `Vec` this field replaces | First real producers; complete Phase 9 pre-live selection |
+| `max_events_per_quantum` | `EventCount` | 360, provisional | **Chosen**, not carried over: `LIMIT-0014`'s constant is an egress ring size, while V1's real per-block buffer has no cap. 256 until EVD-0021 (`P08-S004`) raised the session share by 104 and the cap with it, so the other five shares keep their values and the six still sum to the cap exactly. ADR-0054 stages reselection from real producer occupancy; fitting within the cap does not waive it | `LIMIT-0075` — the unbounded `Vec` this field replaces | First real producers; complete Phase 9 pre-live selection |
 | `compiled_event_share` | `EventCount` | 96, provisional | ADR-0046 fixed profile input for compiled timeline and automation. The six provisional shares satisfy every checked relation and total the cap exactly; ADR-0054 owns final calibration | — | Phase 9 pre-live selection |
 | `authored_runtime_event_share` | `EventCount` | 48, provisional | ADR-0046 fixed profile input for admitted data-dependent expansion. The first real authored-runtime producer measures this class before downstream use under ADR-0054 | — | First real authored producer; Phase 9 pre-live selection |
 | `live_event_share` | `EventCount` | 32, provisional | ADR-0046 fixed profile input covering complete eligible live snapshots. Deterministic simulated ingress may exercise it, but production live ingress requires ADR-0054's complete selection | — | Phase 9 pre-live selection |
-| `session_event_share` | `EventCount` | 24, provisional | ADR-0046 fixed profile input covering complete session snapshots and locate catch-up. ADR-0054 owns final calibration | — | Phase 9 pre-live selection |
+| `session_event_share` | `EventCount` | 128, provisional | ADR-0046 fixed profile input covering complete session snapshots and locate catch-up. **Reselected by [EVD-0021](../evidence/phase-08/EVD-0021-session-share-catch-up.md)** (`P08-S004`) under ADR-0054 clause 2: ADR-0051's catch-up charges one event per writable control per node, so the request is the plan's addressable-parameter count plus one; the survey over every saved project and the slice's bus fixtures measured a high water of 64, and the rule stated before measuring — the next multiple of 32 at or above twice the high water — selects 128. 24 before. ADR-0054 owns final calibration | — | Phase 9 pre-live selection |
 | `internal_event_share` | `EventCount` | 16, provisional | ADR-0046 fixed profile input for admitted renderer-internal producers. The first real internal producer measures this class before downstream use under ADR-0054 | — | First real internal producer; Phase 9 pre-live selection |
 | `release_event_share` | `EventCount` | 40, provisional | ADR-0046 fixed profile input for individual redemptions of non-compiled release holds. ADR-0054 owns final calibration | — | Phase 9 pre-live selection |
 | `release_hold_capacity` | `EventCount` | 40, provisional | ADR-0046 fixed profile input for disjoint non-compiled producer hold entitlements. It is not a share or a term in the sum; `release_event_share >= release_hold_capacity` is checked | — | Phase 9 pre-live selection |
@@ -1048,9 +1049,10 @@ The Phase 1 allocator currently adds one slack quantum to its scratch extent alt
 documents that old slack; the comment beside the Phase 1 allocation is not a second normative formula.
 
 **The event cap has no V1 value to inherit.** The resource inventory establishes that `LIMIT-0014` and `LIMIT-0076`
-are egress rings, while `LIMIT-0075` is V1's uncapped per-block sequencer `Vec`. The current value 256 is chosen and
-unevidenced. ADR-0054 requires staged measurement at the first real authored and internal producers, then complete
-reselection before production live ingress, even when the measured partition would fit within 256.
+are egress rings, while `LIMIT-0075` is V1's uncapped per-block sequencer `Vec`. The current value, 360 since EVD-0021
+raised the session share and 256 before, is chosen: it is the six shares' sum, and the one share a real consumer has
+measured is the session share. ADR-0054 requires staged measurement at the first real authored and internal producers,
+then complete reselection before production live ingress, even when the measured partition would fit within the cap.
 [EVD-0015](../evidence/phase-03/EVD-0015-quantum-occupancy.md) measures a peak
 of 36 in the 23 projects whose streams can be derived, but also shows why that observation cannot establish a safe cap:
 expansion is bounded per tick while renderer occupancy is per quantum, and releases from different production times can
@@ -1130,8 +1132,8 @@ section did.
 | Field | Type | Default | Basis | Replaces | Revisit |
 |-------|------|---------|-------|----------|---------|
 | `max_mix_channels` | `MixChannelCount` | 256 | Chosen. **Counted from the plan's compiled `Channel` nodes** since `P08-S001` (`SOUND-INV-031`), not from a declaration | — | Phase 8 |
-| `max_buses` | `BusCount` | 64 | Chosen | — | Phase 8 |
-| `max_sends_per_channel` | `SendCount` | 16 | V1 carry-over. **ADR-0034 owns what a send is** | `LIMIT-0024` | Phase 8 |
+| `max_buses` | `BusCount` | 64 | Chosen. **Counted from the plan's bus strips** since `P08-S004` (`SOUND-INV-034`), not from a declaration | — | Phase 8 |
+| `max_sends_per_channel` | `SendCount` | 16 | V1 carry-over. **Counted per channel and per bus from the send nodes of its scope** since `P08-S004` (`SOUND-INV-034`), pre-fader and post-fader together as `LIMIT-0024`'s list holds both, and refused by name where V1 dropped the seventeenth. ADR-0034 still owns what a send is to a **track** — the lowerer refuses two assigned tracks with differing sends until it decides | `LIMIT-0024` | Phase 8 |
 
 A plan with 200 metered mix channels is admissible by `max_mix_channels` and refused by `max_observation_taps`, with the
 tap budget named as the dominant contributor. That is the intended shape: the two budgets are allowed to disagree, and
@@ -1448,7 +1450,7 @@ obligations owned by the phase in the rightmost column.
 | Whether the three observation capacities here become one registration budget, now that ADR-0027 says what a tap is and who owns the analyzer surface | No — the three capacities stand until it is decided; nothing here closes it | Phase 5, with the first tap declaration |
 | The retirement crossfade's value, and whether ADR-0009 wants a concurrent-retirement budget below `max_active_voices` — which it may only take together with a defined behaviour for reaching it | No — V1's 128 frames compiles today, and the derived budget cannot bind | ADR-0009, Phase 9 |
 | Recording take and commit semantics, which may change what a "recorded event" is | No | ADR-0024, Phase 9 |
-| What a send is, which may change whether `max_sends_per_channel` is per channel or per bus | No | ADR-0034, Phase 8 |
+| What a send is to a track, since `P08-S004` counts `max_sends_per_channel` per channel and per bus alike and refuses two assigned tracks with differing sends | No | ADR-0034, Phase 8 |
 | The script-work aggregate's threshold, which needs a measured per-instruction cost before it can become a `RenderLimits` field rather than a reported quantity | No — the `ResourceReport` carries the quantity meanwhile | Phase 7 |
 | Whether same-sample ingress order distinguishes `Hardware` from `Arrival`, and how their measured uncertainties participate in that order | No — HOST-INV-021 partitions capacity without assigning semantic precedence | ADR-0023 and Phase 3 for abstract order; ADR-0022 and Phase 9 exit for measured uncertainty |
 | ~~**ADR-0021's `LIMIT-0013` evidence.**~~ **Resolved in Phase 0A, not Phase 3.** Its drivers and disposition describe per-priority drop counters "published on OSC"; they are published nowhere, and the OSC counter it names belongs to another ring. [ADR-0038](../decisions/ADR-0038-engine-egress-queue-classification.md) supersedes both the driver and the disposition on that evidence | Resolved by accepted ADR-0038 | ADR-0038 |

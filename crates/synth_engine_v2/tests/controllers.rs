@@ -5,7 +5,7 @@ use synth_engine_v2::controller::{
     BipolarLevel, ControllerKind, MidiController, NoteExpression, NoteSource,
 };
 use synth_engine_v2::ir::{
-    ExecutionScope, GraphIr, IrNodeKind, NodeId, PortId, SignalDomain, parameters,
+    ChannelTag, ExecutionScope, GraphIr, IrNodeKind, NodeId, PortId, SignalDomain, parameters,
 };
 use synth_engine_v2::node::AMPLIFIER_CONTROL;
 use synth_engine_v2::offline::{OfflineEvent, render_offline};
@@ -632,7 +632,7 @@ fn live_expression_updates_survive_a_deferred_start_without_coalescing_or_losing
 fn a_per_note_source_cannot_be_shared_outside_the_voice_scope() {
     for scope in [
         ExecutionScope::Global,
-        ExecutionScope::Channel,
+        ExecutionScope::Channel(ChannelTag::FIRST),
         ExecutionScope::InstrumentInstance,
     ] {
         let ir = GraphIr::builder()

@@ -18,9 +18,9 @@ use synth_engine_v2::compile::{RenderConfig, compile};
 use synth_engine_v2::diagnostics::{CompileError, CompileWarning};
 use synth_engine_v2::identity::ProducerId;
 use synth_engine_v2::ir::{
-    AuthoredSourceDeclaration, ExecutionScope, GraphIr, InternalProducerDeclaration, IrNodeKind,
-    IrObject, IrProgram, LfoPolarity, LfoWaveform, ModulationDepth, ModulationUnit, NodeId,
-    NoteProducerDeclaration, PlanDeclarations, PortId, ProgramId, SignalDomain, parameters,
+    AuthoredSourceDeclaration, ChannelTag, ExecutionScope, GraphIr, InternalProducerDeclaration,
+    IrNodeKind, IrObject, IrProgram, LfoPolarity, LfoWaveform, ModulationDepth, ModulationUnit,
+    NodeId, NoteProducerDeclaration, PlanDeclarations, PortId, ProgramId, SignalDomain, parameters,
 };
 use synth_engine_v2::profile::{
     CostBudget, EventLimits, GraphLimits, HostProfile, MemoryLimits, MixingLimits,
@@ -179,6 +179,78 @@ fn voiced_declares() -> GraphIr {
         .expect("a voiced source into an output is a readable plan")
 }
 
+/// One source through one mix channel with two sends — one post-fader, one pre-fader —
+/// into two buses, every strip into one master sum (`SOUND-INV-034`): two buses and two
+/// sends on one channel, counted from the IR rather than from a declaration.
+fn one_channel_two_sends_two_buses() -> GraphIr {
+    use synth_engine_v2::ir::BusTag;
+    const STRIP: NodeId = NodeId::new(30);
+    const POST: NodeId = NodeId::new(31);
+    const PRE: NodeId = NodeId::new(32);
+    const ENTRY_A: NodeId = NodeId::new(33);
+    const STRIP_A: NodeId = NodeId::new(34);
+    const ENTRY_B: NodeId = NodeId::new(35);
+    const STRIP_B: NodeId = NodeId::new(36);
+    const MASTER: NodeId = NodeId::new(37);
+    let channel = || IrNodeKind::Channel {
+        fader: synth_engine_v2::quantities::Amplitude::UNITY,
+        pan: synth_engine_v2::controller::BipolarLevel::ZERO,
+        muted: false,
+    };
+    let audio = |from: NodeId, to: NodeId| ((from, PortId::FIRST), (to, PortId::FIRST));
+    let mut builder = GraphIr::builder()
+        .node(SOURCE, IrNodeKind::Silence, ExecutionScope::Voice)
+        .node(STRIP, channel(), ExecutionScope::Channel(ChannelTag::FIRST))
+        .node(
+            POST,
+            IrNodeKind::PostFaderSend {
+                fader: synth_engine_v2::quantities::Amplitude::UNITY,
+                pan: synth_engine_v2::controller::BipolarLevel::ZERO,
+                muted: false,
+                level: synth_engine_v2::quantities::Amplitude::UNITY,
+            },
+            ExecutionScope::Channel(ChannelTag::FIRST),
+        )
+        .node(
+            PRE,
+            IrNodeKind::Send {
+                level: synth_engine_v2::quantities::Amplitude::UNITY,
+                muted: false,
+            },
+            ExecutionScope::Channel(ChannelTag::FIRST),
+        )
+        .node(ENTRY_A, IrNodeKind::Mix, ExecutionScope::Bus(BusTag::FIRST))
+        .node(STRIP_A, channel(), ExecutionScope::Bus(BusTag::FIRST))
+        .node(
+            ENTRY_B,
+            IrNodeKind::Mix,
+            ExecutionScope::Bus(BusTag::new(1)),
+        )
+        .node(STRIP_B, channel(), ExecutionScope::Bus(BusTag::new(1)))
+        .node(MASTER, IrNodeKind::Mix, ExecutionScope::Global)
+        .node(OUTPUT, IrNodeKind::Output, ExecutionScope::Global);
+    for (from, to) in [
+        (SOURCE, STRIP),
+        (SOURCE, POST),
+        (SOURCE, PRE),
+        (POST, ENTRY_A),
+        (PRE, ENTRY_B),
+        (ENTRY_A, STRIP_A),
+        (ENTRY_B, STRIP_B),
+        (STRIP, MASTER),
+        (STRIP_A, MASTER),
+        (STRIP_B, MASTER),
+        (MASTER, OUTPUT),
+    ] {
+        let (from, to) = audio(from, to);
+        builder = builder.connect(from, to, SignalDomain::Audio);
+    }
+    builder
+        .declaring(declared())
+        .build()
+        .expect("a channel with two sends into two buses is a readable plan")
+}
+
 /// A source through two monitors into the output: two declared taps (`SOUND-INV-022`).
 fn two_monitors() -> GraphIr {
     const FIRST_MONITOR: NodeId = NodeId::new(21);
@@ -221,8 +293,16 @@ fn two_channels() -> GraphIr {
     };
     GraphIr::builder()
         .node(SOURCE, IrNodeKind::Silence, ExecutionScope::Voice)
-        .node(FIRST_CHANNEL, channel(), ExecutionScope::Channel)
-        .node(SECOND_CHANNEL, channel(), ExecutionScope::Channel)
+        .node(
+            FIRST_CHANNEL,
+            channel(),
+            ExecutionScope::Channel(ChannelTag::FIRST),
+        )
+        .node(
+            SECOND_CHANNEL,
+            channel(),
+            ExecutionScope::Channel(ChannelTag::new(1)),
+        )
         .node(MIX, IrNodeKind::Mix, ExecutionScope::Global)
         .node(OUTPUT, IrNodeKind::Output, ExecutionScope::Global)
         .connect(
@@ -265,8 +345,6 @@ fn declared() -> PlanDeclarations {
             simultaneous_holds: EventCount::NONE,
         }],
         held_notes: HeldNoteCount::measured(2),
-        buses: BusCount::measured(2),
-        max_sends_on_any_channel: SendCount::measured(2),
         events_per_quantum: EventCount::measured(2),
         note_expansion_per_tick: EventCount::measured(2),
         scheduled_events_in_flight: EventCount::measured(2),
@@ -440,15 +518,18 @@ fn refusal_cases(host: &HostProfile) -> Vec<(ResourceField, GraphIr, HostProfile
         .expect("the overridden capacities are above zero");
         groups.build(host)
     };
-    let mixing = |channels: u32, buses: u32, sends: u32| {
-        let mut groups = Groups::of(host);
+    // A mixer node's output is stereo, so the profile that refuses one by count is a
+    // stereo one; a mono stream would refuse the plan on its layout before its count.
+    let stereo_mixing = |channels: u32, buses: u32, sends: u32| {
+        let stereo = profile(256, ChannelLayout::Stereo);
+        let mut groups = Groups::of(&stereo);
         groups.mixing = MixingLimits::new(
             MixChannelCount::limit(channels).expect("positive"),
             BusCount::limit(buses).expect("positive"),
             SendCount::limit(sends).expect("positive"),
         )
         .expect("the overridden capacities are above zero");
-        groups.build(host)
+        groups.build(&stereo)
     };
     let memory = |immutable: u64, mutable: u64, scratch: u64| {
         let bytes = |value: u64| PreparedBytes::limit(value).expect("positive");
@@ -766,15 +847,19 @@ fn refusal_cases(host: &HostProfile) -> Vec<(ResourceField, GraphIr, HostProfile
                 groups.build(&stereo)
             },
         ),
+        // `SOUND-INV-034`: a plan's buses are its bus strips and a channel's sends are the
+        // send nodes of its scope, both counted from the IR — one channel with two sends
+        // into two buses, and a profile allowing one bus, or one send, refuses the plan by
+        // count.
         (
             ResourceField::MaxBuses,
-            declares.clone(),
-            mixing(256, 1, 16),
+            one_channel_two_sends_two_buses(),
+            stereo_mixing(256, 1, 16),
         ),
         (
             ResourceField::MaxSendsPerChannel,
-            declares.clone(),
-            mixing(256, 64, 1),
+            one_channel_two_sends_two_buses(),
+            stereo_mixing(256, 64, 1),
         ),
         (
             ResourceField::PreparedImmutableBytes,

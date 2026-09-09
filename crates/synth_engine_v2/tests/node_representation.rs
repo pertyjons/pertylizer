@@ -327,7 +327,7 @@ fn a_widened_signal_is_copied_by_a_scheduled_kernel() {
 fn a_declared_kind_appears_in_the_registry_only_by_deferring_to_its_declaration() {
     // The variant as it is spelled in a pattern — fieldless kinds have no `{ .. }` — and
     // the declaration constant it forwards to.
-    const DECLARED: [(&str, &str); 24] = [
+    const DECLARED: [(&str, &str); 26] = [
         ("Script { .. }", "SCRIPT"),
         ("AudioScript { .. }", "AUDIO_SCRIPT"),
         ("NoteScript { .. }", "NOTE_SCRIPT"),
@@ -338,6 +338,8 @@ fn a_declared_kind_appears_in_the_registry_only_by_deferring_to_its_declaration(
         ("Mix", "MIX"),
         ("Balance { .. }", "BALANCE"),
         ("Trim { .. }", "TRIM"),
+        ("Send { .. }", "SEND"),
+        ("PostFaderSend { .. }", "POST_FADER_SEND"),
         ("SoftClip", "SOFT_CLIP"),
         ("HardClamp", "HARD_CLAMP"),
         ("Distortion { .. }", "DISTORTION"),
@@ -536,6 +538,16 @@ fn discovery_and_validation_describe_the_same_ports() {
             NodeKindId::Trim => IrNodeKind::Trim {
                 level: Amplitude::UNITY,
             },
+            NodeKindId::Send => IrNodeKind::Send {
+                level: Amplitude::UNITY,
+                muted: false,
+            },
+            NodeKindId::PostFaderSend => IrNodeKind::PostFaderSend {
+                fader: Amplitude::UNITY,
+                pan: synth_engine_v2::controller::BipolarLevel::ZERO,
+                muted: false,
+                level: Amplitude::UNITY,
+            },
             NodeKindId::SoftClip => IrNodeKind::SoftClip,
             NodeKindId::HardClamp => IrNodeKind::HardClamp,
             NodeKindId::Distortion => IrNodeKind::Distortion {
@@ -583,7 +595,7 @@ fn discovery_and_validation_describe_the_same_ports() {
     let entries = catalog();
     assert_eq!(
         entries.len(),
-        32,
+        34,
         "every kind but the output node is discoverable"
     );
     for entry in entries {

@@ -13,7 +13,7 @@ mod common;
 use common::{OUTPUT, SOURCE, profile};
 use synth_engine_v2::controller::BipolarLevel;
 use synth_engine_v2::ir::{
-    ExecutionScope, GraphIr, IrNodeKind, NodeId, PortId, SignalDomain, parameters,
+    ChannelTag, ExecutionScope, GraphIr, IrNodeKind, NodeId, PortId, SignalDomain, parameters,
 };
 use synth_engine_v2::offline::{OfflineEvent, render_offline};
 use synth_engine_v2::plan::CompiledPlan;
@@ -146,7 +146,11 @@ fn a_balance_scales_each_side_by_the_level_and_v1s_balance_law_bit_for_bit() {
     let (input, pan, level) = chosen.expect("some triple distinguishes the two orders");
     let plan = admit(&staged(
         constant(input),
-        &[(STAGE, balance(level, pan, false), ExecutionScope::Channel)],
+        &[(
+            STAGE,
+            balance(level, pan, false),
+            ExecutionScope::Channel(ChannelTag::FIRST),
+        )],
     ));
     let rendered = render(&plan, &[]);
     let (left, right) = v1_balance_sides(level, pan);
@@ -173,7 +177,11 @@ fn a_balance_at_unity_and_centre_is_neutral_where_the_channel_is_not() {
     let neutral = render(
         &admit(&staged(
             constant(input),
-            &[(STAGE, balance(1.0, 0.0, false), ExecutionScope::Channel)],
+            &[(
+                STAGE,
+                balance(1.0, 0.0, false),
+                ExecutionScope::Channel(ChannelTag::FIRST),
+            )],
         )),
         &[],
     );
@@ -195,7 +203,7 @@ fn a_balance_at_unity_and_centre_is_neutral_where_the_channel_is_not() {
                     pan: BipolarLevel::ZERO,
                     muted: false,
                 },
-                ExecutionScope::Channel,
+                ExecutionScope::Channel(ChannelTag::FIRST),
             )],
         )),
         &[],
@@ -214,7 +222,11 @@ fn a_balance_mute_silences_from_its_sample_writes_positive_zero_and_releases_fro
     let input = -0.5_f32;
     let plan = admit(&staged(
         constant(input),
-        &[(STAGE, balance(1.0, 0.0, false), ExecutionScope::Channel)],
+        &[(
+            STAGE,
+            balance(1.0, 0.0, false),
+            ExecutionScope::Channel(ChannelTag::FIRST),
+        )],
     ));
     let mute = plan
         .resolve_parameter(STAGE, parameters::BALANCE_MUTE)
@@ -254,7 +266,11 @@ fn a_balance_mute_silences_from_its_sample_writes_positive_zero_and_releases_fro
     let muted = render(
         &admit(&staged(
             constant(input),
-            &[(STAGE, balance(1.0, 0.0, true), ExecutionScope::Channel)],
+            &[(
+                STAGE,
+                balance(1.0, 0.0, true),
+                ExecutionScope::Channel(ChannelTag::FIRST),
+            )],
         )),
         &[],
     );
@@ -432,7 +448,11 @@ fn a_staged_render_composes_v1s_laws_in_order_and_is_the_same_bits_under_every_p
     let plan = admit(&staged(
         sine,
         &[
-            (STAGE, balance(level, pan, false), ExecutionScope::Channel),
+            (
+                STAGE,
+                balance(level, pan, false),
+                ExecutionScope::Channel(ChannelTag::FIRST),
+            ),
             (SECOND, IrNodeKind::SoftClip, ExecutionScope::Global),
             (THIRD, trim(master), ExecutionScope::Global),
             (FOURTH, IrNodeKind::HardClamp, ExecutionScope::Global),

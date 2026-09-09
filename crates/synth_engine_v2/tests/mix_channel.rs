@@ -16,8 +16,8 @@ use common::{OUTPUT, SOURCE, profile};
 use synth_engine_v2::controller::BipolarLevel;
 use synth_engine_v2::diagnostics::CompileError;
 use synth_engine_v2::ir::{
-    ExecutionScope, GraphIr, IrNodeKind, LfoPolarity, LfoWaveform, ModulationDepth, ModulationUnit,
-    NodeId, PortId, SignalDomain, parameters,
+    ChannelTag, ExecutionScope, GraphIr, IrNodeKind, LfoPolarity, LfoWaveform, ModulationDepth,
+    ModulationUnit, NodeId, PortId, SignalDomain, parameters,
 };
 use synth_engine_v2::node::{catalog, ports};
 use synth_engine_v2::offline::{OfflineEvent, render_offline};
@@ -67,7 +67,7 @@ fn channel(fader: f32, pan: f32, muted: bool) -> IrNodeKind {
 fn channelled(source: IrNodeKind, strip: IrNodeKind) -> GraphIr {
     GraphIr::builder()
         .node(SOURCE, source, ExecutionScope::Voice)
-        .node(CHANNEL, strip, ExecutionScope::Channel)
+        .node(CHANNEL, strip, ExecutionScope::Channel(ChannelTag::FIRST))
         .node(OUTPUT, IrNodeKind::Output, ExecutionScope::Global)
         .connect(
             (SOURCE, PortId::FIRST),
@@ -379,7 +379,11 @@ fn a_fader_write_an_edge_and_a_script_compose_in_the_one_slot_under_the_decibel_
     };
     let modulated = GraphIr::builder()
         .node(SOURCE, constant(LEVEL), ExecutionScope::Global)
-        .node(CHANNEL, channel(1.0, 0.0, false), ExecutionScope::Channel)
+        .node(
+            CHANNEL,
+            channel(1.0, 0.0, false),
+            ExecutionScope::Channel(ChannelTag::FIRST),
+        )
         .node(LFO, held_lfo, ExecutionScope::Global)
         .script(control_script(0.5), ExecutionScope::Global)
         .node(OUTPUT, IrNodeKind::Output, ExecutionScope::Global)
@@ -456,11 +460,15 @@ fn a_channel_count_over_the_profile_is_refused_by_name_and_counted_from_the_plan
     const SECOND_CHANNEL: NodeId = NodeId::new(15);
     let two = GraphIr::builder()
         .node(SOURCE, constant(LEVEL), ExecutionScope::Global)
-        .node(CHANNEL, channel(1.0, 0.0, false), ExecutionScope::Channel)
+        .node(
+            CHANNEL,
+            channel(1.0, 0.0, false),
+            ExecutionScope::Channel(ChannelTag::FIRST),
+        )
         .node(
             SECOND_CHANNEL,
             channel(0.5, 0.0, false),
-            ExecutionScope::Channel,
+            ExecutionScope::Channel(ChannelTag::new(1)),
         )
         .node(MIX, IrNodeKind::Mix, ExecutionScope::Global)
         .node(OUTPUT, IrNodeKind::Output, ExecutionScope::Global)
@@ -547,7 +555,11 @@ fn fan_in_into_a_port_that_does_not_declare_it_is_still_refused() {
     let two_into_a_channel = GraphIr::builder()
         .node(SOURCE, constant(LEVEL), ExecutionScope::Global)
         .node(SECOND_SOURCE, constant(LEVEL), ExecutionScope::Global)
-        .node(CHANNEL, channel(1.0, 0.0, false), ExecutionScope::Channel)
+        .node(
+            CHANNEL,
+            channel(1.0, 0.0, false),
+            ExecutionScope::Channel(ChannelTag::FIRST),
+        )
         .node(OUTPUT, IrNodeKind::Output, ExecutionScope::Global)
         .connect(
             (SOURCE, PortId::FIRST),
@@ -646,6 +658,8 @@ fn a_channel_and_a_sum_admit_exactly_two_channels_on_every_port() {
                 | NodeKindId::Mix
                 | NodeKindId::Balance
                 | NodeKindId::Trim
+                | NodeKindId::Send
+                | NodeKindId::PostFaderSend
                 | NodeKindId::SoftClip
                 | NodeKindId::HardClamp
                 | NodeKindId::Distortion
@@ -663,6 +677,16 @@ fn a_channel_and_a_sum_admit_exactly_two_channels_on_every_port() {
                     muted: false,
                 },
                 NodeKindId::Trim => IrNodeKind::Trim {
+                    level: Amplitude::UNITY,
+                },
+                NodeKindId::Send => IrNodeKind::Send {
+                    level: Amplitude::UNITY,
+                    muted: false,
+                },
+                NodeKindId::PostFaderSend => IrNodeKind::PostFaderSend {
+                    fader: Amplitude::UNITY,
+                    pan: BipolarLevel::ZERO,
+                    muted: false,
                     level: Amplitude::UNITY,
                 },
                 NodeKindId::SoftClip => IrNodeKind::SoftClip,

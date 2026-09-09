@@ -1162,11 +1162,19 @@ impl RenderLimits {
         // live ingress. These values satisfy every checked relation and sum to the cap
         // exactly, so the default carries no unusable slack a later measurement would have
         // to explain away.
+        //
+        // The session share was reselected by EVD-0021 (`P08-S004`): ADR-0051's catch-up
+        // charges one event per writable control per node, so the share is the plan's
+        // addressable-parameter count plus one, and a whole project's mixer reached 64 on
+        // the survey's largest fixture where the first provisional value was 24. The rule,
+        // stated before the survey: the next multiple of 32 at or above twice the high
+        // water, and the cap raised by the same amount so the other five shares keep their
+        // provisional values. Still provisional until Phase 9's complete reselection.
         let shares = ProducerShares::new(
             EventCount::limit(96)?,
             EventCount::limit(48)?,
             EventCount::limit(32)?,
-            EventCount::limit(24)?,
+            EventCount::limit(128)?,
             EventCount::limit(16)?,
             EventCount::limit(40)?,
             EventCount::limit(40)?,
@@ -1211,7 +1219,8 @@ impl RenderLimits {
                 FrameCount::new(128),
             )?,
             EventLimits::new(
-                EventCount::limit(256)?,
+                // The six shares' sum: 256 before EVD-0021 raised the session share.
+                EventCount::limit(360)?,
                 EventCount::limit(128)?,
                 scheduled_window,
                 horizon,
