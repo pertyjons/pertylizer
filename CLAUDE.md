@@ -57,7 +57,8 @@ evidence gate.
 | Evidence method, harness, digest, phase exit, or Core V2 code in the EVD-0016 simulator dependency closure | The evidence gate below plus the review required by the change's other risk |
 | Rust behavior confined to one package and outside the boundary-sensitive set below | The targeted Rust gate plus author review of the complete diff |
 | Admission, scheduling, identity, concurrency, persistence, protocol, real-time boundaries, or production-facing APIs | The core Rust gate plus one independent uncommitted review |
-| Features, dependencies, build configuration, phase exit, release, or merge to `main` | The complete repository gate plus one independent uncommitted review |
+| Features, dependencies, build configuration, phase exit, or release | The complete repository gate plus one independent uncommitted review |
+| Merge to `main` | The complete repository gate; reuse completed branch reviews for unchanged content as described below |
 
 The fast Core V2 documentation gate is:
 
@@ -292,7 +293,14 @@ git switch main
 git merge --squash <branch>
 ```
 
-Inspect the staged squash, run the required gate and uncommitted review, then:
+Inspect the staged squash and run the complete repository gate. Reuse the
+branch's completed independent reviews for unchanged reviewed content; a squash
+merge alone does not require another independent review. New changes and
+conflict resolutions follow the risk-selected verification and review rules
+above. A prior review waiver does not become a qualifying independent review
+through merging.
+
+Then:
 
 ```bash
 git commit -m "<summary of the whole branch>"
