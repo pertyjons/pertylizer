@@ -154,9 +154,12 @@ serial publisher uses explicit zero lateness and S002's reservations; supplied
 audition traces do not affect capture. The recording specification records the
 bounded checks and the remaining consumer gates.
 
-Next, P09-S004 builds finite certified note projection under TAKE-INV-004 before
-any project commit consumer: retained-context validation, exhaustive monotone
-tick-table admission, nearest-tick selection and explicit error/refusal results.
+P09-S004 adds finite certified note projection under TAKE-INV-004: exhaustive
+tick-table admission, nearest-tick selection, optional start quantization and
+explicit whole-result refusals against the retained context. Its bounded
+checks and remaining consumer gates are in the
+[recording specification](specs/spec-recording-takes-and-commit.md#conformance-tests).
+The next Phase 9 implementation slice remains to be selected.
 Loop capture and physical adapters remain separately gated.
 Input lifecycle, independent clocks and monitoring still require IO-INV-004 and
 IO-INV-005 checks before their first consumers. Concurrent backend fences,
@@ -207,7 +210,7 @@ Phase 3 is complete. Its exit review accepted these bounded residuals:
 ## Current blockers
 
 Phase 8 has no remaining exit blocker. Phase 0B continues with `P00B-T003`
-selected; Phase 9 has completed P09-S001 through P09-S003, and P09-S004 is next.
+selected; Phase 9 has completed P09-S001 through P09-S004.
 The accepted residuals above block their named first consumers.
 Session share 128 and total cap 360 remain provisional until
 Phase 9's complete reselection under ADR-0054.

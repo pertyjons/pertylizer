@@ -2,11 +2,13 @@
 //!
 //! The fixture supplies explicit session-before-source boundaries and zero lateness.
 //! Capture retains its own immutable tempo/target context; audition is a supplied trace,
-//! never a condition of capture acceptance. Loop passes, projection and project commit
-//! are not exposed here. All owned memory, including source state and tempo maps, is
+//! never a condition of capture acceptance. Certified off-thread note projection lives
+//! in [`projection`]; loop passes and project commit are not exposed here.
+//! All owned memory, including source state and tempo maps, is
 //! charged to the recording byte budget. Preparation, arm, rebind and discard run off-thread.
 
 mod hot;
+pub mod projection;
 #[cfg(test)]
 mod tests;
 mod types;

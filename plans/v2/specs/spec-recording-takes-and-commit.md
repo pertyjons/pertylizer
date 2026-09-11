@@ -12,8 +12,8 @@
 | Superseded by | — |
 
 Only a `Current` specification constrains implementation; see [README.md](README.md).
-This contract is accepted for the consuming implementations. P09-S002/S003's bounded
-storage and exact-input checks and the remaining consumer obligations are separated below.
+This contract is accepted for the consuming implementations. P09-S002–S004's bounded
+storage, exact-input and projection checks and remaining consumer obligations are separated below.
 
 ## Scope
 
@@ -274,7 +274,7 @@ Finite capture windows are explicit: reaching the prepared window's end seals
 the segment, and extending it requires a newly admitted window. A loop reuses
 one certified interval plus its pass mapping, not an unbounded table of passes.
 The conformance tests are required before enabling the projection implementation;
-these tests are not yet implementation evidence.
+the bounded exact-input implementation's checks are recorded below.
 
 Optional quantization snaps note starts to the selected musical grid, choosing
 the earlier grid point on a tie and preserving the derived note duration;
@@ -538,9 +538,54 @@ cargo test -p synth_engine_v2 --release --lib recording::notes::tests
 
 This bounded slice does not discharge TAKE-INV-001/002 as a whole: concurrent
 queues, nonzero-lateness reordering, physical synchronization, renderer audition,
-whole-session shutdown, projection, loop passes and project transactions remain
+whole-session shutdown, loop passes and project transactions remain
 at their named consumer gates. The owner must retain the recorder until results
 are resolved; notifications do not transfer its sole payload or free its quota.
+
+P09-S004 adds `SimulatedNoteRecorder::project_notes` in
+`src/recording/notes/projection.rs`. This off-thread consumer returns all derived
+notes or a named refusal, leaving raw capture and its reservations unchanged.
+It certifies every integer tick in the retained arm interval before lookup;
+the capture-only arm API makes no promise that later projection will fit or succeed.
+Checked admission covers the inclusive tick count, table, derived notes and
+projection descriptor together with all recorder-owned storage. Both arrays
+check requested and granted capacity against that aggregate budget. The result
+borrows the recorder through its destructor, preventing another projection allocation,
+mapping replacement, discard or a quality update while that view exists.
+There is no substitute-map argument: the exact owned tempo map, rate, interval,
+fixture revision, anchor, epoch and session remain attached to the take.
+This serial borrow is not a concurrent worker or commit-custody protocol.
+
+The two lower-bound searches implement nearest-frame selection and earliest-tick
+plateau selection independently. Each endpoint reports its signed native
+tick-resolution error. Optional grid snapping moves only the note start and
+preserves the derived duration; unsnapped endpoints and raw input remain readable.
+No physical latency compensation is applied. A nonpositive raw or projected
+lifetime, invalid mapping or out-of-target snapped note refuses the whole result
+with the occurrence identified. Durations follow the accepted FIFO key release
+or the explicit synthetic stop closure; closure provenance remains visible.
+Only onsets inside the final selected capture interval become notes.
+Incomplete effective quality, captured sustain/expression and nonneutral initial
+controller state refuse this note-only result. A partial/interrupted take needs
+a future explicit recovery selection; no automatic salvage or controller
+conversion is implied. The result is not serialized and applies no project edit.
+
+The slice's falsifier is any disagreement with exhaustive nearest-tick selection,
+an undetected interior inversion, use of a foreign mapping, a partial successful
+result, lost controller material, changed raw timing or an allocation outside the
+aggregate budget. `src/recording/notes/projection/tests.rs` compares real step
+and period-ramp maps against every frame in each finite test interval, including
+tempo boundaries and dense tick plateaus. Tests in `projection/table.rs` inject
+an interior inversion and conversion failure and isolate both tie rules.
+Other checks cover FIFO same-key duration under delivery partitions and changed
+audition times, retained-map replacement, foreign session/epoch, finite range,
+checked tick/byte admission, quantization, synthetic closure, invalid lifetime
+and controller/quality refusal. An empty cancelled count-in keeps its unused
+initial controllers without inventing notes. Compile-fail examples hold the
+exclusive projection borrow through last use and actual destruction.
+These tests discharge the finite exact-input lookup and
+note-only projection subset of TAKE-INV-004; runtime loop mapping, physical
+compensation and canonical project output remain at their named consumer gates.
 
 The contract fails if a legal stall or interruption can lose accepted data,
 change its original timing, apply partial replace, duplicate a retry, or require
@@ -565,11 +610,9 @@ allocation/blocking on a callback. Required checks at the remaining consumers ar
 - Change or delete the target, fail asset finalization and lose the commit
   acknowledgement. The project is unchanged on failure, the take remains owned,
   and a retry has exactly one effect. Undo restores the entire prior target.
-- Compare table lookup against exhaustive nearest-tick selection on steps,
-  period ramps, boundaries, equal-frame plateaus and distance ties. Inject an
-  adjacent inversion that an endpoint/stride check misses and require preparation
-  refusal. Check work/byte bounds, stale table context, out-of-range and
-  zero-duration refusals. Report each projection's actual signed error.
+- Carry P09-S004's finite projection checks into runtime loop mapping, physical
+  compensation and canonical project output without substituting a current
+  context or losing the reported native tick error.
 - Feed synthetic ordered pass boundaries at non-Q-aligned positions and record
   a held/sustained note across them. A release exactly on a boundary closes the
   original occurrence in the next pass. Contiguous projection has one onset;
@@ -578,10 +621,10 @@ allocation/blocking on a callback. Required checks at the remaining consumers ar
 - Interrupt audio without a final callback; stop at the last valid watermark,
   preserve source format and prefix, and never label a gapped asset complete.
 
-The storage and exact-input tests above cover parts of TAKE-INV-001/002/006;
+The storage, exact-input and projection tests above cover parts of TAKE-INV-001/002/004/006;
 none of the following invariants is discharged in full. The built arm context,
 serial source ordering and FIFO pairing still need their first physical/concurrent
-consumers' qualification. Runtime callbacks, loop passes, audio, projection and
+consumers' qualification. Runtime callbacks, loop passes, audio, physical compensation and
 project commit remain first-consumer obligations. Physical timestamp/latency
 evidence belongs to ADR-0022; no new EVD result is asserted.
 
@@ -590,7 +633,7 @@ evidence belongs to ADR-0022; no new EVD result is asserted.
 | TAKE-INV-001 | Callback partitions, pre/post-seal late input, two-source fences and attribution retained through commit |
 | TAKE-INV-002 | Physical/concurrent source synchronization, count-in, FIFO pairing and mapping-change integration |
 | TAKE-INV-003 | Synthetic non-Q-aligned pass boundaries, crossing occurrence projection/refusal and pass exhaustion |
-| TAKE-INV-004 | Exhaustive nearest-tick oracle, adjacent inversion refusal, ties/plateaus, finite bounds and signed error |
+| TAKE-INV-004 | Runtime loop mapping, physical compensation and canonical output retaining the certified context and native tick error |
 | TAKE-INV-005 | Revision conflict, failed asset, lost acknowledgement, exactly-once retry and complete undo |
 | TAKE-INV-006 | Every capacity exhausted under worker/GUI stall; retained ownership and off-thread reclamation |
 
