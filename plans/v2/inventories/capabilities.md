@@ -4,7 +4,7 @@
 |---------------|------------|
 | Status        | Active     |
 | Phase         | 00B        |
-| Last reviewed | 2026-09-11 (CLI entry-point subset only) |
+| Last reviewed | 2026-09-11 (MCP project-operation subset only) |
 
 This ledger covers every shipped or externally consumed capability and assigns it a deliberate V2 disposition.
 
@@ -44,10 +44,12 @@ Passes 1 and 2 were a **surface census**; pass 3 added the per-item enumeration 
 The [2026-09-09 project-action inspection](#project-actions-2026-09-09) assigns `Migrate` to seven existing
 capabilities: `CAP-0048` through `CAP-0053`, and `CAP-0055`. The
 [2026-09-11 CLI inspection](#cli-entry-points-2026-09-11) assigns `Migrate` to `CAP-0040` through
-`CAP-0043` and the newly enumerated `CAP-0509`. Other dispositions remain open.
+`CAP-0043` and the newly enumerated `CAP-0509`. The
+[MCP project-operation inspection](#mcp-project-operations-2026-09-11) adds `CAP-0172`, `CAP-0173`,
+`CAP-0205` and `CAP-0206`. Other dispositions remain open.
 
 **Status rule.** The [register vocabulary](README.md) defines `Classified` as required fields *and* disposition filled
-with supporting evidence. The twelve inspected rows meet that classification threshold, not migration verification.
+with supporting evidence. The sixteen inspected rows meet that classification threshold, not migration verification.
 Entries whose disposition is open stay `Discovered` or `Investigating`. `Verified` requires the named migration
 checks to pass; source inspection alone does not establish implemented V2 behavior. P00B-T002 remains incomplete.
 
@@ -63,7 +65,7 @@ checks to pass; source inspection alone does not establish implemented V2 behavi
 | CAP-0006 | MCP     | Sample tools — 16 (`samples.rs`): import, export, crop, loop, normalize, reverse, trim, root note, duplicate, delete                                                 | Same                                                                 |             |                      |                                                                                                                                                                                                                                                 | Discovered    |
 | CAP-0007 | MCP     | Automation tools — 12 (`automation.rs`): points, lanes, copy, scale, offset, simplify, clear, summary                                                                | Same                                                                 |             |                      |                                                                                                                                                                                                                                                 | Discovered    |
 | CAP-0008 | MCP     | Audio-input tools — 7 (`audio_input.rs`): device list/select, monitoring, recording                                                                                  | Same                                                                 |             |                      | Device lifecycle is ADR-0036                                                                                                                                                                                                                    | Discovered    |
-| CAP-0009 | MCP     | Project tools — 5 (`project.rs`): new, load, save, save patch, lint                                                                                                  | Same                                                                 |             |                      | Save path is `STATE-0027`/`STATE-0031` sensitive                                                                                                                                                                                                | Investigating |
+| CAP-0009 | MCP     | Project tools — 5 (`project.rs`): new, load, save, save patch, optimize; lint is CAP-0153 in discovery                                                                                                  | Same                                                                 |             |                      | Save path is `STATE-0027`/`STATE-0031` sensitive                                                                                                                                                                                                | Investigating |
 | CAP-0010 | MCP     | `batch_execute` — 1 (`batch.rs`) plus the `dispatch_tools!` macro that routes every tool through three reply shapes (text / typed payload / action)                  | Same                                                                 |             |                      | Has a dispatch-guard test                                                                                                                                                                                                                       | Discovered    |
 | CAP-0011 | MCP | Behavior annotations — of 219 tools: **71** `read_only_hint = true`, **97** `destructive_hint = false`, **51** `destructive_hint = true`. 71 + 97 + 51 = 219, so coverage is exactly complete and every tool carries precisely one behavior annotation | Tool metadata | | | Counted after excluding commented-out occurrences — a raw `rg` returns 98 `false` because `server/tools/batch.rs:35` explains in a comment why `batch_execute` is *not* `destructive_hint = false`. The 51 destructive tools are the set a V2 authorization policy would gate first (ADR-0029) | Discovered |
 | CAP-0012 | MCP     | Resource completions and closed-set schema enums                                                                                                                     | MCP protocol                                                         |             |                      | Landed in `67b5afa1`                                                                                                                                                                                                                            | Discovered    |
@@ -155,8 +157,10 @@ capability added or removed later shows up as a diff rather than as a changed to
 
 `CAP-0001`..`CAP-0010`, `CAP-0014`, `CAP-0015`, `CAP-0023`, and `CAP-0027` remain at their stable identifiers as
 **rollup rows**: they describe a surface, carry no disposition of their own, and are not counted as capability entries.
-The authoritative per-capability entries are below. Every one is `Discovered`: reachability is filled, disposition is
-not, and per the register vocabulary an entry without a disposition cannot be `Classified`.
+The authoritative per-capability entries are below. The four MCP project operations classified in the
+[2026-09-11 inspection](#mcp-project-operations-2026-09-11) are the exception to the generated rows' original
+`Discovered` status. The other generated entries still lack a disposition; reachability alone cannot make them
+`Classified`. Evidence for each classified MCP entry is linked from its `Reachable from` cell.
 
 ### MCP tools (219)
 
@@ -281,8 +285,8 @@ not, and per the register vocabulary an entry without a disposition cannot be `C
 | CAP-0169 | MCP | `list_samples` | `samples.rs` | read | `synth` server: HTTP `127.0.0.1:9850/mcp` and `--headless` stdio | | | Discovered |
 | CAP-0170 | MCP | `list_tracks` | `sequencer.rs` | read | `synth` server: HTTP `127.0.0.1:9850/mcp` and `--headless` stdio | | | Discovered |
 | CAP-0171 | MCP | `load_example_patch` | `instruments.rs` | destructive | `synth` server: HTTP `127.0.0.1:9850/mcp` and `--headless` stdio | | | Discovered |
-| CAP-0172 | MCP | `load_project` | `project.rs` | destructive | `synth` server: HTTP `127.0.0.1:9850/mcp` and `--headless` stdio | | | Discovered |
-| CAP-0173 | MCP | `new_project` | `project.rs` | destructive | `synth` server: HTTP `127.0.0.1:9850/mcp` and `--headless` stdio | | | Discovered |
+| CAP-0172 | MCP | `load_project` | `project.rs` | destructive | Default MCP GUI HTTP and `--headless` stdio → `ProjectBridge::load_project`; [source trace](#mcp-project-load) | Migrate | Phase 10D Project I/O decode/convert/validate and assets; 10B application lifecycle; 10C saved-state coordination; 10E MCP adapter; 11 GUI refresh | Classified |
+| CAP-0173 | MCP | `new_project` | `project.rs` | destructive | Default MCP GUI HTTP and `--headless` stdio → `ProjectBridge::new_project`; [source trace](#mcp-project-reset) | Migrate | Phase 10A canonical empty document; 10B application lifecycle; 10C history/saved-state coordination; 10E MCP adapter; 11 GUI refresh | Classified |
 | CAP-0174 | MCP | `normalize_sample` | `samples.rs` | destructive | `synth` server: HTTP `127.0.0.1:9850/mcp` and `--headless` stdio | | | Discovered |
 | CAP-0175 | MCP | `note_off` | `instruments.rs` | mutating | `synth` server: HTTP `127.0.0.1:9850/mcp` and `--headless` stdio | | | Discovered |
 | CAP-0176 | MCP | `note_on` | `instruments.rs` | mutating | `synth` server: HTTP `127.0.0.1:9850/mcp` and `--headless` stdio | | | Discovered |
@@ -314,8 +318,8 @@ not, and per the register vocabulary an entry without a disposition cannot be `C
 | CAP-0202 | MCP | `reorder_return_effect` | `mixing.rs` | mutating | `synth` server: HTTP `127.0.0.1:9850/mcp` and `--headless` stdio | | | Discovered |
 | CAP-0203 | MCP | `replace_notes` | `sequencer.rs` | destructive | `synth` server: HTTP `127.0.0.1:9850/mcp` and `--headless` stdio | | | Discovered |
 | CAP-0204 | MCP | `reverse_sample` | `samples.rs` | destructive | `synth` server: HTTP `127.0.0.1:9850/mcp` and `--headless` stdio | | | Discovered |
-| CAP-0205 | MCP | `save_patch` | `project.rs` | destructive | `synth` server: HTTP `127.0.0.1:9850/mcp` and `--headless` stdio | | | Discovered |
-| CAP-0206 | MCP | `save_project` | `project.rs` | destructive | `synth` server: HTTP `127.0.0.1:9850/mcp` and `--headless` stdio | | | Discovered |
+| CAP-0205 | MCP | `save_patch` | `project.rs` | destructive | Default MCP GUI HTTP and `--headless` stdio → `ProjectBridge::save_patch`; [source trace](#mcp-patch-export) | Migrate | Phase 10A canonical instrument content; 10B export operation; 10D patch format/assets; 10E MCP adapter | Classified |
+| CAP-0206 | MCP | `save_project` | `project.rs` | destructive | Default MCP GUI HTTP and `--headless` stdio → `ProjectBridge::save_project`; [source trace](#mcp-project-save) | Migrate | Phase 10A canonical snapshot; 10B operation results; 10C save coordination; 10D writer/assets; 10E MCP adapter; 11 GUI save integration | Classified |
 | CAP-0207 | MCP | `scale_automation_lane` | `automation.rs` | destructive | `synth` server: HTTP `127.0.0.1:9850/mcp` and `--headless` stdio | | | Discovered |
 | CAP-0208 | MCP | `search_modules` | `discovery.rs` | read | `synth` server: HTTP `127.0.0.1:9850/mcp` and `--headless` stdio | | | Discovered |
 | CAP-0209 | MCP | `seq_play` | `sequencer.rs` | mutating | `synth` server: HTTP `127.0.0.1:9850/mcp` and `--headless` stdio | | | Discovered |
@@ -926,9 +930,180 @@ retaining this analysis/CLI surface; any later job integration must obey Phase 1
 | CAP-0043 | 10E host configuration/telemetry; 11 GUI | With OSC compiled in, compare GUI startup with and without the switch: suppression must start no telemetry sender and leave project state unchanged. Exercise feature-disabled argument rejection and mode combinations; document any approved change to the accepted invocation syntax. |
 | CAP-0509 | 10E analysis/CLI adapter; 10B only for later job integration | Compare distinct equal-byte files and deliberately different signals; check versioned reports, unavailable measurements and their diagnostics, path refusals, and nonzero exit on execution failure. A numerical difference must not become an automatic acceptance verdict. Pin or diagnose input replacement under the selected I/O contract. |
 
-The CLI subset is now classified, not migration-verified. Remaining P00B-T002 work includes MCP operation
-dispositions, OSC messages, engine/module/catalog entries, public APIs, the build matrix, developer tools and the
-incomplete per-action GUI census. CAP-0044–CAP-0047 and live transport CAP-0054 keep their existing status.
+The CLI subset is classified, not migration-verified. The subsequent MCP project-operation pass below addresses
+four of the remaining MCP dispositions. Other MCP operations, OSC messages, engine/module/catalog entries,
+public APIs, the build matrix, developer tools and the per-action GUI census remain open. CAP-0044–CAP-0047
+and live transport CAP-0054 keep their existing status.
+
+## MCP project operations 2026-09-11
+
+This bounded P00B-T002 slice classifies four existing tools at `bab84945`: `load_project` (CAP-0172),
+`new_project` (CAP-0173), `save_patch` (CAP-0205) and `save_project` (CAP-0206). It uses the existing
+[source-inspection method](#method-and-acceptance-boundary): follow registered dispatch through the bridge to
+mutation or persistence, inspect failure branches, and assign owners under the
+[Application Core target](../architecture/application-core.md) and [roadmap](../ROADMAP.md).
+A missing dispatch, a false behavioral claim or an inconsistent owner blocks classification; optional detail does
+not. No MCP call, GUI interaction, runtime experiment or migration test was executed for this inspection.
+The tests cited below were read, not run. No evidence harness, production code or external contract changes.
+
+`Migrate` retains the capability, not the misleading catalog wording, V1's mirrors or its partial-failure behavior.
+It does not accept proposed ADRs, choose a V2 format or authorize a compatibility break. Core lifecycle, save and
+I/O behavior belongs to 10A–10D; 10E adapts it to MCP and 11 consumes its GUI notifications. `Classified` does
+not mean V2 has implemented it. The two preceding inspections cover GUI project actions and CLI entry points;
+this pass does not classify all project-related MCP tools or close P00B-T002, P00B-T004/T005 or Phase 0B.
+
+### Shared MCP entry and result boundary
+
+[project.rs](../../../crates/synth_mcp/src/server/tools/project.rs) defines the four handlers, each annotated
+`destructive_hint = true` and publishing `action_output_schema`. The default router in
+[server.rs](../../../crates/synth_mcp/src/server.rs) includes `project_tool_router`; its batch dispatch also names
+all four handlers. The GUI HTTP and headless stdio launch paths are covered by CAP-0040/0041. This is source
+reachability in the default MCP-enabled application, not a request sent to a running server.
+
+`new_project` takes `NoParams`; load/save take `ProjectPathParam.path`; patch export additionally requires an
+`InstrumentId`. File handlers reject relative paths and `..` components before entering the bridge. This check
+is lexical path validation, not filesystem authorization or protection against every symlink/race. The three file
+handlers use `block_in_place`; `new_project` calls its synchronous bridge directly. `action_ok`, `action_failed`
+and `action_rejected` return a message plus one structured mutation item. `stamp_outcome` sets the outcome
+metadata and `isError`; a bridge error is a failed item, but says nothing about rollback of earlier mutations.
+An `Ok` load summary containing reconstruction diagnostics still goes through `action_ok`, not a partial-item
+result. This pass does not infer exact effects or atomicity from the one-item wrapper.
+
+[ProjectBridge's implementation](../../../crates/pertylizer/src/mcp_bridge/project.rs) forwards to `do_*`
+helpers in [mcp_bridge.rs](../../../crates/pertylizer/src/mcp_bridge.rs). Those helpers hold
+`project_io_lock`; ordinary edits and sample imports need not take it, so it does not freeze the document or
+isolate a save from every other mutation. `record_io_result` stores the last outcome and increments
+`project_revision` for both successes and errors that reach it, including saves. Earlier path/instrument
+validation failures do not pass through that helper. This counter is a GUI notification signal, not the
+canonical revision required by Phase 10A.
+
+On successful load/reset the bridge publishes a one-slot `ProjectRefresh` and updates source-path/author state.
+[drain_mcp_state](../../../crates/pertylizer/src/gui/egui_backend/engine_events.rs) consumes that payload,
+refreshes GUI mirrors and calls `mark_saved`. Save-only completion publishes status without a refresh payload,
+so it does not itself change the GUI's current project path or mark the document saved. The last-result and
+refresh slots are not a per-request receipt history. These are current adapter consequences; Phase 10B/10C owns
+the operation, revision and saved-state relationship before Phase 11 adopts it.
+
+### MCP project reset
+
+`CAP-0173` reaches `do_new_project` and
+[reset_to_new_project](../../../crates/pertylizer/src/project_apply.rs). The latter creates an empty `Untitled`
+project with default globals, clears the sample library and passes it to `apply_project`. That stops transport,
+tears down instruments and replaces song/mix state. There is no dirty-document confirmation in this MCP handler.
+On reported success the bridge clears shared author and loaded path, publishes `ProjectRefresh::Reset`, and
+clears the mix-comparison baseline; failure is returned and recorded without publishing that success refresh.
+
+**Failure limit:** sample clearing and engine/song changes happen before all fallible apply steps have completed.
+A returned error does not restore the previous project or samples. This is a lifecycle operation to migrate
+through Application Core, not evidence that resetting V1 is transactional or that a failed call changed nothing.
+`new_project_works_without_gui` in
+[mcp_project_load.rs](../../../crates/pertylizer/tests/mcp_project_load.rs) checks the bridge's reset payload,
+notification increment, cleared path and default tempo; it is not an all-failures rollback test.
+
+### MCP project load
+
+`CAP-0172` reaches `do_load_project` → `load_project_inner`. It calls
+[project::load_file](../../../crates/pertylizer/src/project.rs), which detects a ZIP or decodes JSON. A project
+clears the existing sample library before apply; a bundle is loaded into that library by
+[load_bundle](../../../crates/pertylizer/src/bundle.rs). Successful apply updates shared author immediately,
+stashes the decoded project for GUI refresh, records the loaded path and clears the mix-comparison baseline.
+The returned string includes the apply report's diagnostic summary. No handler-side dirty confirmation occurs.
+
+**Catalog discrepancy:** the `load_project` tool description advertises single-patch loading, and `save_patch`'s
+description says its output is read back by `load_project`. The actual `LoadedFile::Patch` branch refuses with
+"File is a single-instrument patch — use load_patch instead of load_project". Unlike GUI smart-open and the
+CLI renderer's loader, this MCP operation accepts projects/bundles and rejects standalone patches. CAP-0172 is
+classified for that implemented scope. The two tool descriptions need to match it; enabling patch acceptance
+would be a separate behavior decision, not a documentation correction made by this pass.
+The refusal is also misleading: the MCP router/dispatch has no `load_patch` tool. Its example-patch tools do
+not accept arbitrary saved patch paths. There is no dedicated MCP file-import route for reopening `save_patch`
+output at this revision; GUI smart-open and the CLI renderer provide separate patch-consuming surfaces.
+Phase 10E must make the catalog and refusal agree with the supported routes. Any new MCP patch-file loader
+needs its own capability entry or an explicitly approved expansion of CAP-0172.
+
+**Failure limit:** a bundle loader clears the library before opening/parsing the archive and populates it
+incrementally. `apply_project` tears down existing instruments before installing replacements, mutates the song,
+and can fail later, including when the command-drop counter increased. Parse/apply errors therefore cannot all
+be treated as preservation of the previous project. Nonfatal reconstruction diagnostics remain in a successful
+summary, while some bundle decode losses never reach that summary: failed WAV decoding skips the sample and
+prints only to stderr; malformed `metadata.json` is silently discarded via `.ok()`, losing its stored sample
+names, root notes, loops and crops while WAV loading continues. The bridge does not provide a complete typed
+effect/diagnostic receipt or a canonical revision. Phase 10B owns failure/state agreement; 10D
+owns decode, conversion and asset validation. `load_project_works_without_gui` checks instrument count, tempo,
+path and refresh/status publication, not every decoded field, partial apply or failed-bundle outcome.
+
+### MCP project save
+
+`CAP-0206` reaches `do_save_project` → `build_project_for_persistence`. It first waits for pending engine
+commands and asks [McpSharedState::request_gui_project](../../../crates/pertylizer/src/mcp_shared.rs) for the
+project the GUI would save. The GUI's
+[service_mcp_project_requests](../../../crates/pertylizer/src/gui/egui_backend/project_flow.rs) re-drains MCP
+refresh state and reconciles editors before `create_project_from_app` supplies its metadata overlay. With no
+GUI or no reply before the timeout, the bridge builds from engine/song snapshots and shared save options.
+An attached-GUI timeout logs a warning; it is not made a failed save or added to a structured loss report.
+The state ledger's `STATE-0027`, `STATE-0031` and `STATE-0032` identify metadata whose GUI overlay can be lost.
+
+After building, it takes one sample-library read guard for both bundle selection and writing. With samples,
+`normalize_project_path` chooses `.ptz.zip`; without samples it preserves `.ptz`/`.json` and normalizes other
+extensions to `.ptz`. The result string reports the actual written path. This shared library guard makes that
+branch decision consistent with the writer's library, but the project was captured earlier: it does not establish
+one atomic project-plus-assets revision. The plain writer calls `ProjectFile::save`, the bundle writer calls
+`save_bundle`; both reach [atomic I/O](../../../crates/pertylizer/src/io/atomic.rs), writing a temporary file
+before replacing the destination. Destination replacement is separate from correctness of the captured content.
+
+**Failure limit:** the pre-drain and engine builder discard the boolean from `wait_for_pending_commands`.
+That function can time out; its enqueue frontier also excludes commands already dropped. Current control
+snapshots can already reflect accepted commands, so timeout alone does not prove a stale graph, but successful
+save does not certify completed DSP application or a coherent snapshot under concurrent edits. GUI fallback can
+lose metadata and separate snapshot reads are not a revision pin. Phase 10A/10C/10D owns canonical capture,
+save/dirty coordination and assets. This does not reopen ADR-0028's gate for a new V2 render-job surface.
+
+In [mcp_gui_project_snapshot.rs](../../../crates/pertylizer/tests/mcp_gui_project_snapshot.rs),
+`an_mcp_save_persists_the_gui_built_project` uses a fake GUI responder and checks its marker song name;
+`a_headless_mcp_save_falls_back_to_the_engine_build` checks the fallback's name. Neither proves the full live
+GUI overlay. `save_project_works_without_gui` checks a reparseable file containing instruments and an I/O success
+status. These are existing bounded tests, not verification of every persisted field or a new test run here.
+
+### MCP patch export
+
+`CAP-0205` validates the instrument through `ProjectBridge`, then `do_save_patch` calls
+[save_patch_to](../../../crates/pertylizer/src/project_apply.rs). It waits for commands and instrument visibility,
+finds the selected snapshot, filters its modules/connections, builds a `Patch`, creates parent directories and
+calls `Patch::save` through atomic I/O. At the MCP boundary, an initially unknown instrument is rejected by
+`validate_instrument` before this helper or I/O-result recording. The helper separately diagnoses a known
+instrument not mirrored before the wait expires; its own not-found branch can also handle removal between the
+bridge's validation and snapshot lookup. The path is used as supplied after the tool's path validation; this helper does not
+apply whole-project extension normalization or write a sample bundle.
+
+`build_patch_from_engine` starts from `Patch::new`, carries patch description/color, module descriptions,
+parameters/scripts, connections and effect-chain order, and writes default module positions. It does not ask the
+GUI for groups/layout/visualizer overlays or embed the sample library. This is an engine-derived instrument
+export, not a complete project save or evidence that every GUI-authored patch field survives. As with project
+save, the command-wait result is not propagated. The instrument lookup can fail, but a successful lookup does
+not certify all prior DSP mutations or pin the graph against a concurrent edit.
+
+`save_patch_writes_a_loadable_single_instrument_patch` in `project_apply.rs` checks that general `load_file`
+recognizes the result as a patch and excludes a second instrument's distinctive module. It does not call MCP
+`load_project`, so it does not contradict that tool's patch refusal. `save_patch_reports_an_unknown_instrument`
+in [mcp_build_and_save_robustness.rs](../../../crates/pertylizer/tests/mcp_build_and_save_robustness.rs) checks
+the bridge's unknown-ID error. Phase 10A/10D must define retained instrument metadata and asset references;
+10B/10E owns the export operation and its MCP result.
+
+### MCP project migration checks still owed
+
+| Capabilities | Owner | Observable check before `Verified` |
+|---|---|---|
+| All four | 10B operation results; 10E MCP adapter | Exercise direct and batched calls over the supported transports. Assert required-input/path refusals, declared output schemas, `isError`, diagnostics and resulting state agree. A failed item must not imply rollback that did not occur; written files must not be claimed undone by batch restoration. Catalog descriptions must match implemented file-kind support, and refusals must not recommend nonexistent tools. |
+| CAP-0173 | 10A document; 10B lifecycle; 10C history/saved state; 11 GUI | Reset a nonempty project with samples and mirrors. Verify the canonical result, source association and history under the chosen lifecycle rule; inject failure after mutation begins and assert the receipt describes the state retained. |
+| CAP-0172 | 10B lifecycle; 10C saved state; 10D I/O/assets; 11 GUI | Load project/bundle cases and exercise standalone-patch refusal or its separately approved replacement contract. Test corrupt archives, malformed sample metadata, undecodable WAV entries, asset and reconstruction failures with nonempty prior state. Verify operation diagnostics, final document/assets and GUI refresh agree, including partial failure and nonfatal loss; missing samples or discarded metadata must not be silent or stderr-only. |
+| CAP-0206 | 10A snapshot; 10B operation results; 10C save; 10D writer/assets; 10E MCP; 11 GUI integration | Compare equivalent GUI, MCP and headless saves of a canonical revision, including retained metadata/assets. Exercise a stalled/detached GUI, pending/dropped commands, concurrent edits/imports and failed writes. The result must identify the captured revision and actual path; a later edit stays dirty and failure cannot silently advance the saved revision. |
+| CAP-0205 | 10A instrument content; 10B export; 10D format/assets; 10E MCP | Export one of two distinguishable instruments and reopen through the declared patch-file consumer (currently GUI smart-open/CLI render, with no dedicated MCP file-import route). A future MCP loader requires separate scope and classification. Verify the selected instrument's retained metadata and sample-reference policy, unknown/stale IDs, concurrent edits, wait expiry and write failure. No other instrument or song may leak into a standalone patch. |
+
+Only these four MCP rows gain a disposition. `optimize_project` (CAP-0178), `lint_project` (CAP-0153), example
+patch loading (CAP-0084/CAP-0171), all other MCP tools and the remaining GUI/catalog/service inventories are
+still open; arbitrary patch-file loading through MCP is the missing route identified above. The project-tool
+rollup's member names are corrected to include `optimize_project`; `lint_project` is declared in discovery.
+No new CAP identifier is allocated, and the next free identifier remains CAP-0510.
 
 ## Audit passes
 
@@ -939,6 +1114,7 @@ incomplete per-action GUI census. CAP-0044–CAP-0047 and live transport CAP-005
 | 2026-08-25 | `c075ef10` | The shipping CPAL 0.18.1 output/input callbacks at this revision and the candidate CPAL 0.18.2 registry source identified by the updated `Cargo.lock` checksum were read. Every 0.18.2 `ErrorKind` was enumerated, and the stderr-only baseline consumer was traced before this change replaced it with an atomic handoff. | Added `CAP-0508`. The category labels preserve CPAL 0.18.2's richer distinction; the replacement callback path is allocation-, lock-, and logging-free, while non-real-time GUI/MCP polling surfaces coalesced diagnostics and the row leaves durable structured delivery as Phase 9 work. | `Cargo.lock`; `cpal_backend.rs`; EVD-0016; independent uncommitted review |
 | 2026-09-09 | `cf2edf5b` | Followed six document/history shortcuts and their menu handlers, plus startup recovery, into GUI project/dialog/history/autosave flows and their project/store callees; read the named existing tests without running them. | Seven rows (`CAP-0048`–`CAP-0053`, `CAP-0055`) assigned `Migrate` and `Classified`; V2 owners and pending checks named. Corrected the all-menu-bindings claim and separated project recovery from recording-take semantics. Other rows retain their previous status; P00B-T002 remains incomplete. | [Source inspection and limits](#project-actions-2026-09-09) |
 | 2026-09-11 | `85d92f1b` | Followed `Cli`, `Command`, `RenderArgs` and `CompareArgs` through runtime mode dispatch, GUI/stdio startup and render/compare library callees; used the existing source-inspection method and read the cited tests without running them. | Classified CAP-0040–CAP-0043 and new CAP-0509 as `Migrate`; corrected the render-option count and top-level OSC-switch scope, recorded null-backend headless behavior and I/O/shutdown limits. Twelve rows now have dispositions and supporting classification; other rows are unchanged. P00B-T002 remains incomplete. | [CLI source inspection and limits](#cli-entry-points-2026-09-11) |
+| 2026-09-11 | `bab84945` | Used the existing source-inspection method to follow four project-tool handlers through direct/batch dispatch, ProjectBridge, project/sample mutation, save builders and GUI notification consumers; read the cited tests without running them. | CAP-0172, CAP-0173, CAP-0205 and CAP-0206 are `Migrate`/`Classified`, with source limits and pending migration checks. Recorded the catalog/patch-refusal discrepancy, nontransactional load/reset and save capture limits; corrected the project-tool rollup. Sixteen rows now have supporting dispositions; P00B-T002 remains incomplete. | [MCP project-operation source inspection](#mcp-project-operations-2026-09-11) |
 
 Completion requires each discovered entry to have reachability, disposition, V2 ownership, and verification. Matching
 the seed counts alone is insufficient.
