@@ -325,6 +325,11 @@ cargo test -p synth_engine_v2 --release --lib host::capture::tests
 ```
 
 This remains an exclusive-borrow simulator, with explicit synthetic source fences.
+P09-S006 adds the [ordered capture-boundary lane](spec-recording-takes-and-commit.md#conformance-tests).
+Host interruption retains each queued command until dispatch returns its
+cancellation receipt, including after output retirement or replacement. Pending
+receipts block recording-storage release. Capture commands do not operate the
+output's transport latch; ordered audible transport retains its first-consumer gate.
 It has no concurrent pending source queue, hardware input, monitoring or audio
 capture. IO-INV-005 remains unimplemented. Physical input loss, backend capture
 fences, independent clocks, worker backpressure and actual telemetry/retirement

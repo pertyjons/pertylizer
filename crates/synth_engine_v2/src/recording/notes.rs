@@ -9,6 +9,7 @@
 
 mod hot;
 pub mod projection;
+pub mod session;
 #[cfg(test)]
 mod tests;
 mod types;
@@ -274,6 +275,7 @@ pub struct SimulatedNoteRecorder {
     observed: SampleTime,
     pub(crate) host_generation: Option<ConnectionGeneration>,
     host_interrupted: bool,
+    session_lane: Option<session::SessionLane>,
 }
 
 impl SimulatedNoteRecorder {
@@ -322,6 +324,7 @@ impl SimulatedNoteRecorder {
             last_pass: CapturePassId(0),
             host_generation: None,
             host_interrupted: false,
+            session_lane: None,
             epoch,
             observed: SampleTime::ZERO,
         })
@@ -402,6 +405,10 @@ impl SimulatedNoteRecorder {
         context: NoteArmContext,
         sources: &[ConnectionGeneration],
     ) -> Result<TakeReservation, NoteCaptureError> {
+        if self.has_pending_boundaries() {
+            return Err(NoteCaptureError::PendingBoundary);
+        }
+        self.check_session_publication(context.window.start())?;
         if self.active.is_some() {
             return Err(NoteCaptureError::AlreadyArmed);
         }
@@ -676,6 +683,10 @@ fn check_bytes(bytes: u64, limits: RecordingLimits) -> Result<(), NoteCaptureErr
 
 #[derive(Debug, PartialEq, Error)]
 pub enum NoteCaptureError {
+    #[error("ordered capture boundaries are enabled; use the session lane")]
+    OrderedSession,
+    #[error("a queued capture boundary must be dispatched first")]
+    PendingBoundary,
     #[error("capture tempo map uses a different rate from the prepared output")]
     HostSampleRate,
     #[error("capture anchor differs from the prepared output stream")]

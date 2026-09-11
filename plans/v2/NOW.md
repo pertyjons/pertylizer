@@ -166,6 +166,10 @@ unresolved results and does not resume capture. Its bounded checks and remaining
 consumer gates are in the
 [host I/O specification](specs/spec-host-io-lifecycle.md#conformance-tests).
 The next Phase 9 implementation slice remains to be selected.
+P09-S006 adds a bounded serial lane for ordered capture start/end boundaries,
+with source-fence waiting and explicit cancellation after host loss. Its checks
+and remaining audible-transport scope are recorded in the
+[recording specification](specs/spec-recording-takes-and-commit.md#conformance-tests).
 Loop capture and physical adapters remain separately gated.
 Input lifecycle, independent clocks and monitoring still require IO-INV-004 and
 IO-INV-005 checks before their first consumers. Concurrent backend fences,
@@ -216,7 +220,7 @@ Phase 3 is complete. Its exit review accepted these bounded residuals:
 ## Current blockers
 
 Phase 8 has no remaining exit blocker. Phase 0B continues with `P00B-T003`
-selected; Phase 9 has completed P09-S001 through P09-S005.
+selected; Phase 9 has completed P09-S001 through P09-S006.
 The accepted residuals above block their named first consumers.
 Session share 128 and total cap 360 remain provisional until
 Phase 9's complete reselection under ADR-0054.

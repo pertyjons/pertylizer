@@ -46,9 +46,10 @@ use std::path::{Path, PathBuf};
 /// never sees.
 /// `src/host/hot.rs` adds the simulated output callback, including silence and
 /// fault paths that run before entering the renderer.
-const REGION: [&str; 17] = [
+const REGION: [&str; 18] = [
     "src/recording/hot.rs",
     "src/recording/notes/hot.rs",
+    "src/recording/notes/session/hot.rs",
     "src/host/hot.rs",
     "src/render/hot.rs",
     "src/render/slot.rs",
@@ -620,6 +621,10 @@ fn every_call_the_render_loop_makes_is_inside_the_checked_region() {
         // correctness bug rather than a real-time one, but neither call reaches the
         // allocator either way.
         "is_some",
+        // Option reference projections in the capture session lane borrow fixed
+        // storage; they perform no ownership transfer or allocator operation.
+        "as_ref",
+        "as_mut",
         "as_deref_mut",
         // `Option::as_deref`: the shared-reference twin, used to read the ingress store's
         // identity for the latch before the store is moved into the drain. A discriminant

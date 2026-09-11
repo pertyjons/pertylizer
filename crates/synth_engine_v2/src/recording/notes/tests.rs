@@ -7,7 +7,7 @@ use crate::quantities::{
 use crate::tempo::Bpm;
 use crate::time::{FrameCount, PlanPosition, issue_epoch};
 
-fn limits(bytes: u64) -> RecordingLimits {
+pub(super) fn limits(bytes: u64) -> RecordingLimits {
     RecordingLimits::new(
         HeldNoteCount::limit(2).unwrap(),
         EventCount::limit(4).unwrap(),
@@ -29,7 +29,7 @@ fn limits(bytes: u64) -> RecordingLimits {
     .unwrap()
 }
 
-fn context(epoch: StreamEpoch) -> NoteArmContext {
+pub(super) fn context(epoch: StreamEpoch) -> NoteArmContext {
     NoteArmContext::prepare(NoteArmInput {
         target: FixtureTargetId::new(1).unwrap(),
         expected_revision: FixtureRevision::new(0),
@@ -58,7 +58,7 @@ fn setup() -> (SimulatedNoteRecorder, ConnectionGeneration, TakeReservation) {
     (recorder, source, ticket)
 }
 
-fn fence(recorder: &mut SimulatedNoteRecorder, source: ConnectionGeneration, time: u64) {
+pub(super) fn fence(recorder: &mut SimulatedNoteRecorder, source: ConnectionGeneration, time: u64) {
     recorder
         .fence(
             source,
@@ -69,7 +69,7 @@ fn fence(recorder: &mut SimulatedNoteRecorder, source: ConnectionGeneration, tim
         .unwrap();
 }
 
-fn publish(
+pub(super) fn publish(
     recorder: &mut SimulatedNoteRecorder,
     source: ConnectionGeneration,
     time: u64,

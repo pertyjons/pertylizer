@@ -6,6 +6,9 @@ use crate::quantities::{
     Amplitude, CapturePassCount, CaptureResultCount, CaptureSourceCount, ChannelLayout, EventCount,
     HeldNoteCount, PreparedBytes, ProjectionTickCount, SampleRate, TrackedInputNoteCount,
 };
+use crate::recording::notes::session::{
+    BoundaryOutcome, CaptureCommand, CaptureCommandCapacity, CaptureEnd, SessionError,
+};
 use crate::recording::notes::{
     CaptureMode, CaptureQuantization, FixtureRevision, FixtureTargetId, MusicalInterval,
     NoteArmInput,
@@ -731,4 +734,161 @@ fn natural_end_is_not_sealed_until_every_source_covers_it_before_loss() {
             }
         }
     }
+}
+
+#[test]
+fn ordered_session_waits_for_both_sources_and_preserves_a_panic_at_the_natural_end() {
+    let (mut host, generation, sources, epoch) = setup(16, 1);
+    let mut control = host.note_capture_control(generation).unwrap();
+    control
+        .enable_ordered_session(CaptureCommandCapacity::new(2).unwrap())
+        .unwrap();
+    let ticket = control.arm(context(epoch, 1, 5), &sources).unwrap();
+    let start = control
+        .offer_boundary(epoch, SampleTime::new(25), CaptureCommand::Start(ticket))
+        .unwrap();
+    let end = control
+        .offer_boundary(
+            epoch,
+            SampleTime::new(125),
+            CaptureCommand::End(ticket, CaptureEnd::Panic),
+        )
+        .unwrap();
+    fence(&mut host, generation, sources[0], epoch, 25);
+    let waiting = host.dispatch_note_boundary(generation).unwrap().unwrap();
+    assert_eq!(waiting.boundary.id, start);
+    assert_eq!(waiting.outcome, BoundaryOutcome::WaitingForSources);
+    fence(&mut host, generation, sources[1], epoch, 25);
+    assert_eq!(
+        host.dispatch_note_boundary(generation)
+            .unwrap()
+            .unwrap()
+            .outcome,
+        BoundaryOutcome::Applied
+    );
+    publish(
+        &mut host,
+        generation,
+        sources[0],
+        epoch,
+        25,
+        [0x90, 60, 100],
+    );
+    publish(
+        &mut host,
+        generation,
+        sources[1],
+        epoch,
+        26,
+        [0x90, 64, 100],
+    );
+    let ending = host.dispatch_note_boundary(generation).unwrap().unwrap();
+    assert_eq!(ending.boundary.id, end);
+    assert_eq!(ending.outcome, BoundaryOutcome::Applied);
+    fence(&mut host, generation, sources[0], epoch, 125);
+    assert!(host.note_capture().unwrap().result(ticket).is_err());
+    fence(&mut host, generation, sources[1], epoch, 125);
+    let result = host.note_capture().unwrap().result(ticket).unwrap();
+    assert_eq!(result.effective_outcome(), CaptureOutcome::Complete);
+    assert_eq!(result.closures().count(), 2);
+    assert!(
+        result
+            .closures()
+            .all(|closure| closure.reason == CaptureStopReason::Panic)
+    );
+}
+
+#[test]
+fn loss_retains_pending_command_receipts_until_explicit_drain_even_after_reconnection() {
+    for terminal_fault in [false, true] {
+        let (mut host, old, sources, epoch) = setup(16, 1);
+        let mut control = host.note_capture_control(old).unwrap();
+        control
+            .enable_ordered_session(CaptureCommandCapacity::new(2).unwrap())
+            .unwrap();
+        let ticket = control.arm(context(epoch, 1, 5), &sources).unwrap();
+        let start = control
+            .offer_boundary(epoch, SampleTime::new(25), CaptureCommand::Start(ticket))
+            .unwrap();
+        let end = control
+            .offer_boundary(
+                epoch,
+                SampleTime::new(75),
+                CaptureCommand::End(ticket, CaptureEnd::Stop),
+            )
+            .unwrap();
+        if terminal_fault {
+            let mut samples = [0.0; 257];
+            assert!(
+                host.callback(
+                    old,
+                    AudioBlockMut::new(&mut samples, 257, ChannelLayout::Mono).unwrap()
+                )
+                .is_err()
+            );
+        } else {
+            host.device_lost(old).unwrap();
+        }
+        // Dispatch itself notices a callback's terminal fault before any backend fence.
+        let receipt = host.dispatch_note_boundary(old).unwrap().unwrap();
+        assert_eq!(receipt.boundary.id, start);
+        assert_eq!(receipt.outcome, BoundaryOutcome::Cancelled);
+        acknowledge_all(&mut host, old, &sources);
+        let quality = host
+            .note_capture()
+            .unwrap()
+            .result(ticket)
+            .unwrap()
+            .quality();
+        host.discard_note_capture(old, ticket, quality).unwrap();
+        assert!(matches!(
+            host.release_note_capture(old),
+            Err(HostError::CaptureRetained)
+        ));
+        let new = prepare(&mut host);
+        host.activate(new).unwrap();
+        assert!(matches!(
+            host.dispatch_note_boundary(new),
+            Err(HostError::NoNoteCapture)
+        ));
+        let receipt = host.dispatch_note_boundary(old).unwrap().unwrap();
+        assert_eq!(receipt.boundary.id, end);
+        assert_eq!(receipt.outcome, BoundaryOutcome::Cancelled);
+        assert_eq!(host.active().unwrap().state, ConnectionState::Ready);
+        assert!(host.dispatch_note_boundary(old).unwrap().is_none());
+        host.release_note_capture(old).unwrap();
+    }
+}
+
+#[test]
+fn an_unselected_sources_fence_orders_the_shared_session_without_owning_the_take() {
+    let (mut host, generation, sources, epoch) = setup(16, 1);
+    let mut control = host.note_capture_control(generation).unwrap();
+    control
+        .enable_ordered_session(CaptureCommandCapacity::new(2).unwrap())
+        .unwrap();
+    let ticket = control.arm(context(epoch, 1, 5), &sources[..1]).unwrap();
+    // No queued boundary exists yet. The bystander is still part of this serial owner.
+    fence(&mut host, generation, sources[1], epoch, 50);
+    let mut control = host.note_capture_control(generation).unwrap();
+    assert_eq!(
+        control.offer_boundary(epoch, SampleTime::new(25), CaptureCommand::Start(ticket)),
+        Err(SessionError::PastBoundary)
+    );
+    let end = control
+        .offer_boundary(
+            epoch,
+            SampleTime::new(60),
+            CaptureCommand::End(ticket, CaptureEnd::Disarm),
+        )
+        .unwrap();
+    let receipt = host.dispatch_note_boundary(generation).unwrap().unwrap();
+    assert_eq!(receipt.boundary.id, end);
+    assert_eq!(receipt.outcome, BoundaryOutcome::Applied);
+    fence(&mut host, generation, sources[0], epoch, 60);
+    // Only selected source 0 seals the take; bystander 1 remains fenced at 50.
+    let result = host.note_capture().unwrap().result(ticket).unwrap();
+    assert_eq!(result.window().start(), SampleTime::new(60));
+    assert_eq!(result.window().end(), SampleTime::new(60));
+    assert_eq!(result.effective_outcome(), CaptureOutcome::Complete);
 }

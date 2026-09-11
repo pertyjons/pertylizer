@@ -7,6 +7,9 @@
 use super::{ConnectionGeneration, ConnectionState, HostError, HostFailure, SimulatedHost};
 use crate::profile::RecordingLimits;
 use crate::quantities::SampleRate;
+use crate::recording::notes::session::{
+    BoundaryReceipt, CaptureCommand, CaptureCommandCapacity, CaptureCommandId, SessionError,
+};
 use crate::recording::notes::{
     AuditionTrace, CaptureStamp, CaptureStopReason, ControllerSnapshot, Midi1Input, NoteArmContext,
     NoteCaptureError, PublicationReceipt, PublicationSequence, SimulatedNoteRecorder,
@@ -154,6 +157,20 @@ impl SimulatedHost {
         Ok(())
     }
 
+    /// Dispatch the next explicitly reached serial capture boundary. After loss,
+    /// commands drain as cancellation receipts, including after output retirement.
+    pub fn dispatch_note_boundary(
+        &mut self,
+        generation: ConnectionGeneration,
+    ) -> Result<Option<BoundaryReceipt>, HostError> {
+        if self.active().is_some_and(|status| {
+            status.generation == generation && status.state == ConnectionState::Quiescing
+        }) {
+            self.interrupt_note_capture(generation)?;
+        }
+        Ok(self.owned_capture(generation)?.dispatch_boundary())
+    }
+
     /// Only resolved, quiescent storage can be reclaimed. Reconnection alone never
     /// replaces this owner or spends another recording quota beside retained results.
     pub fn release_note_capture(
@@ -161,7 +178,10 @@ impl SimulatedHost {
         generation: ConnectionGeneration,
     ) -> Result<(), HostError> {
         let capture = self.owned_capture(generation)?;
-        if !capture.host_quiescent() || capture.retained_results().next().is_some() {
+        if !capture.host_quiescent()
+            || capture.retained_results().next().is_some()
+            || capture.has_pending_boundaries()
+        {
             return Err(HostError::CaptureRetained);
         }
         if self.active().is_some_and(|status| {
@@ -184,6 +204,23 @@ pub struct NoteCaptureControl<'a> {
 }
 
 impl NoteCaptureControl<'_> {
+    /// Off-thread queue preparation under the recorder's byte admission.
+    pub fn enable_ordered_session(
+        &mut self,
+        capacity: CaptureCommandCapacity,
+    ) -> Result<(), SessionError> {
+        self.recorder.enable_ordered_session(capacity)
+    }
+
+    pub fn offer_boundary(
+        &mut self,
+        epoch: StreamEpoch,
+        at: SampleTime,
+        command: CaptureCommand,
+    ) -> Result<CaptureCommandId, SessionError> {
+        self.recorder.offer_boundary(epoch, at, command)
+    }
+
     pub fn bind_source(
         &mut self,
         initial: ControllerSnapshot,

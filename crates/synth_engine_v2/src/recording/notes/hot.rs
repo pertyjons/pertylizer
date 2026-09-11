@@ -100,6 +100,16 @@ impl SimulatedNoteRecorder {
     /// Apply the explicit session start before any source input at this boundary.
     /// Every selected source must have consumed its fence at exactly this boundary.
     pub fn start(&mut self, ticket: TakeReservation) -> Result<(), NoteCaptureError> {
+        if self.session_lane.is_some() {
+            return Err(NoteCaptureError::OrderedSession);
+        }
+        self.start_boundary(ticket)
+    }
+
+    pub(super) fn start_boundary(
+        &mut self,
+        ticket: TakeReservation,
+    ) -> Result<(), NoteCaptureError> {
         let active = self.active_for(ticket)?;
         if !matches!(active.stage, CaptureStage::Armed) {
             return Err(NoteCaptureError::StartRequired);
@@ -200,6 +210,7 @@ impl SimulatedNoteRecorder {
         if stamp.epoch != self.epoch {
             return Err(NoteCaptureError::ForeignEpoch);
         }
+        self.check_session_publication(stamp.published_at)?;
         let before = self.source_copy(generation)?;
         if before.quiescent {
             return Err(NoteCaptureError::RebindRequired);
@@ -760,6 +771,18 @@ impl SimulatedNoteRecorder {
         at: SampleTime,
         reason: CaptureStopReason,
     ) -> Result<(), NoteCaptureError> {
+        if self.session_lane.is_some() {
+            return Err(NoteCaptureError::OrderedSession);
+        }
+        self.stop_boundary(ticket, at, reason)
+    }
+
+    pub(super) fn stop_boundary(
+        &mut self,
+        ticket: TakeReservation,
+        at: SampleTime,
+        reason: CaptureStopReason,
+    ) -> Result<(), NoteCaptureError> {
         self.active_for(ticket)?;
         if at < self.observed {
             return Err(NoteCaptureError::PastBoundary);
@@ -835,6 +858,7 @@ impl SimulatedNoteRecorder {
         frontier: SampleTime,
         through: PublicationSequence,
     ) -> Result<(), NoteCaptureError> {
+        self.check_session_fence(frontier)?;
         if epoch != self.epoch {
             return Err(NoteCaptureError::ForeignEpoch);
         }
@@ -879,6 +903,9 @@ impl SimulatedNoteRecorder {
         epoch: StreamEpoch,
         last_valid: SampleTime,
     ) -> Result<(), NoteCaptureError> {
+        if !self.host_interrupted {
+            self.check_session_fence(last_valid)?;
+        }
         if epoch != self.epoch {
             return Err(NoteCaptureError::ForeignEpoch);
         }

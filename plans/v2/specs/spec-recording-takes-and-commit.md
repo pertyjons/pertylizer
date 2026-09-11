@@ -599,6 +599,61 @@ Retained results survive output retirement and block replacement recording stora
 until explicit quality-checked disposal and release. This serial integration does
 not establish concurrent source queues, physical fences or session ordering.
 
+P09-S006 adds an optional ordered capture-boundary lane in
+`recording::notes::session`, available through the simulated host's capture
+control. Its commands start a reserved take or end it with stop, disarm or panic
+as the retained reason. These are capture operations; audible transport, renderer
+panic, metronome and callback-driven boundary production remain later consumers.
+The fixture driver explicitly dispatches each engine-epoch boundary. Arm is
+off-thread preparation, remains outside the queue and reserves the immutable
+context and result before a start can be offered.
+
+Admission checks the epoch, active reservation, exact start time and monotone
+command times. Equal-time commands retain offer order. Offers at or before
+already consumed source input refuse; a fence beyond the requested time also
+refuses the offer. This admission floor includes every source bound to the single
+serial publication owner, including unselected sources. It is a conservative
+fixture-wide ordering rule; only selected sources own the take's start/seal
+fences. Source publication cannot overtake the first pending boundary.
+A start stays pending until every selected source fences its exact start. An
+ending boundary must run before an equal-time fence, so natural-end sealing
+cannot erase its requested reason. Applying an end requests finalization;
+sealing still waits for all selected sources. Pre-start held keys remain
+uncaptured, and an end-exclusive release cannot rewrite the recorded closure.
+
+The queue's explicit capacity includes one slot reserved against start traffic
+for an ending command. A full queue refuses without replacing any accepted
+command; it does not provide urgent insertion ahead of already offered future
+commands. Fixed slots are charged to the existing capture byte ceiling before
+allocation. Command identities include the capture session and a checked serial.
+Dispatch returns one identified applied, refused or cancelled receipt, or a
+waiting receipt that leaves the command pending. A permanently refused command
+is consumed explicitly. Host loss cancels pending work without changing its
+requested times, and storage release waits for those cancellation receipts to
+be drained as well as for retained takes and source quiescence.
+
+Dispatch declares its boundary time reached even when the requested transition
+is refused; subsequent publication and arm cannot move behind that time. Refusal
+leaves the take unchanged, not the driver's ordering frontier. An end beyond the
+take's requested interval is admitted; if natural completion seals first, that
+end returns `Refused(NotActive)` without altering the sealed result. An applied
+end is still only a finalization request until sealing. S005's interruption rule
+continues to replace an unsealed request with `Interrupted` at the minimum
+acknowledged source frontier, retaining the accepted raw data and explicit loss
+closures. Only an already sealed result retains its window and outcome on loss.
+
+The falsifier is source input overtaking an accepted equal-time boundary, a lost
+accepted command, a start consuming finalization's queue slot, a fabricated
+source fence, an uncharged allocation, or a stale command affecting a new host
+generation. `recording::notes::session::tests` checks ordering, count-in, each end
+reason, queue wrap/full behavior, byte admission, command exhaustion, refusals
+and zero allocator activity. `host::capture::tests` adds two-source start/end
+fences and cancellation after device loss, terminal callback failure, retirement
+and reconnection. The hot operations join `render_loop_purity`'s scanned region.
+This serial fixture establishes no concurrent delivery or real-time execution
+budget for the future runtime-session producer; ADR-0054's renderer shares are
+unchanged.
+
 The contract fails if a legal stall or interruption can lose accepted data,
 change its original timing, apply partial replace, duplicate a retry, or require
 allocation/blocking on a callback. Required checks at the remaining consumers are:
@@ -633,7 +688,8 @@ allocation/blocking on a callback. Required checks at the remaining consumers ar
 - Interrupt audio without a final callback; stop at the last valid watermark,
   preserve source format and prefix, and never label a gapped asset complete.
 
-The storage, exact-input, projection and host-interruption tests cover parts of TAKE-INV-001/002/004/006;
+The storage, exact-input, projection, host-interruption and ordered-boundary tests
+cover parts of TAKE-INV-001/002/004/006;
 none of the following invariants is discharged in full. The built arm context,
 serial source ordering and FIFO pairing still need their first physical/concurrent
 consumers' qualification. Runtime callbacks, loop passes, audio, physical compensation and

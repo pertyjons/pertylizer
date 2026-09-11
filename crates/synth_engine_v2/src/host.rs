@@ -4,7 +4,8 @@
 //! The simulator serializes invocations and exposes delayed quiescence explicitly; it
 //! does not prove a real backend's callback fence or concurrent publication mechanism.
 //! P09-S005 attaches serial exact-input note capture and retains it across output loss.
-//! Physical input, live ingress, session commands and automatic retries retain their
+//! P09-S006 orders explicit capture boundaries through the bounded serial session lane.
+//! Physical input, live ingress, audible session transport and automatic retries retain their
 //! first-consumer IO/TAKE and ADR-0022/0050/0054 gates.
 
 #[cfg(feature = "simulated-ingress")]
