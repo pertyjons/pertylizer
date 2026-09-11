@@ -4,7 +4,7 @@
 |---------------|------------|
 | Status        | Active     |
 | Phase         | 00B        |
-| Last reviewed | 2026-09-11 (MCP project-operation subset only) |
+| Last reviewed | 2026-09-12 (MCP cleanup, lint and example-patch subset only) |
 
 This ledger covers every shipped or externally consumed capability and assigns it a deliberate V2 disposition.
 
@@ -46,10 +46,12 @@ capabilities: `CAP-0048` through `CAP-0053`, and `CAP-0055`. The
 [2026-09-11 CLI inspection](#cli-entry-points-2026-09-11) assigns `Migrate` to `CAP-0040` through
 `CAP-0043` and the newly enumerated `CAP-0509`. The
 [MCP project-operation inspection](#mcp-project-operations-2026-09-11) adds `CAP-0172`, `CAP-0173`,
-`CAP-0205` and `CAP-0206`. Other dispositions remain open.
+`CAP-0205` and `CAP-0206`. The subsequent
+[cleanup, lint and example-patch inspection](#mcp-cleanup-lint-and-example-patches-2026-09-12) adds
+`CAP-0084`, `CAP-0153`, `CAP-0156`, `CAP-0171` and `CAP-0178`. Other dispositions remain open.
 
 **Status rule.** The [register vocabulary](README.md) defines `Classified` as required fields *and* disposition filled
-with supporting evidence. The sixteen inspected rows meet that classification threshold, not migration verification.
+with supporting evidence. The twenty-one inspected rows meet that classification threshold, not migration verification.
 Entries whose disposition is open stay `Discovered` or `Investigating`. `Verified` requires the named migration
 checks to pass; source inspection alone does not establish implemented V2 behavior. P00B-T002 remains incomplete.
 
@@ -157,10 +159,12 @@ capability added or removed later shows up as a diff rather than as a changed to
 
 `CAP-0001`..`CAP-0010`, `CAP-0014`, `CAP-0015`, `CAP-0023`, and `CAP-0027` remain at their stable identifiers as
 **rollup rows**: they describe a surface, carry no disposition of their own, and are not counted as capability entries.
-The authoritative per-capability entries are below. The four MCP project operations classified in the
-[2026-09-11 inspection](#mcp-project-operations-2026-09-11) are the exception to the generated rows' original
-`Discovered` status. The other generated entries still lack a disposition; reachability alone cannot make them
-`Classified`. Evidence for each classified MCP entry is linked from its `Reachable from` cell.
+The authoritative per-capability entries are below. Nine MCP entries are now classified by the
+[project-operation inspection](#mcp-project-operations-2026-09-11) and the
+[cleanup, lint and example-patch inspection](#mcp-cleanup-lint-and-example-patches-2026-09-12), departing from
+the generated rows' original `Discovered` status. The other generated entries still lack a disposition;
+reachability alone cannot make them `Classified`. Evidence for each classified MCP entry is linked from its
+`Reachable from` cell.
 
 ### MCP tools (219)
 
@@ -197,7 +201,7 @@ The authoritative per-capability entries are below. The four MCP project operati
 | CAP-0081 | MCP | `analyze_spectrum` | `analysis.rs` | read | `synth` server: HTTP `127.0.0.1:9850/mcp` and `--headless` stdio | | | Discovered |
 | CAP-0082 | MCP | `analyze_tension_curve` | `analysis.rs` | read | `synth` server: HTTP `127.0.0.1:9850/mcp` and `--headless` stdio | | | Discovered |
 | CAP-0083 | MCP | `analyze_velocity_response` | `analysis.rs` | read | `synth` server: HTTP `127.0.0.1:9850/mcp` and `--headless` stdio | | | Discovered |
-| CAP-0084 | MCP | `apply_example_patch` | `instruments.rs` | destructive | `synth` server: HTTP `127.0.0.1:9850/mcp` and `--headless` stdio | | | Discovered |
+| CAP-0084 | MCP | `apply_example_patch` | `instruments.rs` | destructive | Default MCP GUI HTTP and `--headless` stdio → `InstrumentBuildBridge::apply_example_patch`; [source trace](#mcp-direct-example-patch-application) | Migrate | Phase 10A canonical instrument/catalog content; 10B replacement operation; 10C history/dirty state; 10E MCP adapter; 11 GUI reconciliation | Classified |
 | CAP-0085 | MCP | `assign_mod_graph` | `sequencer.rs` | mutating | `synth` server: HTTP `127.0.0.1:9850/mcp` and `--headless` stdio | | | Discovered |
 | CAP-0086 | MCP | `assign_sample_to_module` | `samples.rs` | mutating | `synth` server: HTTP `127.0.0.1:9850/mcp` and `--headless` stdio | | | Discovered |
 | CAP-0087 | MCP | `auto_gain_stage` | `analysis.rs` | destructive | `synth` server: HTTP `127.0.0.1:9850/mcp` and `--headless` stdio | | | Discovered |
@@ -266,10 +270,10 @@ The authoritative per-capability entries are below. The four MCP project operati
 | CAP-0150 | MCP | `get_yams_reference` | `discovery.rs` | read | `synth` server: HTTP `127.0.0.1:9850/mcp` and `--headless` stdio | | | Discovered |
 | CAP-0151 | MCP | `import_sample` | `samples.rs` | mutating | `synth` server: HTTP `127.0.0.1:9850/mcp` and `--headless` stdio | | | Discovered |
 | CAP-0152 | MCP | `insert_module_between` | `instruments.rs` | mutating | `synth` server: HTTP `127.0.0.1:9850/mcp` and `--headless` stdio | | | Discovered |
-| CAP-0153 | MCP | `lint_project` | `discovery.rs` | read | `synth` server: HTTP `127.0.0.1:9850/mcp` and `--headless` stdio | | | Discovered |
+| CAP-0153 | MCP | `lint_project` | `discovery.rs` | read | Default MCP GUI HTTP and `--headless` stdio → `InstrumentBridge::lint_project`; [source trace](#mcp-project-lint) | Migrate | Phase 10A canonical validation and graph diagnostics; 10E MCP read adapter | Classified |
 | CAP-0154 | MCP | `list_arrangement` | `sequencer.rs` | read | `synth` server: HTTP `127.0.0.1:9850/mcp` and `--headless` stdio | | | Discovered |
 | CAP-0155 | MCP | `list_automation_lanes` | `automation.rs` | read | `synth` server: HTTP `127.0.0.1:9850/mcp` and `--headless` stdio | | | Discovered |
-| CAP-0156 | MCP | `list_example_patches` | `instruments.rs` | read | `synth` server: HTTP `127.0.0.1:9850/mcp` and `--headless` stdio | | | Discovered |
+| CAP-0156 | MCP | `list_example_patches` | `instruments.rs` | read | Default MCP GUI HTTP and `--headless` stdio → `InstrumentBridge::list_example_patches`; [source trace](#mcp-example-patch-discovery) | Migrate | Phase 10A catalog content; 10E MCP discovery adapter | Classified |
 | CAP-0157 | MCP | `list_input_devices` | `audio_input.rs` | read | `synth` server: HTTP `127.0.0.1:9850/mcp` and `--headless` stdio | | | Discovered |
 | CAP-0158 | MCP | `list_instruments` | `discovery.rs` | read | `synth` server: HTTP `127.0.0.1:9850/mcp` and `--headless` stdio | | | Discovered |
 | CAP-0159 | MCP | `list_master_effects` | `mixing.rs` | read | `synth` server: HTTP `127.0.0.1:9850/mcp` and `--headless` stdio | | | Discovered |
@@ -284,14 +288,14 @@ The authoritative per-capability entries are below. The four MCP project operati
 | CAP-0168 | MCP | `list_return_busses` | `mixing.rs` | read | `synth` server: HTTP `127.0.0.1:9850/mcp` and `--headless` stdio | | | Discovered |
 | CAP-0169 | MCP | `list_samples` | `samples.rs` | read | `synth` server: HTTP `127.0.0.1:9850/mcp` and `--headless` stdio | | | Discovered |
 | CAP-0170 | MCP | `list_tracks` | `sequencer.rs` | read | `synth` server: HTTP `127.0.0.1:9850/mcp` and `--headless` stdio | | | Discovered |
-| CAP-0171 | MCP | `load_example_patch` | `instruments.rs` | destructive | `synth` server: HTTP `127.0.0.1:9850/mcp` and `--headless` stdio | | | Discovered |
+| CAP-0171 | MCP | `load_example_patch` | `instruments.rs` | destructive | Default MCP GUI HTTP and `--headless` stdio → `InstrumentBridge::load_example_patch`; [source trace](#mcp-example-patch-load-and-gui-consumer) | Migrate | Phase 10A canonical instrument/catalog content; 10B creation operation; 10C history/dirty state; 10E MCP adapter; 11 targeted GUI metadata | Classified |
 | CAP-0172 | MCP | `load_project` | `project.rs` | destructive | Default MCP GUI HTTP and `--headless` stdio → `ProjectBridge::load_project`; [source trace](#mcp-project-load) | Migrate | Phase 10D Project I/O decode/convert/validate and assets; 10B application lifecycle; 10C saved-state coordination; 10E MCP adapter; 11 GUI refresh | Classified |
 | CAP-0173 | MCP | `new_project` | `project.rs` | destructive | Default MCP GUI HTTP and `--headless` stdio → `ProjectBridge::new_project`; [source trace](#mcp-project-reset) | Migrate | Phase 10A canonical empty document; 10B application lifecycle; 10C history/saved-state coordination; 10E MCP adapter; 11 GUI refresh | Classified |
 | CAP-0174 | MCP | `normalize_sample` | `samples.rs` | destructive | `synth` server: HTTP `127.0.0.1:9850/mcp` and `--headless` stdio | | | Discovered |
 | CAP-0175 | MCP | `note_off` | `instruments.rs` | mutating | `synth` server: HTTP `127.0.0.1:9850/mcp` and `--headless` stdio | | | Discovered |
 | CAP-0176 | MCP | `note_on` | `instruments.rs` | mutating | `synth` server: HTTP `127.0.0.1:9850/mcp` and `--headless` stdio | | | Discovered |
 | CAP-0177 | MCP | `offset_automation_lane` | `automation.rs` | destructive | `synth` server: HTTP `127.0.0.1:9850/mcp` and `--headless` stdio | | | Discovered |
-| CAP-0178 | MCP | `optimize_project` | `project.rs` | destructive | `synth` server: HTTP `127.0.0.1:9850/mcp` and `--headless` stdio | | | Discovered |
+| CAP-0178 | MCP | `optimize_project` | `project.rs` | destructive | Default MCP GUI HTTP and `--headless` stdio → `ProjectBridge::optimize_project`; [source trace](#mcp-project-cleanup) | Migrate | Phase 10A document references; 10B cleanup operation; 10C history/dirty state; 10D asset reachability; 10E MCP adapter | Classified |
 | CAP-0179 | MCP | `place_pattern` | `sequencer.rs` | mutating | `synth` server: HTTP `127.0.0.1:9850/mcp` and `--headless` stdio | | | Discovered |
 | CAP-0180 | MCP | `preview_note` | `analysis.rs` | mutating | `synth` server: HTTP `127.0.0.1:9850/mcp` and `--headless` stdio | | | Discovered |
 | CAP-0181 | MCP | `quantize_notes_to_grid` | `analysis.rs` | destructive | `synth` server: HTTP `127.0.0.1:9850/mcp` and `--headless` stdio | | | Discovered |
@@ -1099,11 +1103,150 @@ the bridge's unknown-ID error. Phase 10A/10D must define retained instrument met
 | CAP-0206 | 10A snapshot; 10B operation results; 10C save; 10D writer/assets; 10E MCP; 11 GUI integration | Compare equivalent GUI, MCP and headless saves of a canonical revision, including retained metadata/assets. Exercise a stalled/detached GUI, pending/dropped commands, concurrent edits/imports and failed writes. The result must identify the captured revision and actual path; a later edit stays dirty and failure cannot silently advance the saved revision. |
 | CAP-0205 | 10A instrument content; 10B export; 10D format/assets; 10E MCP | Export one of two distinguishable instruments and reopen through the declared patch-file consumer (currently GUI smart-open/CLI render, with no dedicated MCP file-import route). A future MCP loader requires separate scope and classification. Verify the selected instrument's retained metadata and sample-reference policy, unknown/stale IDs, concurrent edits, wait expiry and write failure. No other instrument or song may leak into a standalone patch. |
 
-Only these four MCP rows gain a disposition. `optimize_project` (CAP-0178), `lint_project` (CAP-0153), example
-patch loading (CAP-0084/CAP-0171), all other MCP tools and the remaining GUI/catalog/service inventories are
-still open; arbitrary patch-file loading through MCP is the missing route identified above. The project-tool
+This pass gave only these four MCP rows a disposition. The subsequent pass below addresses cleanup, lint and
+example-patch tools. Other MCP tools and the remaining GUI/catalog/service inventories stay open; arbitrary
+patch-file loading through MCP is still the missing route identified above. The project-tool
 rollup's member names are corrected to include `optimize_project`; `lint_project` is declared in discovery.
 No new CAP identifier is allocated, and the next free identifier remains CAP-0510.
+
+## MCP cleanup, lint and example patches 2026-09-12
+
+This P00B-T002 slice follows five registered tools at `ee5c6600` using the existing
+[source-inspection method](#method-and-acceptance-boundary). A missing shipped dispatch, false behavioral claim,
+inconsistent V2 owner or untestable migration criterion blocks classification; optional implementation detail
+does not. The [Application Core target](../architecture/application-core.md) and [roadmap](../ROADMAP.md)
+assign the owners. Source and named tests were read; no MCP calls, GUI interactions, runtime experiments or
+Rust tests were executed. This pass changes no production code, evidence harness, external contract or ADR status.
+`Migrate` retains each capability; it does not promise to reproduce V1's incomplete results or GUI side effects.
+
+### Shared entry and result limits
+
+The default routers and batch dispatch in [server.rs](../../../crates/synth_mcp/src/server.rs) reach all five
+handlers. CAP-0040/0041 cover GUI HTTP and headless stdio startup. `lint_project`, `list_example_patches` and
+`optimize_project` take `NoParams` and return typed JSON reports/listings. The first two carry read-only
+annotations; optimization and both patch mutations carry destructive annotations. A produced lint report may
+contain error diagnostics without being an MCP execution failure. Likewise, an optimization report carries
+removal names/counts, not a partial-effect verdict or stable removed IDs.
+
+`load_example_patch` takes a required name and returns a one-item action result. `apply_example_patch` takes a
+required patch name and optional instrument ID, returning `ApplyExamplePatchResult`. Its handler explicitly
+marks nonempty `errors` as `Partial` in outcome metadata; `isError` stays false for partial results and becomes
+true for failures. Batch dispatch preserves that stated outcome. The load handler instead uses `action_ok` for
+any bridge `Ok`. These wrappers do not establish atomic mutation, undo coverage or completed DSP application.
+The [preceding pass](#shared-mcp-entry-and-result-boundary) describes the common action-result boundary.
+
+### MCP project cleanup
+
+`CAP-0178` runs [ProjectBridge::optimize_project](../../../crates/pertylizer/src/mcp_bridge/project.rs).
+[Song::remove_unused](../../../crates/synth_sequencer/src/song.rs) treats arrangement placements as the roots:
+it removes unplaced patterns and tracks, bumps the structure revision even for a no-op, and retains instruments
+referenced by the remaining tracks. An unplaced pattern or an instrument kept only for manual playing is not a
+root of this cleanup. The bridge then attempts removal of every unreferenced instrument in its snapshot and
+calls [prune_unused_samples](../../../crates/pertylizer/src/project_apply.rs). Sample roots are the live
+instrument `Sampler` modules' selected sample IDs, not a scan of every persisted reference or future asset type.
+Removed sample names are sorted by sample ID; the result sums the four removal-list lengths.
+
+**Failure/capture limit:** the bridge discards failed `remove_instrument` results with `.is_ok()` and still
+returns `Ok(OptimizeResult)`. [SynthSession::remove_instrument](../../../crates/pertylizer/src/session.rs)
+clears registry/counter/metadata state before a fallible command send, so omission from the removed list does
+not prove no change. Song mutation, instrument snapshots and the later sample-root scan are separate steps,
+without the project-I/O lock, a canonical revision pin or rollback. A report does not certify one coherent
+pruning decision under concurrent edits or pending commands. Phase 10A/10B/10D must make the root policy and
+resulting document/assets explicit; 10C owns history and dirty state. This pass retains cleanup, not an approval
+to discard content outside a separately declared V2 reachability policy.
+
+`prune_unused_samples_keeps_referenced_drops_orphans` in `project_apply.rs` pumps the engine, then checks one
+referenced sample survives and one orphan is removed. It does not exercise the whole MCP optimizer, failed
+instrument deletion, concurrent imports or every reference class.
+
+### MCP project lint
+
+`CAP-0153` uses the default [InstrumentBridge::lint_project](../../../crates/synth_mcp/src/bridge.rs): list
+instruments, collect graph diagnostics, then append orphaned-track and hidden-event reports supplied by the
+[application bridge](../../../crates/pertylizer/src/mcp_bridge/instruments.rs). Instruments disappearing between
+listing and diagnostics are skipped; other bridge errors abort the report. `instruments_checked` counts the
+collected diagnostic sets. `build_lint_report` counts every severity but includes only instruments with warnings
+or errors in `entries`, retaining their informational context. Orphaned tracks add errors; each hidden-event
+pattern adds one warning. The application checks note onsets and automation at/after a positive pattern length;
+zero-length patterns are skipped. These are separate reads, not validation of a pinned complete project revision.
+
+**Catalog/treatment limit:** the tool advertises feedback-loop and missing-audio-path checks. The application
+implementation checks presence of source/output/envelope types and module-level cable participation, with
+exceptions for effects and parameter-routed modulators. It does not traverse paths to prove source-to-output
+reachability or detect cycles. It neither measures sound nor validates all assets, master/return graphs or the
+persisted schema. A zero-error/zero-warning report therefore is not a proof that the project renders correctly.
+The catalog must describe the implemented coverage; adding deeper analysis is separate work. Phase 10A owns
+validation/diagnostic coverage and 10E its read adapter, not a new independent mutation authority.
+
+`lint_project_surfaces_orphaned_track_instrument_references` in
+[mcp_project_load.rs](../../../crates/pertylizer/tests/mcp_project_load.rs) checks one missing instrument reference
+and the error count. `lint_report_tests` in `bridge.rs` check aggregation, actionable entries and empty input.
+Neither establishes cycle detection or whole-project validation.
+
+### MCP example-patch discovery
+
+`CAP-0156` reads [categorized_patches](../../../crates/pertylizer/src/patches/mod.rs) through
+[InstrumentBridge::list_example_patches](../../../crates/pertylizer/src/mcp_bridge/instruments.rs). It constructs
+the built-in catalog and emits each patch's name, category, description, tags and declared module/connection
+counts in catalog order. Counts describe the definition, not what a particular application path can reconstruct.
+There is no directory scan or arbitrary-file import. Both mutation tools select the first catalog name matching
+ASCII case-insensitively; they do not use a stable catalog ID or reject ambiguous duplicate names. Unknown names
+return `PatchNotFound`. Phase 10A owns catalog definitions and their identity/content rules; 10E owns discovery
+and selectors. Classifying these tools does not classify or fidelity-verify every built-in patch row.
+
+### MCP example-patch load and GUI consumer
+
+`CAP-0171` finds a built-in patch, adds a new instrument named after it, and immediately calls
+[SynthSession::apply_patch](../../../crates/pertylizer/src/session.rs). It is not delayed until a GUI frame, despite
+`apply_example_patch`'s contrasting catalog wording. Instrument creation failure is returned, but the load bridge
+discards the apply report, then attempts to replace `pending_patch` and bumps the GUI notification revision.
+The pending value holds only `(Patch, name)`, without the newly created instrument ID; a poisoned mutex silently
+skips publication. The success message names the new instrument even when application reported diagnostics.
+
+**GUI consequence:** [drain_mcp_state](../../../crates/pertylizer/src/gui/egui_backend/engine_events.rs) takes the
+one-slot payload and calls [load_patch_data](../../../crates/pertylizer/src/gui/egui_backend/project_flow.rs).
+That marks dirty and loads into the GUI's then-active instrument (or creates one if none is active).
+[patch_bridge::load_patch](../../../crates/pertylizer/src/gui/patch_bridge.rs) clears and reconstructs that
+instrument's graph as well as its editor metadata. This is another mutation, not just a label/cache refresh, and
+can target an existing instrument other than the one named in the MCP reply. Multiple pending loads can overwrite
+the one-slot payload. No request-specific completion or GUI-side diagnostic is returned to the original caller.
+10B/10C owns the creation and its result/history; Phase 11 must target metadata by the operation's instrument ID
+without reapplying the graph to an unrelated selection. The current headless and GUI paths are not equivalent.
+
+### MCP direct example-patch application
+
+`CAP-0084` uses [InstrumentBuildBridge::apply_example_patch](../../../crates/pertylizer/src/mcp_bridge/instrument_build.rs).
+After catalog lookup, it either verifies the requested instrument exists or creates one. It calls the same
+`SynthSession::apply_patch`, returning the instrument ID, patch name, module/connection counts and rendered
+diagnostic lines. It does not queue the load tool's GUI payload. Existing-instrument application replaces the
+graph rather than appending it; this helper does not rename an existing instrument to the patch name.
+
+The shared applicator resets counters, clears the graph, then installs modules, parameters, scripts and
+connections, and mirrors patch octave offset. It can return after failed clearing or continue after individual
+failures; no previous-graph restoration follows. GUI-only visualizers and `SignalMonitor` are skipped without
+an error entry, and this path does not restore GUI groups/layout/canvas metadata. Empty `errors` thus does not
+prove complete catalog fidelity. The typed partial result preserves reported losses, but a count is not a DSP
+completion acknowledgement. Phase 10A/10B owns canonical instantiation/replacement and explicit retained metadata;
+10C and 11 own history/dirty state and GUI reconciliation. This does not approve a new wire contract.
+
+`apply_patch_migrates_legacy_multislot_script` in `session.rs` checks that the shared applicator diagnoses a dropped
+legacy second script slot while preserving slot 1. It does not call either MCP patch tool or exercise GUI target
+selection. Source inspection here is not a runtime comparison of the two adapters.
+
+### Cleanup, lint and example-patch migration checks still owed
+
+| Capabilities | Owner | Observable check before `Verified` |
+|---|---|---|
+| All five | 10E adapter; 10A reads and 10B mutation results | Exercise direct and batched calls over supported transports, required/invalid inputs, output schemas and outcome metadata. Assert diagnostics and resulting state agree. Catalog wording must match implemented behavior; a successful report is not automatically an effect/completion receipt. |
+| CAP-0178 | 10A references; 10B cleanup; 10C history; 10D assets | Declare retention roots, then prune a fixture with placed/unplaced content, manual-use instruments and referenced/orphan samples. Inject command-send failures and concurrent edits/imports. Removed stable IDs, retained state and diagnostics must agree, with no silent partial deletion; undo and dirty state must follow the operation. |
+| CAP-0153 | 10A validation; 10E report | Check severity totals, info-only entries, orphan tracks, hidden events and instruments removed during inspection. Use disconnected source/output subgraphs and cycles to falsify unsupported coverage claims. State the inspected revision/coverage; error diagnostics in a returned report must remain distinguishable from inability to produce the report. |
+| CAP-0156 | 10A catalog; 10E selectors | Match listing metadata/counts to definitions; test case variants, unknown and duplicate names under the declared selection policy. Verify the catalog read leaves project state unchanged. Each built-in definition still needs its own capability disposition and fidelity checks. |
+| CAP-0171 | 10A content; 10B creation; 10C history; 10E result; 11 GUI | Keep instrument A selected while requesting a new patch instrument B; delay GUI drain and queue multiple loads. A must remain unchanged, metadata must reach B, and each accepted operation must retain its own outcome. Compare headless/GUI results and inject creation, application and GUI-delivery failures. |
+| CAP-0084 | 10A content; 10B replacement; 10C history; 10E result; 11 GUI | Apply to an existing and a newly created instrument, preserving unrelated instruments. Check graph replacement, retained metadata, unknown IDs/names, skipped GUI-only content and application failures. Partial diagnostics, counts, retained graph, undo/dirty state and GUI reconciliation must agree. |
+
+Only these five additional MCP entries become `Migrate`/`Classified`; twenty-one capability rows now have
+supporting dispositions. No identifier is added: CAP-0510 remains next. P00B-T002, the other capability surfaces,
+representative-path evidence (T004), round-trip verification (T005), and the Phase 0B exit remain open.
 
 ## Audit passes
 
@@ -1115,6 +1258,7 @@ No new CAP identifier is allocated, and the next free identifier remains CAP-051
 | 2026-09-09 | `cf2edf5b` | Followed six document/history shortcuts and their menu handlers, plus startup recovery, into GUI project/dialog/history/autosave flows and their project/store callees; read the named existing tests without running them. | Seven rows (`CAP-0048`–`CAP-0053`, `CAP-0055`) assigned `Migrate` and `Classified`; V2 owners and pending checks named. Corrected the all-menu-bindings claim and separated project recovery from recording-take semantics. Other rows retain their previous status; P00B-T002 remains incomplete. | [Source inspection and limits](#project-actions-2026-09-09) |
 | 2026-09-11 | `85d92f1b` | Followed `Cli`, `Command`, `RenderArgs` and `CompareArgs` through runtime mode dispatch, GUI/stdio startup and render/compare library callees; used the existing source-inspection method and read the cited tests without running them. | Classified CAP-0040–CAP-0043 and new CAP-0509 as `Migrate`; corrected the render-option count and top-level OSC-switch scope, recorded null-backend headless behavior and I/O/shutdown limits. Twelve rows now have dispositions and supporting classification; other rows are unchanged. P00B-T002 remains incomplete. | [CLI source inspection and limits](#cli-entry-points-2026-09-11) |
 | 2026-09-11 | `bab84945` | Used the existing source-inspection method to follow four project-tool handlers through direct/batch dispatch, ProjectBridge, project/sample mutation, save builders and GUI notification consumers; read the cited tests without running them. | CAP-0172, CAP-0173, CAP-0205 and CAP-0206 are `Migrate`/`Classified`, with source limits and pending migration checks. Recorded the catalog/patch-refusal discrepancy, nontransactional load/reset and save capture limits; corrected the project-tool rollup. Sixteen rows now have supporting dispositions; P00B-T002 remains incomplete. | [MCP project-operation source inspection](#mcp-project-operations-2026-09-11) |
+| 2026-09-12 | `ee5c6600` | Followed five default MCP handlers and batch routes through cleanup, lint aggregation, built-in catalog lookup, shared patch application and the GUI pending-patch consumer; read the named tests without running them. | Classified CAP-0084, CAP-0153, CAP-0156, CAP-0171 and CAP-0178 with owners and pending checks. Recorded silent cleanup failures, lint coverage limits and the load/apply diagnostic and GUI-target differences. Twenty-one rows have supporting dispositions; P00B-T002 remains incomplete. | [Cleanup, lint and example-patch inspection](#mcp-cleanup-lint-and-example-patches-2026-09-12) |
 
 Completion requires each discovered entry to have reachability, disposition, V2 ownership, and verification. Matching
 the seed counts alone is insufficient.
