@@ -1231,8 +1231,10 @@ custody and finalization rules. P09-S002 extends `RecordingLimits` with explicit
 for rendering may omit that group; capture preparation then refuses with
 `MissingConfiguration`. The first two defaults alone do not admit recording.
 Construction validates positivity and tracker capacity at least `H`; storage
-preparation validates representability and aggregate bytes. Known pre-capture
-state and audio/projection consumption remain checks for their first consumers.
+preparation validates representability and aggregate bytes. P09-S003 additionally
+admits known pre-capture state plus `H` tracker reserve and charges its exact-input
+source arrays and retained arm maps. Audio, reordering and projection consumption
+remain checks for their first consumers.
 No serialized profile or V1 recording API changes here.
 
 | Field | Domain type | Default/configuration | Unit, admission and exhaustion | Replaces | Revisit |

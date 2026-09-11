@@ -31,6 +31,11 @@ fn issue_generation(counter: &AtomicU64) -> Result<ConnectionGeneration, HostErr
         .map_err(|_| HostError::GenerationExhausted)
 }
 
+#[cfg(feature = "simulated-ingress")]
+pub(crate) fn issue_capture_source_generation() -> Result<ConnectionGeneration, HostError> {
+    issue_generation(&NEXT_GENERATION)
+}
+
 struct PreparedOutput {
     control: StreamControl,
     renderer: PreparedRenderer,

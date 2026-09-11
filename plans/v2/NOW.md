@@ -147,12 +147,17 @@ reservation/retained-result fixture under TAKE-INV-001 and TAKE-INV-006. Its
 checked byte layout, separate finalization reserves, retained quality and
 remaining consumer gates are recorded in the
 [recording specification](specs/spec-recording-takes-and-commit.md#conformance-tests).
-It does not yet accept arm or interpret performed input.
+P09-S003 adds typed exact-input note recording against synthetic ordered
+boundaries: immutable arm context, checked source ordering, FIFO note/pedal
+pairing, retained timing and bounded finalization under TAKE-INV-001/002. Its
+serial publisher uses explicit zero lateness and S002's reservations; supplied
+audition traces do not affect capture. The recording specification records the
+bounded checks and the remaining consumer gates.
 
-Next, P09-S003 adds typed exact-input note recording against synthetic ordered
-boundaries: arm context, source ordering and FIFO note/pedal pairing under
-TAKE-INV-001/002, using S002's reservations before any accepted input. Projection,
-loop capture and physical adapters remain separately gated.
+Next, P09-S004 builds finite certified note projection under TAKE-INV-004 before
+any project commit consumer: retained-context validation, exhaustive monotone
+tick-table admission, nearest-tick selection and explicit error/refusal results.
+Loop capture and physical adapters remain separately gated.
 Input lifecycle, independent clocks and monitoring still require IO-INV-004 and
 IO-INV-005 checks before their first consumers. Concurrent backend fences,
 ordered session transport, live swaps, runtime loops, production hardware timing
@@ -202,7 +207,7 @@ Phase 3 is complete. Its exit review accepted these bounded residuals:
 ## Current blockers
 
 Phase 8 has no remaining exit blocker. Phase 0B continues with `P00B-T003`
-selected; Phase 9 has completed P09-S001 and P09-S002, and P09-S003 is next.
+selected; Phase 9 has completed P09-S001 through P09-S003, and P09-S004 is next.
 The accepted residuals above block their named first consumers.
 Session share 128 and total cap 360 remain provisional until
 Phase 9's complete reselection under ADR-0054.

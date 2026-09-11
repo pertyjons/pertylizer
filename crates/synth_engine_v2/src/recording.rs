@@ -12,6 +12,9 @@
 //! not release it, and Rust borrows prevent discard while a consumer holds its view.
 //! This serial model does not establish a concurrent queue or backend source fence.
 
+#[cfg(feature = "simulated-ingress")]
+pub mod notes;
+
 mod hot;
 mod types;
 pub use types::*;
@@ -190,6 +193,27 @@ impl<T: Copy> SimulatedTakeStore<T> {
         window: CaptureWindow,
         sources: &[ConnectionGeneration],
     ) -> Result<TakeReservation, CaptureError> {
+        self.reserve_sources(window, sources, false)
+    }
+
+    /// The note owner has a bounded live-source registry and has already validated every
+    /// selected generation. Its unused live sources need not be introduced in ID order.
+    /// This is private to recording; the opaque public fixture retains conservative admission.
+    #[cfg(feature = "simulated-ingress")]
+    fn reserve_owned_sources(
+        &mut self,
+        window: CaptureWindow,
+        sources: &[ConnectionGeneration],
+    ) -> Result<TakeReservation, CaptureError> {
+        self.reserve_sources(window, sources, true)
+    }
+
+    fn reserve_sources(
+        &mut self,
+        window: CaptureWindow,
+        sources: &[ConnectionGeneration],
+        owner_validated: bool,
+    ) -> Result<TakeReservation, CaptureError> {
         if sources.is_empty() || sources.len() > self.layout.sources {
             return Err(CaptureError::InvalidSources);
         }
@@ -209,9 +233,10 @@ impl<T: Copy> SimulatedTakeStore<T> {
                 if known.frontier > window.start() {
                     return Err(CaptureError::WindowBeforeFrontier);
                 }
-            } else if self
-                .newest_source
-                .is_some_and(|newest| source.as_u64() <= newest.as_u64())
+            } else if !owner_validated
+                && self
+                    .newest_source
+                    .is_some_and(|newest| source.as_u64() <= newest.as_u64())
             {
                 return Err(CaptureError::SourceNotFresh);
             }

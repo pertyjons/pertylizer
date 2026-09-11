@@ -12,8 +12,8 @@
 | Superseded by | — |
 
 Only a `Current` specification constrains implementation; see [README.md](README.md).
-This contract is accepted for the consuming implementations. P09-S002's bounded
-storage checks and the remaining consumer obligations are separated below.
+This contract is accepted for the consuming implementations. P09-S002/S003's bounded
+storage and exact-input checks and the remaining consumer obligations are separated below.
 
 ## Scope
 
@@ -415,8 +415,8 @@ ordinary cells, tracked-input cells, `H` terminal occurrence cells, two source
 snapshot regions, `P` pass cells and `2 * H * (P - 1)` carry cells for every
 retained-result slot. Checked aggregate bytes include the actual typed cells,
 source ledgers, slot descriptors and store descriptor before allocation.
-Allocator bookkeeping is outside the requested Rust layout. There is no arm API
-or physical publisher; the fixture's opaque cells do not establish valid notes,
+Allocator bookkeeping is outside the requested Rust layout. This storage layer has no arm API
+or physical publisher; its opaque cells alone do not establish valid notes,
 source snapshots, audio assets or projection results.
 
 The slice's falsifier is a reservation that exceeds its checked byte budget, an
@@ -456,6 +456,92 @@ does not prove concurrent publication, backend fences or whole-session shutdown.
 The eventual publisher must attribute refusals to every retained interval and
 charge all additional context, reordering, audio and projection allocations.
 
+P09-S003 adds `recording::notes::SimulatedNoteRecorder`, behind `simulated-ingress`,
+for a single serialized exact-input publisher with explicit zero lateness. Its
+immutable arm context owns the fixture target/revision, interval, overdub/replace
+selection, quantization selection, epoch, anchor and tempo map. Those selections
+are retained intent; no projection or project mutation is enabled. Endpoint
+mapping is not TAKE-INV-004's monotonicity certificate. Preparation charges all
+source, tracker and context arrays; arm additionally charges every retained map.
+An arm refusal consumes no result slot. Binding with a controller snapshot asserts
+known empty physical key state; subsequent pre-arm input establishes held keys.
+Unknown or invalid source state refuses arm. The note owner validates its own live
+source registry, so bound sources may first participate in any order; the public
+opaque store retains its conservative high-water admission. Count-in and
+unselected sources cannot consume the outstanding `H` tracker reserve: exhaustion
+invalidates the offending source rather than continuing ambiguous pairing.
+Count-in tracks uncaptured keys and controls, then explicit start requires every
+selected source's fence at that exact boundary. Cancelling count-in seals an empty interval after source fences; it does
+not require source retirement. Loss during count-in also selects an empty interval,
+with an `Interrupted` outcome and quiescence. For a never-started empty take,
+source snapshots remain the arm-time state; they do not describe its empty end
+boundary. A finalized session boundary constrains
+future segments even when they select a fresh source. Session boundaries precede
+source input at the same sample.
+
+MIDI 1 notes, sustain and channel pitch bend are validated; unsupported messages
+refuse. Each source generation has a checked sequence and occurrence counter.
+Same-key releases pair FIFO independently of sustain, capture admission and the
+supplied audition trace. The trace is synthetic evidence, not renderer integration.
+Decreasing nominal time is retained and diagnosed without rewriting source order.
+Below-fence input faults every retained matching interval before any pairing or
+identity-capacity refusal can return. It updates physical pairing when capacity
+permits, but is refused from ordinary capture. A known gap stops further ordinary capture.
+An early stop waits for source fences and may still accept eligible pending input;
+end-exclusive input cannot rewrite that segment's held or controller state.
+Every admitted raw cell also reserves paired-release and synthetic-closure metadata.
+This covers a shortened interval exposing more historical open notes than `H`'s
+reusable live slots. Finalization rebuilds selected controller state and closures
+without altering raw timestamps; `selected_records` distinguishes retained input
+outside the final interval. Ordinary or held-note exhaustion cannot consume that
+metadata. Paired-release observations also reach reserved onset metadata when the
+ordinary release is refused; synthetic closures then report the known key state.
+Refused in-interval sustain updates a fixed per-source observation summary.
+`controls` remains the accepted capture-log state; `observed_pedal` additionally
+accounts for refusals. Before or after the summary's time span the held state is
+known. A backwards cut through that coalesced span reports `None` for affected
+channels, including `SyntheticClosure::pedal_held`, rather than guessing the lost
+intermediate state. No refused-event vector is allocated. A partial/interrupted
+take remains owned and is not enabled for automatic projection or commit here.
+An early stop may narrow behind a consumed source fence while preserving raw
+out-of-selection input; arm cannot recreate that past input for a new take.
+Work is bounded by prepared `E`, `H`, `N`, `R` and `S`; these serial
+scans are not a measured production callback-time qualification.
+Tracker or identity exhaustion invalidates the source, interrupts capture and
+requires quiescence plus a fresh generation. Rebind transfers the retired source's
+diagnostic snapshot to the off-thread caller, including the first late source/time.
+Mapping changes require finalization and a new explicit arm/start; immutable
+earlier contexts remain readable.
+
+The slice's falsifier is changed raw timing or FIFO lifetime under a different
+serial delivery partition or supplied audition result, an unreserved allocation,
+a closure derived from post-end input, an arm against unknown source state, or
+late quality applied only to the newest retained result. `tests/note_capture.rs`
+checks MIDI validation, pre-arm/count-in keys, same-key and cross-source/channel
+pairing, pedal and pitch state, timestamp anomalies, start/end/stop boundaries,
+capacity interruption, retained quality, result quota, mapping changes and stale
+fence refusal. One exact log is delivered with whole, 64, 256 and irregular source
+fence intervals under three audition outcomes. An additional 39-frame partition
+places an interior fence exactly on the sample-64 event. The test compares
+source-local occurrence identity and raw timing; it does not establish physical
+callback scheduling.
+`src/recording/notes/tests.rs` checks aggregate byte boundaries including maps,
+checked identity exhaustion and zero allocations/deallocations during start,
+publication, overflow, sealing and late attribution. The purity checker includes
+`src/recording/notes/hot.rs`. The workspace gate runs the debug checks. These
+additional commands pass locally for the release checks; they are not new CI steps:
+
+```bash
+cargo test -p synth_engine_v2 --release --test note_capture
+cargo test -p synth_engine_v2 --release --lib recording::notes::tests
+```
+
+This bounded slice does not discharge TAKE-INV-001/002 as a whole: concurrent
+queues, nonzero-lateness reordering, physical synchronization, renderer audition,
+whole-session shutdown, projection, loop passes and project transactions remain
+at their named consumer gates. The owner must retain the recorder until results
+are resolved; notifications do not transfer its sole payload or free its quota.
+
 The contract fails if a legal stall or interruption can lose accepted data,
 change its original timing, apply partial replace, duplicate a retry, or require
 allocation/blocking on a callback. Required checks at the remaining consumers are:
@@ -492,16 +578,17 @@ allocation/blocking on a callback. Required checks at the remaining consumers ar
 - Interrupt audio without a final callback; stop at the last valid watermark,
   preserve source format and prefix, and never label a gapped asset complete.
 
-The storage tests above cover parts of TAKE-INV-001/006; none of the following
-invariants is discharged in full. Actual arm context, ordered input, note/pedal
-pairing, callback partitions, loop passes, audio, projection and project commit
-remain first-consumer obligations. Physical timestamp/latency evidence belongs
-to ADR-0022; no new EVD result is asserted.
+The storage and exact-input tests above cover parts of TAKE-INV-001/002/006;
+none of the following invariants is discharged in full. The built arm context,
+serial source ordering and FIFO pairing still need their first physical/concurrent
+consumers' qualification. Runtime callbacks, loop passes, audio, projection and
+project commit remain first-consumer obligations. Physical timestamp/latency
+evidence belongs to ADR-0022; no new EVD result is asserted.
 
 | Invariant | Required future check |
 |---|---|
 | TAKE-INV-001 | Callback partitions, pre/post-seal late input, two-source fences and attribution retained through commit |
-| TAKE-INV-002 | Count-in, FIFO same-key notes, pre-arm keys, key/pedal closure and mapping change |
+| TAKE-INV-002 | Physical/concurrent source synchronization, count-in, FIFO pairing and mapping-change integration |
 | TAKE-INV-003 | Synthetic non-Q-aligned pass boundaries, crossing occurrence projection/refusal and pass exhaustion |
 | TAKE-INV-004 | Exhaustive nearest-tick oracle, adjacent inversion refusal, ties/plateaus, finite bounds and signed error |
 | TAKE-INV-005 | Revision conflict, failed asset, lost acknowledgement, exactly-once retry and complete undo |

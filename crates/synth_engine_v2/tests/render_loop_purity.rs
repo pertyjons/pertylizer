@@ -46,8 +46,9 @@ use std::path::{Path, PathBuf};
 /// never sees.
 /// `src/host/hot.rs` adds the simulated output callback, including silence and
 /// fault paths that run before entering the renderer.
-const REGION: [&str; 16] = [
+const REGION: [&str; 17] = [
     "src/recording/hot.rs",
+    "src/recording/notes/hot.rs",
     "src/host/hot.rs",
     "src/render/hot.rs",
     "src/render/slot.rs",
@@ -593,6 +594,8 @@ fn every_call_the_render_loop_makes_is_inside_the_checked_region() {
         "map_or",
         "ok",
         "is_some_and",
+        // Option discriminant plus an inline predicate; the predicate body is scanned.
+        "is_none_or",
         // The live boundary's counters and the report they reach. `diagnostics_mut` hands
         // back a `&mut` to a field of the renderer; `mirror_ingress_boundary` writes four
         // `u64`s into it; and `dropped_slot`, `dropped_hold`, `dropped_identity`,

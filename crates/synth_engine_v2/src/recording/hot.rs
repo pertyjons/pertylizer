@@ -8,7 +8,7 @@ use crate::host::ConnectionGeneration;
 use crate::time::{SampleTime, StreamEpoch};
 
 impl DiagnosticCount {
-    fn increment(&mut self) {
+    pub(super) fn increment(&mut self) {
         if let Some(next) = self.value.checked_add(1) {
             self.value = next;
         } else {
