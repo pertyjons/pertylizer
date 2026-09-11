@@ -4,7 +4,7 @@
 |---------------|------------|
 | Status        | Active     |
 | Phase         | 00B        |
-| Last reviewed | 2026-09-12 (MCP cleanup, lint and example-patch subset only) |
+| Last reviewed | 2026-09-12 (MCP discovery subset only) |
 
 This ledger covers every shipped or externally consumed capability and assigns it a deliberate V2 disposition.
 
@@ -48,10 +48,12 @@ capabilities: `CAP-0048` through `CAP-0053`, and `CAP-0055`. The
 [MCP project-operation inspection](#mcp-project-operations-2026-09-11) adds `CAP-0172`, `CAP-0173`,
 `CAP-0205` and `CAP-0206`. The subsequent
 [cleanup, lint and example-patch inspection](#mcp-cleanup-lint-and-example-patches-2026-09-12) adds
-`CAP-0084`, `CAP-0153`, `CAP-0156`, `CAP-0171` and `CAP-0178`. Other dispositions remain open.
+`CAP-0084`, `CAP-0153`, `CAP-0156`, `CAP-0171` and `CAP-0178`. The
+[discovery inspection](#mcp-discovery-2026-09-12) adds `CAP-0140`, `CAP-0143`, `CAP-0162`, `CAP-0167` and
+`CAP-0208`. Other dispositions remain open.
 
 **Status rule.** The [register vocabulary](README.md) defines `Classified` as required fields *and* disposition filled
-with supporting evidence. The twenty-one inspected rows meet that classification threshold, not migration verification.
+with supporting evidence. The twenty-six inspected rows meet that classification threshold, not migration verification.
 Entries whose disposition is open stay `Discovered` or `Investigating`. `Verified` requires the named migration
 checks to pass; source inspection alone does not establish implemented V2 behavior. P00B-T002 remains incomplete.
 
@@ -159,9 +161,10 @@ capability added or removed later shows up as a diff rather than as a changed to
 
 `CAP-0001`..`CAP-0010`, `CAP-0014`, `CAP-0015`, `CAP-0023`, and `CAP-0027` remain at their stable identifiers as
 **rollup rows**: they describe a surface, carry no disposition of their own, and are not counted as capability entries.
-The authoritative per-capability entries are below. Nine MCP entries are now classified by the
-[project-operation inspection](#mcp-project-operations-2026-09-11) and the
-[cleanup, lint and example-patch inspection](#mcp-cleanup-lint-and-example-patches-2026-09-12), departing from
+The authoritative per-capability entries are below. Fourteen MCP entries are now classified by the
+[project-operation inspection](#mcp-project-operations-2026-09-11),
+[cleanup, lint and example-patch inspection](#mcp-cleanup-lint-and-example-patches-2026-09-12) and
+[discovery inspection](#mcp-discovery-2026-09-12), departing from
 the generated rows' original `Discovered` status. The other generated entries still lack a disposition;
 reachability alone cannot make them `Classified`. Evidence for each classified MCP entry is linked from its
 `Reachable from` cell.
@@ -257,10 +260,10 @@ reachability alone cannot make them `Classified`. Evidence for each classified M
 | CAP-0137 | MCP | `get_mod_graph` | `sequencer.rs` | read | `synth` server: HTTP `127.0.0.1:9850/mcp` and `--headless` stdio | | | Discovered |
 | CAP-0138 | MCP | `get_mod_matrix_routings` | `discovery.rs` | read | `synth` server: HTTP `127.0.0.1:9850/mcp` and `--headless` stdio | | | Discovered |
 | CAP-0139 | MCP | `get_module_info` | `discovery.rs` | read | `synth` server: HTTP `127.0.0.1:9850/mcp` and `--headless` stdio | | | Discovered |
-| CAP-0140 | MCP | `get_module_type_info` | `discovery.rs` | read | `synth` server: HTTP `127.0.0.1:9850/mcp` and `--headless` stdio | | | Discovered |
+| CAP-0140 | MCP | `get_module_type_info` | `discovery.rs` | read | Default MCP GUI HTTP and `--headless` stdio → `DiscoveryBridge::get_module_type_info`; [source trace](#mcp-module-type-detail) | Migrate | Phase 5 node/parameter declarations and metadata; 10E MCP detail adapter | Classified |
 | CAP-0141 | MCP | `get_note_graph` | `sequencer.rs` | read | `synth` server: HTTP `127.0.0.1:9850/mcp` and `--headless` stdio | | | Discovered |
 | CAP-0142 | MCP | `get_parameter` | `discovery.rs` | read | `synth` server: HTTP `127.0.0.1:9850/mcp` and `--headless` stdio | | | Discovered |
-| CAP-0143 | MCP | `get_project_schema` | `discovery.rs` | read | `synth` server: HTTP `127.0.0.1:9850/mcp` and `--headless` stdio | | | Discovered |
+| CAP-0143 | MCP | `get_project_schema` | `discovery.rs` | read | Default MCP GUI HTTP and `--headless` stdio → `InstrumentBridge::get_project_schema`; [source trace](#mcp-project-schema-discovery) | Migrate | Phase 10D versioned format/schema artifacts; 10E MCP schema adapter | Classified |
 | CAP-0144 | MCP | `get_sample_info` | `samples.rs` | read | `synth` server: HTTP `127.0.0.1:9850/mcp` and `--headless` stdio | | | Discovered |
 | CAP-0145 | MCP | `get_sampler_state` | `samples.rs` | read | `synth` server: HTTP `127.0.0.1:9850/mcp` and `--headless` stdio | | | Discovered |
 | CAP-0146 | MCP | `get_song_info` | `sequencer.rs` | read | `synth` server: HTTP `127.0.0.1:9850/mcp` and `--headless` stdio | | | Discovered |
@@ -279,12 +282,12 @@ reachability alone cannot make them `Classified`. Evidence for each classified M
 | CAP-0159 | MCP | `list_master_effects` | `mixing.rs` | read | `synth` server: HTTP `127.0.0.1:9850/mcp` and `--headless` stdio | | | Discovered |
 | CAP-0160 | MCP | `list_mod_graphs` | `sequencer.rs` | read | `synth` server: HTTP `127.0.0.1:9850/mcp` and `--headless` stdio | | | Discovered |
 | CAP-0161 | MCP | `list_mod_targets` | `sequencer.rs` | read | `synth` server: HTTP `127.0.0.1:9850/mcp` and `--headless` stdio | | | Discovered |
-| CAP-0162 | MCP | `list_module_types` | `discovery.rs` | read | `synth` server: HTTP `127.0.0.1:9850/mcp` and `--headless` stdio | | | Discovered |
+| CAP-0162 | MCP | `list_module_types` | `discovery.rs` | read | Default MCP GUI HTTP and `--headless` stdio → `InstrumentBridge::list_module_types_brief`; [source trace](#mcp-module-type-listing) | Migrate | Phase 5 node declarations and derived catalog; 10E MCP discovery adapter | Classified |
 | CAP-0163 | MCP | `list_modules` | `discovery.rs` | read | `synth` server: HTTP `127.0.0.1:9850/mcp` and `--headless` stdio | | | Discovered |
 | CAP-0164 | MCP | `list_note_graphs` | `sequencer.rs` | read | `synth` server: HTTP `127.0.0.1:9850/mcp` and `--headless` stdio | | | Discovered |
 | CAP-0165 | MCP | `list_notes` | `sequencer.rs` | read | `synth` server: HTTP `127.0.0.1:9850/mcp` and `--headless` stdio | | | Discovered |
 | CAP-0166 | MCP | `list_patterns` | `sequencer.rs` | read | `synth` server: HTTP `127.0.0.1:9850/mcp` and `--headless` stdio | | | Discovered |
-| CAP-0167 | MCP | `list_port_types` | `discovery.rs` | read | `synth` server: HTTP `127.0.0.1:9850/mcp` and `--headless` stdio | | | Discovered |
+| CAP-0167 | MCP | `list_port_types` | `discovery.rs` | read | Default MCP GUI HTTP and `--headless` stdio → `SynthMcpServer::list_port_types`; [source trace](#mcp-port-type-discovery) | Migrate | Phase 5 port declarations and compiler compatibility; 10E MCP discovery adapter | Classified |
 | CAP-0168 | MCP | `list_return_busses` | `mixing.rs` | read | `synth` server: HTTP `127.0.0.1:9850/mcp` and `--headless` stdio | | | Discovered |
 | CAP-0169 | MCP | `list_samples` | `samples.rs` | read | `synth` server: HTTP `127.0.0.1:9850/mcp` and `--headless` stdio | | | Discovered |
 | CAP-0170 | MCP | `list_tracks` | `sequencer.rs` | read | `synth` server: HTTP `127.0.0.1:9850/mcp` and `--headless` stdio | | | Discovered |
@@ -325,7 +328,7 @@ reachability alone cannot make them `Classified`. Evidence for each classified M
 | CAP-0205 | MCP | `save_patch` | `project.rs` | destructive | Default MCP GUI HTTP and `--headless` stdio → `ProjectBridge::save_patch`; [source trace](#mcp-patch-export) | Migrate | Phase 10A canonical instrument content; 10B export operation; 10D patch format/assets; 10E MCP adapter | Classified |
 | CAP-0206 | MCP | `save_project` | `project.rs` | destructive | Default MCP GUI HTTP and `--headless` stdio → `ProjectBridge::save_project`; [source trace](#mcp-project-save) | Migrate | Phase 10A canonical snapshot; 10B operation results; 10C save coordination; 10D writer/assets; 10E MCP adapter; 11 GUI save integration | Classified |
 | CAP-0207 | MCP | `scale_automation_lane` | `automation.rs` | destructive | `synth` server: HTTP `127.0.0.1:9850/mcp` and `--headless` stdio | | | Discovered |
-| CAP-0208 | MCP | `search_modules` | `discovery.rs` | read | `synth` server: HTTP `127.0.0.1:9850/mcp` and `--headless` stdio | | | Discovered |
+| CAP-0208 | MCP | `search_modules` | `discovery.rs` | read | Default MCP GUI HTTP and `--headless` stdio → `DiscoveryBridge::search_modules`; [source trace](#mcp-module-search) | Migrate | Phase 5 node declarations and derived catalog; 10E MCP search/filter adapter | Classified |
 | CAP-0209 | MCP | `seq_play` | `sequencer.rs` | mutating | `synth` server: HTTP `127.0.0.1:9850/mcp` and `--headless` stdio | | | Discovered |
 | CAP-0210 | MCP | `seq_seek` | `sequencer.rs` | mutating | `synth` server: HTTP `127.0.0.1:9850/mcp` and `--headless` stdio | | | Discovered |
 | CAP-0211 | MCP | `seq_stop` | `sequencer.rs` | mutating | `synth` server: HTTP `127.0.0.1:9850/mcp` and `--headless` stdio | | | Discovered |
@@ -1248,6 +1251,163 @@ Only these five additional MCP entries become `Migrate`/`Classified`; twenty-one
 supporting dispositions. No identifier is added: CAP-0510 remains next. P00B-T002, the other capability surfaces,
 representative-path evidence (T004), round-trip verification (T005), and the Phase 0B exit remain open.
 
+## MCP discovery 2026-09-12
+
+This bounded P00B-T002 inspection classifies five discovery tools at `3fb94fb4` using the existing
+[source-inspection method](#method-and-acceptance-boundary). Trace shipped dispatch to the actual source of each
+answer; a false behavioral claim, missing route, inconsistent owner or untestable criterion blocks classification.
+Optional implementation detail does not. The [roadmap](../ROADMAP.md) assigns node/port declarations and their
+discovery surfaces to Phase 5, format/schema artifacts to 10D and the MCP adapter to 10E. The
+[master plan](../master-plan.md#phase-5-declarative-node-and-parameter-api) makes the node declaration the single
+source for UI/discovery metadata and derived catalogs; Phase 10E adapts those declarations to the wire. No new
+node support, format, wire contract, compatibility break or ADR acceptance is authorized by `Migrate`.
+
+The source and cited tests were read; a read-only JSON walk confirmed the existing script-parameter schema gap
+and the version property's shape. No Rust test, GUI interaction, live MCP call or runtime experiment was executed.
+This pass changes only the inventory, not production code or the evidence harness. Each underlying module type
+still needs its own disposition and fidelity evidence; migrating discovery is not a claim that every V1 type is
+implemented in V2.
+
+### Discovery entry and output boundary
+
+All five handlers in [tools/discovery.rs](../../../crates/synth_mcp/src/server/tools/discovery.rs) carry
+`read_only_hint = true`. The default discovery router and the separate batch dispatch in
+[server.rs](../../../crates/synth_mcp/src/server.rs) name them all; CAP-0040/0041 cover GUI HTTP and headless stdio.
+They read catalog/schema sources rather than mutate a project. Four return `Json<T>` with typed output schemas:
+listings use `Listing`, detail uses `ModuleTypeInfo`, and search uses `ModuleSearchResult`. The project-schema
+tool deliberately returns a JSON document as text with no `outputSchema` or structured-content half; batch
+preserves it as text. `NoParams` serves listing, ports and schema; detail and search use their own input structs.
+Bridge failures become tool errors, except the noted best-effort hint and serialization paths below.
+
+The default [output-schema tests](../../../crates/synth_mcp/src/server/tests/output_schema.rs) guard the schema
+presence rule and its named prose exceptions, and check that omitted parameter fields are not required.
+[Batch dispatch coverage](../../../crates/pertylizer/tests/mcp_batch_dispatch_coverage.rs) supplies invalid scalar
+parameters to detect missing routes without executing handlers. These checks are not evidence that the five live
+replies were exercised by this inspection, nor that catalog data matches every runtime or persisted value.
+
+### MCP module-type listing
+
+`CAP-0162` calls [list_module_types_brief](../../../crates/pertylizer/src/mcp_bridge/instruments.rs). The source is
+[module_factory::ALL_MODULE_TYPES](../../../crates/pertylizer/src/module_factory.rs), derived from the `ModuleType`
+enum in declaration order. Each row has the type prefix, display name, coarse category and `gui_only` from
+`is_visualizer()`. This path does not build descriptors or instantiate modules. Visualizers remain listed even
+though `add_module` refuses them over MCP. It does not enumerate live instrument modules, ports or parameters.
+
+**Coverage limit:** enum inclusion alone does not prove factory support. The detailed paths require
+`get_descriptor`; they can fail or skip an entry the brief listing still exposes if a future enum variant lacks
+factory wiring. `every_module_type_has_a_descriptor` in `module_factory.rs` guards that relation, but was not
+run here. A listed type or a false `gui_only` flag is not a promise that every host/path can create it. V2 listing
+must derive from the declared supported catalog and state availability, without resurrecting unimplemented V1
+nodes through this inventory classification.
+
+### MCP module-type detail
+
+`CAP-0140` trims the required `type_key` and rejects an empty value. The
+[DiscoveryBridge implementation](../../../crates/pertylizer/src/mcp_bridge/discovery.rs) resolves it with
+[parse_module_type](../../../crates/pertylizer/src/mcp_bridge.rs), checks registry membership and obtains a
+factory descriptor. The parser accepts keys and name aliases, including separator-insensitive display names;
+the argument is intentionally an open string, not a closed enum. Unknown types return `InvalidModuleType`.
+The handler may add near-miss hints from the brief catalog; failure of that hint lookup omits the hint while
+preserving the original error. It is not a substitute type selection.
+
+[get_descriptor](../../../crates/pertylizer/src/module_factory.rs) constructs temporary default modules/effects
+or visualizers to obtain their descriptors. [build_module_type_info](../../../crates/pertylizer/src/mcp_bridge/discovery_impl.rs)
+then supplies input/output ports and value domains, parameter bounds/defaults/units/choice metadata, category
+flow hints and the math oscillator's algorithm-parameter table. Choice metadata includes numeric index plus
+stable choice ID and display name; it is not a declaration of the on-disk encoding. Flow hints are category-level
+prose, not connection validation. Temporary construction is off the audio path, not an allocation-free read.
+
+**Instance limit:** this is a default type descriptor. Script knobs added by
+[build_script_descriptor](../../../crates/pertylizer/src/session.rs) belong to the installed instance program and
+are absent here. Neither detail nor search establishes that all instance parameters are enumerated. The
+[parser tests](../../../crates/pertylizer/src/mcp_bridge/tests/helpers.rs) check representative key/name aliases;
+[math oscillator tests](../../../crates/pertylizer/tests/math_oscillator_algorithm_params.rs) use the shared search
+builder to inspect algorithm labels and absence on another type. They do not call this MCP handler or validate
+all descriptor values against engine behavior. Phase 5 owns declaration agreement; 10E exposes it through MCP.
+
+### MCP module search
+
+`CAP-0208` reaches [search_module_types](../../../crates/pertylizer/src/mcp_bridge/discovery_impl.rs). Optional
+category/input/output filters are combined with AND. At the tool boundary categories are `voice`, `effect`,
+`visualizer` and signal filters are `audio`, `control`, `gate`, `midi`; other spellings are rejected by enum
+deserialization. Port filters require an actual port of that exact type/direction, not merely a compatible type.
+
+A text query is split on whitespace and lowercased. Token scores add matches in name/key, tags, description and
+parameter names, using substring matching with a one-trailing-character fallback for longer tokens. Not every
+query token must match: a positive aggregate score admits the type. With text, higher scores precede lower ones
+and ties preserve registry order; no/blank text keeps registry order under the hard filters. Descriptors missing
+from the factory are skipped. A genuine text query with no matches may yield up to five near-miss names,
+respecting the same hard filters; this remains a successful empty search, with a handler-supplied hint.
+
+**Limit boundary:** the bridge constructs all matching detail records and records `total_matched`. Only then
+does the handler truncate to the requested positive `limit`, default 20, adding a truncation hint. Zero is rejected;
+there is no declared positive maximum or offset pagination. The limit bounds returned entries, not descriptor
+construction or search work. Empty search results do not prove a capability is absent, and typed enum validation
+of MCP arguments does not apply to callers invoking the string-based helper directly.
+
+[search_modules.rs](../../../crates/pertylizer/tests/search_modules.rs) checks representative ring-modulator
+queries/ranking, nonsense, typo suggestions, filter-respecting suggestions and blank queries through the helper.
+[schema_enum.rs](../../../crates/synth_mcp/src/server/tests/schema_enum.rs) checks the MCP filter enums and invalid
+spellings. The helper tests do not exercise handler truncation, `limit = 0`, live transport or reply-size bounds.
+
+### MCP port-type discovery
+
+`CAP-0167` builds its response directly in the server, without a bridge call. Four explicit entries describe
+`audio`, `control`, `gate` and `midi`; `compatible_with` iterates
+[PortType::ALL](../../../crates/synth_core/src/module_traits.rs) and applies `source.can_drive(destination)`.
+Audio drives audio/control, control drives audio/control/gate, gate drives gate/control, and MIDI drives only
+MIDI. This reports V1's signal-type relation, not graph admission, endpoint existence, per-port value-domain
+compatibility or the V2 compiler's rules. Displayed ranges are descriptive hints, not clamps on sample values.
+
+**Maintenance limit:** the entries and prose are hand-written. A debug-only length assertion compares them to
+`PortType::ALL`; only compatibility lists are derived from it. A new type therefore needs an explicit row, and
+length equality alone does not prove unique/correct entries. `port_type_ids_and_compatibility_are_stable` in
+`module_traits.rs` checks representative pairs and identifiers, not the MCP result. Phase 5 owns the V2 port
+contract and compiler rules; 10E must publish that contract without silently reusing V1's relation under changed
+semantics. No port-protocol change is made here.
+
+### MCP project-schema discovery
+
+`CAP-0143` calls [InstrumentBridge::get_project_schema](../../../crates/pertylizer/src/mcp_bridge/instruments.rs).
+`PROJECT_SCHEMA_JSON` is compiled in with `include_str!` from
+[schemas/project.schema.json](../../../schemas/project.schema.json). It is parsed as `RawValue` to check JSON
+syntax and retain the schema's original numeric text. The wrapper carries `schema_file`, `schema_format_version`
+from `ProjectFile::FORMAT_VERSION` (currently `1.1`), and `app_version` from the serving build. The latter is not
+proof of which build generated the artifact, despite the tool description's wording. It neither regenerates the
+schema nor reads a live file or validates a caller's project. `to_json` formats the wrapper while retaining the
+raw schema; its generic serialization-error fallback returns a text string inside an `Ok`, not a typed tool
+failure. This inspection did not reproduce such a failure for this concrete payload.
+
+**Artifact limit:** exact delivery does not prove a correct or complete schema. The version property is a string
+without a `const`/`enum` restriction, so this artifact alone does not enforce version admission. The existing
+IDN-0015 finding in the [identity inventory](identities.md) also remains visible in the inspected JSON: `script`
+and `audio_script` have empty parameter-property maps with `additionalProperties: false`, whereas installed
+programs can declare knobs. Such saved knob keys cannot satisfy those schema branches. Phase 10D owns the
+versioned schema, conversions and rejection policy; 10E owns truthful publication and errors. This pass neither
+repairs the existing schema nor chooses the V2 format or a new wire envelope.
+
+`embedded_project_schema_is_valid_and_well_formed` in the bridge helper tests checks JSON/root structure and
+nonempty build version, not byte equality or all schema semantics. In
+[schemas_validate_examples.rs](../../../crates/pertylizer/tests/schemas_validate_examples.rs),
+`checked_in_schemas_match_generated` compares generated artifacts with committed bytes, and
+`example_files_validate_against_schemas` validates selected project/patch example files, excluding ZIP bundles.
+Neither proves all possible instance-authored data is modeled, and those tests were not run in this inspection.
+
+### Discovery migration checks still owed
+
+| Capabilities | Owner | Observable check before `Verified` |
+|---|---|---|
+| All five | 10E MCP adapter over named declaration/format owners | Exercise direct and batch calls over supported transports; compare declared input/output schemas, typed versus text reply shapes, errors and catalog contents. Reads must leave canonical project/dirty state unchanged. Keep successful empty results distinct from unsupported input or failed discovery. Any approved wire change needs an explicit contract decision. |
+| CAP-0162 | 5 declarations/catalog; 10E listing | Compare the complete supported registry with unique listed keys, categories and availability flags. Add a declaration without factory/discovery support and require an explicit failure or declared unavailability, not a silently misleading entry. Individual module migration remains separately gated. |
+| CAP-0140 | 5 declarations/metadata; 10E detail | Exercise keys, aliases, whitespace, unknown types and hint-lookup failure. Compare ports, domains, defaults, choices and algorithm metadata with declarations. For instance-declared script knobs, state the type/instance boundary and verify the instance discovery route before claiming complete parameter coverage. |
+| CAP-0208 | 5 declarations/catalog; 10E search | Check ANDed filters, exact port types, mixed matching/nonmatching tokens, stable score ties, blank queries, typos and zero matches. Test default/zero/large limits and pre-truncation totals. Declare and measure work/reply bounds before treating the response limit as a resource bound. |
+| CAP-0167 | 5 port/compiler contract; 10E catalog | Compare every source/destination pair and every unique published type with the supported declaration and connection validators. Test wrong direction, missing endpoints and incompatible value domains separately so type compatibility is never mistaken for complete connection admission. |
+| CAP-0143 | 10D schema/versioning; 10E publication | Compare delivered raw schema content on direct/batch paths with the selected artifact and verify truthful version provenance. Check malformed artifacts, serialization failure handling, unsupported format versions and instance-declared script parameters. Validate applicable fixtures, while keeping artifact fidelity distinct from schema correctness. |
+
+Only these five existing rows gain a disposition. Twenty-six capability rows, including fourteen MCP tools, now have
+supporting classification. CAP-0510 remains next; other capabilities, per-module fidelity, T004/T005 evidence and
+the complete P00B-T002/Phase 0B exit remain open.
+
 ## Audit passes
 
 | Date       | Source revision | Discovery method                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  | Coverage/result                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       | Evidence                           |
@@ -1259,6 +1419,7 @@ representative-path evidence (T004), round-trip verification (T005), and the Pha
 | 2026-09-11 | `85d92f1b` | Followed `Cli`, `Command`, `RenderArgs` and `CompareArgs` through runtime mode dispatch, GUI/stdio startup and render/compare library callees; used the existing source-inspection method and read the cited tests without running them. | Classified CAP-0040–CAP-0043 and new CAP-0509 as `Migrate`; corrected the render-option count and top-level OSC-switch scope, recorded null-backend headless behavior and I/O/shutdown limits. Twelve rows now have dispositions and supporting classification; other rows are unchanged. P00B-T002 remains incomplete. | [CLI source inspection and limits](#cli-entry-points-2026-09-11) |
 | 2026-09-11 | `bab84945` | Used the existing source-inspection method to follow four project-tool handlers through direct/batch dispatch, ProjectBridge, project/sample mutation, save builders and GUI notification consumers; read the cited tests without running them. | CAP-0172, CAP-0173, CAP-0205 and CAP-0206 are `Migrate`/`Classified`, with source limits and pending migration checks. Recorded the catalog/patch-refusal discrepancy, nontransactional load/reset and save capture limits; corrected the project-tool rollup. Sixteen rows now have supporting dispositions; P00B-T002 remains incomplete. | [MCP project-operation source inspection](#mcp-project-operations-2026-09-11) |
 | 2026-09-12 | `ee5c6600` | Followed five default MCP handlers and batch routes through cleanup, lint aggregation, built-in catalog lookup, shared patch application and the GUI pending-patch consumer; read the named tests without running them. | Classified CAP-0084, CAP-0153, CAP-0156, CAP-0171 and CAP-0178 with owners and pending checks. Recorded silent cleanup failures, lint coverage limits and the load/apply diagnostic and GUI-target differences. Twenty-one rows have supporting dispositions; P00B-T002 remains incomplete. | [Cleanup, lint and example-patch inspection](#mcp-cleanup-lint-and-example-patches-2026-09-12) |
+| 2026-09-12 | `3fb94fb4` | Followed five discovery handlers and batch routes into enum/factory catalogs, descriptor builders, search filters/ranking, port compatibility and the embedded schema; inspected JSON branches and read named tests without running Rust. | Classified CAP-0140, CAP-0143, CAP-0162, CAP-0167 and CAP-0208 with V2 owners and pending checks. Recorded type/instance limits, post-build search truncation and schema publication/correctness limits. Twenty-six rows have supporting dispositions; P00B-T002 remains incomplete. | [Discovery inspection](#mcp-discovery-2026-09-12) |
 
 Completion requires each discovered entry to have reachability, disposition, V2 ownership, and verification. Matching
 the seed counts alone is insufficient.
