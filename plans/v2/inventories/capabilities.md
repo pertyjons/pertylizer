@@ -4,7 +4,7 @@
 |---------------|------------|
 | Status        | Active     |
 | Phase         | 00B        |
-| Last reviewed | 2026-09-09 (project-action subset only) |
+| Last reviewed | 2026-09-11 (CLI entry-point subset only) |
 
 This ledger covers every shipped or externally consumed capability and assigns it a deliberate V2 disposition.
 
@@ -38,14 +38,16 @@ subsystems.
 
 ## Ledger
 
-Entries use `CAP-NNNN` identifiers. Next free identifier: `CAP-0509`.
+Entries use `CAP-NNNN` identifiers. Next free identifier: `CAP-0510`.
 
 Passes 1 and 2 were a **surface census**; pass 3 added the per-item enumeration the master plan requires.
 The [2026-09-09 project-action inspection](#project-actions-2026-09-09) assigns `Migrate` to seven existing
-capabilities: `CAP-0048` through `CAP-0053`, and `CAP-0055`. All other dispositions remain open.
+capabilities: `CAP-0048` through `CAP-0053`, and `CAP-0055`. The
+[2026-09-11 CLI inspection](#cli-entry-points-2026-09-11) assigns `Migrate` to `CAP-0040` through
+`CAP-0043` and the newly enumerated `CAP-0509`. Other dispositions remain open.
 
 **Status rule.** The [register vocabulary](README.md) defines `Classified` as required fields *and* disposition filled
-with supporting evidence. The seven inspected rows meet that classification threshold, not migration verification.
+with supporting evidence. The twelve inspected rows meet that classification threshold, not migration verification.
 Entries whose disposition is open stay `Discovered` or `Investigating`. `Verified` requires the named migration
 checks to pass; source inspection alone does not establish implemented V2 behavior. P00B-T002 remains incomplete.
 
@@ -112,10 +114,11 @@ checks to pass; source inspection alone does not establish implemented V2 behavi
 
 | ID       | Surface    | Capability                                                                                                                                                                         | Reachable from               | Disposition | V2 owner/replacement | Evidence                                                                                 | Status        |
 |----------|------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|------------------------------|-------------|----------------------|------------------------------------------------------------------------------------------|---------------|
-| CAP-0040 | CLI        | `pertylizer` (no subcommand) — launch the GUI                                                                                                                                      | Single `[[bin]]`             |             |                      |                                                                                          | Discovered    |
-| CAP-0041 | CLI        | `pertylizer --headless` — MCP server on stdio                                                                                                                                      | `mcp` feature                |             |                      |                                                                                          | Discovered    |
-| CAP-0042 | CLI        | `pertylizer render` — 11 arguments incl. `--protocol-version`, `--bit-depth`, `--solo-track`/`--mute-track` (accept id **or unique name**), `--result-json`                        | Any build                    |             |                      | Contract carries its own `PROTOCOL_VERSION`; open work in `plans/TODO.md` §5.6           | Investigating |
-| CAP-0043 | CLI        | `--no-osc` global flag                                                                                                                                                             | `osc` feature                |             |                      |                                                                                          | Discovered    |
+| CAP-0040 | CLI | `pertylizer` without a mode selector launches the GUI | `main::run_gui` when `gui-egui` is enabled; absent GUI feature returns an error | Migrate | Phase 11 GUI adapter over Application Core; Phase 9 audio host; Phase 10E service/configuration adapters | [GUI launch trace](#gui-launch-and-osc-switch); backend-start success is not established by parsing | Classified |
+| CAP-0041 | CLI | `pertylizer --headless` serves MCP on stdio using a null audio backend | `mcp` feature: `main::run_headless_mcp` → `synth_mcp::serve_stdio` | Migrate | Phase 10E MCP/service adapter over Application Core and runtime session; wire conformance belongs to that adapter; ADR-0029/0030 are proposed authorization and public-facade topics | [Stdio trace](#headless-stdio); individual tools remain separately inventoried | Classified |
+| CAP-0042 | CLI | `pertylizer render` — saved project/bundle/patch to WAV with mix selection and versioned receipt | Ungated `Command::Render` → `render_project` → `render::run_render_command`; ten declared options, excluding generated help | Migrate | Phase 10D Project I/O; Phase 10B revision-pinned render jobs under ADR-0028; Phase 10E CLI adapter over Sound Core rendering | [Render trace](#render-command); existing V1 protocol version 1 is unchanged; [open CLI work](../../TODO.md#56-headless-render-cli--open-follow-ups) | Classified |
+| CAP-0043 | CLI | `--no-osc` suppresses GUI OSC telemetry startup for this invocation | Top-level argument when `osc` is enabled; read only by `run_gui` | Migrate | Phase 10E host configuration/telemetry adapter; Phase 11 startup integration; ADR-0029 owns durable configuration policy | [GUI launch trace](#gui-launch-and-osc-switch); not a project mutation or an MCP-disable flag | Classified |
+| CAP-0509 | CLI | `pertylizer compare` — measure two existing WAVs and emit a versioned JSON report, without a parity verdict | Ungated `Command::Compare` → `compare_renders` → `compare::run_compare_command`; four declared options, excluding generated help | Migrate | Retained Phase 0A comparison utility; Phase 10E CLI/analysis adapter; any later render-job integration remains ADR-0028's Phase 10B work | [Compare trace](#compare-command); no project lowering or rendering occurs in this command | Classified |
 | CAP-0044 | Protocol   | OSC telemetry — 19 addresses under `/synth/*` and `/viz/*` (meta, RMS, peak, FFT, centroid, flux, note on/off, CC, transport, voice count, CPU, event drops, viz ping/pong/camera) | `osc` feature (default), UDP |             |                      | External standalone visualizer consumes `/viz/*`; it is not in this repository           | Investigating |
 | CAP-0045 | Formats    | `.ptz` project (JSON), `.ptz.zip` bundle, `.json` patch, `.json` group template, `settings.json`, recovery snapshots                                                               | File dialogs, CLI, MCP       |             |                      | Three committed JSON Schemas: `project`, `patch`, `bundle-metadata`                      | Investigating |
 | CAP-0046 | Public API | **23** `pub mod` in `crates/pertylizer/src/lib.rs` plus 11 further workspace crates, all with public surfaces | Rust consumers | | | Facade scope is ADR-0030; the planned runtime library is `plans/game-runtime-library.md` | Investigating |
@@ -657,7 +660,7 @@ required non-exhaustive fallback is visibly `unknown`. The resolved-version
 evidence gate makes a later CPAL update fail until the versioned method is
 reviewed, but Phase 9 still owns durable lifecycle and UI diagnostics.
 
-Next free identifier after this section: `CAP-0509`.
+Next free identifier after this section: `CAP-0510`.
 
 ## Project actions 2026-09-09
 
@@ -788,9 +791,144 @@ falsify successful migration of this subset; none has passed here and none close
 | CAP-0052, CAP-0053 | 10B operations; 10C history; 11 GUI | Undo/redo recorded edits through the canonical operation boundary; compare snapshots and stable references. Divergent edits at equal history depth must remain distinct. Inject operation failure and verify history, effect and revision stay consistent under the selected failure contract. |
 | CAP-0055 | 10C recovery; 10D assets; 11 GUI | Recover a sample-bearing snapshot with metadata, assets and original save association intact and still dirty; test discard, unreadable/corrupt input and failed apply. Assert a pending offer is not overwritten and an in-flight worker cannot resurrect work after its retirement under the selected recovery contract. |
 
-Remaining P00B-T002 work includes every other capability disposition and the incomplete per-action GUI census.
-MCP/CLI/OSC behavior, live transport (`CAP-0054`), Phase 8 mixing/effects and public-facade decisions were not audited.
+At the end of this project-action pass, every other capability disposition and the per-action GUI census remained
+open. MCP/CLI/OSC behavior, live transport (`CAP-0054`), Phase 8 mixing/effects and public-facade decisions were
+outside that pass; the later CLI inspection below covers only its declared subset.
 The source traces above are supporting inventory evidence, not the complete workflow or round-trip evidence tasks.
+
+## CLI entry points 2026-09-11
+
+This bounded P00B-T002 slice inspects `CAP-0040`–`CAP-0043` and adds `CAP-0509` at source revision
+`85d92f1b`. It follows the source-inspection method and classification threshold above: enumerate the runtime
+binary's parser, follow each dispatch and its callees, and record failure limits and migration owners. The falsifier
+is a missing parser branch, unreachable claimed behavior, or an owner inconsistent with the existing roadmap.
+Such a defect blocks classification; optional implementation detail does not. No command execution, hardware test,
+MCP request or migration test supports this pass. Existing tests cited below were read, not run.
+
+`Migrate` retains these user-facing capabilities under the [roadmap](../ROADMAP.md), not V1's internal types or
+failure behavior. It neither accepts an ADR nor authorizes a break to existing CLI or JSON contracts. In particular,
+[ADR-0028](../decisions/ADR-0028-long-running-job-contract.md) still blocks a new V2 render/analysis surface before
+its Phase 10B job contract; classifying an existing V1 command does not open that gate. This pass adds no code,
+changes no evidence harness, and does not close P00B-T002 or Phase 0B.
+
+### Parser coverage and mode selection
+
+[main.rs](../../../crates/pertylizer/src/main.rs) defines one `Cli`: optional `--headless` (`mcp` feature),
+optional `--no-osc` (`osc` feature), and the ungated `Render` and `Compare` subcommands. Their structs declare
+**ten** render options and **four** compare options; generated help is excluded from those counts. Render has
+`--protocol-version`, `--input`, `--output`, `--sample-rate`, `--bit-depth`, `--seconds`, `--tail-seconds`,
+`--result-json`, repeatable `--solo-track` and repeatable `--mute-track`. Compare has `--protocol-version`,
+`--reference`, `--candidate` and `--result-json`. This corrects CAP-0042's earlier eleven-argument count and
+covers the previously omitted comparison command without renumbering any existing entry.
+
+Parsing follows tracing and panic-hook installation but precedes the banner, Rayon pool and mode dispatch.
+Unknown arguments/subcommands are rejected by Clap. With `mcp`, combining `--headless` and a subcommand exits
+nonzero; otherwise a subcommand dispatches first, then headless mode, then GUI startup or a no-GUI error.
+`--no-osc` is a top-level argument, not declared with Clap's `global = true`; only GUI startup reads its value.
+Help/version are generated parser responses, not extra operational modes. The parser tests `no_arguments_parses`,
+`an_unknown_argument_is_rejected`, `headless_is_unknown_without_the_mcp_feature` and
+`render_parses_its_version_1_arguments` cover parsing, not successful startup or process-level stream behavior.
+Feature gates come from [Cargo.toml](../../../crates/pertylizer/Cargo.toml); this is no claim that every possible
+feature combination builds. Other developer binaries, examples and external consumers remain outside this census.
+
+### GUI launch and OSC switch
+
+`CAP-0040` reaches `run_gui`, which loads app settings and, when MCP or OSC is enabled, runtime configuration.
+It constructs the V1 engine/session/song/sample library, starts the feature-enabled MCP HTTP thread, chooses an
+audio host and invokes `create_backend().run`. Failure to create the default audio host selects the null host;
+this fallback is not a guarantee that a later stream/window startup succeeds. Backend errors propagate.
+MCP thread/runtime/server startup failures are logged and do not abort GUI startup. No GUI launch was performed.
+
+`CAP-0043` acts earlier in the same function: with `osc` enabled, `--no-osc` skips construction of the OSC
+telemetry object and shared state. Otherwise startup uses the runtime multicast group, port and update rate,
+and calls `start` if a note-event consumer is available. The flag neither disables MCP nor changes saved project
+content. Headless and both subcommands return before this branch, so they start no OSC telemetry here even when
+the switch is absent. This classifies the suppression capability, not the address catalog (`CAP-0044`) or a
+particular future configuration encoding. Phase 10E owns host/service policy and Phase 11 the GUI adapter.
+
+### Headless stdio
+
+`CAP-0041` reaches `run_headless_mcp` only with `mcp`. Despite its older function comment saying audio still
+plays, its body selects `audio::null_host`, starts that output driver, constructs the V1 session and bridge, and
+runs [serve_stdio](../../../crates/synth_mcp/src/lib.rs) in a Tokio runtime. That callee uses stdin/stdout,
+waits for the service to finish, and propagates startup/session errors. This path does not start the GUI's HTTP
+server or physical audio output. Tracing and startup messages target stderr; no complete tool-output audit is
+claimed. The bridge's individual operations remain the MCP per-item rows, not classified by this entry.
+
+After successful service completion, the function explicitly stops the host and drains asynchronous diagnostics.
+Earlier `?` returns skip that explicit sequence; drop behavior and exceptional shutdown remain unverified here.
+Phase 10E owns transport and disconnect/error conformance over Application Core/runtime-session services. This
+retains stdio automation, not an assertion that headless means device playback or that every request is atomic.
+
+### Render command
+
+`CAP-0042` reaches `render_project`, which rejects a mismatched protocol version before constructing a
+[RenderCommand](../../../crates/pertylizer/src/render/command.rs). The command validates duration/rate bounds,
+checks input/output path collisions, obtains the input digest, loads through
+[render/headless.rs](../../../crates/pertylizer/src/render/headless.rs) and
+[project_apply.rs](../../../crates/pertylizer/src/project_apply.rs), resolves the requested mix, renders and writes
+a WAV, and builds the version-1 [receipt](../../../crates/pertylizer/src/render/receipt.rs).
+The loader drives its own engine while its file-loading thread applies a project, bundle or standalone patch;
+it does not open a device. A standalone patch creates no arrangement here and can produce a no-instrument-signal
+warning. [mix.rs](../../../crates/pertylizer/src/render/mix.rs) resolves track IDs or unique names and rejects
+unknown/ambiguous selections and solo/mute overlap before clearing and replacing saved track solo/mute flags.
+The render scope includes master and return effects; these in-memory mix overrides are not saved back.
+
+Warnings, including load diagnostics, reach the receipt and stderr. Without `--result-json`, the receipt goes
+to stdout; with it, the command writes the receipt file. Run errors are printed and exit nonzero. The WAV write
+precedes output digesting and receipt writing, so a later failure can leave a completed WAV without a receipt;
+this is not an atomic pair. Input hashing and loading reopen the path separately, so this source inspection
+cannot establish that the digest names the loaded bytes under concurrent replacement. Path guards use
+`path_identity`; they are not a general filesystem-race guarantee. These limits belong to Phase 10B's captured
+job input/result lifecycle and Phase 10D's I/O, rather than becoming V2 guarantees by classification.
+
+**Conflicting prior evidence:** ADR-0028's workflow table says the CLI input cannot change because it loads a
+file. The separate digest/load reads above refute that claim under concurrent replacement; the nearby comment
+in `render/command.rs` overstates the guarantee for the same reason. ADR-0028 remains `Deferred`, and its
+Phase 10B owner must correct that pinning assertion before accepting the job contract or relying on it for a
+new consumer. This inventory records the contradiction rather than inheriting the assertion; it does not change
+the ADR's deferral or assert that V1 already captures immutable input bytes.
+
+The existing `the_wav_parses_and_matches_the_receipt` and `an_output_that_is_the_input_is_refused` tests in
+[render_command.rs](../../../crates/pertylizer/tests/render_command.rs) exercise the library command's receipt
+and collision branches. They do not execute the CLI or verify all filesystem interleavings. This pass makes no
+V1/V2 parity claim and adds no engine selector, progress, cancellation or shared render request.
+
+### Compare command
+
+`CAP-0509` reaches `compare_renders`, rejects a mismatched comparison protocol version and calls
+[run_compare_command](../../../crates/pertylizer/src/compare/command.rs). It reads two already rendered WAVs,
+checks path collisions, computes digests, decodes through
+[Signal::load](../../../crates/pertylizer/src/compare/signal.rs), measures differences and emits the version-1
+[ComparisonReport](../../../crates/pertylizer/src/compare/report.rs). The decoder rejects unsupported sample
+formats, empty inputs and inputs exceeding its decoded-size bound. Same resolved input paths and a report path
+resolving to an input are refused; distinct files with equal bytes are allowed. As with render, hashing and
+loading are separate reads and do not pin bytes against concurrent replacement.
+
+The command reports sample, level, timing, pitch, envelope, stereo, spectrum and loudness differences.
+Inapplicable measurements are optional and accompanied by warnings; a difference is not an execution failure
+or a parity verdict. JSON goes to stdout or `--result-json`, with warnings on stderr and command errors exiting
+nonzero. This utility performs no project loading or rendering and is the retained synchronous Phase 0A tool
+recognized by ADR-0028, not multi-project render orchestration.
+
+[two_different_projects_report_a_difference and the other comparison tests](../../../crates/pertylizer/tests/compare_command.rs)
+exercise the library command's changed-input, same-path refusal and parseable-report behavior. They are evidence
+of existing test intent, not a new measurement or a process-level CLI test run in this pass. Phase 10E owns
+retaining this analysis/CLI surface; any later job integration must obey Phase 10B's contract.
+
+### CLI migration checks still owed
+
+| Capabilities | Owner | Observable check before `Verified` |
+|---|---|---|
+| CAP-0040 | 9 host; 10E configuration/services; 11 GUI | Launch the GUI through its shipped entry point; exercise audio and service startup failures and ensure the visible runtime state agrees with the actual outcome. Test the no-GUI build's refusal separately from parser acceptance. |
+| CAP-0041 | 10E MCP/service adapter; runtime-session lifecycle | Start stdio without a GUI or physical audio device; send representative discovery and mutation requests through the common operation boundary. Check clean protocol stdout, startup failure, EOF/disconnect and error-path teardown. Feature-disabled builds must reject the flag. |
+| CAP-0042 | 10A snapshot; 10B jobs; 10D I/O/assets; 10E CLI | Render converted project/bundle/patch inputs under their fidelity dispositions and a captured revision; check mix selection, WAV settings, load diagnostics and receipt agreement. Replace input bytes during capture and fail WAV/receipt writes; the result must identify what was actually consumed and retained. Check version refusal and stdout/stderr/exit behavior in a subprocess. |
+| CAP-0043 | 10E host configuration/telemetry; 11 GUI | With OSC compiled in, compare GUI startup with and without the switch: suppression must start no telemetry sender and leave project state unchanged. Exercise feature-disabled argument rejection and mode combinations; document any approved change to the accepted invocation syntax. |
+| CAP-0509 | 10E analysis/CLI adapter; 10B only for later job integration | Compare distinct equal-byte files and deliberately different signals; check versioned reports, unavailable measurements and their diagnostics, path refusals, and nonzero exit on execution failure. A numerical difference must not become an automatic acceptance verdict. Pin or diagnose input replacement under the selected I/O contract. |
+
+The CLI subset is now classified, not migration-verified. Remaining P00B-T002 work includes MCP operation
+dispositions, OSC messages, engine/module/catalog entries, public APIs, the build matrix, developer tools and the
+incomplete per-action GUI census. CAP-0044–CAP-0047 and live transport CAP-0054 keep their existing status.
 
 ## Audit passes
 
@@ -800,6 +938,7 @@ The source traces above are supporting inventory evidence, not the complete work
 | 2026-08-12 | `dd69b657`      | `AppShortcut::ALL` read from `gui/shortcuts.rs` (a closed 7-element table that also renders the menu); MCP annotation attributes counted by `rg -o` over `read_only_hint`/`destructive_hint`/`idempotent_hint`; `dialog_flow.rs` read for the startup ordering.                                                                                                                                                                                                                                                                                                                                                                                   | 8 entries added (`CAP-0048`..`CAP-0055`); `CAP-0011` upgraded to `Classified` once the read/mutate split was separated — annotation coverage turned out to be complete. Gaps remained deliberate at that pass: no entry yet had a disposition, and CAP-0017's external use was unknown. Current correction: CAP-0017 is a public Rust surface even without a workspace caller, and proposed ADR-0039 supplies an explicit disposition for independent review. | Pending `EVD` record for P00B-T002 |
 | 2026-08-25 | `c075ef10` | The shipping CPAL 0.18.1 output/input callbacks at this revision and the candidate CPAL 0.18.2 registry source identified by the updated `Cargo.lock` checksum were read. Every 0.18.2 `ErrorKind` was enumerated, and the stderr-only baseline consumer was traced before this change replaced it with an atomic handoff. | Added `CAP-0508`. The category labels preserve CPAL 0.18.2's richer distinction; the replacement callback path is allocation-, lock-, and logging-free, while non-real-time GUI/MCP polling surfaces coalesced diagnostics and the row leaves durable structured delivery as Phase 9 work. | `Cargo.lock`; `cpal_backend.rs`; EVD-0016; independent uncommitted review |
 | 2026-09-09 | `cf2edf5b` | Followed six document/history shortcuts and their menu handlers, plus startup recovery, into GUI project/dialog/history/autosave flows and their project/store callees; read the named existing tests without running them. | Seven rows (`CAP-0048`–`CAP-0053`, `CAP-0055`) assigned `Migrate` and `Classified`; V2 owners and pending checks named. Corrected the all-menu-bindings claim and separated project recovery from recording-take semantics. Other rows retain their previous status; P00B-T002 remains incomplete. | [Source inspection and limits](#project-actions-2026-09-09) |
+| 2026-09-11 | `85d92f1b` | Followed `Cli`, `Command`, `RenderArgs` and `CompareArgs` through runtime mode dispatch, GUI/stdio startup and render/compare library callees; used the existing source-inspection method and read the cited tests without running them. | Classified CAP-0040–CAP-0043 and new CAP-0509 as `Migrate`; corrected the render-option count and top-level OSC-switch scope, recorded null-backend headless behavior and I/O/shutdown limits. Twelve rows now have dispositions and supporting classification; other rows are unchanged. P00B-T002 remains incomplete. | [CLI source inspection and limits](#cli-entry-points-2026-09-11) |
 
 Completion requires each discovered entry to have reachability, disposition, V2 ownership, and verification. Matching
 the seed counts alone is insufficient.
