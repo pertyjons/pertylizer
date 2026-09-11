@@ -23,6 +23,12 @@ use crate::time::{FrameCount, TimeError};
 /// Why a plan was not admitted.
 #[derive(Debug, Clone, Copy, PartialEq, Error)]
 pub enum CompileError {
+    /// An explicit feedback boundary violates its admitted ownership or timing rule.
+    #[error("feedback boundary {node}: {reason}")]
+    FeedbackBoundary {
+        node: crate::ir::NodeId,
+        reason: &'static str,
+    },
     #[error("{node} script source at {span:?}: {reason}")]
     ScriptBinding {
         node: crate::ir::NodeId,

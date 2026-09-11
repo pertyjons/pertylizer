@@ -644,6 +644,14 @@ fn every_call_the_render_loop_makes_is_inside_the_checked_region() {
         // add, and lands in the same file under the same scan.
         "exp2",
         "powf",
+        // Compressor detector dB conversion: pure f32 libm, with a positive floor.
+        "log10",
+        // f32::signum is a pure sign operation used by the terminating soft knee.
+        "signum",
+        // Decibels::to_linear -> to_gain -> Gain::new in synth_core/types/amplitude.rs:
+        // finite check, powf, and a nonnegative clamp; no allocation/lock/panic. This is
+        // compressor detector gain conversion, not parameter-layer composition.
+        "to_linear",
         // `CompiledPlan::taps` and `BufferRegion::end`: a slice borrow of a table the plan
         // owns and a `const fn` add of a region's offset and length. `HOST-INV-023`'s push
         // reads the tapped regions through them after the schedule walk; neither allocates,

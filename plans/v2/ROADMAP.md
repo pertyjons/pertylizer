@@ -32,7 +32,7 @@ accepted exit review. `NOW.md` owns task activity within an active phase.
 | [5](master-plan.md#phase-5-declarative-node-and-parameter-api) | Declarative node and parameter API | Complete | 4 |
 | [6](master-plan.md#phase-6-polyphony-and-instrument-runtime) | Polyphony and instrument runtime | Complete | 5 |
 | [7](master-plan.md#phase-7-yams-mod-grid-and-unified-modulation) | YAMS, Mod Grid, and unified modulation | Complete | 6 |
-| [8](master-plan.md#phase-8-mixer-channels-buses-effects-and-latency) | Mixer, channels, buses, effects, and latency | Active | 7 |
+| [8](master-plan.md#phase-8-mixer-channels-buses-effects-and-latency) | Mixer, channels, buses, effects, and latency | Complete | 7 |
 | [9](master-plan.md#phase-9-live-integration-and-immutable-plan-swapping) | Live integration and immutable plan swapping | Not started | 8 |
 | [10A](master-plan.md#phase-10a-canonical-project-model-and-stable-identity) | Canonical project model and stable identity | Not started | 0B |
 | [10B](master-plan.md#phase-10b-application-operations-and-transactions) | Application operations and transactions | Not started | 10A |
@@ -197,6 +197,13 @@ engine mirrors.
 
 Exit requires routing/effect parity, deterministic latency compensation, and
 bounded feedback/refusal behavior.
+
+Exit: [REV-P08](reviews/phase-08-exit-review.md) is accepted for the compiled
+Mono/Stereo routing and represented effect catalog. Same-input V1 DSP oracles
+and deterministic V2 corpus qualification are separate; whole-project V1/V2
+orchestration remains P04-R004/ADR-0028's Phase 10B obligation. Rate extensions
+(P08-R001) and additional saved routes (P08-R002) block their first consumers;
+neither is an implied guarantee available to Phase 9.
 
 ### Phase 9 — live integration
 

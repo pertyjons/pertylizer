@@ -143,6 +143,10 @@ pub const ENVELOPE: Kernel = Kernel(envelope);
 pub const FILTER: Kernel = Kernel(filter);
 /// See [`SILENCE`].
 pub const AMPLIFIER: Kernel = Kernel(amplifier);
+/// V1's mono amplifier output, with its CV default and pan law.
+pub const VOICE_AMPLIFIER: Kernel = Kernel(voice_amplifier);
+/// V1's terminating stereo stage.
+pub const VOICE_OUTPUT: Kernel = Kernel(voice_output);
 /// See [`SILENCE`].
 pub const COPY: Kernel = Kernel(copy);
 /// The voice sum's kernel: one instance's output added into the shared mix.
@@ -175,6 +179,10 @@ pub const DISTORTION: Kernel = Kernel(distortion);
 pub const DELAY: Kernel = Kernel(delay);
 /// A declared latency, and the compiler's compensation step (`SOUND-INV-035`).
 pub const LATENCY: Kernel = Kernel(latency);
+/// Stereo compressor with explicit detector routing.
+pub const COMPRESSOR: Kernel = Kernel(compressor);
+/// Read a shared boundary's previous quantum.
+pub const FEEDBACK_READ: Kernel = Kernel(feedback_read);
 /// The low-frequency oscillator's kernel (`SOUND-INV-027`).
 pub const LFO: Kernel = Kernel(lfo);
 /// The bounded, prepared YAMS VM.
@@ -202,6 +210,19 @@ pub fn script(prepared: &PreparedNode, state: &mut NodeState, io: &mut NodeIo<'_
 /// is computed here rather than per quantum, which is the whole point of the split.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum PreparedNode {
+    /// V1's mono amplifier output at unity level.
+    VoiceAmplifier { left: f32, right: f32 },
+    /// V1's terminating stereo output, prepared off thread.
+    VoiceOutput {
+        left: f32,
+        right: f32,
+        threshold: f32,
+        muted: bool,
+        limiting: crate::output::OutputLimiting,
+    },
+
+    /// An explicit quantum feedback boundary.
+    FeedbackDelay,
     /// Immutable VM code, identity seed and evaluation rate.
     Script {
         program: crate::script::ScriptSlot,
@@ -404,6 +425,13 @@ pub enum PreparedNode {
         /// history the renderer hands the kernel holds two of these.
         line: usize,
     },
+    /// Coefficients prepared once for authored compressor settings.
+    Compressor {
+        settings: crate::dynamics::CompressorSettings,
+        attack: f32,
+        release: f32,
+        high_pass: f32,
+    },
     /// A declared latency (`SOUND-INV-035`): the frames its line holds, which is what its
     /// output lags its input by. Also the compiler's compensation step, prepared with the
     /// cable's skew.
@@ -540,6 +568,12 @@ pub enum NodeState {
         tone: f32,
         /// The coefficient in force, that tone's.
         coef: f32,
+    },
+    /// Detector envelope and high-pass history; signal processing internals.
+    Compressor {
+        envelope: f32,
+        filtered: f32,
+        previous: f32,
     },
     /// A declared latency's write index (`SOUND-INV-035`); the line is the history.
     Latency {
@@ -753,6 +787,11 @@ impl NodeState {
                 coef: delay_high_cut_coefficient(tone.as_f32(), *rate),
             },
             PreparedNode::Latency { .. } => Self::Latency { write: 0, valid: 0 },
+            PreparedNode::Compressor { .. } => Self::Compressor {
+                envelope: 0.0,
+                filtered: 0.0,
+                previous: 0.0,
+            },
             PreparedNode::Trim { .. } | PreparedNode::SoftClip | PreparedNode::HardClamp => {
                 Self::Stateless
             }
@@ -768,6 +807,9 @@ impl NodeState {
                 fade_remaining: 0,
                 held: false,
             },
+            PreparedNode::FeedbackDelay
+            | PreparedNode::VoiceAmplifier { .. }
+            | PreparedNode::VoiceOutput { .. } => Self::Stateless,
             PreparedNode::Silence
             | PreparedNode::Amplifier
             | PreparedNode::Constant { .. }
@@ -855,6 +897,7 @@ impl NodeState {
             | Self::Distortion { .. }
             | Self::Delay { .. }
             | Self::Latency { .. }
+            | Self::Compressor { .. }
             | Self::Stateless => None,
         }
     }
@@ -870,6 +913,7 @@ pub fn history_frames(prepared: &PreparedNode) -> usize {
     match prepared {
         PreparedNode::Delay { line, .. } => *line,
         PreparedNode::Latency { frames } => *frames,
+        PreparedNode::FeedbackDelay => crate::time::QUANTUM_FRAMES as usize,
         _ => 0,
     }
 }
@@ -1027,6 +1071,10 @@ pub(crate) fn authored_value(
         | PreparedNode::Gain { .. }
         | PreparedNode::Amplifier
         | PreparedNode::Copy
+        | PreparedNode::FeedbackDelay
+        | PreparedNode::VoiceAmplifier { .. }
+        | PreparedNode::VoiceOutput { .. }
+        | PreparedNode::Compressor { .. }
         | PreparedNode::Script { .. } => None,
     }
 }
@@ -2869,7 +2917,8 @@ pub fn velocity_scaler(_prepared: &PreparedNode, state: &mut NodeState, io: &mut
     let source = io.inputs[0];
     let mut held = *velocity;
     let mut due = 0_usize;
-    for frame in 0..io.out.len() {
+    let channels = io.channels.channels();
+    for frame in 0..io.out.len() / channels {
         while let Some(control) = io.controls.get(due) {
             if control.offset.as_usize() != frame {
                 break;
@@ -2885,13 +2934,12 @@ pub fn velocity_scaler(_prepared: &PreparedNode, state: &mut NodeState, io: &mut
             .copied()
             .unwrap_or(1.0);
         let scale = (1.0 - s) + s * held.as_f32();
-        let input = match source {
-            InputBuffer::Patched(source) => source.get(frame).copied().unwrap_or(0.0),
-            InputBuffer::InPlace => io.out.get(frame).copied().unwrap_or(0.0),
-            InputBuffer::Unpatched => 0.0,
-        };
-        if let Some(sample) = io.out.get_mut(frame) {
-            *sample = input * scale;
+        for channel in 0..channels {
+            let index = frame * channels + channel;
+            let input = stage_input(source, io.out, index);
+            if let Some(sample) = io.out.get_mut(index) {
+                *sample = input * scale;
+            }
         }
     }
     *velocity = held;
@@ -3255,4 +3303,148 @@ pub struct NodeResources<'a> {
     pub scripts: crate::script::ScriptResources<'a>,
     /// The step's slice of the renderer's history slab, empty for a kind that keeps none.
     pub history: &'a mut [f32],
+}
+
+/// V1's stereo compressor arithmetic, with detector audio supplied by the compiled graph.
+pub fn compressor(prepared: &PreparedNode, state: &mut NodeState, io: &mut NodeIo<'_>) {
+    let PreparedNode::Compressor {
+        settings,
+        attack,
+        release,
+        high_pass,
+    } = prepared
+    else {
+        return;
+    };
+    let NodeState::Compressor {
+        envelope,
+        filtered,
+        previous,
+    } = state
+    else {
+        return;
+    };
+    let main = io.inputs[0];
+    let side = io.inputs[1];
+    let external = matches!(
+        settings.detector,
+        crate::dynamics::CompressorDetector::External { .. }
+    ) && !matches!(side, InputBuffer::Unpatched);
+    let mut due = 0;
+    for frame in 0..io.out.len() / 2 {
+        while let Some(control) = io.controls.get(due) {
+            if control.offset.as_usize() != frame {
+                break;
+            }
+            due += 1;
+            if control.control == ControlIndex::RESET {
+                *envelope = 0.0;
+                *filtered = 0.0;
+                *previous = 0.0;
+            }
+        }
+        let index = frame * 2;
+        let left = stage_input(main, io.out, index);
+        let right = stage_input(main, io.out, index + 1);
+        let mut peak = if external {
+            stage_input(side, io.out, index)
+                .abs()
+                .max(stage_input(side, io.out, index + 1).abs())
+        } else {
+            left.abs().max(right.abs())
+        };
+        if external && *high_pass > 0.0 {
+            let next = *high_pass * (*filtered + peak - *previous);
+            *previous = peak;
+            *filtered = next;
+            peak = next.abs();
+        }
+        let peak_db = 20.0 * peak.max(1e-6).log10();
+        let coefficient = if peak_db > *envelope {
+            *attack
+        } else {
+            *release
+        };
+        *envelope = coefficient * *envelope + (1.0 - coefficient) * peak_db;
+        let gain_db = if *envelope > settings.threshold.as_f32() {
+            let overshoot = *envelope - settings.threshold.as_f32();
+            overshoot / settings.ratio.as_f32() - overshoot + settings.makeup.as_f32()
+        } else {
+            settings.makeup.as_f32()
+        };
+        // Unit conversion only; parameter-layer composition stays in render::slot.
+        let gain = synth_core::Decibels::new(gain_db).to_linear();
+        let mix = settings.mix.as_f32();
+        if let Some(out) = io.out.get_mut(index..index + 2) {
+            out[0] = left * (1.0 - mix) + (left * gain) * mix;
+            out[1] = right * (1.0 - mix) + (right * gain) * mix;
+        }
+    }
+}
+
+/// Read all old history before any boundary writes this quantum's signal.
+pub fn feedback_read(_: &PreparedNode, _: &mut NodeState, io: &mut NodeIo<'_>) {
+    for index in 0..io.out.len() {
+        if let Some(out) = io.out.get_mut(index) {
+            *out = io.history.get(index).copied().unwrap_or(0.0);
+        }
+    }
+}
+
+/// The mono output V1 computes from its two panned amplifier outputs.
+pub fn voice_amplifier(prepared: &PreparedNode, _state: &mut NodeState, io: &mut NodeIo<'_>) {
+    let PreparedNode::VoiceAmplifier { left, right } = prepared else {
+        return;
+    };
+    let source = io.inputs[0];
+    for frame in 0..io.out.len() {
+        let cv = match io.inputs[1] {
+            InputBuffer::Unpatched => 1.0,
+            InputBuffer::Patched(values) => values.get(frame).copied().unwrap_or(0.0).max(0.0),
+            InputBuffer::InPlace => 0.0,
+        };
+        let input = stage_input(source, io.out, frame);
+        let l = input * cv * left;
+        let r = input * cv * right;
+        if let Some(sample) = io.out.get_mut(frame) {
+            *sample = (l + r) * 0.5;
+        }
+    }
+}
+
+/// Stereo terminating gain, pan and the explicitly selected V1 limiting law.
+pub fn voice_output(prepared: &PreparedNode, _state: &mut NodeState, io: &mut NodeIo<'_>) {
+    let PreparedNode::VoiceOutput {
+        left,
+        right,
+        threshold,
+        muted,
+        limiting,
+    } = prepared
+    else {
+        return;
+    };
+    let source = io.inputs[0];
+    for index in 0..io.out.len() {
+        let input = stage_input(source, io.out, index);
+        let gain = if index % 2 == 0 { *left } else { *right };
+        let value = if *muted { 0.0 } else { input * gain };
+        let result = match limiting {
+            crate::output::OutputLimiting::Unbounded => value,
+            crate::output::OutputLimiting::HardClamp => value.clamp(-1.0, 1.0),
+            crate::output::OutputLimiting::SoftKnee => {
+                let magnitude = value.abs();
+                if magnitude > *threshold {
+                    let excess = magnitude - threshold;
+                    value.signum()
+                        * (threshold + (1.0 - threshold) * (excess / (1.0 + excess)).tanh())
+                } else {
+                    value
+                }
+            }
+        };
+        if let Some(sample) = io.out.get_mut(index) {
+            *sample = result;
+        }
+    }
 }

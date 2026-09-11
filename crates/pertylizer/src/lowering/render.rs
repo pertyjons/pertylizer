@@ -22,11 +22,9 @@
 //!
 //! # What the render is not
 //!
-//! Not faithful, and it says so: what remains named is Phase 8's — the amplifier's pan stage
-//! and the terminating node's stages — so the outcome's [`Fidelity`] is
-//! [`Fidelity::UnsupportedScope`] and a parity comparison is refused. The audio is evidence
-//! that the lowering, admission, scheduling and rendering path connects end to end — not
-//! evidence that it matches V1.
+//! Fidelity is decided from the saved input's remaining diagnostics. S007 represents
+//! the terminating stages; sidechain timing and summation-order differences remain
+//! explicit. A remaining mark still refuses a parity verdict under LOWER-INV-003.
 //!
 //! V1 remains the default renderer for the GUI, MCP, CLI and releases. Nothing here is
 //! reachable without the non-default `v2-lowering` feature ADR-0056 selects.
@@ -49,7 +47,9 @@ use super::graph::{
     ChannelStrip, GraphAccumulator, InstrumentStages, Sink, lower_instrument_into,
     plan_declarations, voice_tuning,
 };
-use super::identity::{MASTER_CLAMP, MASTER_MIX, MASTER_OUTPUT, MASTER_TRIM};
+use super::identity::{
+    InstrumentSlot, MASTER_CLAMP, MASTER_METER, MASTER_MIX, MASTER_OUTPUT, MASTER_TRIM,
+};
 use super::performance::{
     AutomationTargets, InstrumentPerformance, lower_project_performance, peak_concurrency,
     playing_tracks, project_peak,
@@ -87,20 +87,9 @@ fn project_diagnostics(global: &crate::project::GlobalProjectState) -> Vec<Lower
         // same insert lowering as an instrument's, an effect type V2 has not carried refused
         // there by name.
         return_bus_effects: _,
-        // Refused below, effect by effect: a stage on everything, owed to `P08-S007`.
-        master_effects,
+        // Lowered in saved order before master volume (P08-S007).
+        master_effects: _,
     } = global;
-
-    // A master chain is audible processing on everything. V2 has no master bus at all.
-    for (position, effect) in master_effects.iter().enumerate() {
-        let _ = position;
-        diagnostics.push(LoweringDiagnostic::refused(
-            ProjectSubject::MasterChain,
-            LoweringReason::UnsupportedModuleType {
-                module_type: effect.module_type,
-            },
-        ));
-    }
 
     // A Mod Grid graph is a control-rate modulator V1's offline renderer installs before the
     // engine applies it to track and instrument controls. Since `P07-S003` it is lowered in
@@ -208,7 +197,7 @@ fn instrument_state_dispositions(
         // characterization test that fails the day someone implements it.
         velocity_filter_sensitivity: _,
         // Ducking driven by another instrument, which needs the mixer Phase 8 owns.
-        sidechain_source_id,
+        sidechain_source_id: _,
         // Represented: this is what the voice graph and, since `P08-S003`, the insert chain
         // are lowered from. Its own fields are dispositioned below.
         patch,
@@ -284,18 +273,6 @@ fn instrument_state_dispositions(
          under a non-default allocation mode, which is refused above"
     );
 
-    if sidechain_source_id.is_some() {
-        diagnostics.push(LoweringDiagnostic::refused(
-            subject(),
-            LoweringReason::OwnedByLaterPhase {
-                capability: "a sidechain source, which ducks this instrument on what another \
-                             one plays",
-                owner: "Phase 8, with the mixer model",
-            },
-        ));
-        return Continue::No;
-    }
-
     // Reported rather than refused: the notes are unchanged and only their timbre is.
     // Mapped through V1's own `1 | 2 | 4` reading, where every other value is `X1`, so a saved
     // `3` is neutral to V1 and must be neutral here.
@@ -316,7 +293,7 @@ fn instrument_state_dispositions(
                 // whole-plan path is stable. V1's island is the voice sum alone — voices
                 // rendered at the higher rate and decimated by an 11-tap half-band FIR — so
                 // the insert chain, the channel and the master are outside it either way.
-                owner: "Phase 8, as a rate island; unreached by the corpus, so unbuilt",
+                owner: "P08-R001, before the first nonunity-rate lowering consumer",
             },
         ));
     }
@@ -479,20 +456,16 @@ fn master_trim(
 
 /// What the lowered plan does where V1 saturates (`P08-S002`).
 ///
-/// V1 has two saturation stages a lowered project meets: each channel's post-fader signal
-/// is soft-clipped as it is summed into the master (`mix_stereo_faded`), and the output is
-/// hard-clamped to full scale after the master volume. Both are explicit nodes in the plan
-/// rather than hidden mixing behaviour, and both are selected together: the parity policy
-/// places them where V1 has them, and the headroom policy places neither, so a float
-/// render preserves everything above full scale, which the master plan asks of offline
-/// output unless the caller asks for clipping.
+/// Parity applies the saved voice terminal's limiter, the channel/return soft clippers
+/// and the final master clamp. Headroom bypasses all three limiting locations while
+/// preserving authored gain and the processing of explicit insert effects.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[must_use]
 pub enum OutputPolicy {
     /// V1's stages, for parity: a soft clipper after every channel and a hard clamp before
     /// the output.
     Parity,
-    /// Neither stage: linear summation with float headroom preserved offline.
+    /// Bypass output limiting and preserve float headroom through summation.
     Headroom,
 }
 /// The longest render this bounded scope admits, in seconds.
@@ -548,10 +521,8 @@ pub struct SmokeRender {
 impl SmokeRender {
     /// Whether a parity comparison may read this.
     ///
-    /// Always [`Fidelity::UnsupportedScope`] for an arrangement that places a note: V2 applies
-    /// velocity as one scale where V1 composes two sensitivities, and `lower_performance`
-    /// raises that once per lowering. The method exists so the answer is read rather than
-    /// assumed.
+    /// Derived from remaining diagnostics. The supported single-note subset can be
+    /// faithful; a timing, lifetime or unsupported-state mark still excludes comparison.
     pub fn fidelity(&self) -> Fidelity {
         Fidelity::of(&self.diagnostics)
     }
@@ -757,6 +728,7 @@ pub fn smoke_render_project(
             track: p.playing.as_ref().map(|playing| playing.stage),
             channel: Some(p.strip),
             soft_clip: policy == OutputPolicy::Parity,
+            headroom: policy == OutputPolicy::Headroom,
             sends: p.sends.clone(),
         };
         let outcome = lower_instrument_into(
@@ -800,6 +772,53 @@ pub fn smoke_render_project(
     if refused_any {
         return refused(diagnostics);
     }
+    // Sidechains resolve saved references into audio edges before compilation. They read
+    // the source channel's pre-fader signal in this quantum, not V1's callback cache.
+    for destination in &lowered {
+        let Some(raw_source) = destination.saved.sidechain_source_id else {
+            continue;
+        };
+        let subject = || ProjectSubject::Instrument {
+            instrument: destination.saved.id,
+            name: destination.saved.name.clone(),
+        };
+        let source = lowered
+            .iter()
+            .find(|entry| entry.saved.id.as_u64() == raw_source);
+        let Some(source) = source else {
+            diagnostics.push(LoweringDiagnostic::refused(
+                subject(),
+                LoweringReason::UnresolvedEndpoint {
+                    spelling: format!("sidechain source instrument {raw_source} is absent"),
+                },
+            ));
+            return refused(diagnostics);
+        };
+        let Some(input) = graph.channel_input(source.identities.slot().channel()) else {
+            diagnostics.push(LoweringDiagnostic::refused(
+                subject(),
+                LoweringReason::UnresolvedEndpoint {
+                    spelling: format!(
+                        "sidechain source instrument {raw_source} has no channel input"
+                    ),
+                },
+            ));
+            return refused(diagnostics);
+        };
+        let mut connected = false;
+        for (_, node) in destination.identities.pairs() {
+            if graph.external_detector(node) {
+                graph.connect(input, (node, PortId::new(1)), SignalDomain::Audio);
+                connected = true;
+            }
+        }
+        if connected {
+            diagnostics.push(LoweringDiagnostic::unrepresented(
+                subject(),
+                LoweringReason::SidechainTiming,
+            ));
+        }
+    }
     // The returns (`P08-S004`): each its entry, its chain, its strip and its clipper under
     // the parity policy, into the master unless another return is soloed, and its
     // bus-to-bus sends.
@@ -817,7 +836,12 @@ pub fn smoke_render_project(
 
     // The master, in V1's order: every channel into one sum, the master volume, V1's output
     // clamp under the parity policy, and the plan's one output.
+    let Some(inserts) = master_inserts(&global.master_effects, &mut diagnostics) else {
+        return refused(diagnostics);
+    };
     let mut master_ir = master_nodes(policy, master_level);
+    master_ir.splice(1..1, inserts);
+    master_ir.push((MASTER_METER, IrNodeKind::StereoMonitor));
     master_ir.push((MASTER_OUTPUT, IrNodeKind::Output));
     let mut previous: Option<synth_engine_v2::ir::NodeId> = None;
     let mut builder_error = None;
@@ -1020,4 +1044,41 @@ fn master_nodes(policy: OutputPolicy, level: Amplitude) -> Vec<(NodeId, IrNodeKi
         master.push((MASTER_CLAMP, IrNodeKind::HardClamp));
     }
     master
+}
+
+/// Master inserts share the instrument/return kernel lowerer and retain saved order.
+fn master_inserts(
+    effects: &[crate::patch::ModuleState],
+    diagnostics: &mut Vec<LoweringDiagnostic>,
+) -> Option<Vec<(NodeId, IrNodeKind)>> {
+    let mut result = Vec::with_capacity(effects.len());
+    let mut seen = std::collections::BTreeSet::new();
+    for effect in effects {
+        let id = match effect.id.parse::<synth_engine::ModuleId>() {
+            Ok(id) if id.module_type == effect.module_type && seen.insert(id) => id,
+            _ => {
+                diagnostics.push(LoweringDiagnostic::refused(
+                    ProjectSubject::MasterChain,
+                    LoweringReason::UnresolvedEndpoint {
+                        spelling: format!(
+                            "invalid, mismatched or duplicate master effect {}",
+                            effect.id
+                        ),
+                    },
+                ));
+                return None;
+            }
+        };
+        let kind = super::graph::lower_insert(
+            &|| ProjectSubject::MasterModule { module: id },
+            &|key| ProjectSubject::MasterParameter {
+                module: id,
+                parameter: key.to_owned(),
+            },
+            effect,
+            diagnostics,
+        )?;
+        result.push((InstrumentSlot::MASTER.module(id), kind));
+    }
+    Some(result)
 }

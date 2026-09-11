@@ -65,6 +65,7 @@ impl EdgeLatency {
 #[must_use]
 pub struct PathLatencies {
     policy: CompensationPolicy,
+    feedback: Vec<NodeId>,
     paths: Vec<PathLatency>,
     edges: Vec<EdgeLatency>,
     output: FrameCount,
@@ -77,6 +78,7 @@ impl Default for PathLatencies {
     fn default() -> Self {
         Self {
             policy: CompensationPolicy::default(),
+            feedback: Vec::new(),
             paths: Vec::new(),
             edges: Vec::new(),
             output: FrameCount::ZERO,
@@ -90,6 +92,11 @@ impl Default for PathLatencies {
 impl PathLatencies {
     pub const fn policy(&self) -> CompensationPolicy {
         self.policy
+    }
+    /// Explicit Q-frame boundaries. With any boundary, paths describe one cut-graph
+    /// traversal, not the age of recurring content (ADR-0033).
+    pub fn feedback_boundaries(&self) -> &[NodeId] {
+        &self.feedback
     }
     pub fn paths(&self) -> &[PathLatency] {
         &self.paths
@@ -111,10 +118,14 @@ impl PathLatencies {
         self.compensation_history
     }
     pub(crate) fn prepared_bytes(&self) -> u64 {
-        (self.paths.len() as u64)
-            .saturating_mul(size_of::<PathLatency>() as u64)
+        (self.feedback.len() as u64)
+            .saturating_mul((size_of::<NodeId>() + size_of::<crate::plan::PlanOp>()) as u64)
             .saturating_add(
-                (self.edges.len() as u64).saturating_mul(size_of::<EdgeLatency>() as u64),
+                (self.paths.len() as u64)
+                    .saturating_mul(size_of::<PathLatency>() as u64)
+                    .saturating_add(
+                        (self.edges.len() as u64).saturating_mul(size_of::<EdgeLatency>() as u64),
+                    ),
             )
     }
 }
@@ -137,11 +148,10 @@ pub(crate) fn analyze(
         .map(|node| (node.id(), node.scope()))
         .collect();
     let mut incoming: HashMap<NodeId, Vec<&IrEdge>> = HashMap::new();
-    for edge in ir
-        .edges()
-        .iter()
-        .filter(|edge| edge.domain() != SignalDomain::Event)
-    {
+    for edge in ir.edges().iter().filter(|edge| {
+        edge.domain() != SignalDomain::Event
+            && kinds.get(&edge.to().0) != Some(&IrNodeKind::FeedbackDelay)
+    }) {
         incoming.entry(edge.to().0).or_default().push(edge);
     }
     let voices = ir.voice_instances().get();
@@ -208,7 +218,12 @@ pub(crate) fn analyze(
                 compensation: if align { skew } else { FrameCount::ZERO },
             });
         }
-        let own = crate::node::timing_of(*kind, rate).latency;
+        let own = if matches!(kind, IrNodeKind::FeedbackDelay) {
+            result.feedback.push(*id);
+            FrameCount::ZERO
+        } else {
+            crate::node::timing_of(*kind, rate).latency
+        };
         // Preserve any skew inherited from an uncompensated multi-input node.
         let earliest = if align {
             arrivals
@@ -266,6 +281,8 @@ pub(crate) fn analyze(
             bytes: crate::quantities::PreparedBytes::measured(history),
         });
     }
+    result.feedback.sort_unstable();
+    result.feedback = result.feedback.into_boxed_slice().into_vec();
     result.paths = paths.into_values().collect();
     result.paths.sort_by_key(|path| path.node);
     result.edges.sort_by_key(|edge| edge.edge);

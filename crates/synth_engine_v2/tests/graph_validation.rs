@@ -489,6 +489,7 @@ catalog! {
         tone: synth_engine_v2::quantities::NormalizedLevel::FULL,
     } => IrNodeKind::Delay { .. },
     IrNodeKind::Latency { frames: FrameCount::new(7) } => IrNodeKind::Latency { .. },
+    IrNodeKind::Compressor { settings: synth_engine_v2::dynamics::CompressorSettings::default() } => IrNodeKind::Compressor { .. },
     IrNodeKind::Sampler {
         map: synth_engine_v2::sample::SampleMapRef::new(0),
         level: level(1.0),
@@ -517,6 +518,11 @@ catalog! {
         phase_offset: synth_engine_v2::quantities::PhaseOffset::ZERO,
         polarity: synth_engine_v2::ir::LfoPolarity::Bipolar,
     } => IrNodeKind::Lfo { .. },
+    IrNodeKind::FeedbackDelay => IrNodeKind::FeedbackDelay,
+    IrNodeKind::VoiceAmplifier { pan: synth_engine_v2::controller::BipolarLevel::ZERO } => IrNodeKind::VoiceAmplifier { .. },
+    IrNodeKind::VoiceOutput { master: synth_engine_v2::quantities::NormalizedLevel::FULL, pan: synth_engine_v2::controller::BipolarLevel::ZERO, muted: false, limiting: synth_engine_v2::output::OutputLimiting::SoftKnee } => IrNodeKind::VoiceOutput { .. },
+    IrNodeKind::StereoVelocityScaler { sensitivity: synth_engine_v2::quantities::NormalizedLevel::FULL } => IrNodeKind::StereoVelocityScaler { .. },
+    IrNodeKind::StereoMonitor => IrNodeKind::StereoMonitor,
     IrNodeKind::Output => IrNodeKind::Output,
 }
 
@@ -551,6 +557,11 @@ fn every_kernel_admits_exactly_one_channel_on_every_port() {
                 | IrNodeKind::HardClamp
                 | IrNodeKind::Distortion { .. }
                 | IrNodeKind::Delay { .. }
+                | IrNodeKind::Compressor { .. }
+                | IrNodeKind::FeedbackDelay
+                | IrNodeKind::VoiceOutput { .. }
+                | IrNodeKind::StereoMonitor
+                | IrNodeKind::StereoVelocityScaler { .. }
         ) {
             ChannelLayout::Stereo
         } else {

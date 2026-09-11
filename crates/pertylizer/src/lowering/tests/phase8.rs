@@ -217,7 +217,17 @@ fn an_instrument_soloed_elsewhere_silences_this_one() {
 #[test]
 fn the_parity_policy_clamps_at_full_scale_and_headroom_preserves_the_sum() {
     // Both faders at V1's mixer maximum, both instruments sounding at once.
-    let instruments = [instrument_with(0, 2.0), instrument_with(1, 2.0)];
+    let mut instruments = [instrument_with(0, 2.0), instrument_with(1, 2.0)];
+    for saved in &mut instruments {
+        saved.pan = synth_core::BipolarValue::new(-1.0);
+        for module in &mut saved.patch.modules {
+            if module.module_type == ModuleType::StereoOutput {
+                module
+                    .parameters
+                    .insert("pan".to_owned(), ParamValue::Float(-1.0));
+            }
+        }
+    }
     let song = two_instrument_song(1);
     let global = unity_master();
     let parity = render(&instruments, &song, &global, OutputPolicy::Parity);
@@ -270,6 +280,7 @@ fn the_chain_is_v1s_order_into_one_master() {
             muted: false,
         }),
         soft_clip: true,
+        headroom: false,
         sends: Vec::new(),
     };
     let lowered = lower_instrument_into(
@@ -362,9 +373,15 @@ fn the_chain_is_v1s_order_into_one_master() {
     assert_eq!(outputs, vec![MASTER_OUTPUT]);
     // And the cable the patch draws into its output module enters the scaler.
     let out_module = ModuleId::new(ModuleType::StereoOutput, 1);
-    assert!(
+    assert!(matches!(
         ir.node(lowered.identities.node_for(out_module).expect("resolved"))
-            .is_none()
+            .expect("terminal")
+            .kind(),
+        IrNodeKind::VoiceOutput { .. }
+    ));
+    assert_eq!(
+        scope_of(lowered.identities.node_for(out_module).expect("resolved")),
+        ExecutionScope::Voice
     );
     assert!(
         ir.edges()
@@ -887,6 +904,7 @@ fn inserts_sit_between_the_balance_and_the_channel_in_the_orders_order() {
             muted: false,
         }),
         soft_clip: true,
+        headroom: false,
         sends: Vec::new(),
     };
     let lowered = lower_instrument_into(
@@ -1417,4 +1435,374 @@ fn v2s_delay_and_distortion_are_v1s_modules_bit_for_bit() {
     }));
     assert_eq!(bits(&v2), bits(&expected), "distortion");
     assert_ne!(bits(&v2), bits(&input));
+}
+
+/// The compressor oracle is the existing V1 effect, including its initial zero-dB
+/// envelope and rectified sidechain high-pass. Both engines receive the same samples.
+#[test]
+fn v2_compressor_matches_v1_with_internal_external_and_unpatched_detectors() {
+    use synth_core::{
+        AudioEffect, CompressorParam, Decibels, Hertz, Milliseconds, Param, ProcessContext, Ratio,
+    };
+    use synth_engine_v2::dynamics::{CompressorDetector, CompressorSettings};
+    use synth_engine_v2::ir::{GraphIr, NodeId, PortId, SignalDomain};
+    use synth_engine_v2::quantities::{Amplitude, CutoffFrequency, Frequency, NormalizedLevel};
+    use synth_engine_v2::time::PlanPosition;
+    let main = NodeId::new(1);
+    let detector = NodeId::new(2);
+    let effect = NodeId::new(3);
+    let out = NodeId::new(4);
+    let source = |frequency| IrNodeKind::Sine {
+        frequency: Frequency::new(frequency).expect("frequency"),
+        amplitude: Amplitude::new(0.8).expect("level"),
+    };
+    let render = |settings: Option<CompressorSettings>, patched: bool, frequency: f32| {
+        let mut b = GraphIr::builder()
+            .node(main, source(frequency), ExecutionScope::Global)
+            .node(out, IrNodeKind::Output, ExecutionScope::Global);
+        if let Some(settings) = settings {
+            b = b
+                .node(
+                    effect,
+                    IrNodeKind::Compressor { settings },
+                    ExecutionScope::Global,
+                )
+                .connect(
+                    (main, PortId::FIRST),
+                    (effect, PortId::FIRST),
+                    SignalDomain::Audio,
+                )
+                .connect(
+                    (effect, PortId::FIRST),
+                    (out, PortId::FIRST),
+                    SignalDomain::Audio,
+                );
+            if patched {
+                b = b
+                    .node(detector, source(73.0), ExecutionScope::Global)
+                    .connect(
+                        (detector, PortId::FIRST),
+                        (effect, PortId::new(1)),
+                        SignalDomain::Audio,
+                    );
+            }
+        } else {
+            b = b.connect(
+                (main, PortId::FIRST),
+                (out, PortId::FIRST),
+                SignalDomain::Audio,
+            );
+        }
+        let plan = compile(
+            &b.build().expect("graph"),
+            &RenderConfig::new(harness_profile()),
+        )
+        .into_plan()
+        .expect("plan");
+        synth_engine_v2::offline::render_offline(
+            plan,
+            FrameCount::new(2048),
+            PlanPosition::ZERO,
+            &[],
+        )
+        .expect("render")
+    };
+    let main_samples = render(None, false, 880.0);
+    let side_samples = render(None, false, 73.0);
+    for (external, patched, cutoff) in [
+        (false, false, 80.0),
+        (true, false, 80.0),
+        (true, true, 20.0),
+        (true, true, 180.0),
+    ] {
+        let settings = CompressorSettings::new(
+            Decibels::new(-23.0),
+            Ratio::new(5.0),
+            Milliseconds::new(0.5),
+            Milliseconds::new(70.0),
+            Decibels::new(3.0),
+            NormalizedLevel::new(0.7).expect("mix"),
+            if external {
+                CompressorDetector::External {
+                    cutoff: CutoffFrequency::new(cutoff).expect("cutoff"),
+                }
+            } else {
+                CompressorDetector::Internal
+            },
+        )
+        .expect("settings");
+        let mut v1 = synth_modules::effects::Compressor::new();
+        for p in [
+            CompressorParam::Threshold(Decibels::new(-23.0)),
+            CompressorParam::Ratio(Ratio::new(5.0)),
+            CompressorParam::Attack(Milliseconds::new(0.5)),
+            CompressorParam::Release(Milliseconds::new(70.0)),
+            CompressorParam::Makeup(Decibels::new(3.0)),
+            CompressorParam::Mix(synth_core::NormalizedValue::new(0.7)),
+            CompressorParam::SidechainEnabled(external),
+            CompressorParam::SidechainFilter(Hertz::new(cutoff)),
+        ] {
+            v1.set_param(Param::Compressor(p));
+        }
+        if patched {
+            v1.set_sidechain_input(&side_samples);
+        }
+        let mut expected = vec![0.0; main_samples.len()];
+        v1.process(
+            &main_samples,
+            &mut expected,
+            &ProcessContext {
+                sample_rate: synth_core::SampleRate::new(48_000.0),
+                samples: synth_core::SampleCount::new(2048),
+                ..Default::default()
+            },
+        );
+        assert_eq!(
+            render(Some(settings), patched, 880.0),
+            expected,
+            "external {external}, patched {patched}, cutoff {cutoff}"
+        );
+        assert_ne!(
+            expected, main_samples,
+            "comparison must exercise processing"
+        );
+    }
+}
+
+#[test]
+fn project_sidechain_resolves_the_source_channel_and_marks_current_quantum_timing() {
+    let source = instrument_with(0, 0.4);
+    let mut destination = instrument_with(1, 0.6);
+    destination.sidechain_source_id = Some(0);
+    let mut compressor = module("cmp-1", ModuleType::Compressor);
+    compressor
+        .parameters
+        .insert("sidechain".into(), crate::patch::ParamValue::Float(1.0));
+    destination.patch.modules.push(compressor);
+    destination
+        .patch
+        .settings
+        .effect_chain_order
+        .push("cmp-1".into());
+    let result = smoke_render_project(
+        &[source, destination],
+        &two_instrument_song(1),
+        &crate::project::GlobalProjectState::default(),
+        harness_profile(),
+        FrameCount::new(4096),
+        OutputPolicy::Parity,
+    );
+    assert!(!result.samples.is_empty(), "{:?}", result.diagnostics);
+    assert!(
+        result
+            .diagnostics
+            .iter()
+            .any(|d| matches!(d.reason(), LoweringReason::SidechainTiming))
+    );
+    assert_eq!(
+        result.fidelity(),
+        Fidelity::UnsupportedScope,
+        "intentional timing is not a parity claim"
+    );
+}
+
+#[test]
+fn voice_amplifier_and_terminating_output_match_actual_v1_modules() {
+    use synth_core::{
+        AudioBuffer, InputPorts, MixerParam, Param, PolyModule, PortName, ProcessContext,
+    };
+    use synth_engine_v2::controller::BipolarLevel;
+    use synth_engine_v2::ir::{GraphIr, NodeId, PortId, SignalDomain};
+    use synth_engine_v2::output::OutputLimiting;
+    use synth_engine_v2::quantities::{Amplitude, NormalizedLevel};
+    use synth_engine_v2::time::PlanPosition;
+    let context = ProcessContext {
+        samples: synth_core::SampleCount::new(64),
+        ..ProcessContext::default()
+    };
+    for input in [-3.0, -0.2, 0.0, 0.7, 4.0] {
+        let mut audio = AudioBuffer::new(64);
+        for n in 0..64 {
+            audio[n] = input;
+        }
+        for pan in [-1.0, -0.37, 0.0, 0.63, 1.0] {
+            let render = |kind| {
+                let ir = GraphIr::builder()
+                    .node(
+                        NodeId::new(1),
+                        IrNodeKind::Constant {
+                            level: Amplitude::new(input).expect("level"),
+                        },
+                        ExecutionScope::Global,
+                    )
+                    .node(NodeId::new(2), kind, ExecutionScope::Global)
+                    .node(NodeId::new(3), IrNodeKind::Output, ExecutionScope::Global)
+                    .connect(
+                        (NodeId::new(1), PortId::FIRST),
+                        (NodeId::new(2), PortId::FIRST),
+                        SignalDomain::Audio,
+                    )
+                    .connect(
+                        (NodeId::new(2), PortId::FIRST),
+                        (NodeId::new(3), PortId::FIRST),
+                        SignalDomain::Audio,
+                    )
+                    .build()
+                    .expect("graph");
+                let plan = compile(&ir, &RenderConfig::new(harness_profile()))
+                    .into_plan()
+                    .expect("plan");
+                synth_engine_v2::offline::render_offline(
+                    plan,
+                    FrameCount::new(64),
+                    PlanPosition::ZERO,
+                    &[],
+                )
+                .expect("render")
+            };
+            let mut amp = synth_modules::Amplifier::new();
+            amp.set_param(Param::Amplifier(synth_core::AmplifierParam::Pan(
+                synth_core::BipolarValue::new(pan),
+            )));
+            let mut outputs =
+                std::collections::HashMap::from([(PortName::OUT, AudioBuffer::new(64))]);
+            amp.process(
+                InputPorts::new(&[(PortName::IN, &audio)]),
+                &mut outputs,
+                &context,
+            );
+            let expected: Vec<f32> = outputs[&PortName::OUT]
+                .as_slice()
+                .iter()
+                .flat_map(|v| [*v; 2])
+                .collect();
+            assert_eq!(
+                render(IrNodeKind::VoiceAmplifier {
+                    pan: BipolarLevel::new(pan).expect("pan")
+                }),
+                expected,
+                "amp input {input} pan {pan}"
+            );
+            for master in [0.0, 0.8, 1.0] {
+                for (enabled, muted) in [(true, false), (false, false), (true, true)] {
+                    let mut terminal = synth_modules::StereoOutput::new();
+                    for p in [
+                        Param::Mixer(MixerParam::Master(synth_core::Gain::new(master))),
+                        Param::Amplifier(synth_core::AmplifierParam::Pan(
+                            synth_core::BipolarValue::new(pan),
+                        )),
+                        Param::Mixer(MixerParam::Limit(enabled)),
+                        Param::Mixer(MixerParam::Mute(muted)),
+                    ] {
+                        terminal.set_param(p);
+                    }
+                    terminal.process(
+                        InputPorts::new(&[(PortName::IN, &audio)]),
+                        &mut std::collections::HashMap::new(),
+                        &context,
+                    );
+                    let actual = render(IrNodeKind::VoiceOutput {
+                        master: NormalizedLevel::new(master).expect("master"),
+                        pan: BipolarLevel::new(pan).expect("pan"),
+                        muted,
+                        limiting: if enabled {
+                            OutputLimiting::SoftKnee
+                        } else {
+                            OutputLimiting::HardClamp
+                        },
+                    });
+                    assert_eq!(
+                        actual,
+                        &terminal.get_output()[..128],
+                        "output input {input} pan {pan} master {master} limit {enabled} mute {muted}"
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn saved_master_inserts_keep_order_before_volume_and_refuse_bad_identities() {
+    use synth_core::ProcessContext;
+    let saved = instrument_with(0, 1.0);
+    let song = four_note_song();
+    let base = render(
+        std::slice::from_ref(&saved),
+        &song,
+        &unity_master(),
+        OutputPolicy::Headroom,
+    );
+    let distortion = corpus_inserts().instruments[0]
+        .patch
+        .modules
+        .iter()
+        .find(|module| module.module_type == ModuleType::Distortion)
+        .expect("distortion")
+        .clone();
+    let compressor = module("cmp-1", ModuleType::Compressor);
+    let mut outcomes = Vec::new();
+    for effects in [
+        [distortion.clone(), compressor.clone()],
+        [compressor.clone(), distortion.clone()],
+    ] {
+        let mut global = unity_master();
+        global.master_volume = synth_core::Gain::new(0.4);
+        global.master_effects = effects.to_vec();
+        let actual = render(
+            std::slice::from_ref(&saved),
+            &song,
+            &global,
+            OutputPolicy::Headroom,
+        );
+        assert!(actual.is_audible(), "{:?}", actual.diagnostics);
+        let mut expected = base.samples.clone();
+        for effect in &effects {
+            let (mut v1, descriptor) =
+                crate::module_factory::create_effect(effect.module_type).expect("effect");
+            v1.set_sample_rate(synth_core::SampleRate::new(48_000.0));
+            for (key, value) in &effect.parameters {
+                let declaration = descriptor.find_parameter(key).expect("parameter");
+                v1.set_param(value.to_param(declaration));
+            }
+            let mut next = vec![0.0; expected.len()];
+            v1.process(
+                &expected,
+                &mut next,
+                &ProcessContext {
+                    sample_rate: synth_core::SampleRate::new(48_000.0),
+                    samples: synth_core::SampleCount::new(expected.len() / 2),
+                    ..ProcessContext::default()
+                },
+            );
+            expected = next;
+        }
+        for sample in &mut expected {
+            *sample *= 0.4;
+        }
+        assert_eq!(actual.samples, expected);
+        outcomes.push(actual.samples);
+    }
+    assert_ne!(outcomes[0], outcomes[1], "insert order must be audible");
+    for effects in [
+        vec![compressor.clone(), compressor.clone()],
+        vec![module("dly-1", ModuleType::Compressor)],
+    ] {
+        let mut global = unity_master();
+        global.master_effects = effects;
+        let actual = render(
+            std::slice::from_ref(&saved),
+            &song,
+            &global,
+            OutputPolicy::Parity,
+        );
+        assert!(actual.samples.is_empty());
+        assert!(
+            actual
+                .diagnostics
+                .iter()
+                .any(|d| d.subject() == &ProjectSubject::MasterChain
+                    && d.severity() == Severity::Refused)
+        );
+    }
 }

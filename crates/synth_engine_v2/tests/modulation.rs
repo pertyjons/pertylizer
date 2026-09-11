@@ -972,6 +972,7 @@ fn a_source_modulating_another_sources_rate_is_composed_before_that_source_runs(
         .map(|op| match op {
             PlanOp::Node(_) => "node",
             PlanOp::Modulate(_) => "modulate",
+            PlanOp::FeedbackWrite { .. } => "feedback_write",
             PlanOp::Output { .. } => "output",
         })
         .collect();

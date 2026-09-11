@@ -1149,6 +1149,14 @@ pub enum NodeKindId {
     Gain,
     /// V1's voice-output velocity stage (ADR-0059).
     VelocityScaler,
+    /// Stereo velocity stage.
+    StereoVelocityScaler,
+    /// V1 mono amplifier output.
+    VoiceAmplifier,
+    /// V1 terminating stereo stage.
+    VoiceOutput,
+    /// Stereo observation point.
+    StereoMonitor,
     /// A mix channel: fader, pan and mute over one stereo signal (`SOUND-INV-031`).
     Channel,
     /// An explicit stereo sum whose input declares fan-in (`SOUND-INV-031`).
@@ -1177,6 +1185,10 @@ pub enum NodeKindId {
     /// A declared latency and nothing else, the first kind with one (`P08-S005`,
     /// `SOUND-INV-035`).
     Latency,
+    /// Stereo dynamics with a current-quantum sidechain input.
+    Compressor,
+    /// Explicit shared feedback history.
+    FeedbackDelay,
     /// An amplifier driven by a control input.
     Amplifier,
     /// A low-pass filter.
@@ -2143,7 +2155,7 @@ fn prepare_script_program(
 /// the declarations are `static` rather than `const`: a `const` is materialised at each
 /// use and has no single address to compare — so a kind declared but left out here cannot
 /// be discovered, and one listed here but not resolvable cannot compile.
-static DECLARED: [&NodeDeclaration; 35] = [
+static DECLARED: [&NodeDeclaration; 41] = [
     &SCRIPT,
     &AUDIO_SCRIPT,
     &NOTE_SCRIPT,
@@ -2157,6 +2169,10 @@ static DECLARED: [&NodeDeclaration; 35] = [
     &FILTER,
     &ENVELOPE,
     &MONITOR,
+    &STEREO_MONITOR,
+    &STEREO_VELOCITY_SCALER,
+    &VOICE_AMPLIFIER,
+    &VOICE_OUTPUT,
     &VELOCITY_SCALER,
     &CHANNEL,
     &MIX,
@@ -2169,6 +2185,8 @@ static DECLARED: [&NodeDeclaration; 35] = [
     &DISTORTION,
     &DELAY,
     &LATENCY,
+    &COMPRESSOR,
+    &FEEDBACK_DELAY,
     &SAMPLER,
     &LFO,
     &MOD_WHEEL,
@@ -2298,7 +2316,7 @@ pub(crate) static CHANNEL: NodeDeclaration = NodeDeclaration {
     ],
     in_place_safe: true,
     note_control: None,
-    taps: &[],
+    taps: MONITOR.taps,
     prepare: prepare_channel,
     timing: stateless_timing,
     prepared_bytes: size_of::<(
@@ -2999,6 +3017,10 @@ pub(crate) fn declaration(kind: IrNodeKind) -> Option<&'static NodeDeclaration> 
         IrNodeKind::Impulse { .. } => Some(&IMPULSE),
         IrNodeKind::Amplifier => Some(&AMPLIFIER),
         IrNodeKind::Monitor => Some(&MONITOR),
+        IrNodeKind::StereoMonitor => Some(&STEREO_MONITOR),
+        IrNodeKind::StereoVelocityScaler { .. } => Some(&STEREO_VELOCITY_SCALER),
+        IrNodeKind::VoiceAmplifier { .. } => Some(&VOICE_AMPLIFIER),
+        IrNodeKind::VoiceOutput { .. } => Some(&VOICE_OUTPUT),
         IrNodeKind::Gain { .. } => Some(&GAIN),
         IrNodeKind::VelocityScaler { .. } => Some(&VELOCITY_SCALER),
         IrNodeKind::Channel { .. } => Some(&CHANNEL),
@@ -3012,6 +3034,8 @@ pub(crate) fn declaration(kind: IrNodeKind) -> Option<&'static NodeDeclaration> 
         IrNodeKind::Distortion { .. } => Some(&DISTORTION),
         IrNodeKind::Delay { .. } => Some(&DELAY),
         IrNodeKind::Latency { .. } => Some(&LATENCY),
+        IrNodeKind::Compressor { .. } => Some(&COMPRESSOR),
+        IrNodeKind::FeedbackDelay => Some(&FEEDBACK_DELAY),
         IrNodeKind::Sampler { .. } => Some(&SAMPLER),
         IrNodeKind::Filter { .. } => Some(&FILTER),
         IrNodeKind::Controller { kind } => Some(match kind {
@@ -3067,10 +3091,13 @@ pub(crate) fn descriptor(kind: IrNodeKind) -> Option<NodeDescriptor> {
         IrNodeKind::Saw { .. } => declared.map(NodeDeclaration::descriptor),
         IrNodeKind::Envelope { .. } => declared.map(NodeDeclaration::descriptor),
         IrNodeKind::Amplifier => declared.map(NodeDeclaration::descriptor),
+        IrNodeKind::VoiceAmplifier { .. } => declared.map(NodeDeclaration::descriptor),
         IrNodeKind::Monitor => declared.map(NodeDeclaration::descriptor),
+        IrNodeKind::StereoMonitor => declared.map(NodeDeclaration::descriptor),
         IrNodeKind::Filter { .. } => declared.map(NodeDeclaration::descriptor),
         IrNodeKind::Gain { .. } => declared.map(NodeDeclaration::descriptor),
         IrNodeKind::VelocityScaler { .. } => declared.map(NodeDeclaration::descriptor),
+        IrNodeKind::StereoVelocityScaler { .. } => declared.map(NodeDeclaration::descriptor),
         IrNodeKind::Channel { .. } => declared.map(NodeDeclaration::descriptor),
         IrNodeKind::Mix => declared.map(NodeDeclaration::descriptor),
         IrNodeKind::Balance { .. } => declared.map(NodeDeclaration::descriptor),
@@ -3082,6 +3109,9 @@ pub(crate) fn descriptor(kind: IrNodeKind) -> Option<NodeDescriptor> {
         IrNodeKind::Distortion { .. } => declared.map(NodeDeclaration::descriptor),
         IrNodeKind::Delay { .. } => declared.map(NodeDeclaration::descriptor),
         IrNodeKind::Latency { .. } => declared.map(NodeDeclaration::descriptor),
+        IrNodeKind::Compressor { .. } => declared.map(NodeDeclaration::descriptor),
+        IrNodeKind::VoiceOutput { .. } => declared.map(NodeDeclaration::descriptor),
+        IrNodeKind::FeedbackDelay => declared.map(NodeDeclaration::descriptor),
         IrNodeKind::Sampler { .. } => declared.map(NodeDeclaration::descriptor),
         IrNodeKind::Controller { .. } | IrNodeKind::NoteSource { .. } => {
             declared.map(NodeDeclaration::descriptor)
@@ -3320,9 +3350,12 @@ pub fn prepared_payload_bytes(kind: IrNodeKind) -> u64 {
         IrNodeKind::Impulse { .. } => return declared.map_or(0, |d| d.prepared_bytes),
         IrNodeKind::Sine { .. } => return declared.map_or(0, |d| d.prepared_bytes),
         IrNodeKind::Amplifier => return declared.map_or(0, |d| d.prepared_bytes),
+        IrNodeKind::VoiceAmplifier { .. } => return declared.map_or(0, |d| d.prepared_bytes),
         IrNodeKind::Monitor => return declared.map_or(0, |d| d.prepared_bytes),
+        IrNodeKind::StereoMonitor => return declared.map_or(0, |d| d.prepared_bytes),
         IrNodeKind::Gain { .. } => return declared.map_or(0, |d| d.prepared_bytes),
         IrNodeKind::VelocityScaler { .. } => return declared.map_or(0, |d| d.prepared_bytes),
+        IrNodeKind::StereoVelocityScaler { .. } => return declared.map_or(0, |d| d.prepared_bytes),
         IrNodeKind::Channel { .. } => return declared.map_or(0, |d| d.prepared_bytes),
         IrNodeKind::Mix => return declared.map_or(0, |d| d.prepared_bytes),
         IrNodeKind::Balance { .. } => return declared.map_or(0, |d| d.prepared_bytes),
@@ -3334,6 +3367,9 @@ pub fn prepared_payload_bytes(kind: IrNodeKind) -> u64 {
         IrNodeKind::Distortion { .. } => return declared.map_or(0, |d| d.prepared_bytes),
         IrNodeKind::Delay { .. } => return declared.map_or(0, |d| d.prepared_bytes),
         IrNodeKind::Latency { .. } => return declared.map_or(0, |d| d.prepared_bytes),
+        IrNodeKind::Compressor { .. } => return declared.map_or(0, |d| d.prepared_bytes),
+        IrNodeKind::VoiceOutput { .. } => return declared.map_or(0, |d| d.prepared_bytes),
+        IrNodeKind::FeedbackDelay => return declared.map_or(0, |d| d.prepared_bytes),
         IrNodeKind::Sampler { .. } => return declared.map_or(0, |d| d.prepared_bytes),
         IrNodeKind::Filter { .. } => return declared.map_or(0, |d| d.prepared_bytes),
         // The output node has no kernel, so it carries no prepared data of its own.
@@ -3418,9 +3454,12 @@ pub fn state_payload_bytes(kind: IrNodeKind) -> u64 {
         IrNodeKind::Impulse { .. } => return declared.map_or(0, |d| d.state_bytes),
         IrNodeKind::Filter { .. } => return declared.map_or(0, |d| d.state_bytes),
         IrNodeKind::Amplifier => return declared.map_or(0, |d| d.state_bytes),
+        IrNodeKind::VoiceAmplifier { .. } => return declared.map_or(0, |d| d.state_bytes),
         IrNodeKind::Monitor => return declared.map_or(0, |d| d.state_bytes),
+        IrNodeKind::StereoMonitor => return declared.map_or(0, |d| d.state_bytes),
         IrNodeKind::Gain { .. } => return declared.map_or(0, |d| d.state_bytes),
         IrNodeKind::VelocityScaler { .. } => return declared.map_or(0, |d| d.state_bytes),
+        IrNodeKind::StereoVelocityScaler { .. } => return declared.map_or(0, |d| d.state_bytes),
         IrNodeKind::Channel { .. } => return declared.map_or(0, |d| d.state_bytes),
         IrNodeKind::Mix => return declared.map_or(0, |d| d.state_bytes),
         IrNodeKind::Balance { .. } => return declared.map_or(0, |d| d.state_bytes),
@@ -3432,6 +3471,9 @@ pub fn state_payload_bytes(kind: IrNodeKind) -> u64 {
         IrNodeKind::Distortion { .. } => return declared.map_or(0, |d| d.state_bytes),
         IrNodeKind::Delay { .. } => return declared.map_or(0, |d| d.state_bytes),
         IrNodeKind::Latency { .. } => return declared.map_or(0, |d| d.state_bytes),
+        IrNodeKind::Compressor { .. } => return declared.map_or(0, |d| d.state_bytes),
+        IrNodeKind::VoiceOutput { .. } => return declared.map_or(0, |d| d.state_bytes),
+        IrNodeKind::FeedbackDelay => return declared.map_or(0, |d| d.state_bytes),
         IrNodeKind::Sampler { .. } => return declared.map_or(0, |d| d.state_bytes),
         IrNodeKind::Envelope { .. } => return declared.map_or(0, |d| d.state_bytes),
         IrNodeKind::Controller { .. } | IrNodeKind::NoteSource { .. } => {
@@ -3443,6 +3485,235 @@ pub fn state_payload_bytes(kind: IrNodeKind) -> u64 {
         IrNodeKind::NoteScript { .. } => return declared.map_or(0, |d| d.state_bytes),
         IrNodeKind::Output => 0,
     }) as u64
+}
+
+/// Stereo compressor. The second audio input is a detector, never audible by itself.
+static COMPRESSOR: NodeDeclaration = NodeDeclaration {
+    id: NodeKindId::Compressor,
+    name: "compressor",
+    kernel: kernels::COMPRESSOR,
+    ports: &[
+        PortSpec::new(
+            crate::ir::PortId::FIRST,
+            PortDirection::Input,
+            SignalDomain::Audio,
+            ChannelLayout::Stereo,
+        ),
+        PortSpec::new(
+            crate::ir::PortId::new(1),
+            PortDirection::Input,
+            SignalDomain::Audio,
+            ChannelLayout::Stereo,
+        ),
+        PortSpec::new(
+            crate::ir::PortId::FIRST,
+            PortDirection::Output,
+            SignalDomain::Audio,
+            ChannelLayout::Stereo,
+        ),
+    ],
+    controls: &[],
+    in_place_safe: true,
+    note_control: None,
+    taps: &[],
+    prepare: prepare_compressor,
+    timing: stateless_timing,
+    prepared_bytes: size_of::<(crate::dynamics::CompressorSettings, [f32; 3])>() as u64,
+    state_bytes: size_of::<[f32; 3]>() as u64,
+};
+
+fn prepare_compressor(
+    _node: NodeId,
+    kind: IrNodeKind,
+    ctx: &PrepareContext<'_>,
+) -> Result<PreparedNode, CompileError> {
+    let IrNodeKind::Compressor { settings } = kind else {
+        return Ok(PreparedNode::Silence);
+    };
+    let rate = ctx.rate.as_f32();
+    let attack = (-1.0 / (settings.attack.to_seconds().as_f32() * rate).max(1.0)).exp();
+    let release = (-1.0 / (settings.release.to_seconds().as_f32() * rate).max(1.0)).exp();
+    let high_pass = match settings.detector {
+        crate::dynamics::CompressorDetector::External { cutoff } if cutoff.as_f32() > 20.0 => {
+            let rc = 1.0 / (2.0 * std::f32::consts::PI * cutoff.as_f32());
+            rc / (rc + 1.0 / rate)
+        }
+        _ => 0.0,
+    };
+    Ok(PreparedNode::Compressor {
+        settings,
+        attack,
+        release,
+        high_pass,
+    })
+}
+
+/// An explicit state boundary. Input is captured by a deferred plan operation.
+static FEEDBACK_DELAY: NodeDeclaration = NodeDeclaration {
+    id: NodeKindId::FeedbackDelay,
+    name: "feedback_delay",
+    kernel: kernels::FEEDBACK_READ,
+    ports: &[
+        PortSpec::new(
+            crate::ir::PortId::FIRST,
+            PortDirection::Input,
+            SignalDomain::Audio,
+            ChannelLayout::Stereo,
+        ),
+        PortSpec::new(
+            crate::ir::PortId::FIRST,
+            PortDirection::Output,
+            SignalDomain::Audio,
+            ChannelLayout::Stereo,
+        ),
+    ],
+    controls: &[],
+    in_place_safe: false,
+    note_control: None,
+    taps: &[],
+    prepare: prepare_feedback,
+    timing: feedback_timing,
+    prepared_bytes: 0,
+    state_bytes: 0,
+};
+fn prepare_feedback(
+    _: NodeId,
+    _: IrNodeKind,
+    _: &PrepareContext<'_>,
+) -> Result<PreparedNode, CompileError> {
+    Ok(PreparedNode::FeedbackDelay)
+}
+fn feedback_timing(_: IrNodeKind, _: SampleRate) -> NodeTiming {
+    NodeTiming {
+        latency: FrameCount::QUANTUM,
+        tail: None,
+        history: FrameCount::QUANTUM,
+    }
+}
+
+/// Stereo observation uses the same copy kernel and host subscription as the mono tap.
+pub(crate) static STEREO_MONITOR: NodeDeclaration = NodeDeclaration {
+    id: NodeKindId::StereoMonitor,
+    name: "stereo_monitor",
+    kernel: kernels::MONITOR,
+    ports: &[STEREO_AUDIO_IN, STEREO_AUDIO_OUT],
+    controls: &[],
+    in_place_safe: true,
+    note_control: None,
+    taps: MONITOR.taps,
+    prepare: prepare_stereomonitor,
+    timing: stateless_timing,
+    prepared_bytes: 0,
+    state_bytes: 0,
+};
+
+/// The velocity destination after a stereo terminating node.
+pub(crate) static STEREO_VELOCITY_SCALER: NodeDeclaration = NodeDeclaration {
+    id: NodeKindId::StereoVelocityScaler,
+    name: "stereo_velocity_scaler",
+    kernel: kernels::VELOCITY_SCALER,
+    ports: &[STEREO_AUDIO_IN, STEREO_AUDIO_OUT],
+    controls: VELOCITY_SCALER.controls,
+    in_place_safe: true,
+    note_control: None,
+    taps: &[],
+    prepare: prepare_stereovelocityscaler,
+    timing: stateless_timing,
+    prepared_bytes: VELOCITY_SCALER.prepared_bytes,
+    state_bytes: VELOCITY_SCALER.state_bytes,
+};
+
+fn prepare_stereomonitor(
+    node: NodeId,
+    kind: IrNodeKind,
+    _: &PrepareContext<'_>,
+) -> Result<PreparedNode, CompileError> {
+    let IrNodeKind::StereoMonitor = kind else {
+        return Err(declared_for_another_kind(node));
+    };
+    Ok(PreparedNode::Copy)
+}
+
+fn prepare_stereovelocityscaler(
+    node: NodeId,
+    kind: IrNodeKind,
+    _: &PrepareContext<'_>,
+) -> Result<PreparedNode, CompileError> {
+    let IrNodeKind::StereoVelocityScaler { sensitivity } = kind else {
+        return Err(declared_for_another_kind(node));
+    };
+    Ok(PreparedNode::VelocityScaler { sensitivity })
+}
+
+/// The mono port of V1's amplifier at unity level.
+pub(crate) static VOICE_AMPLIFIER: NodeDeclaration = NodeDeclaration {
+    id: NodeKindId::VoiceAmplifier,
+    name: "voice_amplifier",
+    kernel: kernels::VOICE_AMPLIFIER,
+    ports: AMPLIFIER.ports,
+    controls: &[],
+    in_place_safe: true,
+    note_control: None,
+    taps: &[],
+    prepare: prepare_voiceamplifier,
+    timing: stateless_timing,
+    prepared_bytes: size_of::<[f32; 2]>() as u64,
+    state_bytes: 0,
+};
+
+fn prepare_voiceamplifier(
+    node: NodeId,
+    kind: IrNodeKind,
+    _: &PrepareContext<'_>,
+) -> Result<PreparedNode, CompileError> {
+    let IrNodeKind::VoiceAmplifier { pan } = kind else {
+        return Err(declared_for_another_kind(node));
+    };
+    let angle = (pan.as_f32() + 1.0) * std::f32::consts::FRAC_PI_4;
+    Ok(PreparedNode::VoiceAmplifier {
+        left: angle.cos(),
+        right: angle.sin(),
+    })
+}
+
+/// V1's voice terminal has no detector history or lookahead.
+pub(crate) static VOICE_OUTPUT: NodeDeclaration = NodeDeclaration {
+    id: NodeKindId::VoiceOutput,
+    name: "voice_output",
+    kernel: kernels::VOICE_OUTPUT,
+    ports: &[STEREO_AUDIO_IN, STEREO_AUDIO_OUT],
+    controls: &[],
+    in_place_safe: true,
+    note_control: None,
+    taps: MONITOR.taps,
+    prepare: prepare_voiceoutput,
+    timing: stateless_timing,
+    prepared_bytes: size_of::<([f32; 3], bool, crate::output::OutputLimiting)>() as u64,
+    state_bytes: 0,
+};
+
+fn prepare_voiceoutput(
+    node: NodeId,
+    kind: IrNodeKind,
+    _: &PrepareContext<'_>,
+) -> Result<PreparedNode, CompileError> {
+    let IrNodeKind::VoiceOutput {
+        master,
+        pan,
+        muted,
+        limiting,
+    } = kind
+    else {
+        return Err(declared_for_another_kind(node));
+    };
+    let angle = (pan.as_f32() + 1.0) * std::f32::consts::FRAC_PI_4;
+    Ok(PreparedNode::VoiceOutput {
+        left: master.as_f32() * angle.cos(),
+        right: master.as_f32() * angle.sin(),
+        threshold: synth_core::Decibels::new(-0.3).to_linear(),
+        muted,
+        limiting,
+    })
 }
 
 #[cfg(test)]
@@ -3488,11 +3759,13 @@ mod tests {
             let timing = timing_of(kind, rate);
             let expected_latency = match kind {
                 IrNodeKind::Latency { frames } => frames,
+                IrNodeKind::FeedbackDelay => FrameCount::QUANTUM,
                 _ => FrameCount::ZERO,
             };
             assert_eq!(timing.latency, expected_latency, "{kind:?}");
             let expected_tail = match kind {
-                IrNodeKind::Filter { .. }
+                IrNodeKind::FeedbackDelay
+                | IrNodeKind::Filter { .. }
                 | IrNodeKind::Envelope { .. }
                 | IrNodeKind::Sampler { .. }
                 | IrNodeKind::Script { .. }
@@ -3505,8 +3778,10 @@ mod tests {
                 _ => Some(FrameCount::ZERO),
             };
             assert_eq!(timing.tail, expected_tail, "{kind:?}");
-            let keeps_history =
-                matches!(kind, IrNodeKind::Delay { .. } | IrNodeKind::Latency { .. });
+            let keeps_history = matches!(
+                kind,
+                IrNodeKind::Delay { .. } | IrNodeKind::Latency { .. } | IrNodeKind::FeedbackDelay
+            );
             assert_eq!(timing.history > FrameCount::ZERO, keeps_history, "{kind:?}");
         }
         assert_eq!(
@@ -3646,8 +3921,25 @@ mod tests {
             IrNodeKind::Latency {
                 frames: FrameCount::new(7),
             },
+            IrNodeKind::Compressor {
+                settings: crate::dynamics::CompressorSettings::default(),
+            },
+            IrNodeKind::FeedbackDelay,
             IrNodeKind::Amplifier,
             IrNodeKind::Monitor,
+            IrNodeKind::VoiceAmplifier {
+                pan: crate::controller::BipolarLevel::ZERO,
+            },
+            IrNodeKind::VoiceOutput {
+                master: crate::quantities::NormalizedLevel::FULL,
+                pan: crate::controller::BipolarLevel::ZERO,
+                muted: false,
+                limiting: crate::output::OutputLimiting::SoftKnee,
+            },
+            IrNodeKind::StereoVelocityScaler {
+                sensitivity: crate::quantities::NormalizedLevel::FULL,
+            },
+            IrNodeKind::StereoMonitor,
             IrNodeKind::Envelope {
                 attack: crate::quantities::Seconds::ZERO,
                 decay: crate::quantities::Seconds::ZERO,
@@ -3946,8 +4238,28 @@ mod tests {
                     )
                     | (IrNodeKind::Delay { .. }, PreparedNode::Delay { .. })
                     | (IrNodeKind::Latency { .. }, PreparedNode::Latency { .. })
+                    | (
+                        IrNodeKind::Compressor { .. },
+                        PreparedNode::Compressor { .. }
+                    )
+                    | (IrNodeKind::FeedbackDelay, PreparedNode::FeedbackDelay)
                     | (IrNodeKind::Amplifier, PreparedNode::Amplifier)
-                    | (IrNodeKind::Monitor, PreparedNode::Copy)
+                    | (
+                        IrNodeKind::Monitor | IrNodeKind::StereoMonitor,
+                        PreparedNode::Copy
+                    )
+                    | (
+                        IrNodeKind::VoiceAmplifier { .. },
+                        PreparedNode::VoiceAmplifier { .. }
+                    )
+                    | (
+                        IrNodeKind::VoiceOutput { .. },
+                        PreparedNode::VoiceOutput { .. }
+                    )
+                    | (
+                        IrNodeKind::StereoVelocityScaler { .. },
+                        PreparedNode::VelocityScaler { .. }
+                    )
                     | (IrNodeKind::Filter { .. }, PreparedNode::Filter { .. })
                     | (IrNodeKind::Envelope { .. }, PreparedNode::Envelope { .. })
                     | (IrNodeKind::Sampler { .. }, PreparedNode::Sampler { .. })
@@ -3979,9 +4291,12 @@ mod tests {
                 | IrNodeKind::Constant { .. }
                 | IrNodeKind::Impulse { .. }
                 | IrNodeKind::Trim { .. }
-                | IrNodeKind::Gain { .. } => (true, false),
+                | IrNodeKind::Gain { .. }
+                | IrNodeKind::VoiceAmplifier { .. }
+                | IrNodeKind::VoiceOutput { .. } => (true, false),
                 IrNodeKind::Filter { .. }
                 | IrNodeKind::VelocityScaler { .. }
+                | IrNodeKind::StereoVelocityScaler { .. }
                 | IrNodeKind::Channel { .. }
                 | IrNodeKind::Send { .. }
                 | IrNodeKind::PostFaderSend { .. }
@@ -3993,6 +4308,7 @@ mod tests {
                 | IrNodeKind::Lfo { .. }
                 | IrNodeKind::Distortion { .. }
                 | IrNodeKind::Delay { .. }
+                | IrNodeKind::Compressor { .. }
                 | IrNodeKind::Latency { .. } => (true, true),
                 IrNodeKind::NoteSource { .. }
                 | IrNodeKind::Silence
@@ -4000,6 +4316,8 @@ mod tests {
                 | IrNodeKind::Mix
                 | IrNodeKind::SoftClip
                 | IrNodeKind::HardClamp
+                | IrNodeKind::FeedbackDelay
+                | IrNodeKind::StereoMonitor
                 | IrNodeKind::Monitor => (false, false),
                 other => panic!("{other:?} is declared but this test does not know its shape"),
             };
@@ -4018,6 +4336,10 @@ mod tests {
                 matches!(
                     kind,
                     IrNodeKind::Amplifier
+                        | IrNodeKind::VoiceAmplifier { .. }
+                        | IrNodeKind::VoiceOutput { .. }
+                        | IrNodeKind::StereoVelocityScaler { .. }
+                        | IrNodeKind::StereoMonitor
                         | IrNodeKind::Monitor
                         | IrNodeKind::Gain { .. }
                         | IrNodeKind::VelocityScaler { .. }
@@ -4031,6 +4353,7 @@ mod tests {
                         | IrNodeKind::HardClamp
                         | IrNodeKind::Distortion { .. }
                         | IrNodeKind::Delay { .. }
+                        | IrNodeKind::Compressor { .. }
                         | IrNodeKind::Latency { .. }
                         | IrNodeKind::Filter { .. }
                 ),
@@ -4081,7 +4404,13 @@ mod tests {
                     declared.name
                 );
             }
-            let expected = if declared.id == NodeKindId::Monitor {
+            let expected = if matches!(
+                declared.id,
+                NodeKindId::Monitor
+                    | NodeKindId::StereoMonitor
+                    | NodeKindId::Channel
+                    | NodeKindId::VoiceOutput
+            ) {
                 1
             } else {
                 0

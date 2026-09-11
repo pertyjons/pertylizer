@@ -91,6 +91,7 @@ mod arena;
 pub mod compile;
 pub mod controller;
 pub mod diagnostics;
+pub mod dynamics;
 pub mod identity;
 pub mod latency;
 pub mod script;
@@ -110,6 +111,7 @@ pub mod ir;
 pub mod node;
 pub mod observe;
 pub mod offline;
+pub mod output;
 pub mod plan;
 pub mod profile;
 pub mod publish;
@@ -159,3 +161,7 @@ mod modulation_tests;
 mod insert_tests;
 
 pub mod authored;
+
+#[cfg(test)]
+#[path = "tests/feedback.rs"]
+mod feedback_tests;

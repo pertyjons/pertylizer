@@ -539,6 +539,13 @@ impl PartialEq for NodeStep {
 /// clause 2 rejects: a node addition was a new arm inside the quantum loop.
 #[derive(Debug, Clone, PartialEq)]
 pub enum PlanOp {
+    /// Capture one shared source after all current-quantum reads (ADR-0033).
+    FeedbackWrite {
+        /// The boundary's history owner.
+        node: NodeSlot,
+        /// Stereo source kept live until this operation.
+        source: BufferSlot,
+    },
     /// Run one prepared node kernel.
     Node(NodeStep),
     /// Read one modulation source and compose it into one parameter row
@@ -1453,8 +1460,25 @@ impl CompiledPlan {
         &self.tap_addresses
     }
 
-    /// The tap a node's output port compiled to, or `None` where the node's kind declares
-    /// none there: a consumer can name only a declared tap, never a node's internals.
+    /// A channel meter, resolved by this plan's compiled channel identity.
+    #[must_use]
+    pub fn channel_tap(&self, channel: ChannelId) -> Option<TapSlot> {
+        self.channels()
+            .iter()
+            .find(|record| record.id == channel)
+            .and_then(|record| self.resolve_tap(record.node, crate::ir::PortId::FIRST))
+    }
+
+    /// A return meter, resolved by this plan's compiled bus identity.
+    #[must_use]
+    pub fn bus_tap(&self, bus: BusId) -> Option<TapSlot> {
+        self.buses()
+            .iter()
+            .find(|record| record.id == bus)
+            .and_then(|record| self.resolve_tap(record.strip, crate::ir::PortId::FIRST))
+    }
+
+    /// The tap a node's output port compiled to, or `None` where none is declared.
     #[must_use]
     pub fn resolve_tap(&self, node: NodeId, port: crate::ir::PortId) -> Option<TapSlot> {
         self.tap_addresses

@@ -404,13 +404,13 @@ fn the_corpus_patch_with_a_sine_lowers_and_compiles() {
     );
 
     let ir = lowered.ir.expect("the supported subset must lower");
-    assert_eq!(ir.nodes().len(), 5);
-    assert_eq!(ir.edges().len(), 4);
+    assert_eq!(ir.nodes().len(), 6);
+    assert_eq!(ir.edges().len(), 5);
 
     let profile = HostProfile::harness(
         SampleRate::new(48_000.0).expect("a real rate"),
         FrameCount::new(512),
-        ChannelLayout::Mono,
+        ChannelLayout::Stereo,
     )
     .expect("a harness profile");
     let outcome = compile(&ir, &RenderConfig::new(profile));
@@ -780,12 +780,9 @@ fn a_choice_stored_as_a_number_is_refused_rather_than_defaulted() {
     );
 }
 
-/// An amplifier with no control cable is refused, because the two engines disagree about it.
-///
-/// V1 reads an unpatched `cv` at unity and sounds; V2 reads it as defined silence. Lowering
-/// it would produce a graph that compiles, renders, and is silent with nothing saying so.
+/// The dedicated V1 amplifier kind supplies unity when its CV cable is absent.
 #[test]
-fn an_amplifier_with_no_control_cable_is_refused() {
+fn an_amplifier_with_no_control_cable_lowers_with_unity_cv() {
     let (modules, mut connections) = corpus_patch("sine");
     connections.retain(|c| !(c.to.0 == "amp-1" && c.to.1 == "cv"));
     let lowered = lower_voice_patch(
@@ -795,28 +792,15 @@ fn an_amplifier_with_no_control_cable_is_refused() {
         synth_engine_v2::quantities::EventCount::NONE,
     );
 
+    assert!(lowered.ir.is_some(), "{:?}", lowered.diagnostics);
     assert!(
-        lowered.ir.is_none(),
-        "the topology must not lower to silence"
-    );
-    assert!(
-        lowered.diagnostics.iter().any(|d| {
-            d.severity() == Severity::Refused
-                && matches!(
-                    d.reason(),
-                    LoweringReason::OwnedByLaterPhase { capability, .. }
-                        if capability.contains("no control cable")
-                )
-        }),
-        "the refusal must say why, got {:?}",
-        lowered.diagnostics
+        lowered
+            .diagnostics
+            .iter()
+            .all(|d| d.severity() != Severity::Refused)
     );
 }
 
-/// V1's resonance clamp is applied before the conversion, so a saved `1.0` still lowers.
-///
-/// V1 renders `1.0` at `0.99`, which is `k = 0.02` and therefore `Q = 50`. Converting the raw
-/// value would divide by zero's neighbourhood and refuse a filter V1 plays.
 #[test]
 fn a_saved_resonance_of_one_lowers_at_the_value_v1_renders() {
     let (mut modules, connections) = corpus_patch("sine");
@@ -849,7 +833,7 @@ fn a_saved_resonance_of_one_lowers_at_the_value_v1_renders() {
     );
 }
 
-/// The DSP stages of a voice patch are per-voice; only the terminating output is not.
+/// Saved DSP stages are per voice; the separately inserted final sink is global.
 #[test]
 fn the_voice_patch_nodes_carry_voice_scope_and_the_output_does_not() {
     use synth_engine_v2::ir::ExecutionScope;
@@ -959,9 +943,9 @@ fn an_audio_cable_into_a_control_input_is_refused_by_the_lowerer() {
     );
 }
 
-/// V1's amplifier pans and V2's does not, so every lowered amplifier reports the stage.
+/// The lowered amplifier carries V1's mono pan stage explicitly.
 #[test]
-fn the_amplifiers_pan_stage_is_reported_on_the_amplifier() {
+fn the_amplifiers_pan_stage_is_lowered_on_the_amplifier() {
     let (modules, connections) = corpus_patch("sine");
     let lowered = lower_voice_patch(
         instrument(),
@@ -970,28 +954,15 @@ fn the_amplifiers_pan_stage_is_reported_on_the_amplifier() {
         synth_engine_v2::quantities::EventCount::NONE,
     );
 
+    assert!(lowered.diagnostics.iter().all(|d| !matches!(d.reason(), LoweringReason::OwnedByLaterPhase { capability, .. } if capability.contains("pan stage"))));
+    let ir = lowered.ir.expect("graph");
     assert!(
-        lowered.diagnostics.iter().any(|d| {
-            d.subject()
-                == &ProjectSubject::Module {
-                    instrument: instrument(),
-                    module: ModuleId::new(ModuleType::Amplifier, 1),
-                }
-                && matches!(
-                    d.reason(),
-                    LoweringReason::OwnedByLaterPhase { capability, .. }
-                        if capability.contains("pan stage")
-                )
-        }),
-        "the pan stage must be reported against the amplifier, not another module"
+        ir.nodes()
+            .iter()
+            .any(|node| matches!(node.kind(), IrNodeKind::VoiceAmplifier { .. }))
     );
 }
 
-// ---------------------------------------------------------------------------
-// Topologies and encodings V1 accepts and V2 does not
-// ---------------------------------------------------------------------------
-
-/// A numeric value this cannot read is refused, not quietly replaced by a default.
 #[test]
 fn a_parameter_value_of_an_unreadable_kind_is_refused() {
     let (mut modules, connections) = corpus_patch("sine");
@@ -1140,7 +1111,7 @@ fn omitted_parameters_are_judged_against_v1s_defaults() {
         "an omitted uni_phase means 1.0 in V1 and must be reported"
     );
 
-    // `master` absent means 0.8 in V1, which is not the unity V2's output applies.
+    // The terminating stage carries V1's omitted master default of 0.8.
     let (mut modules, connections) = corpus_patch("sine");
     for m in &mut modules {
         if m.module_type == ModuleType::StereoOutput {
@@ -1153,18 +1124,10 @@ fn omitted_parameters_are_judged_against_v1s_defaults() {
         &connections,
         synth_engine_v2::quantities::EventCount::NONE,
     );
-    assert!(
-        lowered.diagnostics.iter().any(|d| {
-            matches!(d.subject(), ProjectSubject::Parameter { parameter, .. } if parameter == "master")
-        }),
-        "an omitted master means 0.8 in V1 and must be reported"
-    );
+    let ir = lowered.ir.expect("default master lowers");
+    assert!(ir.nodes().iter().any(|node| matches!(node.kind(), IrNodeKind::VoiceOutput { master, .. } if master.as_f32() == 0.8)));
 }
 
-/// A refused parameter value stops the lowering rather than sitting beside an IR.
-///
-/// `Severity::Refused` means lowering stopped; an outcome carrying one and an `ir: Some`
-/// would make the severity mean nothing.
 #[test]
 fn a_refused_neutral_parameter_stops_the_lowering() {
     let (mut modules, connections) = corpus_patch("sine");
@@ -1364,8 +1327,8 @@ fn a_non_finite_saved_value_is_refused() {
 fn a_value_near_neutral_is_still_reported() {
     let (mut modules, connections) = corpus_patch("sine");
     for m in &mut modules {
-        if m.module_type == ModuleType::StereoOutput {
-            floats(m, &[("master", 0.999_999_94)]);
+        if m.module_type == ModuleType::Amplifier {
+            floats(m, &[("level", 0.999_999_94)]);
         }
     }
     let lowered = lower_voice_patch(
@@ -1376,9 +1339,9 @@ fn a_value_near_neutral_is_still_reported() {
     );
     assert!(
         lowered.diagnostics.iter().any(|d| {
-            matches!(d.subject(), ProjectSubject::Parameter { parameter, .. } if parameter == "master")
+            matches!(d.subject(), ProjectSubject::Parameter { parameter, .. } if parameter == "level")
         }),
-        "a master V1 applies and V2 does not must be reported however close to unity it is"
+        "an amplifier level V1 ramps and V2 does not must be reported however close to unity it is"
     );
 }
 
@@ -1578,8 +1541,8 @@ fn a_saved_instrument_and_song_render_through_v2_and_are_audible() {
         rendered.diagnostics
     );
     // And since ADR-0059 the velocity half of the reporting closes too: the composition is
-    // V1's, so nothing names it as unrepresented. What still keeps this outcome from
-    // `Faithful` is Phase 8's — the master volume and the pan stages — and is named as such.
+    // V1's, so nothing names it as unrepresented. S007 also represents the pan and
+    // terminating stages; any remaining diagnostics describe this input's other gaps.
     assert!(
         !names_the_composition(&rendered),
         "{:?}",
@@ -3498,8 +3461,8 @@ fn every_audible_instrument_setting_is_dispositioned() {
     // A sidechain source ducks this instrument on what another one plays.
     let ducked = render(&|i| i.sidechain_source_id = Some(1));
     assert!(
-        says(&ducked, "sidechain source") && ducked.samples.is_empty(),
-        "a sidechain source must be refused: {:?}",
+        ducked.diagnostics.iter().any(|d| matches!(d.reason(), LoweringReason::UnresolvedEndpoint { spelling } if spelling.contains("sidechain source instrument 1"))) && ducked.samples.is_empty(),
+        "an absent sidechain source must be refused: {:?}",
         ducked.diagnostics
     );
 
@@ -3710,7 +3673,7 @@ fn project_global_state_is_read_rather_than_ignored() {
         outside.diagnostics
     );
 
-    // A master effect is audible processing on everything, and V2 has no master bus.
+    // A supported master compressor is audible processing and now lowers.
     let mut global = crate::project::GlobalProjectState::default();
     global
         .master_effects
@@ -3722,39 +3685,15 @@ fn project_global_state_is_read_rather_than_ignored() {
         harness_profile(),
         FrameCount::new(4_800),
     );
+    assert!(rendered.is_audible(), "{:?}", rendered.diagnostics);
     assert!(
-        rendered.diagnostics.iter().any(|d| {
-            d.subject() == &ProjectSubject::MasterChain && d.severity() == Severity::Refused
-        }),
-        "a master chain must be refused, not silently absent: {:?}",
-        rendered.diagnostics
+        rendered
+            .diagnostics
+            .iter()
+            .all(|d| d.severity() != Severity::Refused)
     );
 }
 
-/// No file loading reaches V2, through the lowerer or inside the crate itself.
-///
-/// The work list requires that "samples and other assets" arrive as already-prepared immutable
-/// data and that "no file loading reaches V2". The second half is the checkable one, and this
-/// is the check: no production source in **either** tree that can reach the renderer — the
-/// lowering module that consumes V2, and `synth_engine_v2` itself — opens, reads, or names a
-/// loader.
-///
-/// The first half is vacuous today and says so rather than claiming a guarantee: V2's node
-/// registry has no sampler, so there is no asset for the lowerer to prepare. It becomes real
-/// with ADR-0026's zone model, and this test will not notice that on its own.
-///
-/// # What this establishes, and what it does not
-///
-/// It is a scan for spellings, and it claims no more than `crate_boundary`'s equivalent does: a
-/// scan for a grammar fails open, one spelling at a time. Two earlier revisions failed open in
-/// ways an independent review found rather than a determined author would have had to
-/// engineer — it read only the immediate directory, so a nested module was invisible, and it
-/// matched `::load(` while the repository's own project loader is `::load_file(`. Both are
-/// closed below; the class is not.
-///
-/// What is stronger and lives elsewhere: `synth_engine_v2`'s manifest allows `synth_core` and
-/// `thiserror` and nothing else, which `crate_boundary` checks by asking Cargo. That bounds
-/// which *crates* it can reach; this bounds what its own source does with the standard library.
 #[test]
 fn no_file_loading_reaches_v2() {
     const FORBIDDEN: [&str; 11] = [
@@ -4156,35 +4095,22 @@ fn an_instrument_diagnostic_names_the_instrument_rather_than_the_song() {
 }
 
 #[test]
-fn a_placed_note_names_no_velocity_gap_and_still_refuses_a_parity_verdict() {
-    // The reporting half's velocity clause, closed by `P06-S004` under ADR-0059: V1 applies
-    // one saved velocity twice — at the envelope and again at the voice output — and V2 now
-    // applies both, each with its saved sensitivity, so a placed note no longer names the
-    // composition as unrepresented. The outcome is **still** `UnsupportedScope` and still
-    // refuses a parity verdict, and rightly: Phase 8's stages — the master volume and the
-    // pans — remain named, and `LOWER-INV-003` waits for the *last* unrepresented
-    // capability, not for this one. An independent read caught an earlier name for this test
-    // that claimed the verdict was admitted.
+fn a_single_placed_note_has_no_missing_stages_and_admits_comparison() {
+    // ADR-0059 carries both velocity destinations; S007 carries both pan stages
+    // and terminating gain/limiting. This one-note fixture now has no missing stage.
     let rendered = render_one_note(60, 0.8, 0.0);
     assert!(rendered.is_audible());
-    assert_eq!(rendered.fidelity(), Fidelity::UnsupportedScope);
+    assert_eq!(rendered.fidelity(), Fidelity::Faithful);
     assert!(
-        !rendered.fidelity().admits_parity_comparison(),
-        "Phase 8's marks still refuse the verdict"
+        rendered.fidelity().admits_parity_comparison(),
+        "all stages of this one-note subset are represented"
     );
     assert!(
         !names_the_composition(&rendered),
         "nothing names the velocity composition as unrepresented, got {:?}",
         rendered.diagnostics
     );
-    assert!(
-        rendered.diagnostics.iter().all(|d| matches!(
-            d.reason(),
-            LoweringReason::OwnedByLaterPhase { owner, .. } if owner == &"Phase 8"
-        )),
-        "and what remains is Phase 8's alone, got {:?}",
-        rendered.diagnostics
-    );
+    assert!(rendered.diagnostics.is_empty());
 
     // And with four notes through the one gate, the same holds: nothing names the velocity
     // composition, however many notes the project places.
@@ -5901,7 +5827,7 @@ fn the_corpus_mod_matrix_slot_lowers_to_one_edge_at_v1s_scale() {
         .node_for(matrix)
         .expect("the matrix resolves");
     assert!(ir.nodes().iter().all(|n| n.id() != matrix_node));
-    assert_eq!(ir.nodes().len(), saved.patch.modules.len() - 1);
+    assert_eq!(ir.nodes().len(), saved.patch.modules.len());
 
     // The edge: `0.7 × 48` semitones into the filter's cutoff, and nothing else.
     let filter = lowered
@@ -7093,3 +7019,4 @@ mod buses;
 mod evidence;
 mod phase7;
 mod phase8;
+mod phase8_exit;

@@ -307,6 +307,30 @@ pub enum IrNodeKind {
     /// in this crate — an unpatched input is silence — and the alternative would be to
     /// invent a level nobody asked for.
     Amplifier,
+    /// V1's unity-level amplifier mono output, including pan and nonnegative CV.
+    /// Unpatched CV is unity. Saved level smoothing is not implemented by this kind.
+    VoiceAmplifier {
+        /// Constant-power pan, averaged back to the mono output V1 exposes.
+        pan: crate::controller::BipolarLevel,
+    },
+    /// V1's terminating stereo stage, before velocity and voice summation.
+    VoiceOutput {
+        /// Saved master level in zero through one.
+        master: NormalizedLevel,
+        /// Constant-power pan.
+        pan: crate::controller::BipolarLevel,
+        /// A muted voice emits silence.
+        muted: bool,
+        /// Explicit output limiting policy.
+        limiting: crate::output::OutputLimiting,
+    },
+    /// Stereo pass-through with one declared audio observation tap.
+    StereoMonitor,
+    /// ADR-0059's velocity law on a stereo voice output, with frame-positioned controls.
+    StereoVelocityScaler {
+        /// Independent voice-output sensitivity.
+        sensitivity: NormalizedLevel,
+    },
     /// V1's voice-output velocity stage (ADR-0059): a pass-through scaled by
     /// `(1 − s) + s × v` from its own velocity destination and this sensitivity, which the
     /// lowerer places between a voice's terminating node and the output.
@@ -451,6 +475,13 @@ pub enum IrNodeKind {
         mix: NormalizedLevel,
         /// The feedback high cut, `0` at a 200 Hz corner through `1` at 20 kHz.
         tone: NormalizedLevel,
+    },
+    /// Explicit shared stereo history boundary of one quantum (ADR-0033).
+    FeedbackDelay,
+    /// Stereo compressor with a separately routed detector.
+    Compressor {
+        /// Validated authored dynamics and detector configuration.
+        settings: crate::dynamics::CompressorSettings,
     },
     /// A declared latency and nothing else (`P08-S005`, `SOUND-INV-035`): its output at frame
     /// `n` is its input at frame `n − frames`, and it declares exactly `frames` as the latency

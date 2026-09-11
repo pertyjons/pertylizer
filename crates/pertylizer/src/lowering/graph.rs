@@ -2,32 +2,10 @@
 //!
 //! # What the mapping is, and where each half of it comes from
 //!
-//! Five saved module types have a counterpart in V2's node registry. Two of the mappings are
-//! not the identity, and neither is guessed here:
-//!
-//! - **Resonance is a different quantity in each engine.** V1's filter takes a normalised
-//!   resonance and forms `k = 2 - 2·res`; V2's takes a quality factor and forms
-//!   `damping = 1/Q`. `EVD-0013` established that these are the same coefficient under two
-//!   names, so the lowering law is `Q = 1 / (2 - 2·res)` — an equality between the two
-//!   engines' own arithmetic, not a curve fitted to it.
-//! - **The output nodes are not the same node.** V1's `StereoOutput` pans, limits, meters and
-//!   writes two channels; V2's `Output` writes one source to however many channels the
-//!   profile declares. `EVD-0013` records that too. The lowering keeps the routing and
-//!   reports the rest as unrepresented rather than pretending the stages are absent.
-//!
-//! Three more asymmetries were found by an independent read of an earlier revision, and each
-//! is verified against V1's own source rather than assumed:
-//!
-//! - **An unpatched amplifier control is unity in V1 and silence in V2.** V1 reads its `cv`
-//!   input with a default of `1.0`, so an amplifier used as a plain gain stage sounds; V2's
-//!   unpatched input reads defined silence, so the same graph is silent. The topology is
-//!   refused rather than lowered into silence.
-//! - **V1's amplifier pans, and at centre that is not unity.** Its equal-power law takes
-//!   centre to `cos(π/4)` on each channel — about `0.707` — where V2's amplifier only
-//!   multiplies. Every lowered amplifier reports the stage.
-//! - **V1 clamps resonance into `[0, 0.99]` before using it.** A saved `1.0` is valid input
-//!   that V1 renders at `0.99`; converting the raw value instead would refuse a filter V1
-//!   plays. The clamp is applied first, so the conversion sees what V1 sees.
+//! Native counterparts preserve the declared V1 laws within the bounded catalog.
+//! Resonance lowers as `Q = 1 / (2 - 2 * res)` after V1's own clamp (EVD-0013).
+//! P08-S007 carries the amplifier's mono pan stage and the terminating stereo
+//! gain, pan and limiter explicitly, before velocity and voice summation.
 //!
 //! # Why an unmapped parameter is a diagnostic rather than a default
 //!
@@ -207,6 +185,8 @@ pub struct InstrumentStages {
     pub channel: Option<ChannelStrip>,
     /// V1's channel-stage soft clipper (`P08-S002`), under the parity output policy.
     pub soft_clip: bool,
+    /// Bypass the terminating limiter for the explicit float-headroom policy.
+    pub headroom: bool,
     /// The channel's sends (`P08-S004`), each reading what the channel reads.
     pub sends: Vec<ChannelSend>,
 }
@@ -214,11 +194,9 @@ pub struct InstrumentStages {
 /// Where an instrument's signal ends.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum Sink {
-    /// The instrument's own saved output module becomes the plan's `Output` node, which is
-    /// what a bare patch lowers to and what every render before `P08-S002` rendered through.
+    /// A separate global sink follows the saved terminating voice stage.
     OwnOutput,
-    /// A node the caller placed — the master sum — which the last stage feeds; the saved
-    /// output module then lowers to no node of its own.
+    /// A caller-owned master sum receives the last inserted stage.
     Node(NodeId),
 }
 
@@ -249,6 +227,19 @@ type AccumulatedModulation = (
 );
 
 impl GraphAccumulator {
+    /// The audio signal entering a compiled channel, before its fader and pan.
+    pub(super) fn channel_input(&self, channel: NodeId) -> Option<(NodeId, PortId)> {
+        self.edges
+            .iter()
+            .find(|(_, to, domain)| to.0 == channel && *domain == SignalDomain::Audio)
+            .map(|(from, _, _)| *from)
+    }
+
+    pub(super) fn external_detector(&self, node: NodeId) -> bool {
+        matches!(self.nodes.get(&node), Some((IrNodeKind::Compressor { settings }, _))
+            if matches!(settings.detector(), synth_engine_v2::dynamics::CompressorDetector::External { .. }))
+    }
+
     /// Add a node, or name the address another node already holds.
     pub(super) fn node(
         &mut self,
@@ -365,6 +356,7 @@ pub fn lower_voice_patch_with(
             track: None,
             channel,
             soft_clip: false,
+            headroom: false,
             sends: Vec::new(),
         },
         modulators,
@@ -572,7 +564,7 @@ pub(super) fn lower_instrument_into(
                 LoweringReason::OwnedByLaterPhase {
                     capability: "a second output module, which V1 resolves between and V2 \
                                  refuses outright",
-                    owner: "Phase 8, with the mixer and bus model",
+                    owner: "P08-R002, before the first lowering consumer of this saved route",
                 },
             ));
         }
@@ -633,13 +625,14 @@ pub(super) fn lower_instrument_into(
     // V1 scales each voice's output and applies each voice's track control before the
     // voice sum — so both are in the voice scope; the channel and the clipper run once per
     // instrument on the sum.
-    let mut chain: Vec<NodeId> = Vec::with_capacity(5);
+    let mut chain: Vec<NodeId> = Vec::with_capacity(6);
+    chain.extend(output_node);
     if let Some(sensitivity) = stages.velocity {
         let id = slot.voice_output_scaler();
         if !place(
             graph,
             id,
-            IrNodeKind::VelocityScaler { sensitivity },
+            IrNodeKind::StereoVelocityScaler { sensitivity },
             ExecutionScope::Voice,
             &mut diagnostics,
         ) {
@@ -742,10 +735,21 @@ pub(super) fn lower_instrument_into(
         ));
         refused = true;
     }
-    // Where the chain ends: the saved output module as the plan's output, or the caller's
-    // node, in which case the saved output module lowers to no node of its own.
+    // The terminating module remains per voice; a separate global sink ends the chain.
     let end = match sink {
-        Sink::OwnOutput => output_node,
+        Sink::OwnOutput => {
+            let id = slot.patch_output();
+            if !place(
+                graph,
+                id,
+                IrNodeKind::Output,
+                ExecutionScope::Global,
+                &mut diagnostics,
+            ) {
+                refused = true;
+            }
+            Some(id)
+        }
         Sink::Node(node) => Some(node),
     };
     // The stage the cable into the output module enters instead: the first inserted stage,
@@ -814,11 +818,12 @@ pub(super) fn lower_instrument_into(
         }
 
         match lower_module(instrument, id, module, &patched, &mut diagnostics) {
-            // The saved output module is audited and reported as every module is, but it
-            // is a node only where it is the plan's output: into a caller's sink it lowers
-            // to the cable that reaches it.
-            Some((IrNodeKind::Output, _)) if sink != Sink::OwnOutput => {}
-            Some((kind, scope)) => {
+            Some((mut kind, scope)) => {
+                if stages.headroom
+                    && let IrNodeKind::VoiceOutput { limiting, .. } = &mut kind
+                {
+                    *limiting = synth_engine_v2::output::OutputLimiting::Unbounded;
+                }
                 if !place(graph, node, kind, scope, &mut diagnostics) {
                     refused = true;
                 }
@@ -873,7 +878,7 @@ pub(super) fn lower_instrument_into(
                 },
                 LoweringReason::OwnedByLaterPhase {
                     capability: "two cables into one input, which V1 sums and V2 refuses",
-                    owner: "Phase 8, with the mixer and summing model",
+                    owner: "P08-R002, before the first lowering consumer of this saved route",
                 },
             ));
             refused = true;
@@ -982,7 +987,7 @@ pub(super) fn lower_instrument_into(
             },
             LoweringReason::OwnedByLaterPhase {
                 capability: "a feedback path, which V2 refuses as a cycle",
-                owner: "Phase 8, with the latency and feedback model",
+                owner: "P08-R002, before the first lowering consumer of this saved route",
             },
         ));
         refused = true;
@@ -1201,6 +1206,59 @@ pub(super) fn lower_insert(
         quantity(NormalizedLevel::new(value), parameter(key), diagnostics)
     };
     match module.module_type {
+        ModuleType::Compressor => {
+            if !audit_parameters(
+                module,
+                &declarations,
+                &[
+                    "threshold",
+                    "ratio",
+                    "attack",
+                    "release",
+                    "makeup",
+                    "mix",
+                    "sidechain",
+                    "sc_filter",
+                ],
+                &parameter,
+                diagnostics,
+            ) {
+                return None;
+            }
+            let threshold = v1_value(module, &declarations, "threshold", &parameter, diagnostics)?;
+            let ratio = v1_value(module, &declarations, "ratio", &parameter, diagnostics)?;
+            let attack = v1_value(module, &declarations, "attack", &parameter, diagnostics)?;
+            let release = v1_value(module, &declarations, "release", &parameter, diagnostics)?;
+            let makeup = v1_value(module, &declarations, "makeup", &parameter, diagnostics)?;
+            let mix = level("mix", diagnostics)?;
+            let sidechain = v1_value(module, &declarations, "sidechain", &parameter, diagnostics)?;
+            let cutoff = v1_value(module, &declarations, "sc_filter", &parameter, diagnostics)?;
+            let detector = if sidechain > 0.5 {
+                synth_engine_v2::dynamics::CompressorDetector::External {
+                    cutoff: quantity(
+                        CutoffFrequency::new(cutoff),
+                        parameter("sc_filter"),
+                        diagnostics,
+                    )?,
+                }
+            } else {
+                synth_engine_v2::dynamics::CompressorDetector::Internal
+            };
+            let settings = quantity(
+                synth_engine_v2::dynamics::CompressorSettings::new(
+                    synth_core::Decibels::new(threshold),
+                    synth_core::Ratio::new(ratio),
+                    synth_core::Milliseconds::new(attack),
+                    synth_core::Milliseconds::new(release),
+                    synth_core::Decibels::new(makeup),
+                    mix,
+                    detector,
+                ),
+                subject(),
+                diagnostics,
+            )?;
+            Some(IrNodeKind::Compressor { settings })
+        }
         ModuleType::Distortion => {
             // `bit_depth` is read by V1's bitcrush mode alone; consumed so a non-finite one
             // is still refused, and inert under the one mode carried.
@@ -1221,7 +1279,7 @@ pub(super) fn lower_insert(
                     LoweringReason::OwnedByLaterPhase {
                         capability: "a distortion mode other than soft clip, whose law V2 has \
                                      not carried",
-                        owner: "Phase 8, with the corpus case that needs the mode",
+                        owner: "P08-R002, before the first lowering consumer of this saved route",
                     },
                 ));
                 return None;
@@ -1259,7 +1317,7 @@ pub(super) fn lower_insert(
                     LoweringReason::OwnedByLaterPhase {
                         capability: "a stereo or ping-pong delay mode, whose law V2 has not \
                                      carried",
-                        owner: "Phase 8, with the corpus case that needs the mode",
+                        owner: "P08-R002, before the first lowering consumer of this saved route",
                     },
                 ));
                 return None;
@@ -1273,7 +1331,7 @@ pub(super) fn lower_insert(
                     parameter("tempo_sync"),
                     LoweringReason::OwnedByLaterPhase {
                         capability: "a tempo-synced delay time, which follows the song's tempo",
-                        owner: "Phase 8, with a tempo-following insert time",
+                        owner: "P08-R002, before the first lowering consumer of this saved route",
                     },
                 ));
                 return None;
@@ -1585,66 +1643,60 @@ fn lower_module(
                 return None;
             }
 
-            // V1 reads an unpatched `cv` as `1.0`; V2 reads an unpatched control input as
-            // defined silence. So the same graph that V1 sounds, V2 renders silent — and a
-            // silent render with no diagnostic is exactly what fail-closed forbids.
-            let has_control = patched
-                .iter()
-                .any(|(to_module, to_port)| *to_module == id && to_port == "cv");
-            if !has_control {
-                diagnostics.push(LoweringDiagnostic::refused(
-                    subject(),
-                    LoweringReason::OwnedByLaterPhase {
-                        capability: "an amplifier with no control cable, which V1 drives at \
-                                     unity and V2 would render silent",
-                        owner: "Phase 5, with the declarative node API's default-value law",
-                    },
-                ));
-                return None;
-            }
-
-            // V1's amplifier pans, and its equal-power law puts centre at `cos(π/4)` on each
-            // channel rather than at unity. V2's does not pan at all, so the stage is absent
-            // whatever the saved value is — including when there is none.
-            diagnostics.push(LoweringDiagnostic::unrepresented(
-                subject(),
-                LoweringReason::OwnedByLaterPhase {
-                    capability: "the amplifier's pan stage, whose equal-power centre is not \
-                                 unity gain",
-                    owner: "Phase 8",
-                },
-            ));
-            (IrNodeKind::Amplifier, ExecutionScope::Voice)
+            let pan = v1_value(module, &declarations, "pan", &parameter, diagnostics)?;
+            let pan = quantity(
+                synth_engine_v2::controller::BipolarLevel::new(pan),
+                parameter("pan"),
+                diagnostics,
+            )?;
+            (IrNodeKind::VoiceAmplifier { pan }, ExecutionScope::Voice)
         }
 
         ModuleType::StereoOutput => {
-            if !audit_parameters(module, &declarations, &["master"], &parameter, diagnostics) {
-                return None;
-            }
-            // V1's terminating node defaults its master level to 0.8, not unity, so an
-            // omitted key is already an amplitude V2 does not apply.
-            if !require_neutral(
+            if !audit_parameters(
                 module,
                 &declarations,
-                "master",
-                1.0,
+                &["master", "pan", "limit", "mute", "dither"],
+                &parameter,
+                diagnostics,
+            ) || !require_neutral(
+                module,
+                &declarations,
+                "dither",
+                0.0,
                 &parameter,
                 diagnostics,
             ) {
                 return None;
             }
-            // Recorded by `EVD-0013`: V1's terminating node pans, limits and meters, and
-            // V2's writes one source to the profile's channels. The routing survives; those
-            // three stages do not.
-            diagnostics.push(LoweringDiagnostic::unrepresented(
-                subject(),
-                LoweringReason::OwnedByLaterPhase {
-                    capability: "the terminating node's pan, limiter and metering stages",
-                    owner: "Phase 8",
+            let master = v1_value(module, &declarations, "master", &parameter, diagnostics)?;
+            let master = quantity(
+                NormalizedLevel::new(master),
+                parameter("master"),
+                diagnostics,
+            )?;
+            let pan = v1_value(module, &declarations, "pan", &parameter, diagnostics)?;
+            let pan = quantity(
+                synth_engine_v2::controller::BipolarLevel::new(pan),
+                parameter("pan"),
+                diagnostics,
+            )?;
+            let muted = v1_value(module, &declarations, "mute", &parameter, diagnostics)? > 0.5;
+            let limiting =
+                if v1_value(module, &declarations, "limit", &parameter, diagnostics)? > 0.5 {
+                    synth_engine_v2::output::OutputLimiting::SoftKnee
+                } else {
+                    synth_engine_v2::output::OutputLimiting::HardClamp
+                };
+            (
+                IrNodeKind::VoiceOutput {
+                    master,
+                    pan,
+                    muted,
+                    limiting,
                 },
-            ));
-            // The one node of a voice patch that is not per-voice: every voice mixes into it.
-            (IrNodeKind::Output, ExecutionScope::Global)
+                ExecutionScope::Voice,
+            )
         }
 
         // `P07-S003`: V1's LFO is V2's `Lfo` kind, per voice as every voice module is. Its

@@ -169,7 +169,7 @@ impl InstrumentSlot {
     }
 
     /// The address of one of this instrument's saved modules.
-    fn module(self, id: ModuleId) -> NodeId {
+    pub(super) fn module(self, id: ModuleId) -> NodeId {
         NodeId::new(
             ((self.0 as u32) << Self::SHIFT)
                 | ((id.module_type as u32) << 16)
@@ -200,6 +200,11 @@ impl InstrumentSlot {
     /// V1's channel-stage soft clipper (`P08-S002`).
     pub const fn soft_clip(self) -> NodeId {
         self.inserted(3)
+    }
+
+    /// A bare patch's separate global sink after its terminating voice stage.
+    pub const fn patch_output(self) -> NodeId {
+        self.inserted(4)
     }
 
     /// One of V1's six Mod Matrix macro sources (`P07-S004`), by its one-based tag.
@@ -310,6 +315,8 @@ pub const MASTER_TRIM: NodeId = InstrumentSlot::MASTER.inserted(1);
 pub const MASTER_CLAMP: NodeId = InstrumentSlot::MASTER.inserted(2);
 /// The plan's one output (`P08-S002`).
 pub const MASTER_OUTPUT: NodeId = InstrumentSlot::MASTER.inserted(3);
+/// Master observation after the output policy stages.
+pub const MASTER_METER: NodeId = InstrumentSlot::MASTER.inserted(4);
 
 /// The two-way mapping between a patch's saved module identities and one plan's node
 /// identities.

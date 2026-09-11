@@ -3557,3 +3557,100 @@ fn a_locate_restores_the_pitch_the_last_note_before_it_carried() {
          prepared frequency rather than the last write before the destination"
     );
 }
+
+#[test]
+fn shared_feedback_survives_voice_stealing_release_and_transport_relocation() {
+    use synth_engine_v2::latency::CompensationPolicy;
+    const CLICK: NodeId = NodeId::new(90);
+    const MEMORY: NodeId = NodeId::new(91);
+    const SUM: NodeId = NodeId::new(92);
+    const GAIN: NodeId = NodeId::new(93);
+    let base = gated_constant_stealing(1);
+    let mut builder = GraphIr::builder().declaring(synth_engine_v2::ir::PlanDeclarations {
+        compensation: CompensationPolicy::Decline,
+        ..base.declarations().clone()
+    });
+    for node in base.nodes() {
+        builder = builder.node(node.id(), node.kind(), node.scope());
+    }
+    for edge in base.edges() {
+        if edge.to().0 != OUTPUT {
+            builder = builder.connect(edge.from(), edge.to(), edge.domain());
+        }
+    }
+    // The voice still runs and steals, but its audio is disconnected. Only shared
+    // feedback reaches the output, making any accidental voice/reset ownership audible.
+    for (id, kind) in [
+        (
+            CLICK,
+            IrNodeKind::Impulse {
+                position: PlanPosition::ZERO,
+            },
+        ),
+        (MEMORY, IrNodeKind::FeedbackDelay),
+        (SUM, IrNodeKind::Mix),
+        (
+            GAIN,
+            IrNodeKind::Trim {
+                level: Amplitude::new(0.5).expect("gain"),
+            },
+        ),
+    ] {
+        builder = builder.node(id, kind, ExecutionScope::Global);
+    }
+    for (from, to) in [
+        (CLICK, SUM),
+        (MEMORY, SUM),
+        (SUM, GAIN),
+        (GAIN, MEMORY),
+        (SUM, OUTPUT),
+    ] {
+        builder = builder.connect(
+            (from, PortId::FIRST),
+            (to, PortId::FIRST),
+            SignalDomain::Audio,
+        );
+    }
+    let profile = common::profile(TOTAL as u64, ChannelLayout::Stereo);
+    let plan = common::admit(&builder.build().expect("graph"), profile);
+    let run = |intervene: bool, block: usize| {
+        let (mut control, mut renderer) = StreamControl::open(plan.clone(), ORIGIN).expect("open");
+        let events = if intervene {
+            vec![
+                keyed(&plan, 0, 60, true),
+                keyed(&plan, 83, 62, true),
+                keyed(&plan, 151, 62, false),
+            ]
+        } else {
+            vec![]
+        };
+        let stream = admitted(&plan, &events);
+        let quiet = admitted(&plan, &[]);
+        let mut scheduler =
+            CompiledEventScheduler::prepare(&mut control, &stream).expect("schedule");
+        if intervene {
+            let activation = control
+                .plan_activation(&quiet, request(209, 512))
+                .expect("activation");
+            scheduler.offer(&mut renderer, activation).expect("offer");
+        }
+        let mut arbiter = PublicationArbiter::prepare(&profile).expect("arbiter");
+        let mut samples = vec![0.0; 2048];
+        for chunk in samples.chunks_mut(block * 2) {
+            let frames = chunk.len() / 2;
+            scheduler
+                .render(
+                    &mut renderer,
+                    &mut arbiter,
+                    AudioBlockMut::new(chunk, frames, ChannelLayout::Stereo).expect("shape"),
+                )
+                .expect("render");
+        }
+        samples
+    };
+    let reference = run(false, 1024);
+    assert!(reference[1024..].iter().any(|v| *v > 0.0));
+    for block in [1024, 256, 64, 37] {
+        assert_eq!(run(true, block), reference, "block {block}");
+    }
+}

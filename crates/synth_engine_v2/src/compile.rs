@@ -1866,9 +1866,13 @@ fn lower(
                 .iter()
                 .filter(|port| port.direction() == crate::validate::PortDirection::Input);
             for (index, port) in declared.enumerate() {
-                let arrivals = edges_into
-                    .get(&(*id, port.id()))
-                    .map_or(&[][..], Vec::as_slice);
+                let arrivals = if matches!(kind, IrNodeKind::FeedbackDelay) {
+                    &[][..]
+                } else {
+                    edges_into
+                        .get(&(*id, port.id()))
+                        .map_or(&[][..], Vec::as_slice)
+                };
                 let mut resolved: Vec<BufferSlot> = Vec::with_capacity(arrivals.len());
                 for (edge, from) in arrivals {
                     if let Some(buffer) = aligned
@@ -2308,6 +2312,30 @@ fn lower(
             }),
             _ => fault = fault.or(Some(CompileError::DestinationWithoutSlot { node })),
         }
+    }
+
+    // Capture boundaries after every graph read. The arena includes these reads when
+    // deciding liveness and in-place reuse; history itself is outside the arena.
+    for id in &order {
+        if kinds.get(id) != Some(&IrNodeKind::FeedbackDelay) {
+            continue;
+        }
+        let Some((edge, from)) = edges_into
+            .get(&(*id, PortId::FIRST))
+            .and_then(|arrivals| arrivals.first())
+        else {
+            continue;
+        };
+        let (Some(mut source), Some(node)) =
+            (slots.get(from).copied(), node_slots.get(id).copied())
+        else {
+            fault = fault.or(Some(CompileError::DestinationWithoutSlot { node: *id }));
+            continue;
+        };
+        if let Some(conversion) = converted.get(edge) {
+            source = state.widen(source, ChannelLayout::Stereo, *edge, *conversion, warnings);
+        }
+        state.ops.push(PlanOp::FeedbackWrite { node, source });
     }
 
     // ADR-0005: lowering emits one buffer per value; the arena decides which of them

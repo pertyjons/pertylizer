@@ -1489,7 +1489,9 @@ impl Steps {
                 .iter()
                 .filter_map(|op| match op {
                     PlanOp::Node(step) => Some(step.clone()),
-                    PlanOp::Output { .. } | PlanOp::Modulate(_) => None,
+                    PlanOp::Output { .. } | PlanOp::Modulate(_) | PlanOp::FeedbackWrite { .. } => {
+                        None
+                    }
                 })
                 .collect(),
             // ADR-0041 clause 2: `bind` reads the regions the plan records, and since
@@ -1619,6 +1621,7 @@ fn assert_shape_a_is_the_compiled_plan(plan: &CompiledPlan) {
                 // arm models by hand.
                 channels.push((source.index(), 0));
             }
+            PlanOp::FeedbackWrite { .. } => panic!("shape A has no feedback boundary"),
             PlanOp::Modulate(step) => panic!(
                 "shape A has no modulation, and one landed on row {}",
                 step.row()

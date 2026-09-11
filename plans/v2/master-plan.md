@@ -1568,7 +1568,9 @@ instrument voice sum
   compensation where required.
 - Let nodes declare supported rates. Compile oversampling islands and explicit
   up/downsampling operations after the initial whole-plan oversampling path is
-  stable.
+  stable. **Carried as P08-R001:** rate declarations and execution remain unbuilt;
+  saved nonunity oversampling is diagnosed. The first rate-extension consumer
+  owns conversion, history and latency qualification before enabling it.
 - Compile acyclic sidechains in current-quantum dependency order. Require an
   explicit delay for cyclic feedback rather than applying a hidden callback
   delay to every sidechain.
@@ -1577,16 +1579,24 @@ instrument voice sum
 
 ### Exit gate
 
-- [ ] Two independent channels using the same patch definition retain
+- [x] Two independent channels using the same patch definition retain
       independent faders, inserts, sends, meters, voices, and tails.
-- [ ] Sidechain latency is reported and independent of host callback size.
-- [ ] Float offline output preserves documented internal headroom.
-- [ ] Node and route latency is visible in diagnostics and compensated according
+- [x] Sidechain latency is reported and independent of host callback size.
+- [x] Float offline output preserves documented internal headroom.
+- [x] Node and route latency is visible in diagnostics and compensated according
       to the declared policy.
-- [ ] Return and group routing require no renderer-specific topological sort per
+- [x] Return and group routing require no renderer-specific topological sort per
       block.
-- [ ] Common channel and bus processing remains allocation-free under the RT
+- [x] Common channel and bus processing remains allocation-free under the RT
       guard.
+
+The gate is accepted in [REV-P08](reviews/phase-08-exit-review.md), with the
+bounded native/lowering catalog and named residuals P08-R001 and P08-R002.
+[EVD-0022](evidence/phase-08/EVD-0022-routing-qualification.md) qualifies V2
+corpus rendering/refusal; actual V1 DSP modules are compared on identical
+inputs separately. This is not whole-project V1/V2 orchestration, which remains
+P04-R004/ADR-0028's Phase 10B obligation. Phase 9 inherits no unbuilt rate,
+saved-route, hardware or persisted-ownership guarantee.
 
 ## Phase 9: Live integration and immutable plan swapping
 

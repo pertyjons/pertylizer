@@ -124,7 +124,7 @@ fn admitted(ir: &GraphIr) -> CompiledPlan {
     let profile = synth_engine_v2::profile::HostProfile::harness(
         SampleRate::new(48_000.0).expect("rate"),
         FrameCount::new((Q * QUANTA) as u64),
-        ChannelLayout::Mono,
+        ChannelLayout::Stereo,
     )
     .expect("profile");
     compile(ir, &RenderConfig::new(profile))

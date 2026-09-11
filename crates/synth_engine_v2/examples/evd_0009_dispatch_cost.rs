@@ -403,7 +403,7 @@ impl Table {
             .iter()
             .filter_map(|op| match op {
                 PlanOp::Node(step) => Some(step.clone()),
-                PlanOp::Output { .. } | PlanOp::Modulate(_) => None,
+                PlanOp::Output { .. } | PlanOp::Modulate(_) | PlanOp::FeedbackWrite { .. } => None,
             })
             .collect();
         // The plan's output operations, executed by every arm: the acceptance rule's
@@ -413,7 +413,7 @@ impl Table {
             .iter()
             .filter_map(|op| match op {
                 PlanOp::Output { source } => Some((*source, 0)),
-                PlanOp::Node(_) | PlanOp::Modulate(_) => None,
+                PlanOp::Node(_) | PlanOp::Modulate(_) | PlanOp::FeedbackWrite { .. } => None,
             })
             .collect();
         let kinds: Vec<Kind> = steps

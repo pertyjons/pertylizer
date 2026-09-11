@@ -115,6 +115,18 @@ pub enum ProjectSubject {
     },
     /// The master effect chain.
     MasterChain,
+    /// One master effect by saved identity.
+    MasterModule {
+        /// The owning effect.
+        module: ModuleId,
+    },
+    /// One parameter of a master effect.
+    MasterParameter {
+        /// The owning effect.
+        module: ModuleId,
+        /// Saved parameter key.
+        parameter: String,
+    },
     /// One instrument's insert chain as `patch.settings.effect_chain_order` describes it
     /// (`P08-S003`): the subject of a refusal about the order itself rather than about one
     /// of the modules it names.
@@ -152,6 +164,8 @@ pub enum ProjectSubject {
 #[must_use]
 #[non_exhaustive]
 pub enum LoweringReason {
+    /// Intentional current-quantum detector timing, replacing V1's previous-callback cache.
+    SidechainTiming,
     /// The module's type has no node kind in V2's registry.
     UnsupportedModuleType {
         /// The type the project authored.

@@ -1380,6 +1380,25 @@ impl PreparedRenderer {
                     };
                     step.kernel().run(prepared, state, &mut io);
                 }
+                PlanOp::FeedbackWrite { node, source } => {
+                    let (Some(start), Some(end), Some(region)) = (
+                        self.history_starts.get(node.index()).copied(),
+                        self.history_starts.get(node.index() + 1).copied(),
+                        self.plan.regions().get(source.index()),
+                    ) else {
+                        continue;
+                    };
+                    let Some(history) = self.history.get_mut(start..end) else {
+                        continue;
+                    };
+                    let Some(input) = self
+                        .buffers
+                        .get(region.offset()..region.offset().saturating_add(history.len()))
+                    else {
+                        continue;
+                    };
+                    history.copy_from_slice(input);
+                }
                 PlanOp::Modulate(step) => {
                     let step = *step;
                     self.compose_modulation(step);

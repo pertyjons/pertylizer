@@ -1135,6 +1135,8 @@ section did.
 | `max_buses` | `BusCount` | 64 | Chosen. **Counted from the plan's bus strips** since `P08-S004` (`SOUND-INV-034`), not from a declaration | — | Phase 8 |
 | `max_sends_per_channel` | `SendCount` | 16 | V1 carry-over. **Counted per channel and per bus from the send nodes of its scope** since `P08-S004` (`SOUND-INV-034`), pre-fader and post-fader together as `LIMIT-0024`'s list holds both, and refused by name where V1 dropped the seventeenth. ADR-0034 still owns what a send is to a **track** — the lowerer refuses two assigned tracks with differing sends until it decides | `LIMIT-0024` | Phase 8 |
 
+Since `P08-S007`, every channel and return strip declares its stereo meter tap
+(`SOUND-INV-037`). Master and voice-terminal taps count against the same observation ceiling.
 A plan with 200 metered mix channels is admissible by `max_mix_channels` and refused by `max_observation_taps`, with the
 tap budget named as the dominant contributor. That is the intended shape: the two budgets are allowed to disagree, and
 the report says which one bound the plan. V1's version of the same situation was a meter that stopped appearing.

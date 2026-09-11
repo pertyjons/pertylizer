@@ -506,3 +506,207 @@ fn drive(plan: &CompiledPlan, mode: Observed, quanta: usize) -> Driven {
         id,
     }
 }
+
+#[test]
+fn channel_return_and_master_taps_are_stereo_lossy_and_audio_invariant() {
+    use crate::controller::BipolarLevel;
+    use crate::ir::{BusTag, ChannelTag};
+    let mut builder = GraphIr::builder();
+    for (id, kind, scope) in [
+        (
+            1,
+            IrNodeKind::Constant {
+                level: Amplitude::new(0.7).expect("level"),
+            },
+            ExecutionScope::Global,
+        ),
+        (
+            2,
+            IrNodeKind::VoiceAmplifier {
+                pan: BipolarLevel::ZERO,
+            },
+            ExecutionScope::Global,
+        ),
+        (
+            3,
+            IrNodeKind::VoiceOutput {
+                master: NormalizedLevel::FULL,
+                pan: BipolarLevel::ZERO,
+                muted: false,
+                limiting: crate::output::OutputLimiting::SoftKnee,
+            },
+            ExecutionScope::Global,
+        ),
+        (
+            4,
+            IrNodeKind::StereoVelocityScaler {
+                sensitivity: NormalizedLevel::FULL,
+            },
+            ExecutionScope::Global,
+        ),
+        (
+            5,
+            IrNodeKind::Channel {
+                fader: Amplitude::new(0.3).expect("level"),
+                pan: BipolarLevel::new(-0.4).expect("pan"),
+                muted: false,
+            },
+            ExecutionScope::Channel(ChannelTag::new(1)),
+        ),
+        (
+            6,
+            IrNodeKind::Channel {
+                fader: Amplitude::new(0.6).expect("level"),
+                pan: BipolarLevel::new(0.3).expect("pan"),
+                muted: false,
+            },
+            ExecutionScope::Channel(ChannelTag::new(2)),
+        ),
+        (
+            7,
+            IrNodeKind::Send {
+                level: Amplitude::new(0.5).expect("level"),
+                muted: false,
+            },
+            ExecutionScope::Channel(ChannelTag::new(1)),
+        ),
+        (8, IrNodeKind::Mix, ExecutionScope::Bus(BusTag::new(1))),
+        (
+            9,
+            IrNodeKind::Channel {
+                fader: Amplitude::new(0.7).expect("level"),
+                pan: BipolarLevel::ZERO,
+                muted: false,
+            },
+            ExecutionScope::Bus(BusTag::new(1)),
+        ),
+        (10, IrNodeKind::Mix, ExecutionScope::Global),
+        (11, IrNodeKind::StereoMonitor, ExecutionScope::Global),
+        (12, IrNodeKind::Output, ExecutionScope::Global),
+    ] {
+        builder = builder.node(NodeId::new(id), kind, scope);
+    }
+    for (from, to) in [
+        (1, 2),
+        (2, 3),
+        (3, 4),
+        (4, 5),
+        (4, 6),
+        (4, 7),
+        (7, 8),
+        (8, 9),
+        (5, 10),
+        (6, 10),
+        (9, 10),
+        (10, 11),
+        (11, 12),
+    ] {
+        builder = builder.connect(
+            (NodeId::new(from), PortId::FIRST),
+            (NodeId::new(to), PortId::FIRST),
+            SignalDomain::Audio,
+        );
+    }
+    let profile = HostProfile::harness(
+        profile().capabilities().sample_rate(),
+        FrameCount::new(256),
+        ChannelLayout::Stereo,
+    )
+    .expect("profile");
+    let graph = builder.build().expect("graph");
+    let plan = compile(&graph, &RenderConfig::new(profile))
+        .into_plan()
+        .expect("plan");
+    assert_eq!(plan.channels().len(), 2);
+    assert_eq!(plan.buses().len(), 1);
+    assert!(plan.channel_tap(plan.channels()[0].id).is_some());
+    assert!(plan.bus_tap(plan.buses()[0].id).is_some());
+    let foreign = compile(&graph, &RenderConfig::new(profile))
+        .into_plan()
+        .expect("foreign");
+    assert!(plan.channel_tap(foreign.channels()[0].id).is_none());
+    assert!(plan.bus_tap(foreign.buses()[0].id).is_none());
+    let limits = profile.limits();
+    let observation = crate::profile::ObservationLimits::new(
+        crate::quantities::TapCount::limit(3).expect("cap"),
+        limits.observation().telemetry_ring_frames(),
+        limits.observation().analyzer_fft_size(),
+    )
+    .expect("limits");
+    let limited = crate::profile::RenderLimits::new(
+        limits.stream(),
+        limits.graph(),
+        limits.voices(),
+        limits.events(),
+        observation,
+        limits.mixing(),
+        limits.memory(),
+        limits.script(),
+        limits.recording(),
+        limits.cost(),
+    )
+    .expect("limits");
+    let limited = HostProfile::new(profile.capabilities(), limited).expect("profile");
+    let refused = compile(&graph, &RenderConfig::new(limited));
+    assert!(
+        refused.plan().is_err(),
+        "five taps exceed three while both channels fit"
+    );
+    assert!(format!("{:?}", refused.plan()).contains("ObservationTaps"));
+
+    let run = |observe| {
+        let (mut control, mut renderer) = StreamControl::open(plan.clone(), ORIGIN).expect("open");
+        let quiet = AdmittedCompiledStream::admit(&plan, &[]).expect("stream");
+        let mut scheduler =
+            CompiledEventScheduler::prepare(&mut control, &quiet).expect("scheduler");
+        let mut arbiter = PublicationArbiter::prepare(&profile).expect("arbiter");
+        let mut store = ObservationSubscriptions::prepare(&profile, &plan);
+        let ids: Vec<_> = [5, 6, 9, 11]
+            .map(|id| {
+                store
+                    .subscribe(
+                        &plan,
+                        plan.resolve_tap(NodeId::new(id), PortId::FIRST)
+                            .expect("declared"),
+                    )
+                    .expect("subscribe")
+            })
+            .into();
+        let mut output = [0.0; 512];
+        let allocations = crate::render_allocation::count_allocs(|| {
+            for _ in 0..20 {
+                let block =
+                    AudioBlockMut::new(&mut output, 256, ChannelLayout::Stereo).expect("block");
+                if observe {
+                    scheduler
+                        .render_observed(&mut renderer, &mut arbiter, None, Some(&mut store), block)
+                        .expect("render");
+                } else {
+                    scheduler
+                        .render(&mut renderer, &mut arbiter, block)
+                        .expect("render");
+                }
+            }
+        });
+        assert_eq!(allocations, 0);
+        let mut values = Vec::new();
+        if observe {
+            for id in ids {
+                assert_eq!(store.channels(id), Some(2));
+                let mut buffer = [0.0; 512];
+                let read = store.read(id, &mut buffer).expect("read");
+                assert!(read.dropped.as_u64() > 0, "saturation is visible");
+                assert!(read.frames.as_u64() > 0);
+                values.push([buffer[0], buffer[1]]);
+            }
+            assert_ne!(values[0], values[1], "independent strips remain distinct");
+            assert_ne!(
+                values[0][0], values[0][1],
+                "stereo pan survives observation"
+            );
+            assert_eq!(values[3], [output[0], output[1]]);
+        }
+        output
+    };
+    assert_eq!(run(false), run(true));
+}

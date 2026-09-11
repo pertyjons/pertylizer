@@ -136,7 +136,7 @@ fn a_mono_source_into_a_stereo_stream_widens_into_one_wider_region() {
         .iter()
         .filter_map(|op| match op {
             PlanOp::Output { source } => Some(source.index()),
-            PlanOp::Node(_) | PlanOp::Modulate(_) => None,
+            PlanOp::Node(_) | PlanOp::Modulate(_) | PlanOp::FeedbackWrite { .. } => None,
         })
         .collect();
     let duplications: Vec<(usize, usize)> = plan
@@ -149,7 +149,7 @@ fn a_mono_source_into_a_stereo_stream_widens_into_one_wider_region() {
                 .copied()
                 .flatten()
                 .map(|source| (source.index(), step.out().index())),
-            PlanOp::Output { .. } | PlanOp::Modulate(_) => None,
+            PlanOp::Output { .. } | PlanOp::Modulate(_) | PlanOp::FeedbackWrite { .. } => None,
         })
         .collect();
 
@@ -284,6 +284,7 @@ fn buffer_slots_are_dense_and_every_operation_indexes_inside_the_arena() {
             }
             PlanOp::Output { source } => vec![source.index()],
             PlanOp::Modulate(step) => vec![step.source().index()],
+            PlanOp::FeedbackWrite { source, .. } => vec![source.index()],
         };
         for slot in slots {
             assert!(

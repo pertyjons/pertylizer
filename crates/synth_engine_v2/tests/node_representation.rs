@@ -241,7 +241,7 @@ fn a_gain_reading_its_own_slot_scales_rather_than_silences() {
             .copied()
             .flatten()
             .is_some_and(|input| input == step.out()),
-        PlanOp::Output { .. } | PlanOp::Modulate(_) => false,
+        PlanOp::Output { .. } | PlanOp::Modulate(_) | PlanOp::FeedbackWrite { .. } => false,
     });
     assert!(
         merged,
@@ -327,7 +327,7 @@ fn a_widened_signal_is_copied_by_a_scheduled_kernel() {
 fn a_declared_kind_appears_in_the_registry_only_by_deferring_to_its_declaration() {
     // The variant as it is spelled in a pattern — fieldless kinds have no `{ .. }` — and
     // the declaration constant it forwards to.
-    const DECLARED: [(&str, &str); 27] = [
+    const DECLARED: [(&str, &str); 33] = [
         ("Script { .. }", "SCRIPT"),
         ("AudioScript { .. }", "AUDIO_SCRIPT"),
         ("NoteScript { .. }", "NOTE_SCRIPT"),
@@ -345,6 +345,8 @@ fn a_declared_kind_appears_in_the_registry_only_by_deferring_to_its_declaration(
         ("Distortion { .. }", "DISTORTION"),
         ("Delay { .. }", "DELAY"),
         ("Latency { .. }", "LATENCY"),
+        ("Compressor { .. }", "COMPRESSOR"),
+        ("FeedbackDelay", "FEEDBACK_DELAY"),
         ("Sampler { .. }", "SAMPLER"),
         ("Envelope { .. }", "ENVELOPE"),
         ("Sine { .. }", "SINE"),
@@ -352,6 +354,10 @@ fn a_declared_kind_appears_in_the_registry_only_by_deferring_to_its_declaration(
         ("Constant { .. }", "CONSTANT"),
         ("Impulse { .. }", "IMPULSE"),
         ("Amplifier", "AMPLIFIER"),
+        ("VoiceAmplifier { .. }", "VOICE_AMPLIFIER"),
+        ("VoiceOutput { .. }", "VOICE_OUTPUT"),
+        ("StereoMonitor", "STEREO_MONITOR"),
+        ("StereoVelocityScaler { .. }", "STEREO_VELOCITY_SCALER"),
         ("Monitor", "MONITOR"),
         ("Gain { .. }", "GAIN"),
         ("Filter { .. }", "FILTER"),
@@ -574,7 +580,24 @@ fn discovery_and_validation_describe_the_same_ports() {
                 play_mode: synth_engine_v2::sample::PlayMode::Sustain,
                 direction: synth_engine_v2::sample::PlayDirection::Forward,
             },
+            NodeKindId::FeedbackDelay => IrNodeKind::FeedbackDelay,
+            NodeKindId::Compressor => IrNodeKind::Compressor {
+                settings: synth_engine_v2::dynamics::CompressorSettings::default(),
+            },
             NodeKindId::Monitor => IrNodeKind::Monitor,
+            NodeKindId::VoiceAmplifier => IrNodeKind::VoiceAmplifier {
+                pan: synth_engine_v2::controller::BipolarLevel::ZERO,
+            },
+            NodeKindId::VoiceOutput => IrNodeKind::VoiceOutput {
+                master: synth_engine_v2::quantities::NormalizedLevel::FULL,
+                pan: synth_engine_v2::controller::BipolarLevel::ZERO,
+                muted: false,
+                limiting: synth_engine_v2::output::OutputLimiting::SoftKnee,
+            },
+            NodeKindId::StereoVelocityScaler => IrNodeKind::StereoVelocityScaler {
+                sensitivity: synth_engine_v2::quantities::NormalizedLevel::FULL,
+            },
+            NodeKindId::StereoMonitor => IrNodeKind::StereoMonitor,
             NodeKindId::Filter => IrNodeKind::Filter {
                 cutoff: CutoffFrequency::new(1_000.0).expect("positive"),
                 resonance: Resonance::BUTTERWORTH,
@@ -599,7 +622,7 @@ fn discovery_and_validation_describe_the_same_ports() {
     let entries = catalog();
     assert_eq!(
         entries.len(),
-        35,
+        41,
         "every kind but the output node is discoverable"
     );
     for entry in entries {

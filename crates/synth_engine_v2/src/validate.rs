@@ -494,6 +494,7 @@ pub(crate) fn validate(ir: &GraphIr, stream: ChannelLayout) -> Result<Validated,
     mixer_scopes(ir)?;
     modulations(ir, &index)?;
     fan_in(ir, &index)?;
+    feedback_boundaries(ir)?;
     let order = topological_order(&index)?;
     let warnings = outputs(ir)?;
 
@@ -872,9 +873,8 @@ fn mixer_scopes(ir: &GraphIr) -> Result<(), CompileError> {
 
 /// Depth-first order, refusing the first cycle it closes.
 ///
-/// Phase 2 refuses **every** cycle rather than scheduling one. ADR-0033 owns the
-/// delay-boundary rule that would relax that, it is `Proposed`, and the diagnostic
-/// below deliberately does not promise a rule that does not exist yet.
+/// ADR-0033 cuts only explicit feedback writes; every remaining dependency cycle
+/// is refused by the closing cable or modulation binding.
 fn topological_order(index: &Index<'_>) -> Result<Vec<NodeId>, CompileError> {
     /// Where a node is in the walk.
     #[derive(Clone, Copy, PartialEq, Eq)]
@@ -949,6 +949,14 @@ fn topological_order(index: &Index<'_>) -> Result<Vec<NodeId>, CompileError> {
                     let Some(successor_slot) = index.position.get(&successor).copied() else {
                         continue;
                     };
+                    // The cable writes next quantum's state, not this quantum's input.
+                    if matches!(dependency, Dependency::Cable(_))
+                        && ir.nodes().get(successor_slot).is_some_and(|node| {
+                            matches!(node.kind(), crate::ir::IrNodeKind::FeedbackDelay)
+                        })
+                    {
+                        continue;
+                    }
                     match marks.get(successor_slot).copied().unwrap_or(Mark::Done) {
                         Mark::OnStack => {
                             if let Some(start) =
@@ -1065,4 +1073,39 @@ fn outputs(ir: &GraphIr) -> Result<Vec<CompileWarning>, CompileError> {
         return Ok(vec![CompileWarning::OutputNotReached { output }]);
     }
     Ok(Vec::new())
+}
+
+/// Validate the explicit delayed boundary before removing its write dependencies.
+fn feedback_boundaries(ir: &GraphIr) -> Result<(), CompileError> {
+    for node in ir
+        .nodes()
+        .iter()
+        .filter(|node| matches!(node.kind(), crate::ir::IrNodeKind::FeedbackDelay))
+    {
+        let refusal = |reason| CompileError::FeedbackBoundary {
+            node: node.id(),
+            reason,
+        };
+        if node.scope() == ExecutionScope::Voice {
+            return Err(refusal("voice scope is not supported"));
+        }
+        if ir.declarations().compensation != crate::latency::CompensationPolicy::Decline {
+            return Err(refusal("requires explicit Decline compensation policy"));
+        }
+        if ir.is_modulation_source(node.id()) {
+            return Err(refusal("modulation prepass cannot read feedback history"));
+        }
+        let Some(edge) = ir.edges().iter().find(|edge| edge.to().0 == node.id()) else {
+            return Err(refusal("requires one audio input"));
+        };
+        if ir
+            .node(edge.from().0)
+            .is_some_and(|source| source.scope() == ExecutionScope::Voice)
+        {
+            return Err(refusal(
+                "requires a shared input source; sum voices before the boundary",
+            ));
+        }
+    }
+    Ok(())
 }

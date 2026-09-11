@@ -83,7 +83,7 @@ fn names(rendered: &super::super::render::SmokeRender, needle: &str) -> bool {
 }
 
 /// The corpus's send case: the send is lowered and no longer named; what stays refused is
-/// the return's reverb and the master's compressor, each by type and by subject.
+/// the return's reverb; the master compressor is supported.
 #[test]
 fn the_corpus_send_case_no_longer_names_its_send() {
     let project = corpus_project("sends-returns-master");
@@ -96,20 +96,18 @@ fn the_corpus_send_case_no_longer_names_its_send() {
         OutputPolicy::Parity,
     );
     assert!(!names(&rendered, "send"), "{:?}", rendered.diagnostics);
-    // The master chain is a project-wide disposition, refused before anything is lowered:
-    // the one refusal is the compressor's.
     let refused = refusals(&rendered);
-    assert!(refused.iter().all(|d| matches!(
-        (d.subject(), d.reason()),
+    assert_eq!(refused.len(), 1, "{refused:?}");
+    assert!(matches!(
+        (refused[0].subject(), refused[0].reason()),
         (
-            ProjectSubject::MasterChain,
+            ProjectSubject::ReturnBusModule { .. },
             LoweringReason::UnsupportedModuleType {
-                module_type: ModuleType::Compressor
+                module_type: ModuleType::Reverb
             }
         )
-    )));
-    assert_eq!(refused.len(), 1, "{refused:?}");
-    // Without it, the return's reverb is what stays refused — by type, on the return's
+    ));
+    // Removing the supported master leaves the same refusal — by type, on the return's
     // own effect — and still nothing names the send.
     let mut without_master = project.global.clone();
     without_master.master_effects.clear();
@@ -213,6 +211,7 @@ fn the_bus_graph_is_lowered_in_v1s_shape_and_scopes() {
             muted: false,
         }),
         soft_clip: true,
+        headroom: false,
         sends,
     };
     let lowered = lower_instrument_into(
