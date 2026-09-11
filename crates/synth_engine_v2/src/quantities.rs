@@ -160,6 +160,36 @@ macro_rules! counted_quantity {
 
 counted_quantity!(NodeCount, u32, "nodes", "A number of graph nodes.");
 counted_quantity!(
+    TrackedInputNoteCount,
+    u32,
+    "tracked input notes",
+    "Captured and uncaptured key-down occurrences."
+);
+counted_quantity!(
+    CaptureSourceCount,
+    u32,
+    "capture sources",
+    "Source connections reserved by a capture."
+);
+counted_quantity!(
+    CapturePassCount,
+    u32,
+    "capture passes",
+    "Retained capture segments, including empty passes."
+);
+counted_quantity!(
+    CaptureResultCount,
+    u32,
+    "capture results",
+    "Active and sealed takes still owning result entitlement."
+);
+counted_quantity!(
+    ProjectionTickCount,
+    u64,
+    "projection ticks",
+    "Entries in a finite certified projection interval."
+);
+counted_quantity!(
     RecordCount,
     u32,
     "records",

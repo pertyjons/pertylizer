@@ -246,7 +246,7 @@ open owner is a starting point recorded honestly, not a rule invented here.
    against a quantity a plan states — and two cannot. It also
    moves `max_events_per_quantum` out of the checked set: a plan no longer requests the cap directly, and cannot
    exceed it without exceeding a share first, because the shares sum to at most the cap.
-   Once that contract is enabled, **sixteen** of fifty fields do not take this refusal, in seven groups: the three
+   Before P09-S002, **sixteen** of fifty fields do not take this refusal, in seven groups: the three
    queried capabilities, which describe what a plan is *prepared against*; `accepted_sample_rates`; the three sizing
    fields, which bound nothing; the five capacities a plan does not request — `forward_event_horizon`, the three
    queue depths and `max_concurrent_retiring_voices`, which is derived so that it
@@ -261,6 +261,14 @@ open owner is a starting point recorded honestly, not a rule invented here.
    script is one host slot per voice. Program instruction, source, state, local, stack and array
    counts come from the compiled program; caller declarations cannot understate them. The work
    aggregate multiplies each Control evaluation by its scope's admitted instance count.
+
+   P09-S002 adds eight explicit capture settings to the report: **twenty-four** of
+   **fifty-eight** fields now do not take a plan refusal, while the checked set
+   stays **thirty-four**. Capture settings are enforced at capture preparation
+   and their later consumers, not requested by a graph. A profile without them
+   reports `NotConfigured` rather than a fitting zero or an admitted capture
+   budget. Configured rows report declared settings; storage admission separately
+   checks the actual typed aggregate layout under HOST-INV-020.
 
    **That does not discharge `LIMIT-0004`'s disposition, and an earlier revision claimed it did "in substance".** The
    ledger requires a *job* outside the range to be refused with a job admission error naming the requested rate and the
@@ -1218,11 +1226,14 @@ contributor.
 
 [ADR-0024](../decisions/ADR-0024-recording-take-and-commit-semantics.md) fixes these
 units and the [recording contract](spec-recording-takes-and-commit.md) fixes their
-custody and finalization rules. The first capture implementation must extend
-`RecordingLimits` with every field below before accepting arm. The existing
-Rust profile carries only the first two fields; its defaults alone do not admit
-recording. This is an implementation obligation, not a claim that the new fields
-already exist. No serialized profile or V1 recording API changes here.
+custody and finalization rules. P09-S002 extends `RecordingLimits` with explicit
+`CaptureLimits` containing all eight additional fields below. Profiles used only
+for rendering may omit that group; capture preparation then refuses with
+`MissingConfiguration`. The first two defaults alone do not admit recording.
+Construction validates positivity and tracker capacity at least `H`; storage
+preparation validates representability and aggregate bytes. Known pre-capture
+state and audio/projection consumption remain checks for their first consumers.
+No serialized profile or V1 recording API changes here.
 
 | Field | Domain type | Default/configuration | Unit, admission and exhaustion | Replaces | Revisit |
 |---|---|---|---|---|---|
@@ -1238,8 +1249,10 @@ already exist. No serialized profile or V1 recording API changes here.
 | `capture_lateness_allowance` | `FrameCount` | Required explicit nonnegative value; zero valid | Capture-epoch frame duration; apply source watermark admission under TAKE-INV-001 | — | ADR-0022 physical-source qualification |
 
 New quantity types follow HOST-INV-018; identifiers do not double as counts.
-Missing, zero where positivity is required, inconsistent and unrepresentable
-configuration refuses construction. Check aggregate cost with checked arithmetic
+Capture construction requires all additional settings; a rendering-only profile
+may leave the group absent. Field construction rejects zero where positivity is
+required and inconsistent values. Storage preparation rejects missing settings
+and unrepresentable layouts and checks aggregate cost with checked arithmetic
 before allocation and before arm. A fixture supplies explicitly labeled fixture
 values; production values require workload qualification. No hidden default is
 inferred for the additional fields, including when an initial fixture does not

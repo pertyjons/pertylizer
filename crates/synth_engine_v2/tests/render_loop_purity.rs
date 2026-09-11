@@ -44,7 +44,11 @@ use std::path::{Path, PathBuf};
 /// more: it is the only file in the region that **writes back** into a producer's own
 /// storage while the call runs, so an allocation there would be one the producing half
 /// never sees.
-const REGION: [&str; 14] = [
+/// `src/host/hot.rs` adds the simulated output callback, including silence and
+/// fault paths that run before entering the renderer.
+const REGION: [&str; 16] = [
+    "src/recording/hot.rs",
+    "src/host/hot.rs",
     "src/render/hot.rs",
     "src/render/slot.rs",
     "src/observe/hot.rs",

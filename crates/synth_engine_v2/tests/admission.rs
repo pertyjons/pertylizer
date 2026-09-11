@@ -3,10 +3,12 @@
 //! The refusal cases are `HOST-INV-007`'s conformance row: **one per render limit a
 //! plan can exceed**, each asserting the error names the field, both amounts, and the
 //! responsible object, and that the plan the caller handed in is unchanged. There are
-//! thirty-two: twenty-eight in Phase 1, plus the five ADR-0046 fields a plan states —
+//! thirty-four: twenty-eight in Phase 1, plus the five ADR-0046 fields a plan states —
 //! `compiled_event_share`, `release_hold_capacity`, `session_event_share`,
 //! `authored_runtime_event_share` and `internal_event_share` — less
-//! `max_events_per_quantum`, which left when a plan stopped requesting the cap directly.
+//! `max_events_per_quantum`, which left when a plan stopped requesting the cap directly,
+//! plus Phase 7's modulation and script-host slots. Capture settings are admitted
+//! separately by storage preparation and the later capture consumers.
 //! The test asserts that number against
 //! [`ResourceField::is_admission_checked`] so a new limit cannot arrive without a case.
 
@@ -1200,7 +1202,16 @@ fn ground_of(field: ResourceField) -> Ground {
         | ResourceField::SessionEventShare
         | ResourceField::InternalEventShare
         | ResourceField::ReleaseEventShare
-        | ResourceField::ReleaseHoldCapacity => AcceptedDecision,
+        | ResourceField::ReleaseHoldCapacity
+        | ResourceField::MaxTrackedInputNotes
+        | ResourceField::MaxCaptureSources
+        | ResourceField::MaxCapturePasses
+        | ResourceField::MaxPendingCaptureResults
+        | ResourceField::MaxCaptureBytes
+        | ResourceField::MaxAudioCaptureFrames
+        | ResourceField::MaxProjectionTicks
+        | ResourceField::CaptureLatenessAllowance
+        => AcceptedDecision,
 
         // Ground 3, the enumerated residual: the six no-antecedent fields other than the
         // horizon, plus the two whose ledger rows are provenance rather than a ground.
@@ -1303,7 +1314,7 @@ fn every_field_is_admitted_by_exactly_one_rule() {
          max_events_per_quantum, and the renderer-ingress capacity"
     );
 
-    // Ground 2 is a closed list too, and it grew from one to eight: ADR-0032 clause 21
+    // Ground 2 is a closed list too. ADR-0024 adds eight capture settings; ADR-0032 clause 21
     // creates the horizon, and ADR-0046 clause 1 creates the six producer shares and the
     // release-hold capacity. A field added here without an accepted record behind it is
     // exactly what `HOST-INV-005` refuses, so the list is asserted rather than counted.
@@ -1322,6 +1333,14 @@ fn every_field_is_admitted_by_exactly_one_rule() {
             ResourceField::InternalEventShare,
             ResourceField::ReleaseEventShare,
             ResourceField::ReleaseHoldCapacity,
+            ResourceField::MaxTrackedInputNotes,
+            ResourceField::MaxCaptureSources,
+            ResourceField::MaxCapturePasses,
+            ResourceField::MaxPendingCaptureResults,
+            ResourceField::MaxCaptureBytes,
+            ResourceField::MaxAudioCaptureFrames,
+            ResourceField::MaxProjectionTicks,
+            ResourceField::CaptureLatenessAllowance,
         ]
     );
 }
@@ -2187,4 +2206,95 @@ fn script_hosts_over_limit(host: &HostProfile) -> GraphIr {
         builder = builder.script(program, ExecutionScope::Voice);
     }
     builder.build().expect("IR")
+}
+
+#[test]
+fn capture_report_distinguishes_absent_settings_from_declared_configuration() {
+    use synth_engine_v2::profile::{CaptureLimits, CaptureLimitsInput};
+    use synth_engine_v2::quantities::{
+        CapturePassCount, CaptureResultCount, CaptureSourceCount, ProjectionTickCount,
+        TrackedInputNoteCount,
+    };
+    use synth_engine_v2::recording::{CaptureError, CaptureLayout};
+    use synth_engine_v2::report::Fit;
+
+    let host = profile(256, ChannelLayout::Mono);
+    let mut groups = Groups::of(&host);
+    let ir = source_plan(IrNodeKind::Silence);
+    let absent = compile(&ir, &RenderConfig::new(host));
+    assert!(absent.plan().is_ok());
+    for field in ResourceField::ALL
+        .into_iter()
+        .filter(|f| f.is_capture_configuration())
+    {
+        let row = absent.report().row(field).unwrap();
+        assert_eq!(row.available(), ResourceAmount::NotConfigured);
+        assert_eq!(row.requested(), ResourceAmount::NotConfigured);
+        assert_eq!(row.fit(), Fit::NotConfigured);
+    }
+    assert!(matches!(
+        CaptureLayout::for_payload::<u64>(groups.recording),
+        Err(CaptureError::MissingConfiguration)
+    ));
+    let input = CaptureLimitsInput {
+        max_tracked_input_notes: TrackedInputNoteCount::limit(64).unwrap(),
+        max_capture_sources: CaptureSourceCount::limit(2).unwrap(),
+        max_capture_passes: CapturePassCount::limit(3).unwrap(),
+        max_pending_capture_results: CaptureResultCount::limit(4).unwrap(),
+        max_capture_bytes: PreparedBytes::limit(1).unwrap(),
+        max_audio_capture_frames: FrameCount::new(123),
+        max_projection_ticks: ProjectionTickCount::limit(456).unwrap(),
+        capture_lateness_allowance: FrameCount::ZERO,
+    };
+    groups.recording = groups
+        .recording
+        .with_capture(CaptureLimits::new(input).unwrap())
+        .unwrap();
+    assert!(matches!(
+        CaptureLayout::for_payload::<u64>(groups.recording),
+        Err(CaptureError::ByteBudget { .. })
+    ));
+    // A declared setting is not storage admission: the graph can render even when
+    // the capture byte budget cannot hold one cell. No arm is inferred from Within.
+    let configured = compile(&ir, &RenderConfig::new(groups.build(&host)));
+    assert!(configured.plan().is_ok());
+    for (field, amount) in [
+        (
+            ResourceField::MaxTrackedInputNotes,
+            ResourceAmount::TrackedInputNotes(input.max_tracked_input_notes),
+        ),
+        (
+            ResourceField::MaxCaptureSources,
+            ResourceAmount::CaptureSources(input.max_capture_sources),
+        ),
+        (
+            ResourceField::MaxCapturePasses,
+            ResourceAmount::CapturePasses(input.max_capture_passes),
+        ),
+        (
+            ResourceField::MaxPendingCaptureResults,
+            ResourceAmount::CaptureResults(input.max_pending_capture_results),
+        ),
+        (
+            ResourceField::MaxCaptureBytes,
+            ResourceAmount::Bytes(input.max_capture_bytes),
+        ),
+        (
+            ResourceField::MaxAudioCaptureFrames,
+            ResourceAmount::Frames(input.max_audio_capture_frames),
+        ),
+        (
+            ResourceField::MaxProjectionTicks,
+            ResourceAmount::ProjectionTicks(input.max_projection_ticks),
+        ),
+        (
+            ResourceField::CaptureLatenessAllowance,
+            ResourceAmount::Frames(FrameCount::ZERO),
+        ),
+    ] {
+        let row = configured.report().row(field).unwrap();
+        assert_eq!(row.available(), amount);
+        assert_eq!(row.requested(), amount);
+        assert_eq!(row.fit(), Fit::Within);
+    }
 }

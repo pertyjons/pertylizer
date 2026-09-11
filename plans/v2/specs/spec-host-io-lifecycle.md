@@ -12,8 +12,8 @@
 | Superseded by | — |
 
 Only a `Current` specification constrains implementation; see [README.md](README.md).
-This contract is accepted for the first consuming implementation. Its conformance
-checks are required future work, not claims of existing code or measurements.
+This contract is accepted. The conformance section distinguishes the implemented
+simulated output subset from checks still required before later consumers.
 
 ## Scope
 
@@ -70,6 +70,13 @@ takes an active connection through `Quiescing` to `Unavailable`. A voluntary
 shutdown ends in `Stopped`. A retry creates a fresh generation in `Preparing`.
 Old generations remain owned until their callbacks and capture fences are
 quiescent; `Unavailable` is not permission to free live callback state.
+
+A lost or canceled candidate cannot activate. Before it owns callback resources,
+loss ends in `Unavailable` and cancellation in `Stopped`; a late preparation
+completion is refused. Once resources exist, either event enters `Quiescing`
+and waits for the same backend/capture fences before reclamation. Candidate loss
+does not invalidate an otherwise valid active connection. Candidate callbacks
+produce silence and cannot enter the active generation's epoch.
 
 The normal transition is `Stopped -> Preparing -> Ready -> Running`. Preparation
 negotiates the configuration, obtains the capability inputs required by
@@ -217,18 +224,69 @@ or require blocking/allocation in the callback. Phase 9 must test:
 - Retirement and completion channels saturate. No final drop occurs in the
   callback; recovery waits off-thread and retained data still has one owner.
 
-These are required future checks, not results. Physical timing acceptance still
-requires ADR-0022's retained platform/adapter evidence and ADR-0054's complete
-producer calibration before a production live adapter is enabled.
+The full checks above remain phase obligations. P09-S001 implements a bounded
+output subset in `synth_engine_v2::host::SimulatedHost`. It uses the real compiler
+and renderer with harness capabilities; it opens no hardware. Exclusive Rust
+borrows serialize simulated callbacks, while an explicit backend acknowledgement
+models delayed quiescence. This tests the coordinator's response to a fence;
+it does not establish any real backend's fence or concurrent publication proof.
+The simulator's start/stop latch freezes rendering while silent; it is not the
+ordered runtime-session transport lane. Every retry is a new explicit user
+request, with no automatic retry or resumption.
+In this simulator, fallback lookup advances past missing endpoints only; an
+enumerated endpoint's open/configuration failure is surfaced. A newer request
+must wait for shutdown and quiescence of a prepared candidate before replacing it.
 
-| Invariant | Required future check |
+`crates/synth_engine_v2/tests/host_lifecycle.rs` covers the following subset:
+
+- IO-INV-001: distinct active/candidate state, readiness only after preparation,
+  coherent generation/plan/epoch publication, and stale commands, callbacks and completion.
+  Candidate loss or cancellation invalidates readiness and waits for owned resources
+  to quiesce; candidate callbacks stay silent and cannot mutate the active connection.
+- IO-INV-002: stopped-only configuration changes with a fresh epoch, preparation
+  failure retaining the active plan, sine-wave partition equality with equal clocks,
+  and terminal oversized callbacks while both Ready and Running. Shutdown uses the
+  fence directly and has no pause dependency.
+- IO-INV-003: unknown bounds refuse even with an estimate or buffer preference;
+  ambiguous identity refuses, equal names do not match, and explicit substitutions
+  are reported before activation.
+- IO-INV-004: output loss with and without a final callback, retained last-valid
+  plan, silence after loss, and reconnection remaining Ready until explicitly started.
+- IO-INV-006: generation-local persistent faults and callback size remain visible
+  without a telemetry reader. Stale messages cannot alter replacement diagnostics.
+
+The `host::tests` unit tests exercise generation exhaustion and stalled retirement
+with repeated candidate replacement. The existing allocation guard counts zero
+allocation or deallocation events across the first render, terminal fault,
+quiescing, stale and Ready callbacks. The callback is also in the purity scan.
+Only one active and one candidate connection can own callback resources; activation
+waits for old quiescence, and reclamation runs in the coordinator.
+
+P09-S001's local validation includes both commands below. The release invocation
+is additional to the repository gate; CI does not currently run this V2 suite in
+release mode. The prepared identity in a status record is not a concurrent
+callback acknowledgement; that consumer retains its later gate.
+
+```bash
+cargo test -p synth_engine_v2 --test host_lifecycle
+cargo test -p synth_engine_v2 --release --test host_lifecycle
+```
+
+IO-INV-005 remains unimplemented: no input, monitoring or capture can be enabled
+through this simulator. Input loss, capture fences/results, independent clocks,
+worker backpressure and actual telemetry/retirement channel saturation still need
+the full checks below. Physical timing acceptance requires ADR-0022's retained
+platform/adapter evidence and ADR-0054's complete producer calibration before a
+production live adapter is enabled.
+
+| Invariant | Full check still required beyond P09-S001 |
 |---|---|
-| IO-INV-001 | Simulated transitions and stale-generation commands/callbacks |
-| IO-INV-002 | Rate/layout reprepare, unsupported pause, oversized callback in both build modes, off-thread retirement |
-| IO-INV-003 | Unknown capability, ambiguous identity and explicit fallback refusal |
-| IO-INV-004 | Loss with/without final callback; reconnect stays Ready and preserves retained capture |
+| IO-INV-001 | Concurrent publication and backend callback fences; independently opened input generations |
+| IO-INV-002 | Ordered session stop, real backend shutdown when pause is unsupported, concurrent off-thread retirement |
+| IO-INV-003 | Evidence establishing any physical backend callback bound before activation |
+| IO-INV-004 | Input loss, retained capture with/without final callback, and bounded automatic retry if implemented |
 | IO-INV-005 | Independent clocks, bounded stalled-worker input and distinct monitoring/capture loss |
-| IO-INV-006 | Saturated telemetry preserves lifecycle fault and active-generation acknowledgement |
+| IO-INV-006 | Saturated concurrent telemetry preserves faults and acknowledgements; input backlog and timing provenance |
 
 ## Unresolved questions
 

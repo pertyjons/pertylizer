@@ -131,21 +131,32 @@ must establish its fidelity disposition before lifting its diagnostic.
 | P08-R001 | Oversampling and rate islands remain unbuilt; saved nonunity oversampling is diagnosed and excludes a parity verdict. | The first Sound Core rate-extension slice, before any nonunity-rate node or saved oversampling consumer, must define rate conversion, history and composed latency and qualify them. Phase 9 inherits this before such an expansion. |
 | P08-R002 | Saved multiple terminals, module-input fan-in, implicit cyclic feedback, additional distortion/delay modes and tempo-following delay time remain refused by name. | The first lowering slice for each named route must define its law, explicit graph representation and a same-input V1 oracle before lifting that refusal. Native fan-in and explicit shared feedback already exist; no saved feedback boundary is inferred. |
 
-## Phase 9 — entry ready
+## Phase 9 — active
 
 [ADR-0036](decisions/ADR-0036-audio-device-and-input-lifecycle.md) and
 [ADR-0024](decisions/ADR-0024-recording-take-and-commit-semantics.md) are `Accepted`.
 Their current contracts are [host I/O lifecycle](specs/spec-host-io-lifecycle.md)
 and [recording takes and commit](specs/spec-recording-takes-and-commit.md), with
 capture budgets in the [host profile](specs/spec-host-profile-and-render-limits.md#recording).
-The entry-decision requirement is met; implementation has not started.
+P09-S001 builds the stopped-only simulated output coordinator; its bounded
+conformance and remaining checks are recorded in the
+[host I/O specification](specs/spec-host-io-lifecycle.md#conformance-tests).
 
-Next, implement the stopped-only host coordinator against a simulated backend:
-prepare/activate, stale-generation rejection, loss without a final callback and
-explicit recovery, with IO-INV-001 through IO-INV-006 conformance checks. Before
-adding capture, implement the complete admitted configuration and retained-result
-path under TAKE-INV-001 and TAKE-INV-006. Live swaps, runtime loops, production
-hardware timing and project transactions retain their named first-consumer gates.
+P09-S002 builds complete typed recording configuration and the serialized
+reservation/retained-result fixture under TAKE-INV-001 and TAKE-INV-006. Its
+checked byte layout, separate finalization reserves, retained quality and
+remaining consumer gates are recorded in the
+[recording specification](specs/spec-recording-takes-and-commit.md#conformance-tests).
+It does not yet accept arm or interpret performed input.
+
+Next, P09-S003 adds typed exact-input note recording against synthetic ordered
+boundaries: arm context, source ordering and FIFO note/pedal pairing under
+TAKE-INV-001/002, using S002's reservations before any accepted input. Projection,
+loop capture and physical adapters remain separately gated.
+Input lifecycle, independent clocks and monitoring still require IO-INV-004 and
+IO-INV-005 checks before their first consumers. Concurrent backend fences,
+ordered session transport, live swaps, runtime loops, production hardware timing
+and project transactions retain their named first-consumer gates.
 
 ## Active streams
 
@@ -191,8 +202,7 @@ Phase 3 is complete. Its exit review accepted these bounded residuals:
 ## Current blockers
 
 Phase 8 has no remaining exit blocker. Phase 0B continues with `P00B-T003`
-selected; Phase 9 entry decisions are accepted and implementation may start
-with the simulated stopped-only host slice above.
+selected; Phase 9 has completed P09-S001 and P09-S002, and P09-S003 is next.
 The accepted residuals above block their named first consumers.
 Session share 128 and total cap 360 remain provisional until
 Phase 9's complete reselection under ADR-0054.

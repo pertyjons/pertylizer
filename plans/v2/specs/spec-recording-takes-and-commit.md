@@ -12,8 +12,8 @@
 | Superseded by | — |
 
 Only a `Current` specification constrains implementation; see [README.md](README.md).
-This contract is accepted for the first consuming implementation. Its conformance
-checks are required future work, not claims of existing code or measurements.
+This contract is accepted for the consuming implementations. P09-S002's bounded
+storage checks and the remaining consumer obligations are separated below.
 
 ## Scope
 
@@ -112,6 +112,8 @@ After sealing, raw data and the sealed outcome remain immutable; the quality
 slot changes. Every result consumer, including commit and preview, combines
 the outcome with this slot: `Complete` plus a fault is treated as incomplete.
 An already applied project transaction is not silently changed or undone.
+Once attributed, a fault stays recorded even if a later ordered stop narrows the
+selected interval. Refusals arriving after sealing use that final interval.
 
 At requested stop `T`, retain admissible events in `[start, T)` until the
 take's seal watermark reaches `T`; source fences also order equal-sample commands under
@@ -407,9 +409,56 @@ collection may hold recording data.
 
 ## Conformance tests
 
+P09-S002 implements complete typed capture configuration and a serialized
+`SimulatedTakeStore<T: Copy>` in `synth_engine_v2/src/recording.rs`. It reserves
+ordinary cells, tracked-input cells, `H` terminal occurrence cells, two source
+snapshot regions, `P` pass cells and `2 * H * (P - 1)` carry cells for every
+retained-result slot. Checked aggregate bytes include the actual typed cells,
+source ledgers, slot descriptors and store descriptor before allocation.
+Allocator bookkeeping is outside the requested Rust layout. There is no arm API
+or physical publisher; the fixture's opaque cells do not establish valid notes,
+source snapshots, audio assets or projection results.
+
+The slice's falsifier is a reservation that exceeds its checked byte budget, an
+ordinary write that consumes finalization storage, a sealed payload changed by
+late attribution, a lost result when notification stalls, or entitlement reused
+before source quiescence and current quality acknowledgement. Tests in
+`tests/capture_reservations.rs` exercise exact byte boundaries, checked overflow,
+every reserved region, ordinary/result exhaustion, two source watermarks,
+explicit lateness including zero, pre/post-seal sticky quality, empty intervals,
+stale identities and interruption without another callback. Unit tests in
+`src/recording/tests.rs` check the owned layout, identity exhaustion, explicit
+counter saturation and zero allocations/deallocations during hot operations.
+`tests/render_loop_purity.rs` includes `src/recording/hot.rs` in its checked region.
+
+Interruption before the requested start seals an empty selected interval at the
+last valid boundary; the original requested interval remains separately readable.
+All sources must still acknowledge quiescence. A source generation has one epoch,
+consumed frontier, watermark and quiescence state throughout the store: a fence updates every
+retained take sharing it, and new reservations inherit that state. Admission
+cannot make past input available: a new window starting before any known source's
+consumed frontier refuses before reserving storage. The frontier is retained
+separately from the allowance-adjusted watermark, including when the watermark
+saturates at zero. Quiescence
+cannot be undone by reserving another take. Once no retained ledger names a
+generation, first introduction must be newer than every previously introduced
+generation. This conservative monotone admission rule prevents resurrection with
+a fixed high-water mark rather than an unbounded retired-source registry.
+Even an empty interval at epoch origin requires every source's explicit fence; an initial numeric zero is not an
+acknowledgement. These cases must leave a result that can be read and discarded.
+
+The result remains in its pool slot while notification carries only a lossy,
+counted hint; enumeration recovers every sealed result. Borrowed reads neither
+copy nor retire it. Explicit off-thread discard requires every synthetic source
+to quiesce and the owner to acknowledge current sticky quality. The caller must
+keep the store alive until its retained results are resolved. This serial model
+does not prove concurrent publication, backend fences or whole-session shutdown.
+The eventual publisher must attribute refusals to every retained interval and
+charge all additional context, reordering, audio and projection allocations.
+
 The contract fails if a legal stall or interruption can lose accepted data,
 change its original timing, apply partial replace, duplicate a retry, or require
-allocation/blocking on a callback. Required future checks are:
+allocation/blocking on a callback. Required checks at the remaining consumers are:
 
 - The same mapped input and session boundaries under whole, 64, 256 and
   irregular callbacks produce identical raw takes and derived events. Vary
@@ -443,8 +492,11 @@ allocation/blocking on a callback. Required future checks are:
 - Interrupt audio without a final callback; stop at the last valid watermark,
   preserve source format and prefix, and never label a gapped asset complete.
 
-These are obligations, not passed tests. Physical timestamp/latency evidence
-belongs to ADR-0022; no new EVD result is asserted.
+The storage tests above cover parts of TAKE-INV-001/006; none of the following
+invariants is discharged in full. Actual arm context, ordered input, note/pedal
+pairing, callback partitions, loop passes, audio, projection and project commit
+remain first-consumer obligations. Physical timestamp/latency evidence belongs
+to ADR-0022; no new EVD result is asserted.
 
 | Invariant | Required future check |
 |---|---|

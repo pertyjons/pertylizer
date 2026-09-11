@@ -132,11 +132,27 @@ pub enum ResourceField {
     ReleaseHoldCapacity,
     /// The live performance-event ingress queue's depth.
     PerformanceIngressCapacity,
+    /// Recording configuration: `max_tracked_input_notes`.
+    MaxTrackedInputNotes,
+    /// Recording configuration: `max_capture_sources`.
+    MaxCaptureSources,
+    /// Recording configuration: `max_capture_passes`.
+    MaxCapturePasses,
+    /// Recording configuration: `max_pending_capture_results`.
+    MaxPendingCaptureResults,
+    /// Recording configuration: `max_capture_bytes`.
+    MaxCaptureBytes,
+    /// Recording configuration: `max_audio_capture_frames`.
+    MaxAudioCaptureFrames,
+    /// Recording configuration: `max_projection_ticks`.
+    MaxProjectionTicks,
+    /// Recording configuration: `capture_lateness_allowance`.
+    CaptureLatenessAllowance,
 }
 
 impl ResourceField {
     /// How many fields carry an amount.
-    pub const COUNT: usize = 50;
+    pub const COUNT: usize = 58;
 
     /// Every field, once.
     pub const ALL: [Self; Self::COUNT] = [
@@ -190,7 +206,30 @@ impl ResourceField {
         Self::ReleaseEventShare,
         Self::ReleaseHoldCapacity,
         Self::PerformanceIngressCapacity,
+        Self::MaxTrackedInputNotes,
+        Self::MaxCaptureSources,
+        Self::MaxCapturePasses,
+        Self::MaxPendingCaptureResults,
+        Self::MaxCaptureBytes,
+        Self::MaxAudioCaptureFrames,
+        Self::MaxProjectionTicks,
+        Self::CaptureLatenessAllowance,
     ];
+
+    /// These optional settings are admitted by capture preparation, not by a graph.
+    pub const fn is_capture_configuration(self) -> bool {
+        matches!(
+            self,
+            Self::MaxTrackedInputNotes
+                | Self::MaxCaptureSources
+                | Self::MaxCapturePasses
+                | Self::MaxPendingCaptureResults
+                | Self::MaxCaptureBytes
+                | Self::MaxAudioCaptureFrames
+                | Self::MaxProjectionTicks
+                | Self::CaptureLatenessAllowance
+        )
+    }
 
     /// This field's position in [`Self::ALL`].
     ///
@@ -250,6 +289,14 @@ impl ResourceField {
             Self::ReleaseEventShare => 47,
             Self::ReleaseHoldCapacity => 48,
             Self::PerformanceIngressCapacity => 49,
+            Self::MaxTrackedInputNotes => 50,
+            Self::MaxCaptureSources => 51,
+            Self::MaxCapturePasses => 52,
+            Self::MaxPendingCaptureResults => 53,
+            Self::MaxCaptureBytes => 54,
+            Self::MaxAudioCaptureFrames => 55,
+            Self::MaxProjectionTicks => 56,
+            Self::CaptureLatenessAllowance => 57,
         }
     }
 
@@ -307,6 +354,14 @@ impl ResourceField {
             Self::ReleaseEventShare => "release_event_share",
             Self::ReleaseHoldCapacity => "release_hold_capacity",
             Self::PerformanceIngressCapacity => "performance_ingress_capacity",
+            Self::MaxTrackedInputNotes => "max_tracked_input_notes",
+            Self::MaxCaptureSources => "max_capture_sources",
+            Self::MaxCapturePasses => "max_capture_passes",
+            Self::MaxPendingCaptureResults => "max_pending_capture_results",
+            Self::MaxCaptureBytes => "max_capture_bytes",
+            Self::MaxAudioCaptureFrames => "max_audio_capture_frames",
+            Self::MaxProjectionTicks => "max_projection_ticks",
+            Self::CaptureLatenessAllowance => "capture_lateness_allowance",
         }
     }
 
@@ -325,10 +380,13 @@ impl ResourceField {
     ///
     /// `HOST-INV-007` binds the limits a plan can exceed, and its conformance row asks
     /// for one refusal case per such limit — so this predicate has to be exactly the
-    /// set those cases can be written for. Thirty-four fields qualify. The sixteen
-    /// that do not take that refusal fall into seven groups, each excluded for its own
+    /// set those cases can be written for. Thirty-four fields qualify. The remaining fields
+    /// do not take that refusal, each excluded for its own
     /// reason:
     ///
+    /// - **The eight optional capture settings.** No graph requests them. Missing
+    ///   settings are reported explicitly; recording reservation refuses until all
+    ///   are supplied and its typed aggregate storage is admitted.
     /// - **The three queried capabilities.** A capability describes what the plan is
     ///   *prepared against*, not a budget it spends.
     /// - **`accepted_sample_rates`.** The named exception: no plan carries a rate, so
@@ -368,7 +426,7 @@ impl ResourceField {
     /// `HOST-INV-007`'s conformance row unsatisfiable: six of the remaining fields
     /// compare a value against itself, and no plan can be built that exceeds one.
     ///
-    /// Sixteen fields are excluded and thirty-four qualify; P07-S005 admits actual script host usage.
+    /// Twenty-four fields are excluded and thirty-four qualify; capture settings are checked separately.
     #[must_use]
     pub const fn is_admission_checked(self) -> bool {
         !matches!(
@@ -389,6 +447,14 @@ impl ResourceField {
                 | Self::LiveEventShare
                 | Self::ReleaseEventShare
                 | Self::PerformanceIngressCapacity
+                | Self::MaxTrackedInputNotes
+                | Self::MaxCaptureSources
+                | Self::MaxCapturePasses
+                | Self::MaxPendingCaptureResults
+                | Self::MaxCaptureBytes
+                | Self::MaxAudioCaptureFrames
+                | Self::MaxProjectionTicks
+                | Self::CaptureLatenessAllowance
         )
     }
 }
@@ -437,6 +503,13 @@ impl std::fmt::Display for EventsBeyondCount {
 /// One amount, with its unit intact.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum ResourceAmount {
+    /// Capture has not been configured; never interpreted as zero capacity.
+    NotConfigured,
+    TrackedInputNotes(crate::quantities::TrackedInputNoteCount),
+    CaptureSources(crate::quantities::CaptureSourceCount),
+    CapturePasses(crate::quantities::CapturePassCount),
+    CaptureResults(crate::quantities::CaptureResultCount),
+    ProjectionTicks(crate::quantities::ProjectionTickCount),
     /// A number of nodes.
     Nodes(NodeCount),
     /// A number of edges.
@@ -495,6 +568,8 @@ pub enum ResourceAmount {
 /// How a requested amount stands against an available one.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Fit {
+    /// Optional capture settings absent; capture reservation still refuses.
+    NotConfigured,
     /// The request fits.
     Within,
     /// The request is larger than what is available.
@@ -513,6 +588,13 @@ impl ResourceAmount {
     #[must_use]
     pub fn fits_within(self, available: Self) -> Fit {
         let within = match (self, available) {
+            (Self::NotConfigured, Self::NotConfigured) => return Fit::NotConfigured,
+            (Self::TrackedInputNotes(a), Self::TrackedInputNotes(b)) => a <= b,
+            (Self::CaptureSources(a), Self::CaptureSources(b)) => a <= b,
+            (Self::CapturePasses(a), Self::CapturePasses(b)) => a <= b,
+            (Self::CaptureResults(a), Self::CaptureResults(b)) => a <= b,
+            (Self::ProjectionTicks(a), Self::ProjectionTicks(b)) => a <= b,
+
             (Self::Nodes(a), Self::Nodes(b)) => a <= b,
             (Self::Edges(a), Self::Edges(b)) => a <= b,
             (Self::FanOut(a), Self::FanOut(b)) => a <= b,
@@ -564,6 +646,13 @@ impl ResourceAmount {
 impl std::fmt::Display for ResourceAmount {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            Self::NotConfigured => f.write_str("not configured"),
+            Self::TrackedInputNotes(value) => write!(f, "{value}"),
+            Self::CaptureSources(value) => write!(f, "{value}"),
+            Self::CapturePasses(value) => write!(f, "{value}"),
+            Self::CaptureResults(value) => write!(f, "{value}"),
+            Self::ProjectionTicks(value) => write!(f, "{value}"),
+
             Self::Nodes(v) => write!(f, "{v}"),
             Self::Edges(v) => write!(f, "{v}"),
             Self::FanOut(v) => write!(f, "{v}"),

@@ -302,7 +302,8 @@ fn first_refusal(
         };
         match row.fit() {
             Fit::Within => {}
-            Fit::UnitMismatch => {
+            Fit::NotConfigured if field.is_capture_configuration() => {}
+            Fit::NotConfigured | Fit::UnitMismatch => {
                 if may_refuse {
                     refusal = refusal.or(Some(CompileError::ReportUnitMismatch { field }));
                 }
@@ -1127,6 +1128,61 @@ fn build_rows(
         ResourceAmount::Events(limits.events().queues().performance_ingress_capacity()),
         IrObject::Plan,
     ));
+
+    // Configuration only: the graph does not reserve capture storage.
+    let capture = limits.recording().capture();
+    for (field, amount) in [
+        (
+            ResourceField::MaxTrackedInputNotes,
+            capture
+                .map(|value| ResourceAmount::TrackedInputNotes(value.max_tracked_input_notes()))
+                .unwrap_or(ResourceAmount::NotConfigured),
+        ),
+        (
+            ResourceField::MaxCaptureSources,
+            capture
+                .map(|value| ResourceAmount::CaptureSources(value.max_capture_sources()))
+                .unwrap_or(ResourceAmount::NotConfigured),
+        ),
+        (
+            ResourceField::MaxCapturePasses,
+            capture
+                .map(|value| ResourceAmount::CapturePasses(value.max_capture_passes()))
+                .unwrap_or(ResourceAmount::NotConfigured),
+        ),
+        (
+            ResourceField::MaxPendingCaptureResults,
+            capture
+                .map(|value| ResourceAmount::CaptureResults(value.max_pending_capture_results()))
+                .unwrap_or(ResourceAmount::NotConfigured),
+        ),
+        (
+            ResourceField::MaxCaptureBytes,
+            capture
+                .map(|value| ResourceAmount::Bytes(value.max_capture_bytes()))
+                .unwrap_or(ResourceAmount::NotConfigured),
+        ),
+        (
+            ResourceField::MaxAudioCaptureFrames,
+            capture
+                .map(|value| ResourceAmount::Frames(value.max_audio_capture_frames()))
+                .unwrap_or(ResourceAmount::NotConfigured),
+        ),
+        (
+            ResourceField::MaxProjectionTicks,
+            capture
+                .map(|value| ResourceAmount::ProjectionTicks(value.max_projection_ticks()))
+                .unwrap_or(ResourceAmount::NotConfigured),
+        ),
+        (
+            ResourceField::CaptureLatenessAllowance,
+            capture
+                .map(|value| ResourceAmount::Frames(value.capture_lateness_allowance()))
+                .unwrap_or(ResourceAmount::NotConfigured),
+        ),
+    ] {
+        rows.push(ResourceRow::new(field, amount, amount, IrObject::Plan));
+    }
 
     rows
 }

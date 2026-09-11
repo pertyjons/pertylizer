@@ -34,6 +34,9 @@ macro_rules! accessors {
     };
 }
 
+mod capture;
+pub use capture::{CaptureLimits, CaptureLimitsInput};
+
 /// Refuse a zero capacity, naming the field rather than the type.
 ///
 /// The group constructors take already-built newtypes, so a caller can hand them a
@@ -58,6 +61,12 @@ fn nonzero(field: &'static str, value: u64) -> Result<(), ProfileError> {
 /// *both* fields, because naming one leaves the reader guessing which to change.
 #[derive(Debug, Clone, Copy, PartialEq, Error)]
 pub enum ProfileError {
+    /// The tracker includes captured notes as well as pre-capture held state.
+    #[error("max_tracked_input_notes {tracked} is below max_held_notes_per_take {held}")]
+    CaptureTrackerBelowHeld {
+        tracked: crate::quantities::TrackedInputNoteCount,
+        held: HeldNoteCount,
+    },
     /// A single field was outside its own domain.
     #[error("profile field out of range: {0}")]
     Quantity(#[from] QuantityError),
@@ -1006,6 +1015,7 @@ impl ScriptLimits {
 pub struct RecordingLimits {
     max_held_notes_per_take: HeldNoteCount,
     max_recorded_events_per_take: EventCount,
+    capture: Option<CaptureLimits>,
 }
 
 impl RecordingLimits {
@@ -1025,7 +1035,26 @@ impl RecordingLimits {
         Ok(Self {
             max_held_notes_per_take,
             max_recorded_events_per_take,
+            capture: None,
         })
+    }
+
+    /// Supply all eight required capture settings. The two-field constructor alone
+    /// supports existing plan declarations but does not admit a recording reservation.
+    pub fn with_capture(mut self, capture: CaptureLimits) -> Result<Self, ProfileError> {
+        if capture.max_tracked_input_notes().get() < self.max_held_notes_per_take.get() {
+            return Err(ProfileError::CaptureTrackerBelowHeld {
+                tracked: capture.max_tracked_input_notes(),
+                held: self.max_held_notes_per_take,
+            });
+        }
+        self.capture = Some(capture);
+        Ok(self)
+    }
+
+    /// Missing settings are explicit; no fixture values are production defaults.
+    pub const fn capture(&self) -> Option<CaptureLimits> {
+        self.capture
     }
 
     accessors! {
