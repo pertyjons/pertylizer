@@ -1,0 +1,466 @@
+# SPEC: Recording Takes and Commit
+
+| Field | Value |
+|---|---|
+| Status | Current |
+| Phase | 9/10B |
+| Created | 2026-09-11 |
+| Last reviewed | 2026-09-11 |
+| Based on | ADR-0024, ADR-0036, ADR-0023, ADR-0032, ADR-0038, ADR-0049, ADR-0054, ADR-0055 |
+| Invariant prefix | TAKE |
+| Supersedes | — |
+| Superseded by | — |
+
+Only a `Current` specification constrains implementation; see [README.md](README.md).
+This contract is accepted for the first consuming implementation. Its conformance
+checks are required future work, not claims of existing code or measurements.
+
+## Scope
+
+This specification defines runtime custody of performed input, finite capture
+windows, projection into musical time and the requirements on a later atomic
+Application Core commit. Capture and project commit are separate success states.
+
+## Non-goals
+
+No project format, durable recovery encoding, canonical revision representation
+or general transaction service is introduced. Those remain Phase 10A/10B/10D.
+Physical clock mapping remains ADR-0022. Runtime loop-boundary production remains
+ADR-0052; ADR-0055's loop-playback refusal stands until that work is complete.
+The recorder may be tested against synthetic input and boundary logs first.
+
+## Terminology
+
+A take is owned performed data with capture context and a final outcome, not a
+GUI preview or live-note telemetry. A pass is a half-open segment of a recording
+session. A performed occurrence identifies an input onset independently of key,
+collection index and renderer voice. A watermark is a fenced capture-admission
+frontier; the take's seal watermark is the minimum across its sources.
+
+## Accepted decisions
+
+| ADR | Decision it fixes here |
+|---|---|
+| [ADR-0024](../decisions/ADR-0024-recording-take-and-commit-semantics.md) | Retained takes, pairing, projection, pass storage, bounded finalization and atomic commit requirements |
+| [ADR-0036](../decisions/ADR-0036-audio-device-and-input-lifecycle.md) | Host ownership and device-interruption handoff |
+| [ADR-0023](../decisions/ADR-0023-same-sample-event-ordering.md) | Declared same-sample producer order |
+| [ADR-0032](../decisions/ADR-0032-sample-time-and-event-timestamps.md) | Original epoch-scoped timing and prohibition on persisted runtime time |
+| [ADR-0038](../decisions/ADR-0038-engine-egress-queue-classification.md) | Non-dropping custody versus observational egress |
+| [ADR-0049](../decisions/ADR-0049-tempo-ramp-law.md) | Forward tempo law; no assumed global floating-point monotonicity |
+| [ADR-0054](../decisions/ADR-0054-staged-producer-capacity-calibration.md) | Separate production renderer-share calibration |
+| [ADR-0055](../decisions/ADR-0055-refuse-unimplemented-loop-playback.md) | Existing refusal until runtime loop work is implemented |
+
+## Invariants
+
+The following requirements are normative.
+
+### TAKE-INV-001 — Arming and capture ownership
+
+Arming fixes the destination context, intended musical interval, capture input,
+overdub/replace mode, quantization options and a retained snapshot of the tempo
+and transport mapping. Default to overdub and quantization off. Armed/count-in
+states do not mutate the destination. The capture start/end and same-sample
+commands follow ADR-0023's declared producer order; this record adds no global
+note-off-before-note-on priority.
+
+Admission reserves capture storage, held-occurrence tracking, finalization
+metadata and a non-dropping result slot before accepting the arm command. The
+runtime session owns the active take. Workers own sealed chunks and derived
+representations; the GUI receives a replaceable preview. Its lifetime or drain
+rate cannot own the only copy of the recording.
+
+For note input, capture at the validated performance publication boundary,
+before voice allocation, tuning, voice stealing or recorded-note quantization.
+Capture admission and live playback admission are separately reported: a note
+may be retained even when playback refused it, and a stopped/full recorder does
+not suppress otherwise valid live playback. No claim of audible/live equality
+may hide that distinction. Each captured event retains source order, occurrence
+identity and the original mapped timestamp/provenance; where it also enters the
+renderer, associate its actual execution time or explicit refusal outcome.
+That association is metadata, not another copy of the sole recording payload.
+
+Late-clamping a playback event does not rewrite its recorded source timestamp.
+Capture input is an ordered log per source connection: validation assigns a
+monotone publication sequence and occurrence association before any temporal
+reordering. Clock conversion supplies the nominal engine sample time and its
+provenance. A decreasing nominal timestamp is retained as a source timing
+anomaly; a derived negative lifetime refuses projection rather than repairing
+or silently reordering the physical note pairing.
+
+Arming explicitly supplies a nonnegative `capture_lateness_allowance`, a duration
+in the capture epoch's frames. It is a chosen admission window, not a guarantee
+that every physical event will arrive within it. For an observed render-clock
+frontier `P`, the candidate watermark is `max(0, P - allowance)`. A worker may
+advance a source's watermark only after consuming that source's publication
+fence and all records through it. Watermarks never retreat. With several
+sources, the take's seal watermark is the minimum of their watermarks; one
+source cannot seal another source's unconsumed records. A record published
+after its fence with a nominal time below that source's advanced watermark is
+refused from capture; audition follows its own late policy. There is no
+automatic movement into a newer take. The diagnostic always names source/time.
+
+If that time lies in a retained take's selected capture interval, both before
+and after sealing, the refusal sets that take's pre-reserved sticky quality
+slot to `LateCaptureInput`, retaining the first affected time and a checked
+count. Count saturation remains explicit in the slot. Repeated faults coalesce
+without another result entitlement. A refusal outside every retained selected
+interval remains a source diagnostic and does not fault an unrelated take.
+Before sealing, the first such fault stops capture and finalizes `Partial` at
+the ordered stop boundary, preserving every accepted record, including records
+later than the discovered gap; this is not a claim of a gap-free prefix.
+After sealing, raw data and the sealed outcome remain immutable; the quality
+slot changes. Every result consumer, including commit and preview, combines
+the outcome with this slot: `Complete` plus a fault is treated as incomplete.
+An already applied project transaction is not silently changed or undone.
+
+At requested stop `T`, retain admissible events in `[start, T)` until the
+take's seal watermark reaches `T`; source fences also order equal-sample commands under
+ADR-0023. If already accepted raw input carries a nominal timestamp beyond an
+early stop, keep it marked outside the selected interval; it does not become an
+in-range note by clamping and is excluded from automatic projection. If the
+render clock stops advancing or a device is lost, close source
+admission and obtain its quiescence fence off-thread instead. Preserve every
+already accepted record, close at the last valid boundary, and label the result
+interrupted rather than waiting for a nonexistent future callback. Callback
+threads never wait for the worker or a fence consumer.
+
+`Complete` means no known gap in the admitted capture window at sealing; it is
+not a promise about arbitrarily delayed physical input. The quality slot and
+result entitlement are reserved at arm whether or not a fault occurs. Retain
+them until every participating source generation is quiescent and the take's
+owner has acknowledged the current quality state. They continue consuming the
+result entitlement after project commit; reaching the limit refuses another
+arm until the sources are quiesced/rebound and the quality state acknowledged.
+This explicit cost bounds late-fault attribution instead of keeping an
+unbounded take index. Quality is not droppable meter telemetry. Source
+generations are retired before their attribution state can be reclaimed.
+Hardware selection of the allowance and its observed late-refusal rate require
+ADR-0022's qualification; exact simulated sources can explicitly select zero.
+
+### TAKE-INV-002 — Note lifetime, count-in and transport changes
+
+Retain note-on, key release, sustain changes and supported expression separately.
+Every admitted note-on mints a fresh `PerformedOccurrenceId` within its typed
+source connection generation; checked counter exhaustion stops capture without
+reusing an identity. It is independent of the renderer's allocator.
+
+For the initial MIDI 1 input, normalize note-on with velocity zero to key release.
+Match releases FIFO to the oldest unreleased onset with the same source
+connection, MIDI channel and key. That tuple is a lookup key, not occurrence
+identity. For `on A, on B, off, off` on one key, the releases close A then B.
+Unmatched releases are counted and retained as diagnostics, never guessed onto
+another channel or generation. Sustain does not postpone this key pairing.
+Sources with a native occurrence token may use a separately declared exact-token
+adapter; accepting arbitrary token schemes is not implied by MIDI 1 support.
+A renderer steal affects the audition trace, not captured physical key lifetime.
+
+The source tracker includes pre-capture held keys and their FIFO order: those
+entries are marked uncaptured, so their releases cannot close a later captured
+onset. Initial pedal/controller state and held-key state must be established
+before arming. If that state is unknown, arming refuses until the source is
+explicitly reset/reconnected and synchronized. Tracker overflow invalidates
+pairing and interrupts capture; refusing just one onset and continuing to pair
+later releases would be ambiguous. Space for all tracked occurrences, including
+uncaptured ones, is admitted separately from the take's held-note capacity.
+
+Count-in establishes the initial pedal/controller state but records no earlier
+note-on. The initial policy captures notes newly started within the recording
+interval; keys already held when it starts are not silently retriggered or
+invented as new notes. Their later releases cannot close another occurrence.
+
+At normal stop, disarm or panic, finalize at the ordered capture boundary.
+Record explicit synthetic closure for any open captured occurrences, preserving
+whether the key or pedal was still held. Panic retains the take and is not
+discard. A note-on exactly at the exclusive end belongs outside that interval;
+finalization uses the prior held state. The half-open interval is determined
+from capture time, not the GUI's receipt of a command.
+
+For the first note-only projection, note duration follows key release; sustain
+is a separate retained controller. A target that cannot express captured
+sustain or expression must refuse automatic commit of that material and keep
+the take. Do not silently lengthen notes to approximate pedal behavior. A future
+explicit conversion may offer that transformation with its limitations visible.
+
+Seek, tempo-map replacement and device re-preparation finalize the current
+capture segment before changing its mapping. A new segment requires a new
+explicit capture start. Thus one segment never reinterprets earlier events
+using a later tempo map. Same-plan loop wrap is the sole intended exception,
+with the separate pass contract below. Device loss follows ADR-0036's quiescence
+and last-valid-capture boundary; it never depends on another callback arriving.
+
+### TAKE-INV-003 — Loop recording
+
+Retain each pass as a separate take segment under one recording session, with
+an explicit half-open interval. Preserve the original occurrence and raw
+key/pedal sequence across the boundary; do not inject a played note-on into
+live audio merely to split a storage segment. Carry-in/carry-out annotations
+are distinct from performed events. Pass storage and those annotations consume
+admitted capacity; loop recording is not an unbounded vector of takes.
+
+Default to retaining passes separately. Combining selected passes is an
+explicit overdub transaction, and choosing a replacement pass never deletes
+other retained passes. `PassId` is a checked non-reused session counter, not a
+renderer generation or the pass's vector index. Exhaustion finalizes the
+recording before another pass is admitted.
+
+The recorder consumes an ordered `PassBoundary` carrying the effective engine
+time, old/new pass identities, loop interval and the new transport mapping.
+At boundary `T`, pass A owns events before `T` and pass B owns events at/after
+`T`. Apply the session boundary before other producers at the same sample,
+without changing each source's FIFO occurrence association. A release at `T`
+therefore belongs to B even though it closes an occurrence begun in A. A
+boundary must be sealed against every capture source fence just like stop.
+The physical occurrence and pedal state continue; only capture segmentation
+changes. Reserve carry-out/carry-in metadata before crossing a boundary.
+
+For a contiguous multi-pass projection, first join segments by performed
+occurrence and project its one onset and one key release on an unrolled musical
+timeline; do not create an attack per pass. For an isolated pass that contains a
+carry-in note, automatic note-only projection refuses: the target cannot
+represent an already sounding continuation by inventing a note-on. The retained
+pass can instead be selected together with its onset pass. A carry-out note can
+be explicitly trimmed to the selected interval, with a synthetic closure and
+visible transformation in the commit preview; without that choice projection
+refuses. Pedal/controller state at selection start must be representable by the
+target or projection refuses under the existing expression rule. Thus separate
+pass storage promises neither seamless isolated-pass playback nor silent cuts.
+
+This storage and projection contract does not supply the runtime `PassBoundary`
+producer. ADR-0052 still owns sample-exact wrap
+execution, compiled per-pass identities, repeated catch-up admission and
+precedence with pending activation. Its production consumer must establish the
+above boundary stream without changing the captured physical occurrences.
+ADR-0055 remains in force until that loop work is completed. Synthetic boundary
+logs can test this recorder contract independently; no successful live-loop
+activation or Phase 9 exit is claimed by those tests.
+
+### TAKE-INV-004 — Runtime timing and project projection
+
+Runtime raw timing carries its session, stream epoch and original mapping
+context. It cannot survive that context by retaining an unscoped frame integer.
+Before any persistent output, derive musical positions and asset-relative
+sample offsets and discard engine-epoch positions from the serialized form.
+Unquantized means no user grid snapping; it does not promise infinite musical
+resolution. A projection must report its native tick-resolution error separately
+from optional quantization and latency compensation.
+
+Select an off-thread prepared projection table over an explicit finite closed
+musical interval `[a, b]`. Before capture can rely on projection, checked
+`b - a + 1` must fit `max_projection_ticks` and the table's byte budget. Evaluate
+`TempoMap::position_of` at **every integer tick** in that interval using the
+accepted forward law. Any conversion failure or decreasing adjacent frame
+refuses preparation with the offending ticks named. Checking only endpoints or
+sampling a stride is insufficient under ADR-0049 clause 6. No assumption about
+monotonicity elsewhere in the map enters this certificate.
+
+Retain the checked table with the exact tempo-map revision/rate and target
+interval. A lower-bound search in its nondecreasing frame column finds the
+adjacent candidate frame values for a captured position. Choose the candidate
+with smaller absolute frame distance; for equidistant different frames choose
+the earlier musical tick. For an equal-frame plateau, a second lower-bound
+search selects the earliest tick on that plateau within `[a, b]`. These are two
+different tie cases. Return the chosen tick and the signed difference between
+its forward frame and the captured frame. Runtime timestamps stay out of the
+persisted result.
+
+A position outside the prepared table's frame range refuses projection; it is
+not clamped. A changed map, rate or target interval requires a new table. This
+accepts the cost of one bounded off-thread enumeration and table storage rather
+than changing the forward tempo law or claiming that sparse measurements prove
+an inverse. Preparation failure leaves the take/old prepared capture untouched.
+Finite capture windows are explicit: reaching the prepared window's end seals
+the segment, and extending it requires a newly admitted window. A loop reuses
+one certified interval plus its pass mapping, not an unbounded table of passes.
+The conformance tests are required before enabling the projection implementation;
+these tests are not yet implementation evidence.
+
+Optional quantization snaps note starts to the selected musical grid, choosing
+the earlier grid point on a tie and preserving the derived note duration;
+velocity and pedal/expression timing are unchanged. Retain the unsnapped take.
+A nonpositive projected duration, unrepresentable value, or snapped note outside
+the allowed target interval blocks that projection with the affected occurrence
+named. Do not silently delete, truncate or move the note back into range.
+
+Input/output latency, the render adapter's Q and any user offset must have one
+named compensation owner and a recorded applied correction. Never subtract a
+callback estimate twice. ADR-0022 must settle the mapping and compensation used
+before a production recorder can claim aligned placement.
+
+### TAKE-INV-005 — Overdub, replace and concurrent project edits
+
+Overdub inserts the chosen projected events. Replace applies only to the
+explicit target, musical interval and selected event classes. For the initial
+note replacement policy, membership is by note start in `[start, end)`; a note
+starting before the interval remains untouched even if its tail overlaps it.
+This rule is visible in the transaction preview. Controller replacement
+requires an explicit selected lane and restoration-at-boundary rule before it
+can be offered; selecting notes does not implicitly erase controllers.
+
+Capture keeps stable target references and an expected base revision. Commit
+validates both inside the same Application Core transaction that applies the
+insertion and any replacement deletion. Start with whole-project revision
+equality: unrelated edits may cause a conservative conflict. Never guess a new
+target by name, position or current GUI selection. A conflict retains the take;
+an explicit retry may select a new target/base without recapturing.
+
+The transaction has a stable operation identity: retry after an uncertain
+acknowledgement returns the prior result rather than inserting twice. Undo
+restores both removed and inserted material as one operation. A partial or
+interrupted take is never automatically committed as replace; the user must
+explicitly select its retained material and replacement interval. Ordinary
+complete takes may commit under the mode already selected when arming.
+
+These are recording-specific requirements on Phase 10B. They do not declare
+ADR-0035 accepted or choose its general transaction implementation. A commit
+consumer cannot ship until canonical revisions, identities and undo storage
+can enforce them together.
+
+### TAKE-INV-006 — Capacity, finalization and audio assets
+
+Define ordinary capture capacity separately from emergency finalization space.
+Reserve at least one closure record for every admitted open occurrence and one
+terminal result per take, plus bounded pass-boundary metadata. When ordinary
+storage would be exceeded, stop accepting new capture at a named boundary,
+finalize using the reserve, and keep every accepted event. A zero-copy handoff
+must retain ownership until acknowledgement; a full notification queue cannot
+destroy its payload. New arming refuses while no result/storage entitlement is
+available. Reclamation occurs off-thread.
+
+The [host profile recording fields](spec-host-profile-and-render-limits.md#recording)
+are the authority for resource units, defaults and exhaustion. All capacities
+and aggregate allocation costs must be checked before arm; the implementation
+must not infer missing production values from a fixture. `H`, `E` and `P` below
+are the admitted held-occurrence, raw-record and pass limits respectively.
+
+`E` excludes finalization and pass metadata, which are charged separately in
+`max_capture_bytes`. Reserve `H` terminal occurrence records, one initial
+controller-state snapshot per source, and at most `2 * H * (P - 1)` carry records
+for interior pass boundaries, using checked arithmetic. A captured occurrence
+remains one ordinary onset record regardless of passes; synthetic continuation
+metadata is never another performed event. Sustained-but-key-released state is
+represented by already retained key releases plus the pedal state, not by
+unbounded new held-key entries. Reserve terminal pedal state for every source
+as well as the take's outcome, first fault location and publication fences.
+
+Audio chunk count/bytes and their descriptors are included in the aggregate
+budget; a worker freeing a consumed transfer chunk does not grant permission
+to exceed the total admitted audio-frame or retained-asset storage budget.
+All custody is retained until commit/discard and final reference retirement.
+A capture may stop when a worker stalls arbitrarily long, but it cannot lose
+accepted data or borrow a result slot from telemetry. No live renderer event
+share is enlarged here: ADR-0054 still qualifies audition/transport producers
+separately before production enablement.
+
+Audio capture hands preallocated sample chunks to a worker together with their
+source rate, channel layout and timing continuity. The worker creates immutable
+asset data. Input loss, chunk exhaustion or storage failure stops capture and
+retains its valid prefix with the first missing frame/range or explicit unknown
+gap boundary. Silence inserted for monitoring is not genuine recorded input.
+
+Only a completed, validated asset may be referenced by a project transaction.
+Asset finalization precedes atomic project insertion; a failed or conflicting
+insertion keeps an owned uncommitted asset for retry. Project commit and its
+operation identity publish together. Cleanup must not delete an asset still
+held by a take, a project or undo history. Persistent asset identity, storage
+format and crash recovery are Phase 10A/10D decisions, not implied guarantees
+of an in-memory take. No runtime `SampleTime` is saved in a recovery record.
+
+Discard is an explicit owner action after finalization. Process-crash survival
+is not claimed until a durable take/recovery format exists; orderly shutdown
+must offer retention through a supported format or report that uncommitted
+session data still requires a decision, rather than silently dropping it.
+
+## Types and ownership
+
+Use private, validated domain newtypes for capture session, take, pass,
+performed occurrence, source connection generation and every capacity/unit.
+Counters cannot wrap into reused identity. These are domain concepts, not new
+serialized encodings. The session owns active capture and its reserved result;
+workers own sealed chunks and derived data; the GUI owns a replaceable preview.
+A final outcome (`Complete`, `Partial`, `Interrupted`) is distinct from commit
+state (uncommitted, conflict-blocked, committed or explicitly discarded) and
+from the retained quality slot. Every consumer combines outcome and quality.
+Canonical target identity and revision belong to Phase 10A and ADR-0035.
+
+## Lifecycle and timing
+
+TAKE-INV-001 and TAKE-INV-002 define arm, start, stop, source fences and mapping
+changes. TAKE-INV-003 defines pass segmentation. TAKE-INV-004 governs off-thread
+projection without replacing original capture time by playback execution time.
+
+## Failure and diagnostics
+
+TAKE-INV-001 defines late-input quality, including discovery after commit.
+TAKE-INV-005 defines conflicts and retry; TAKE-INV-006 preserves accepted data
+on capacity, interruption or worker/storage failure. Missing input is never
+reported as complete audio. These outcomes must remain observable independently
+of a stalled GUI and saturated lossy telemetry.
+
+## Real-time and resource constraints
+
+The callback must not allocate, block, log or reclaim the final reference to a
+result, stream, chunk or asset. Storage, closure metadata, quality and publication
+slots are reserved before arm. Projection preparation, transactions, asset
+creation and reclamation run off-thread. Use the host profile's recording
+budgets and TAKE-INV-006's checked finalization reserve; no secondary uncharged
+collection may hold recording data.
+
+## Conformance tests
+
+The contract fails if a legal stall or interruption can lose accepted data,
+change its original timing, apply partial replace, duplicate a retry, or require
+allocation/blocking on a callback. Required future checks are:
+
+- The same mapped input and session boundaries under whole, 64, 256 and
+  irregular callbacks produce identical raw takes and derived events. Vary
+  late execution while keeping original stamps fixed; source timing survives.
+- Publish the same in-interval below-watermark record before and after sealing.
+  Both set the existing quality slot without another entitlement; the first
+  finalizes `Partial`, the second degrades effective quality without rewriting
+  raw data or an applied transaction. Repeated faults coalesce, and an
+  out-of-interval refusal does not fault an unrelated take. Stall one of two
+  sources: the minimum seal watermark waits for its fence. Retain attribution
+  through commit until all source generations quiesce and quality is acknowledged.
+- Count-in, exact start/end, note-off and sustain at one sample follow the
+  declared ordering. Same-key occurrences, stolen voices and held keys at arm
+  cannot close or create the wrong recorded note.
+- Exhaust each ordinary and result capacity with all held slots occupied and
+  stall the worker/GUI. Finalization still succeeds, preserves the prefix and
+  names the partial outcome without freeing owned memory on a callback.
+- Change or delete the target, fail asset finalization and lose the commit
+  acknowledgement. The project is unchanged on failure, the take remains owned,
+  and a retry has exactly one effect. Undo restores the entire prior target.
+- Compare table lookup against exhaustive nearest-tick selection on steps,
+  period ramps, boundaries, equal-frame plateaus and distance ties. Inject an
+  adjacent inversion that an endpoint/stride check misses and require preparation
+  refusal. Check work/byte bounds, stale table context, out-of-range and
+  zero-duration refusals. Report each projection's actual signed error.
+- Feed synthetic ordered pass boundaries at non-Q-aligned positions and record
+  a held/sustained note across them. A release exactly on a boundary closes the
+  original occurrence in the next pass. Contiguous projection has one onset;
+  isolated carry-in projection refuses, and carry-out trim requires selection.
+  Repeat against the real boundary producer when ADR-0052 is implemented.
+- Interrupt audio without a final callback; stop at the last valid watermark,
+  preserve source format and prefix, and never label a gapped asset complete.
+
+These are obligations, not passed tests. Physical timestamp/latency evidence
+belongs to ADR-0022; no new EVD result is asserted.
+
+| Invariant | Required future check |
+|---|---|
+| TAKE-INV-001 | Callback partitions, pre/post-seal late input, two-source fences and attribution retained through commit |
+| TAKE-INV-002 | Count-in, FIFO same-key notes, pre-arm keys, key/pedal closure and mapping change |
+| TAKE-INV-003 | Synthetic non-Q-aligned pass boundaries, crossing occurrence projection/refusal and pass exhaustion |
+| TAKE-INV-004 | Exhaustive nearest-tick oracle, adjacent inversion refusal, ties/plateaus, finite bounds and signed error |
+| TAKE-INV-005 | Revision conflict, failed asset, lost acknowledgement, exactly-once retry and complete undo |
+| TAKE-INV-006 | Every capacity exhausted under worker/GUI stall; retained ownership and off-thread reclamation |
+
+## Unresolved questions
+
+| Question | Blocking? | ADR or task |
+|---|---|---|
+| Physical mapping, compensation, arrival allowance and workload qualification | Before production recording; exact simulated inputs may proceed | ADR-0022 and Phase 9 capture qualification |
+| Sample-exact runtime loop boundary producer | Before live loop capture and Phase 9 exit; synthetic logs may test this consumer | ADR-0052, ADR-0055 |
+| Canonical revisions, transaction service and undo storage | Before shipping the project-commit consumer | Phase 10A/10B, ADR-0035 |
+| Durable assets and crash recovery | Before claiming persisted take/asset recovery | Phase 10A/10D |
+| Additional input token schemes or controller replacement lanes | Before enabling those optional modes; current refusal remains | TAKE-INV-002, TAKE-INV-005 |

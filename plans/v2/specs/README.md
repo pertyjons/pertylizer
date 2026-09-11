@@ -62,6 +62,8 @@ when its display title changes.
 | [Host profile and render limits](spec-host-profile-and-render-limits.md) | `HOST` | Current | The immutable preparation input a render plan is admitted against: field set, defaults, ownership, admission failure, and the `ResourceReport` |
 | [Sound Core render contract](spec-sound-core-render-contract.md) | `SOUND` | Current | The experimental compiler, plan, runtime state, arena, and render invariants through Phase 2 |
 | [Project lowering and fidelity](spec-project-lowering-and-fidelity.md) | `LOWER` | Current | What the V1-to-V2 lowerer must produce, how an outcome's fidelity is derived, and what may be claimed about a lowered render |
+| [Host I/O lifecycle](spec-host-io-lifecycle.md) | `IO` | Current | Device configuration, connection generations, callback retirement, interruption and recovery |
+| [Recording takes and commit](spec-recording-takes-and-commit.md) | `TAKE` | Current | Performed-data custody, pairing, timing projection, pass storage, bounded finalization and atomic commit requirements |
 
 Add a row when creating a specification and check that its prefix is unique
 before allocating invariants.

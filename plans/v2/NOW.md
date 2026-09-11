@@ -118,7 +118,7 @@ refusal. Complete repository checks and independent reviews passed.
 
 S006–S008 and the exit records are squash-merged to `main` on 2026-09-11;
 S001–S005 were already on `main`. The phase's coordination is archived in
-[phase-08](archive/phase-08/INDEX.md). Phase 9 remains unselected and not started.
+[phase-08](archive/phase-08/INDEX.md). Phase 9 entry readiness and its next implementation slice are stated below.
 Existing ADR-0028/P04-R004 still owns whole-project V1/V2 orchestration in Phase
 10B. P05-R001 still blocks nonunity amplifier-level lowering. The first consumer
 of an uncarried saved effect, port, script, note-lifetime rule or modulation law
@@ -130,6 +130,22 @@ must establish its fidelity disposition before lifting its diagnostic.
 |---|---|---|
 | P08-R001 | Oversampling and rate islands remain unbuilt; saved nonunity oversampling is diagnosed and excludes a parity verdict. | The first Sound Core rate-extension slice, before any nonunity-rate node or saved oversampling consumer, must define rate conversion, history and composed latency and qualify them. Phase 9 inherits this before such an expansion. |
 | P08-R002 | Saved multiple terminals, module-input fan-in, implicit cyclic feedback, additional distortion/delay modes and tempo-following delay time remain refused by name. | The first lowering slice for each named route must define its law, explicit graph representation and a same-input V1 oracle before lifting that refusal. Native fan-in and explicit shared feedback already exist; no saved feedback boundary is inferred. |
+
+## Phase 9 — entry ready
+
+[ADR-0036](decisions/ADR-0036-audio-device-and-input-lifecycle.md) and
+[ADR-0024](decisions/ADR-0024-recording-take-and-commit-semantics.md) are `Accepted`.
+Their current contracts are [host I/O lifecycle](specs/spec-host-io-lifecycle.md)
+and [recording takes and commit](specs/spec-recording-takes-and-commit.md), with
+capture budgets in the [host profile](specs/spec-host-profile-and-render-limits.md#recording).
+The entry-decision requirement is met; implementation has not started.
+
+Next, implement the stopped-only host coordinator against a simulated backend:
+prepare/activate, stale-generation rejection, loss without a final callback and
+explicit recovery, with IO-INV-001 through IO-INV-006 conformance checks. Before
+adding capture, implement the complete admitted configuration and retained-result
+path under TAKE-INV-001 and TAKE-INV-006. Live swaps, runtime loops, production
+hardware timing and project transactions retain their named first-consumer gates.
 
 ## Active streams
 
@@ -175,6 +191,8 @@ Phase 3 is complete. Its exit review accepted these bounded residuals:
 ## Current blockers
 
 Phase 8 has no remaining exit blocker. Phase 0B continues with `P00B-T003`
-selected; Phase 9 is not started. The accepted residuals above block their named
-first consumers. Session share 128 and total cap 360 remain provisional until
+selected; Phase 9 entry decisions are accepted and implementation may start
+with the simulated stopped-only host slice above.
+The accepted residuals above block their named first consumers.
+Session share 128 and total cap 360 remain provisional until
 Phase 9's complete reselection under ADR-0054.
