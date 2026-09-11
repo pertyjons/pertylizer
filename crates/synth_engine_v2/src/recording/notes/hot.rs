@@ -9,6 +9,48 @@ use super::{
 };
 
 impl SimulatedNoteRecorder {
+    /// Freeze the serial host's capture selection before acknowledging source shutdown.
+    /// A missing fence establishes no captured prefix, even if raw input is retained.
+    pub(crate) fn interrupt_host(
+        &mut self,
+        reason: CaptureStopReason,
+    ) -> Result<(), NoteCaptureError> {
+        if self.host_interrupted {
+            return Ok(());
+        }
+        if let Some(active) = self.active {
+            let mut boundary = self.window(active.ticket)?.end();
+            for source in self.sources.iter().flatten() {
+                if self.participates(active.ticket, source.generation) {
+                    boundary = boundary.min(source.fence.unwrap_or(SampleTime::ZERO));
+                }
+            }
+            self.stop_at(active.ticket, boundary, CaptureOutcome::Interrupted, reason)?;
+            self.try_seal()?;
+        }
+        self.host_interrupted = true;
+        Ok(())
+    }
+
+    /// The caller supplies a backend fence, not a later GUI timestamp. Publication
+    /// has been closed by the host; the already acknowledged frontier cannot advance.
+    pub(crate) fn acknowledge_host_source(
+        &mut self,
+        source: ConnectionGeneration,
+    ) -> Result<(), NoteCaptureError> {
+        let state = self.source_copy(source)?;
+        if state.quiescent {
+            return Ok(());
+        }
+        self.quiesce(source, self.epoch, state.fence.unwrap_or(SampleTime::ZERO))
+    }
+
+    pub(crate) fn host_quiescent(&self) -> bool {
+        self.host_interrupted
+            && self.active.is_none()
+            && self.sources.iter().flatten().all(|source| source.quiescent)
+    }
+
     pub(super) fn source_index(
         &self,
         generation: ConnectionGeneration,

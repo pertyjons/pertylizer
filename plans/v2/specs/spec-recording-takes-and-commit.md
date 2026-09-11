@@ -12,8 +12,8 @@
 | Superseded by | — |
 
 Only a `Current` specification constrains implementation; see [README.md](README.md).
-This contract is accepted for the consuming implementations. P09-S002–S004's bounded
-storage, exact-input and projection checks and remaining consumer obligations are separated below.
+This contract is accepted for the consuming implementations. P09-S002–S005's bounded
+storage, exact-input, projection and host-interruption checks and remaining consumer obligations are separated below.
 
 ## Scope
 
@@ -587,6 +587,18 @@ These tests discharge the finite exact-input lookup and
 note-only projection subset of TAKE-INV-004; runtime loop mapping, physical
 compensation and canonical project output remain at their named consumer gates.
 
+P09-S005 connects this recorder to one simulated output generation. The
+[host I/O conformance record](spec-host-io-lifecycle.md#conformance-tests) owns the
+lifecycle checks. Capture admission closes when that output quiesces; the recorder
+freezes its selection against the minimum acknowledged source frontier and retains
+raw out-of-selection input. Source shutdown acknowledgements cannot move that
+boundary. Count-in with no acknowledged frontier seals an empty interrupted take.
+The recorder's added host identity and interruption state are part of its charged
+descriptor. Source-by-source finalization uses the existing terminal reserves.
+Retained results survive output retirement and block replacement recording storage
+until explicit quality-checked disposal and release. This serial integration does
+not establish concurrent source queues, physical fences or session ordering.
+
 The contract fails if a legal stall or interruption can lose accepted data,
 change its original timing, apply partial replace, duplicate a retry, or require
 allocation/blocking on a callback. Required checks at the remaining consumers are:
@@ -621,7 +633,7 @@ allocation/blocking on a callback. Required checks at the remaining consumers ar
 - Interrupt audio without a final callback; stop at the last valid watermark,
   preserve source format and prefix, and never label a gapped asset complete.
 
-The storage, exact-input and projection tests above cover parts of TAKE-INV-001/002/004/006;
+The storage, exact-input, projection and host-interruption tests cover parts of TAKE-INV-001/002/004/006;
 none of the following invariants is discharged in full. The built arm context,
 serial source ordering and FIFO pairing still need their first physical/concurrent
 consumers' qualification. Runtime callbacks, loop passes, audio, physical compensation and

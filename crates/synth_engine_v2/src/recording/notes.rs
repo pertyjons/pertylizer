@@ -272,6 +272,8 @@ pub struct SimulatedNoteRecorder {
     last_pass: CapturePassId,
     epoch: StreamEpoch,
     observed: SampleTime,
+    pub(crate) host_generation: Option<ConnectionGeneration>,
+    host_interrupted: bool,
 }
 
 impl SimulatedNoteRecorder {
@@ -318,6 +320,8 @@ impl SimulatedNoteRecorder {
             map_bytes: PreparedBytes::NONE,
             session,
             last_pass: CapturePassId(0),
+            host_generation: None,
+            host_interrupted: false,
             epoch,
             observed: SampleTime::ZERO,
         })
@@ -672,6 +676,10 @@ fn check_bytes(bytes: u64, limits: RecordingLimits) -> Result<(), NoteCaptureErr
 
 #[derive(Debug, PartialEq, Error)]
 pub enum NoteCaptureError {
+    #[error("capture tempo map uses a different rate from the prepared output")]
+    HostSampleRate,
+    #[error("capture anchor differs from the prepared output stream")]
+    HostAnchor,
     #[error(transparent)]
     Storage(#[from] CaptureError),
     #[error(transparent)]

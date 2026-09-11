@@ -13,7 +13,7 @@
 
 Only a `Current` specification constrains implementation; see [README.md](README.md).
 This contract is accepted. The conformance section distinguishes the implemented
-simulated output subset from checks still required before later consumers.
+simulated output and exact-input note-capture subsets from checks still required before later consumers.
 
 ## Scope
 
@@ -272,19 +272,72 @@ cargo test -p synth_engine_v2 --test host_lifecycle
 cargo test -p synth_engine_v2 --release --test host_lifecycle
 ```
 
-IO-INV-005 remains unimplemented: no input, monitoring or capture can be enabled
-through this simulator. Input loss, capture fences/results, independent clocks,
-worker backpressure and actual telemetry/retirement channel saturation still need
-the full checks below. Physical timing acceptance requires ADR-0022's retained
+P09-S005 attaches one `SimulatedNoteRecorder` to the active Ready output's
+generation and epoch through `SimulatedHost::prepare_note_capture`. Its complete
+descriptor and arrays use the recording byte admission. A borrowed
+`NoteCaptureControl` admits exact-input publication and explicit capture boundaries
+only while that output remains Ready or Running; it cannot replace the recorder.
+Arm rejects a context from another epoch, sample rate or prepared stream anchor
+before consuming a result slot.
+The simulator's transport stop refuses an active take until the caller explicitly
+finalizes it. This is not the ordered runtime-session transport consumer.
+
+Output loss, voluntary shutdown and simulated note-source loss close that view.
+Terminal render faults close it in the callback; the coordinator subsequently
+finalizes capture. The selected end freezes at the minimum previously acknowledged
+frontier among the take's sources, bounded by its selected end. An unfenced source
+establishes no prefix; count-in loss can select an empty interval at epoch origin.
+Accepted raw records beyond that end remain readable outside selection. Neither a
+later GUI timestamp nor the renderer's quantum-ahead clock supplies the boundary.
+One source reaching the requested end requests a stop; it does not seal the take
+while another source's publication frontier still lags. Loss in that waiting state
+still interrupts at the minimum known frontier. A take already sealed before loss
+keeps its sealed outcome and interval. Different publication frontiers consumed
+before loss can therefore produce different selected intervals; a shutdown
+acknowledgement cannot stand in for the missing publication fence.
+Each bound source acknowledges shutdown separately, without advancing its frontier.
+Finalization and output-resource retirement wait for their applicable source
+fences; output retirement additionally requires an explicit backend acknowledgement.
+A backend acknowledgement attempted too early refuses and must be retried after
+source quiescence. No acknowledgement is inferred from a silent callback.
+
+Capture results remain owned after output retirement and replacement. A new output
+returns Ready without resuming capture. Preparing another recorder refuses until
+the owner has acknowledged current result quality, discarded every retained result
+and explicitly released the quiescent storage after backend retirement. Loss of an
+unselected but bound note source also stops the output and names that source in
+persistent diagnostics. Candidate loss does not affect the active recorder.
+
+For fixed publication frontiers consumed before loss, the falsifier is lost accepted
+input, a selection changed by source-shutdown acknowledgement order or GUI-notification
+delay, admission after loss, retirement before both fences, or recording quota
+replaced while results remain unresolved.
+`src/host/capture/tests.rs` checks loss with/without a final callback, unequal source
+frontiers and both acknowledgement orders, a natural end awaiting a lagging source,
+count-in, candidate and stale-generation isolation, source loss, full ordinary storage and stalled result consumption,
+terminal callback faults, explicit disposal and reconnection. The allocation guard
+observes zero allocation/deallocation during publication, loss, silent callbacks and
+source finalization. Renderer and capture storage reclamation remain off-thread.
+The release-mode checks also run locally with:
+
+```bash
+cargo test -p synth_engine_v2 --release --lib host::capture::tests
+```
+
+This remains an exclusive-borrow simulator, with explicit synthetic source fences.
+It has no concurrent pending source queue, hardware input, monitoring or audio
+capture. IO-INV-005 remains unimplemented. Physical input loss, backend capture
+fences, independent clocks, worker backpressure and actual telemetry/retirement
+channel saturation still need the full checks below. Physical timing acceptance requires ADR-0022's retained
 platform/adapter evidence and ADR-0054's complete producer calibration before a
 production live adapter is enabled.
 
-| Invariant | Full check still required beyond P09-S001 |
+| Invariant | Full check still required beyond P09-S001/S005 |
 |---|---|
 | IO-INV-001 | Concurrent publication and backend callback fences; independently opened input generations |
 | IO-INV-002 | Ordered session stop, real backend shutdown when pause is unsupported, concurrent off-thread retirement |
 | IO-INV-003 | Evidence establishing any physical backend callback bound before activation |
-| IO-INV-004 | Input loss, retained capture with/without final callback, and bounded automatic retry if implemented |
+| IO-INV-004 | Physical input loss, concurrent retained capture with/without final callback, and bounded automatic retry if implemented |
 | IO-INV-005 | Independent clocks, bounded stalled-worker input and distinct monitoring/capture loss |
 | IO-INV-006 | Saturated concurrent telemetry preserves faults and acknowledgements; input backlog and timing provenance |
 

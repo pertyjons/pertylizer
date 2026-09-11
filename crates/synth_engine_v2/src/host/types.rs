@@ -227,11 +227,23 @@ pub enum HostFailure {
     InvalidConfiguration,
     Compilation,
     DeviceLost,
+    CaptureSourceLost(ConnectionGeneration),
     Render(RenderError),
 }
 
 #[derive(Debug, Error)]
 pub enum HostError {
+    #[error("finalize note capture through its explicit boundary before stopping transport")]
+    CaptureActive,
+    #[cfg(feature = "simulated-ingress")]
+    #[error(transparent)]
+    NoteCapture(#[from] crate::recording::notes::NoteCaptureError),
+    #[error("capture sources await quiescence")]
+    AwaitingCaptureQuiescence,
+    #[error("resolve retained capture and release its storage before preparing another recorder")]
+    CaptureRetained,
+    #[error("no note recorder belongs to this output generation")]
+    NoNoteCapture,
     #[error("endpoint identity must be nonempty")]
     EmptyEndpoint,
     #[error("buffer frame count must be nonzero")]

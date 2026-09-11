@@ -159,6 +159,12 @@ tick-table admission, nearest-tick selection, optional start quantization and
 explicit whole-result refusals against the retained context. Its bounded
 checks and remaining consumer gates are in the
 [recording specification](specs/spec-recording-takes-and-commit.md#conformance-tests).
+P09-S005 connects the simulated output generation to retained exact-input note
+capture: loss closes admission, freezes the acknowledged capture frontier and
+waits for source/backend fences without another callback. Reconnection retains
+unresolved results and does not resume capture. Its bounded checks and remaining
+consumer gates are in the
+[host I/O specification](specs/spec-host-io-lifecycle.md#conformance-tests).
 The next Phase 9 implementation slice remains to be selected.
 Loop capture and physical adapters remain separately gated.
 Input lifecycle, independent clocks and monitoring still require IO-INV-004 and
@@ -210,7 +216,7 @@ Phase 3 is complete. Its exit review accepted these bounded residuals:
 ## Current blockers
 
 Phase 8 has no remaining exit blocker. Phase 0B continues with `P00B-T003`
-selected; Phase 9 has completed P09-S001 through P09-S004.
+selected; Phase 9 has completed P09-S001 through P09-S005.
 The accepted residuals above block their named first consumers.
 Session share 128 and total cap 360 remain provisional until
 Phase 9's complete reselection under ADR-0054.

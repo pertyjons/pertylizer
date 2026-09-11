@@ -3,8 +3,14 @@
 //! This is host-side code, separate from the render plan. It opens no platform device.
 //! The simulator serializes invocations and exposes delayed quiescence explicitly; it
 //! does not prove a real backend's callback fence or concurrent publication mechanism.
-//! Input, recording, live ingress, session commands and automatic retries have no consumer
-//! here. Their first consumers retain the IO/TAKE and ADR-0022/0050/0054 gates.
+//! P09-S005 attaches serial exact-input note capture and retains it across output loss.
+//! Physical input, live ingress, session commands and automatic retries retain their
+//! first-consumer IO/TAKE and ADR-0022/0050/0054 gates.
+
+#[cfg(feature = "simulated-ingress")]
+mod capture;
+#[cfg(feature = "simulated-ingress")]
+pub use capture::NoteCaptureControl;
 
 mod hot;
 mod types;
@@ -60,6 +66,8 @@ pub struct SimulatedHost {
     active: Option<Connection>,
     candidate: Option<Connection>,
     last_valid: Option<StreamControl>,
+    #[cfg(feature = "simulated-ingress")]
+    note_capture: Option<crate::recording::notes::SimulatedNoteRecorder>,
 }
 
 impl SimulatedHost {
@@ -217,6 +225,12 @@ impl SimulatedHost {
 
     /// Stop transport without retiring the device or creating another epoch.
     pub fn stop(&mut self, generation: ConnectionGeneration) -> Result<(), HostError> {
+        #[cfg(feature = "simulated-ingress")]
+        if self.note_capture.as_ref().is_some_and(|capture| {
+            capture.host_generation == Some(generation) && capture.is_active()
+        }) {
+            return Err(HostError::CaptureActive);
+        }
         let connection = self.active_mut(generation)?;
         if !matches!(
             connection.status.state,
@@ -243,6 +257,8 @@ impl SimulatedHost {
             return Err(HostError::WrongState);
         }
         connection.status.state = ConnectionState::Quiescing;
+        #[cfg(feature = "simulated-ingress")]
+        self.interrupt_note_capture(generation)?;
         Ok(())
     }
 
@@ -266,6 +282,8 @@ impl SimulatedHost {
             .failure
             .get_or_insert(HostFailure::DeviceLost);
         connection.status.state = ConnectionState::Quiescing;
+        #[cfg(feature = "simulated-ingress")]
+        self.interrupt_note_capture(generation)?;
         Ok(())
     }
 
@@ -276,6 +294,17 @@ impl SimulatedHost {
         &mut self,
         generation: ConnectionGeneration,
     ) -> Result<(), HostError> {
+        if self.connection_mut(generation)?.status.state != ConnectionState::Quiescing {
+            return Err(HostError::WrongState);
+        }
+        #[cfg(feature = "simulated-ingress")]
+        self.interrupt_note_capture(generation)?;
+        #[cfg(feature = "simulated-ingress")]
+        if self.note_capture.as_ref().is_some_and(|capture| {
+            capture.host_generation == Some(generation) && !capture.host_quiescent()
+        }) {
+            return Err(HostError::AwaitingCaptureQuiescence);
+        }
         let was_active = self
             .active()
             .is_some_and(|status| status.generation == generation);
