@@ -219,6 +219,8 @@ impl ConnectionStatus {
 /// Fixed-size retained failure, readable repeatedly without consuming it.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum HostFailure {
+    #[cfg(feature = "simulated-ingress")]
+    Session(crate::schedule::ScheduledRenderError),
     EndpointUnavailable,
     AmbiguousEndpoint,
     OpenFailed,
@@ -233,6 +235,9 @@ pub enum HostFailure {
 
 #[derive(Debug, Error)]
 pub enum HostError {
+    #[cfg(feature = "simulated-ingress")]
+    #[error(transparent)]
+    Session(#[from] super::session::SessionError),
     #[error("finalize note capture through its explicit boundary before stopping transport")]
     CaptureActive,
     #[cfg(feature = "simulated-ingress")]
@@ -291,6 +296,9 @@ impl HostError {
 /// Callback errors contain no allocating diagnostic payload.
 #[derive(Debug, Clone, Copy, PartialEq, Error)]
 pub enum CallbackError {
+    #[cfg(feature = "simulated-ingress")]
+    #[error("session fault: {0}")]
+    Session(crate::schedule::ScheduledRenderError),
     #[error("callback belongs to a stale connection")]
     StaleGeneration,
     #[error("running connection has no prepared renderer")]

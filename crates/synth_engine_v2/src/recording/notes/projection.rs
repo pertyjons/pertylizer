@@ -167,6 +167,9 @@ impl SimulatedNoteRecorder {
         ticket: TakeReservation,
     ) -> Result<ProjectedTake<'_>, ProjectionError> {
         let raw = self.result(ticket)?;
+        if raw.context().anchor().is_none() {
+            return Err(ProjectionError::LoopMapping);
+        }
         validate_material(&raw)?;
         let count = selected_onsets(&raw).count();
         let capture = self
@@ -389,6 +392,8 @@ fn snap(tick: MusicalTick, quantization: CaptureQuantization) -> Option<MusicalT
 
 #[derive(Debug, PartialEq, Error)]
 pub enum ProjectionError {
+    #[error("loop capture requires a pass-aware projection")]
+    LoopMapping,
     #[error(transparent)]
     Capture(#[from] NoteCaptureError),
     #[error(transparent)]

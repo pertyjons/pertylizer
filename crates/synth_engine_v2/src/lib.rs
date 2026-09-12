@@ -109,6 +109,7 @@ pub mod script;
 )]
 pub mod ingress;
 pub mod ir;
+pub mod looping;
 pub mod node;
 pub mod observe;
 pub mod offline;

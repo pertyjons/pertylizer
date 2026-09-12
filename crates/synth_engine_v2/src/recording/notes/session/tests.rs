@@ -341,13 +341,13 @@ fn a_refused_end_beyond_natural_completion_still_marks_the_dispatched_time_as_re
         publish(&mut recorder, source, 130, [0x90, 60, 100]),
         Err(NoteCaptureError::PastBoundary)
     );
-    let mut past = context(recorder.epoch).input;
+    let mut past = super::super::tests::context_input(recorder.epoch);
     past.interval = MusicalInterval::new(MusicalTick::new(5), MusicalTick::new(9)).unwrap();
     assert_eq!(
         recorder.arm(NoteArmContext::prepare(past).unwrap(), &[source]),
         Err(NoteCaptureError::PastBoundary)
     );
-    let mut future = context(recorder.epoch).input;
+    let mut future = super::super::tests::context_input(recorder.epoch);
     future.interval = MusicalInterval::new(MusicalTick::new(7), MusicalTick::new(11)).unwrap();
     let next = recorder
         .arm(NoteArmContext::prepare(future).unwrap(), &[source])

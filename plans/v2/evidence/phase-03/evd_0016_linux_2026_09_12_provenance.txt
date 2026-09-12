@@ -1,0 +1,99 @@
+=== source-revision.txt ===
+1ac24ff620bc092793d78cf9e488050399a19bbe
+
+=== command.txt ===
+/home/per/github/pertylizer/target/release/examples/evd_0016_cpal_timestamps record duplex 10000 --physical --output-device alsa:hw:CARD=0,DEV=0 --input-device alsa:hw:CARD=0,DEV=0
+
+=== probe-exit.txt ===
+0
+
+=== analyzer-exit.txt ===
+1
+
+=== callbacks-sha256.txt ===
+58ee00ecd460055a61f88e915bb9ba9c801d428c23d8cd8f5e4ea6363f6fb833
+
+=== binary-sha256.txt ===
+b573fb17b6760a21d9d74de9d3d80f8336f21caaa42d3241765d0c0ef5f0e73f
+
+=== kernel.txt ===
+7.2.4-200.fc44.x86_64 x86_64 GNU/Linux
+
+=== os-release.txt ===
+NAME="Fedora Linux"
+VERSION="44 (Workstation Edition)"
+RELEASE_TYPE=stable
+ID=fedora
+VERSION_ID=44
+VERSION_CODENAME=""
+PRETTY_NAME="Fedora Linux 44 (Workstation Edition)"
+ANSI_COLOR="0;38;2;60;110;180"
+LOGO=fedora-logo-icon
+CPE_NAME="cpe:/o:fedoraproject:fedora:44"
+DEFAULT_HOSTNAME="fedora"
+HOME_URL="https://fedoraproject.org/"
+DOCUMENTATION_URL="https://docs.fedoraproject.org/en-US/fedora/f44/"
+SUPPORT_URL="https://ask.fedoraproject.org/"
+BUG_REPORT_URL="https://bugzilla.redhat.com/"
+REDHAT_BUGZILLA_PRODUCT="Fedora"
+REDHAT_BUGZILLA_PRODUCT_VERSION=44
+REDHAT_SUPPORT_PRODUCT="Fedora"
+REDHAT_SUPPORT_PRODUCT_VERSION=44
+SUPPORT_END=2027-05-19
+VARIANT="Workstation Edition"
+VARIANT_ID=workstation
+
+=== load-before.txt ===
+1.33 10.26 11.54 2/2455 1249275
+
+=== load-after.txt ===
+0.70 7.37 10.36 1/2466 1249492
+
+=== build.log ===
+   Compiling pertylizer v0.317.0 (/home/per/github/pertylizer/crates/pertylizer)
+   Compiling synth_engine_v2 v0.1.0 (/home/per/github/pertylizer/crates/synth_engine_v2)
+   Compiling triple_buffer v9.0.0
+   Compiling allocation-counter v0.8.1
+    Finished `release` profile [optimized] target(s) in 2m 24s
+
+=== probe.stderr ===
+
+=== devices.txt ===
+host=alsa
+os=linux
+arch=x86_64
+output_devices:
+  name=Discard all samples (playback) or generate zero samples (capture) id=alsa:null type=Unknown format=F32 rate=48000 channels=2 buffers=Range { min: 1, max: 268435455 }
+  name=PipeWire Sound Server id=alsa:pipewire type=Unknown format=F32 rate=48000 channels=2 buffers=Range { min: 16, max: 262144 }
+  name=Default ALSA Output (currently PipeWire Media Server) id=alsa:default type=Unknown format=F32 rate=48000 channels=2 buffers=Range { min: 16, max: 262144 }
+  name=sof-hda-dsp,  id=alsa:sysdefault:CARD=sofhdadsp type=Unknown format=F32 rate=48000 channels=2 buffers=Range { min: 2, max: 183253370 }
+  name=sof-hda-dsp,  id=alsa:hw:CARD=0,DEV=0 type=Unknown format=I32 rate=48000 channels=2 buffers=Range { min: 24, max: 2048 }
+  name=sof-hda-dsp,  id=alsa:plughw:CARD=0,DEV=0 type=Unknown format=F32 rate=48000 channels=2 buffers=Range { min: 2, max: 183253370 }
+  name=sof-hda-dsp, HDMI 1 id=alsa:hw:CARD=0,DEV=3 type=Unknown format=I24 rate=48000 channels=2 buffers=Range { min: 24, max: 2048 }
+  name=sof-hda-dsp, HDMI 1 id=alsa:plughw:CARD=0,DEV=3 type=Unknown format=F32 rate=48000 channels=2 buffers=Range { min: 2, max: 183253370 }
+  name=sof-hda-dsp, HDMI 2 id=alsa:hw:CARD=0,DEV=4 type=Unknown format=I24 rate=48000 channels=2 buffers=Range { min: 24, max: 2048 }
+  name=sof-hda-dsp, HDMI 2 id=alsa:plughw:CARD=0,DEV=4 type=Unknown format=F32 rate=48000 channels=2 buffers=Range { min: 2, max: 183253370 }
+  name=sof-hda-dsp, HDMI 3 id=alsa:hw:CARD=0,DEV=5 type=Unknown format=I24 rate=48000 channels=2 buffers=Range { min: 24, max: 2048 }
+  name=sof-hda-dsp, HDMI 3 id=alsa:plughw:CARD=0,DEV=5 type=Unknown format=F32 rate=48000 channels=2 buffers=Range { min: 2, max: 183253370 }
+  name=sof-hda-dsp,  id=alsa:hw:CARD=0,DEV=31 type=Unknown format=I32 rate=48000 channels=2 buffers=Range { min: 24, max: 2048 }
+  name=sof-hda-dsp,  id=alsa:plughw:CARD=0,DEV=31 type=Unknown format=F32 rate=48000 channels=2 buffers=Range { min: 2, max: 183253370 }
+input_devices:
+  name=Discard all samples (playback) or generate zero samples (capture) id=alsa:null type=Unknown format=F32 rate=48000 channels=2 buffers=Range { min: 1, max: 268435455 }
+  name=PipeWire Sound Server id=alsa:pipewire type=Unknown format=F32 rate=48000 channels=2 buffers=Range { min: 16, max: 262144 }
+  name=Default ALSA Output (currently PipeWire Media Server) id=alsa:default type=Unknown format=F32 rate=48000 channels=2 buffers=Range { min: 16, max: 262144 }
+  name=sof-hda-dsp,  id=alsa:sysdefault:CARD=sofhdadsp type=Unknown format=F32 rate=48000 channels=2 buffers=Range { min: 2, max: 183253370 }
+  name=sof-hda-dsp,  id=alsa:hw:CARD=0,DEV=0 type=Unknown format=I24 rate=48000 channels=2 buffers=Range { min: 24, max: 2048 }
+  name=sof-hda-dsp,  id=alsa:plughw:CARD=0,DEV=0 type=Unknown format=F32 rate=48000 channels=2 buffers=Range { min: 2, max: 183253370 }
+  name=sof-hda-dsp,  id=alsa:hw:CARD=0,DEV=6 type=Unknown format=I32 rate=48000 channels=2 buffers=Range { min: 24, max: 2048 }
+  name=sof-hda-dsp,  id=alsa:plughw:CARD=0,DEV=6 type=Unknown format=F32 rate=48000 channels=2 buffers=Range { min: 2, max: 183253370 }
+  name=sof-hda-dsp,  id=alsa:hw:CARD=0,DEV=7 type=Unknown format=I32 rate=16000 channels=2 buffers=Range { min: 24, max: 2048 }
+  name=sof-hda-dsp,  id=alsa:plughw:CARD=0,DEV=7 type=Unknown format=F32 rate=48000 channels=2 buffers=Range { min: 6, max: 268435455 }
+
+=== rustc -Vv ===
+rustc 1.98.0 (88d9e12ae 2026-08-18)
+binary: rustc
+commit-hash: 88d9e12ae178fab0fb5cc050a94da85685d449ea
+commit-date: 2026-08-18
+host: x86_64-unknown-linux-gnu
+release: 1.98.0
+LLVM version: 22.1.8

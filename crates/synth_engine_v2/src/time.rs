@@ -12,6 +12,9 @@
 //!   becoming an event eighteen quintillion frames late is the classic form
 //!   this defect takes (clause 3).
 
+mod timeline;
+pub use timeline::QuantumTimeline;
+
 use thiserror::Error;
 
 use std::sync::atomic::{AtomicU32, Ordering};

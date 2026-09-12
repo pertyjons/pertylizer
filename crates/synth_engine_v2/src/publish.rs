@@ -316,6 +316,22 @@ impl PublicationArbiter {
     /// This is the only allocation. Every later call opens, fills and seals inside it.
     pub fn prepare(profile: &HostProfile) -> Result<Self, crate::profile::ProfileError> {
         let max_quanta_per_callback = profile.capabilities().max_quanta_per_callback()?;
+        Self::prepare_window(profile, max_quanta_per_callback)
+    }
+
+    /// The exclusive loop owner seals one quantum at a time. A valid profile
+    /// always admits at least one quantum, including a maximum callback below Q.
+    pub(crate) fn prepare_one_quantum(
+        profile: &HostProfile,
+    ) -> Result<Self, crate::profile::ProfileError> {
+        let one = QuantumCount::limit(1)?;
+        Self::prepare_window(profile, one)
+    }
+
+    fn prepare_window(
+        profile: &HostProfile,
+        max_quanta_per_callback: QuantumCount,
+    ) -> Result<Self, crate::profile::ProfileError> {
         let max_events_per_quantum = profile.limits().events().max_events_per_quantum();
 
         // Clause 1's sealed-batch relation, and the reason `HostProfile::new` already

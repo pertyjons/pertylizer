@@ -6,7 +6,7 @@
 | Status        | Deferred                                                     |
 | Phase         | 0A/9, deferred to the Phase 9 exit gate                       |
 | Created       | 2026-08-13                                                   |
-| Last reviewed | 2026-08-25                                                   |
+| Last reviewed | 2026-09-12                                                   |
 | Related       | ADR-0001, ADR-0032, ADR-0021, ADR-0036, ADR-0023, EVD-0016, P00A-T006 |
 | Supersedes    | —                                                            |
 | Superseded by | —                                                            |
@@ -136,9 +136,10 @@ control. The final non-selected-bracket diagnostic Linux observation reports con
 frames and 602 output frames after adding the pinned ALSA source audit's one-period `Stream::now()` freshness bound.
 F4 requires their input-to-output sum to remain strictly below `Q = 64`; 1,184 frames is therefore `Not supported` for
 the measured direct candidate. It is not a universal Linux result: load
-was uncontrolled, the raw trace is not retained, and the worktree has no final source revision. Final-revision Linux,
-macOS, and Windows callback artifacts remain missing, as does the paired-reference arrival measurement for every
-initial untimestamped V2 adapter. The Active-record self-audit also made
+was uncontrolled, the earlier raw trace was not retained, and that worktree had no final source revision.
+A new [retained Linux observation](../evidence/phase-03/EVD-0016-host-time-mapping.md#retained-linux-observation-2026-09-12)
+is tied to a clean source revision and remains `Not supported` under F4. macOS and Windows callback artifacts
+remain missing, as does the paired-reference arrival measurement for every initial untimestamped V2 adapter. The Active-record self-audit also made
 explicit that every hardware-timestamped adapter needs its own connection-clock bridge; a midir timestamp and a CPAL
 `StreamInstant` do not share a raw origin. No replacement is yet characterized, and the diagnostic observation is not
 a basis for accepting this decision.
@@ -195,7 +196,7 @@ Three constraints hold in the meantime, so that the deferral cannot be used as p
 | Task                                                                        | Phase | Status      |
 |-----------------------------------------------------------------------------|-------|-------------|
 | Build the simulated-host harness (timestamps, drift, block sizes, disconnects) | 9   | Implemented early with executable controls in Active EVD-0016 |
-| Measure per-callback host timestamps on Linux, macOS, and Windows            | 9     | Diagnostic direct-PCM Linux run observed; final-revision retained artifacts missing |
+| Measure per-callback host timestamps on Linux, macOS, and Windows            | 9     | Revision-bound Linux direct-PCM data retained; F4 Not supported. macOS/Windows missing |
 | Bridge each hardware-timestamped adapter's connection clock                  | 9     | Not started; no physical MIDI endpoint is attached to the Linux host |
 | Measure each untimestamped adapter's arrival-time uncertainty                | 9     | Not started |
 | Write and accept this record against that evidence                           | 9     | Required before Phase 9 exit |

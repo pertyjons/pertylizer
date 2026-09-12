@@ -29,10 +29,9 @@ use thiserror::Error;
 use crate::admit::{AdmissionError, admit_linear};
 use crate::plan::{CompiledPlan, PlanId};
 use crate::quantities::EventCount;
-use crate::render::{EventEnvelope, EventPayload, NoteEdge, PreparedRenderer, TimedEvent};
+use crate::render::{EventEnvelope, EventPayload, NoteEdge, TimedEvent};
 use crate::stream::StreamControl;
 use crate::time::{Located, PlanPosition, SampleTime, StreamEpoch, TimeSource};
-use crate::transport::ActivationRefused;
 
 /// One exact event produced by compiled plan time.
 ///
@@ -422,6 +421,15 @@ pub enum SchedulePrepareError {
 /// Why a prepared schedule could not serve one renderer call.
 #[derive(Debug, Clone, Copy, PartialEq, Error)]
 pub enum ScheduledRenderError {
+    /// Epoch equality does not identify one prepared plan/table instance.
+    #[error("compiled schedule owns table {schedule}, but the renderer owns {renderer}")]
+    TableMismatch {
+        schedule: crate::identity::TableId,
+        renderer: crate::identity::TableId,
+    },
+    #[cfg(feature = "simulated-ingress")]
+    #[error("activation changed after successful exclusive session preflight: {0}")]
+    SessionActivationRefused(crate::transport::ActivationRefused),
     /// The renderer was re-prepared after this schedule was stamped.
     #[error("compiled schedule belongs to {schedule}, but the renderer belongs to {renderer}")]
     EpochMismatch {
@@ -526,6 +534,7 @@ pub enum ScheduledRenderError {
 #[must_use]
 pub struct CompiledEventScheduler {
     epoch: StreamEpoch,
+    table: crate::identity::TableId,
     arbiter: Option<crate::publish::ArbiterId>,
     max_events_per_quantum: EventCount,
     events: Vec<TimedEvent>,
@@ -544,6 +553,8 @@ pub struct CompiledEventScheduler {
     /// renders a quantum — which is not always the next call, because one served entirely
     /// from the carry opens a window with no rows at all.
     owed_release_charge: bool,
+    /// Already admitted scalar session operations at the next rendered boundary.
+    session_operations: EventCount,
     /// ADR-0051 clause 1's catch-up batch, swapped in at adoption and spent once.
     ///
     /// The buffer is kept after it is spent so adoption can swap into it again without
@@ -609,7 +620,7 @@ impl CompiledEventScheduler {
     ///
     /// A schedule prepared against one stream and rendered by another is refused where it
     /// becomes wrong rather than here: the stamped events carry this control's epoch, and
-    /// `render` refuses a renderer whose epoch differs. Checking it at preparation would
+    /// `render` refuses a renderer whose epoch or prepared table differs. Checking at preparation would
     /// need the renderer back, which is what this signature exists to avoid.
     pub fn prepare(
         control: &mut StreamControl,
@@ -668,6 +679,7 @@ impl CompiledEventScheduler {
         control.scheduler_prepared();
         Ok(Self {
             epoch,
+            table: control.table_id(),
             arbiter: None,
             max_events_per_quantum,
             released_after_steal,
@@ -681,6 +693,7 @@ impl CompiledEventScheduler {
             in_force: crate::transport::ActivationSequence::INITIAL,
             exchange: crate::transport::Exchange::Empty,
             owed_release_charge: false,
+            session_operations: EventCount::measured(0),
             catch_up: Vec::new(),
             catch_up_len: 0,
             shift: crate::time::FrameCount::ZERO,
@@ -697,100 +710,6 @@ impl CompiledEventScheduler {
         self.in_force
     }
 
-    /// Offer an activation, which the next boundary at or after its time adopts.
-    ///
-    /// **Every refusal is here**, which is what makes adoption infallible. There are six, and
-    /// this is the order they are decided in: a schedule paired with another stream's
-    /// renderer, a stream that has already faulted, a stale epoch, unsupported loop playback,
-    /// an occupied exchange slot, and a superseded sequence. The last two are in that order
-    /// deliberately — an
-    /// uncollected retirement is *why* a candidate is superseded, so reporting the
-    /// consequence would send a reader after a racing seek when the fix is that the
-    /// off-thread half has not collected. Each leaves the stream running on the state in
-    /// force, and the candidate comes back so the control can withdraw it — which means
-    /// dropping the working copy it stamped against and restoring nothing because nothing
-    /// was taken.
-    ///
-    /// **Five of the six are counted; the pairing is not**, and that is why it is decided
-    /// first: the counters belong to the stream that was offered to, and a renderer that is
-    /// not this schedule's half is not that stream. Counting matters because a stream that
-    /// silently declines every seek and one that adopts them are otherwise
-    /// indistinguishable.
-    pub fn offer(
-        &mut self,
-        renderer: &mut PreparedRenderer,
-        activation: Box<crate::transport::TransportActivation>,
-    ) -> Result<
-        (),
-        (
-            Box<crate::transport::TransportActivation>,
-            ActivationRefused,
-        ),
-    > {
-        // The pairing first, because everything below writes to the renderer's counters and
-        // a foreign renderer's counters are another stream's report.
-        if self.epoch != renderer.epoch() {
-            let refusal = ActivationRefused::ForeignRenderer {
-                schedule: self.epoch,
-                renderer: renderer.epoch(),
-            };
-            return Err((activation, refusal));
-        }
-        // A faulted epoch adopts nothing ever again, so accepting a candidate into it would
-        // trap the candidate: adoption never comes, `collect` never yields it, and the control
-        // cannot withdraw a value it no longer holds.
-        if renderer.diagnostics().needs_reprepare() {
-            renderer.count_refused_activation();
-            return Err((activation, ActivationRefused::StreamFaulted));
-        }
-        if activation.epoch != self.epoch {
-            renderer.count_refused_activation();
-            let refusal = ActivationRefused::StaleEpoch {
-                candidate: activation.epoch,
-                stream: self.epoch,
-            };
-            return Err((activation, refusal));
-        }
-        // The interval has already passed its off-thread density and polyphony checks, but
-        // no runtime wrap exists. Accepting it would expose a loop as active while the
-        // schedule continues beyond its end. This refusal is the executable pull-forward
-        // guard on the deferred sample-exact wrap obligation.
-        if let Some(interval) = activation.loop_interval() {
-            renderer.count_refused_activation();
-            let refusal = ActivationRefused::LoopPlaybackUnsupported {
-                start: interval.start(),
-                end: interval.end(),
-            };
-            return Err((activation, refusal));
-        }
-        // **The slot is asked before the sequence**, and the order is the diagnostic rather
-        // than an arbitrary choice. An uncollected retired value is *why* the control's idea
-        // of what is in force is stale, so a candidate built in that window is superseded as
-        // a consequence. Reporting the consequence would send a reader to look for a racing
-        // seek when the actual fix is that the off-thread half has not collected — and it
-        // would leave `RetiredUncollected` unreachable, which is a rule nobody checks.
-        if let Some(refusal) = self.exchange.occupied() {
-            renderer.count_refused_activation();
-            return Err((activation, refusal));
-        }
-        if activation.supersedes != self.in_force {
-            renderer.count_refused_activation();
-            let refusal = ActivationRefused::Superseded {
-                supersedes: activation.supersedes,
-                in_force: self.in_force,
-            };
-            return Err((activation, refusal));
-        }
-        // ADR-0050 clause 1's lateness, decided **here**: the clock has already passed the
-        // time this candidate names, so building it took longer than the time it asked for.
-        // This is the only moment the question has a stable answer — by the call that adopts,
-        // the clock stands on the boundary and every off-grid request looks late.
-        let mut activation = activation;
-        activation.late = activation.requested() < renderer.clock();
-        self.exchange = crate::transport::Exchange::Pending(activation);
-        Ok(())
-    }
-
     /// Take the retired activation, if adoption has produced one.
     ///
     /// The off-thread half calls this. Until it does, the slot is occupied and a further
@@ -798,12 +717,18 @@ impl CompiledEventScheduler {
     /// half has fallen behind. Collecting is also what tells the control that adoption
     /// happened, and therefore when to promote the working copy it has been holding.
     pub fn collect(&mut self) -> Option<Box<crate::transport::TransportActivation>> {
+        self.take_retired()
+    }
+
+    /// The exclusive host has closed this stream and fenced callback access. Return
+    /// even an unadopted candidate for off-thread withdrawal during final teardown.
+    /// This does not cancel an activation in a stream that can continue rendering.
+    #[cfg(feature = "simulated-ingress")]
+    pub(crate) fn close_exchange(&mut self) -> Option<Box<crate::transport::TransportActivation>> {
         match std::mem::take(&mut self.exchange) {
-            crate::transport::Exchange::Retired(retired) => Some(retired),
-            other => {
-                self.exchange = other;
-                None
-            }
+            crate::transport::Exchange::Pending(value)
+            | crate::transport::Exchange::Retired(value) => Some(value),
+            crate::transport::Exchange::Empty => None,
         }
     }
 }

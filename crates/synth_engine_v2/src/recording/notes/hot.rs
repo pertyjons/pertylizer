@@ -9,6 +9,13 @@ use super::{
 };
 
 impl SimulatedNoteRecorder {
+    pub fn source_sequence(
+        &self,
+        source: ConnectionGeneration,
+    ) -> Result<PublicationSequence, NoteCaptureError> {
+        Ok(self.source_copy(source)?.sequence)
+    }
+
     /// Freeze the serial host's capture selection before acknowledging source shutdown.
     /// A missing fence establishes no captured prefix, even if raw input is retained.
     pub(crate) fn interrupt_host(
@@ -145,6 +152,7 @@ impl SimulatedNoteRecorder {
         self.active = Some(ActiveCapture {
             ticket,
             stage: CaptureStage::Capturing,
+            seal_ready: active.seal_ready,
         });
         if window.start() == window.end() {
             self.stop_at(
@@ -791,6 +799,8 @@ impl SimulatedNoteRecorder {
             reason,
             CaptureStopReason::Capacity
                 | CaptureStopReason::LateInput
+                | CaptureStopReason::LoopCarryCapacity
+                | CaptureStopReason::LoopRenderFault
                 | CaptureStopReason::SourceInvalid
                 | CaptureStopReason::DeviceLost
         ) {
@@ -802,7 +812,7 @@ impl SimulatedNoteRecorder {
         Ok(())
     }
 
-    fn stop_at(
+    pub(super) fn stop_at(
         &mut self,
         ticket: TakeReservation,
         at: SampleTime,
@@ -845,6 +855,7 @@ impl SimulatedNoteRecorder {
                 outcome,
                 reason,
             },
+            seal_ready: active.seal_ready,
         });
         Ok(())
     }
@@ -964,10 +975,13 @@ impl SimulatedNoteRecorder {
         Ok(())
     }
 
-    fn try_seal(&mut self) -> Result<(), NoteCaptureError> {
+    pub(super) fn try_seal(&mut self) -> Result<(), NoteCaptureError> {
         let Some(active) = self.active else {
             return Ok(());
         };
+        if !active.seal_ready {
+            return Ok(());
+        }
         let CaptureStage::Stopping {
             at,
             outcome,

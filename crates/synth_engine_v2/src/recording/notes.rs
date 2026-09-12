@@ -3,11 +3,13 @@
 //! The fixture supplies explicit session-before-source boundaries and zero lateness.
 //! Capture retains its own immutable tempo/target context; audition is a supplied trace,
 //! never a condition of capture acceptance. Certified off-thread note projection lives
-//! in [`projection`]; loop passes and project commit are not exposed here.
+//! in [`projection`]. [`loop_capture`] adds a separate serial loop owner; pass-aware
+//! projection, concurrent source transfer and project commit remain separate consumers.
 //! All owned memory, including source state and tempo maps, is
 //! charged to the recording byte budget. Preparation, arm, rebind and discard run off-thread.
 
 mod hot;
+pub mod loop_capture;
 pub mod projection;
 pub mod session;
 #[cfg(test)]
@@ -93,7 +95,13 @@ pub struct NoteArmInput {
 /// Immutable capture context. Preparing the endpoints is not a projection certificate.
 #[must_use]
 pub struct NoteArmContext {
-    input: NoteArmInput,
+    target: FixtureTargetId,
+    expected_revision: FixtureRevision,
+    interval: MusicalInterval,
+    mode: CaptureMode,
+    quantization: CaptureQuantization,
+    tempo: TempoMap,
+    mapping: NoteMapping,
     window: CaptureWindow,
 }
 impl NoteArmContext {
@@ -107,32 +115,55 @@ impl NoteArmContext {
             .time_of(input.tempo.position_of(input.interval.end)?)
             .ok_or(NoteCaptureError::MappingRange)?;
         let window = CaptureWindow::new(input.epoch, start, end)?;
-        Ok(Self { input, window })
+        Ok(Self {
+            target: input.target,
+            expected_revision: input.expected_revision,
+            interval: input.interval,
+            mode: input.mode,
+            quantization: input.quantization,
+            tempo: input.tempo,
+            mapping: NoteMapping::Linear(input.anchor),
+            window,
+        })
     }
     pub const fn target(&self) -> FixtureTargetId {
-        self.input.target
+        self.target
     }
     pub const fn expected_revision(&self) -> FixtureRevision {
-        self.input.expected_revision
+        self.expected_revision
     }
     pub const fn interval(&self) -> MusicalInterval {
-        self.input.interval
+        self.interval
     }
     pub const fn mode(&self) -> CaptureMode {
-        self.input.mode
+        self.mode
     }
     pub const fn quantization(&self) -> CaptureQuantization {
-        self.input.quantization
+        self.quantization
     }
     pub const fn window(&self) -> CaptureWindow {
         self.window
     }
-    pub const fn anchor(&self) -> StreamAnchor {
-        self.input.anchor
+    /// Only ordinary capture has one linear anchor for the complete take.
+    pub const fn anchor(&self) -> Option<StreamAnchor> {
+        match self.mapping {
+            NoteMapping::Linear(anchor) => Some(anchor),
+            NoteMapping::Loop(_) => None,
+        }
+    }
+    pub const fn mapping(&self) -> NoteMapping {
+        self.mapping
     }
     pub const fn tempo(&self) -> &TempoMap {
-        &self.input.tempo
+        &self.tempo
     }
+}
+
+/// The retained interpretation of nominal engine time; no implicit loop unrolling.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NoteMapping {
+    Linear(StreamAnchor),
+    Loop(loop_capture::LoopCaptureMapping),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -145,6 +176,8 @@ pub enum CaptureStopReason {
     DeviceReprepare,
     Capacity,
     LateInput,
+    LoopCarryCapacity,
+    LoopRenderFault,
     SourceInvalid,
     DeviceLost,
 }
@@ -241,6 +274,8 @@ enum NoteCell {
     Held(HeldInput),
     Source(RecordedSourceState),
     Pass(CapturePassId),
+    LoopPass(loop_capture::LoopCapturePass),
+    Carry(loop_capture::LoopCarry),
 }
 #[derive(Debug, Clone, Copy)]
 enum CaptureStage {
@@ -256,6 +291,7 @@ enum CaptureStage {
 struct ActiveCapture {
     ticket: TakeReservation,
     stage: CaptureStage,
+    seal_ready: bool,
 }
 
 /// One bounded serial publisher; all source generations belong to this owner.
@@ -283,6 +319,13 @@ impl SimulatedNoteRecorder {
         epoch: StreamEpoch,
         limits: RecordingLimits,
     ) -> Result<Self, NoteCaptureError> {
+        Self::prepare_fixture_extra(epoch, limits, PreparedBytes::NONE)
+    }
+    fn prepare_fixture_extra(
+        epoch: StreamEpoch,
+        limits: RecordingLimits,
+        owner_bytes: PreparedBytes,
+    ) -> Result<Self, NoteCaptureError> {
         let capture = limits.capture().ok_or(CaptureError::MissingConfiguration)?;
         if capture.capture_lateness_allowance().as_u64() != 0 {
             return Err(NoteCaptureError::NonzeroLateness);
@@ -306,6 +349,7 @@ impl SimulatedNoteRecorder {
             .checked_sub(size_of::<SimulatedTakeStore<NoteCell>>() as u64)
             .and_then(|n| n.checked_add(size_of::<Self>() as u64))
             .ok_or(CaptureError::LayoutOverflow)?;
+        let base = add_bytes(base, owner_bytes.get())?;
         let base = add_bytes(base, array_bytes::<Option<SourceState>>(sources)?)?;
         let base = add_bytes(base, array_bytes::<Option<HeldInput>>(tracked)?)?;
         let base = add_bytes(base, array_bytes::<Option<NoteArmContext>>(results)?)?;
@@ -442,10 +486,7 @@ impl SimulatedNoteRecorder {
         {
             return Err(NoteCaptureError::TrackerReservation);
         }
-        let map_bytes = add_bytes(
-            self.map_bytes.get(),
-            context.input.tempo.bytes_held() as u64,
-        )?;
+        let map_bytes = add_bytes(self.map_bytes.get(), context.tempo.bytes_held() as u64)?;
         check_bytes(add_bytes(self.base_bytes.get(), map_bytes)?, self.limits)?;
         let pass = self
             .last_pass
@@ -460,6 +501,7 @@ impl SimulatedNoteRecorder {
         self.active = Some(ActiveCapture {
             ticket,
             stage: CaptureStage::Armed,
+            seal_ready: true,
         });
         self.store
             .write_fixture_metadata(ticket, CaptureBuffer::Pass, 0, NoteCell::Pass(pass))?;
@@ -474,6 +516,25 @@ impl SimulatedNoteRecorder {
         self.snapshot_sources(ticket)?;
         Ok(ticket)
     }
+    /// The serial session validates its reserved, unstarted take without exposing
+    /// mutable context or treating an unsealed take as a result.
+    pub(crate) fn armed_context(
+        &self,
+        ticket: TakeReservation,
+    ) -> Result<&NoteArmContext, NoteCaptureError> {
+        let active = self
+            .active
+            .filter(|active| active.ticket == ticket)
+            .ok_or(NoteCaptureError::NotActive)?;
+        if !matches!(active.stage, CaptureStage::Armed) {
+            return Err(NoteCaptureError::StartRequired);
+        }
+        self.contexts
+            .get(ticket.slot)
+            .and_then(Option::as_ref)
+            .ok_or(NoteCaptureError::NotActive)
+    }
+
     pub fn result(
         &self,
         ticket: TakeReservation,
@@ -499,16 +560,16 @@ impl SimulatedNoteRecorder {
     pub const fn notification_misses(&self) -> DiagnosticCount {
         self.store.notification_misses()
     }
+    /// The current capture association, including an ending take awaiting sources.
+    /// Sealing clears this association without erasing the retained result.
+    pub(crate) const fn active_ticket(&self) -> Option<TakeReservation> {
+        match self.active {
+            Some(active) => Some(active.ticket),
+            None => None,
+        }
+    }
     pub const fn is_active(&self) -> bool {
         self.active.is_some()
-    }
-    pub fn source_sequence(
-        &self,
-        source: ConnectionGeneration,
-    ) -> Result<PublicationSequence, NoteCaptureError> {
-        Ok(self.sources[self.source_index(source)?]
-            .ok_or(NoteCaptureError::ForeignSource)?
-            .sequence)
     }
     pub fn source_diagnostics(
         &self,
@@ -525,9 +586,8 @@ impl SimulatedNoteRecorder {
     ) -> Result<(), NoteCaptureError> {
         self.store.discard(ticket, quality)?;
         if let Some(context) = self.contexts[ticket.slot].take() {
-            self.map_bytes = PreparedBytes::measured(
-                self.map_bytes.get() - context.input.tempo.bytes_held() as u64,
-            );
+            self.map_bytes =
+                PreparedBytes::measured(self.map_bytes.get() - context.tempo.bytes_held() as u64);
         }
         Ok(())
     }
@@ -618,6 +678,7 @@ impl NoteCaptureResult<'_> {
     pub fn pass(&self) -> Option<CapturePassId> {
         match self.raw.cells(CaptureBuffer::Pass).first() {
             Some(Some(NoteCell::Pass(id))) => Some(*id),
+            Some(Some(NoteCell::LoopPass(pass))) => Some(pass.id()),
             _ => None,
         }
     }

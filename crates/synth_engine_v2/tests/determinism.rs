@@ -14,7 +14,9 @@
 //! its exclusive finite-source tests in `authored::tests`.
 
 mod common;
+#[cfg(feature = "simulated-ingress")]
 use synth_engine_v2::identity::ProducerId;
+#[cfg(feature = "simulated-ingress")]
 use synth_engine_v2::ingress::PerformanceIngress;
 use synth_engine_v2::ir::{
     ExecutionScope, GraphIr, IrNodeKind, NodeId, NoteProducerDeclaration, PlanDeclarations, PortId,
@@ -40,6 +42,7 @@ const OUTPUT: NodeId = NodeId::new(4);
 const Q: u64 = QUANTUM_FRAMES as u64;
 const TOTAL: usize = 32 * Q as usize;
 const ORIGIN: StreamAnchor = StreamAnchor::new(SampleTime::ZERO, PlanPosition::ZERO);
+#[cfg(feature = "simulated-ingress")]
 const ONLY_PRODUCER: ProducerId = ProducerId::new(0);
 const FADE: FrameCount = FrameCount::new(128);
 
@@ -114,6 +117,7 @@ fn compiled_declarations() -> PlanDeclarations {
     }
 }
 
+#[cfg(feature = "simulated-ingress")]
 fn live_declarations() -> PlanDeclarations {
     PlanDeclarations {
         note_producers: vec![NoteProducerDeclaration {
@@ -298,6 +302,7 @@ fn render_offline(plan: &CompiledPlan) -> Vec<f32> {
 /// The live path: every edge offered at its own quantum through the ingress store, one
 /// quantum rendered at a time, because a taken voice becomes takeable again only once the
 /// drain has published its deferred start (`simulated_ingress` records why).
+#[cfg(feature = "simulated-ingress")]
 fn render_live(plan: &CompiledPlan) -> (Vec<f32>, u64) {
     let (mut control, mut renderer) =
         StreamControl::open(plan.clone(), ORIGIN).expect("the stream opens");
@@ -433,6 +438,7 @@ fn the_offline_render_under_stealing_pressure_is_the_compiled_streams_render() {
     assert_same(&again, &offline, "a second offline run");
 }
 
+#[cfg(feature = "simulated-ingress")]
 #[test]
 fn the_live_boundary_under_stealing_pressure_is_bit_identical_run_to_run_and_to_the_compiled_stream()
  {
@@ -487,6 +493,7 @@ fn fixed_project_seed_survives_stealing_recompile_partitions_offline_and_live() 
     );
     let fresh = seeded_voice(compiled_declarations(), Some(91));
     assert_same(&render_offline(&fresh), &offline, "fresh seeded offline");
+    #[cfg(feature = "simulated-ingress")]
     for _ in 0..2 {
         let live = seeded_voice(live_declarations(), Some(91));
         let (actual, released) = render_live(&live);

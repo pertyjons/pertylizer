@@ -15,18 +15,18 @@
 //! explicit sites — is what the combined mutations in `SOUND-INV-026`'s row established.
 
 mod common;
+#[cfg(feature = "simulated-ingress")]
 use synth_engine_v2::identity::ProducerId;
+#[cfg(feature = "simulated-ingress")]
 use synth_engine_v2::ingress::PerformanceIngress;
 use synth_engine_v2::ir::{
-    ExecutionScope, GraphIr, IrNodeKind, NodeId, NoteProducerDeclaration, PlanDeclarations, PortId,
-    SignalDomain,
+    ExecutionScope, GraphIr, IrNodeKind, NodeId, PlanDeclarations, PortId, SignalDomain,
 };
 use synth_engine_v2::observe::ObservationSubscriptions;
 use synth_engine_v2::plan::CompiledPlan;
 use synth_engine_v2::publish::PublicationArbiter;
 use synth_engine_v2::quantities::{
-    Amplitude, ChannelLayout, EventCount, HeldNoteCount, KeyIdentity, NormalizedLevel,
-    NoteVelocity, Seconds,
+    Amplitude, ChannelLayout, KeyIdentity, NormalizedLevel, NoteVelocity, Seconds,
 };
 use synth_engine_v2::render::AudioBlockMut;
 use synth_engine_v2::sample::{
@@ -39,6 +39,11 @@ use synth_engine_v2::schedule::{
 use synth_engine_v2::stream::{ActivationRequest, StreamControl};
 use synth_engine_v2::time::{FrameCount, PlanPosition, QUANTUM_FRAMES, SampleTime, StreamAnchor};
 use synth_engine_v2::tuning::PreparedTuning;
+#[cfg(feature = "simulated-ingress")]
+use synth_engine_v2::{
+    ir::NoteProducerDeclaration,
+    quantities::{EventCount, HeldNoteCount},
+};
 
 const SOURCE: NodeId = NodeId::new(1);
 const ENVELOPE: NodeId = NodeId::new(2);
@@ -48,6 +53,7 @@ const OUTPUT: NodeId = NodeId::new(5);
 const Q: u64 = QUANTUM_FRAMES as u64;
 const BLOCK: usize = 256;
 const ORIGIN: StreamAnchor = StreamAnchor::new(SampleTime::ZERO, PlanPosition::ZERO);
+#[cfg(feature = "simulated-ingress")]
 const ONLY_PRODUCER: ProducerId = ProducerId::new(0);
 const KEY: u8 = 72;
 
@@ -55,6 +61,7 @@ fn key(raw: u8) -> KeyIdentity {
     KeyIdentity::new(raw).expect("a keyboard position")
 }
 
+#[cfg(feature = "simulated-ingress")]
 fn live_declarations() -> PlanDeclarations {
     PlanDeclarations {
         note_producers: vec![NoteProducerDeclaration {
@@ -191,6 +198,7 @@ fn render_offline(plan: &CompiledPlan, on: u64, off: u64, frames: u64) -> Vec<f3
 
 /// The live path: the note offered at the boundary, one quantum at a time, through the
 /// ingress store; the compiled stream is empty so every edge came through the boundary.
+#[cfg(feature = "simulated-ingress")]
 fn render_live(plan: &CompiledPlan, on: u64, off: u64, frames: usize) -> Vec<f32> {
     let (mut control, mut renderer) =
         StreamControl::open(plan.clone(), ORIGIN).expect("the stream opens");
@@ -323,13 +331,16 @@ fn the_sequenced_offline_and_live_paths_render_one_key_the_same_under_nineteen_t
         &compiled[Q as usize..],
         "offline against the compiled stream",
     );
-    let live = render_live(
-        &voice(common::nineteen_tet(), live_declarations()),
-        on,
-        off,
-        FRAMES as usize,
-    );
-    assert_same(&live, &compiled, "live against the compiled stream");
+    #[cfg(feature = "simulated-ingress")]
+    {
+        let live = render_live(
+            &voice(common::nineteen_tet(), live_declarations()),
+            on,
+            off,
+            FRAMES as usize,
+        );
+        assert_same(&live, &compiled, "live against the compiled stream");
+    }
     let twelve = voice(common::twelve_tet(), common::compiled_notes(2));
     let under_twelve = render_compiled(&twelve, &note_events(&twelve, on, off), FRAMES as usize);
     assert!(

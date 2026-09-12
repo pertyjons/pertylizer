@@ -480,11 +480,11 @@ open owner is a starting point recorded honestly, not a rule invented here.
     unchanged and reports the interval, phase, requested count and available count. An admitted loop cannot fail for
     compiled capacity at its wrap. **This check runs off the audio thread**, like the tempo-map replacement below:
     only the sliding window is bounded by `Q`, while the work scales with the compiled events inside the loop
-    interval, which no profile capacity bounds. The current runtime performs no
-    wrap-time admission and adopts no loop state: ADR-0055 makes the offer fail
-    closed after these off-thread checks. ADR-0052's first executable runtime
-    wrap must retain off-thread admission rather than moving this scan onto the
-    audio thread.
+    interval, which no profile capacity bounds. Ordinary activation retains
+    ADR-0055's loop-offer refusal. ADR-0065's exclusive compiled-loop owner also
+    admits repeated Session work and the initial suffix junction off-thread; its
+    runtime wraps do not repeat these admission scans. Its one-Q arbiter uses the
+    supplied profile's shares, with a separate retained loop-storage byte budget.
 
     A tempo-map edit invalidates compiled and authored-runtime entitlements. The replacement map is compiled and
     re-admitted off the audio thread and activates only with its admitted plan; failure leaves the old plan and tempo

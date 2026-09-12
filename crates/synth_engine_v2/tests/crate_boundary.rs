@@ -75,12 +75,15 @@ const LOWERING_MODULE_PREFIX: &str = "src/lowering/";
 /// The only files permitted to reach the experimental crate from that consumer.
 ///
 /// This is what keeps the exception from widening into a real coupling: the
-/// dependency may exist, but only these three targets may use it, and none
-/// ships.
-const MEASUREMENT_HARNESSES: [&str; 3] = [
+/// dependency may exist, but only these four targets and the Linux harness's
+/// named support modules may use it, and none ships.
+const MEASUREMENT_HARNESSES: [&str; 6] = [
     "examples/evd_0013_equivalence.rs",
     "examples/evd_0014_cost.rs",
     "examples/evd_0016_cpal_timestamps.rs",
+    "examples/v2_cpal_output.rs",
+    "examples/support/v2_plan_transfer.rs",
+    "examples/support/v2_loop_journal.rs",
 ];
 
 /// Nothing that ships depends on the experimental crate, and the one thing that

@@ -5,8 +5,8 @@
 | Status | Current |
 | Phase | 9/10B |
 | Created | 2026-09-11 |
-| Last reviewed | 2026-09-11 |
-| Based on | ADR-0024, ADR-0036, ADR-0023, ADR-0032, ADR-0038, ADR-0049, ADR-0054, ADR-0055 |
+| Last reviewed | 2026-09-12 |
+| Based on | ADR-0024, ADR-0036, ADR-0023, ADR-0032, ADR-0038, ADR-0049, ADR-0054, ADR-0055, ADR-0066 |
 | Invariant prefix | TAKE |
 | Supersedes | — |
 | Superseded by | — |
@@ -25,8 +25,10 @@ Application Core commit. Capture and project commit are separate success states.
 
 No project format, durable recovery encoding, canonical revision representation
 or general transaction service is introduced. Those remain Phase 10A/10B/10D.
-Physical clock mapping remains ADR-0022. Runtime loop-boundary production remains
-ADR-0052; ADR-0055's loop-playback refusal stands until that work is complete.
+Physical clock mapping remains ADR-0022. ADR-0065 supplies the exclusive compiled
+loop owner, and ADR-0066 supplies its serial recording-boundary consumer. Concurrent
+input transfer and loop session controls remain open. ADR-0055 continues to refuse
+loop-bearing ordinary activations.
 The recorder may be tested against synthetic input and boundary logs first.
 
 ## Terminology
@@ -48,7 +50,8 @@ frontier; the take's seal watermark is the minimum across its sources.
 | [ADR-0038](../decisions/ADR-0038-engine-egress-queue-classification.md) | Non-dropping custody versus observational egress |
 | [ADR-0049](../decisions/ADR-0049-tempo-ramp-law.md) | Forward tempo law; no assumed global floating-point monotonicity |
 | [ADR-0054](../decisions/ADR-0054-staged-producer-capacity-calibration.md) | Separate production renderer-share calibration |
-| [ADR-0055](../decisions/ADR-0055-refuse-unimplemented-loop-playback.md) | Existing refusal until runtime loop work is implemented |
+| [ADR-0055](../decisions/ADR-0055-refuse-unimplemented-loop-playback.md) | Loop-bearing ordinary activation remains refused; ADR-0065 supplies a separate exclusive owner |
+| [ADR-0066](../decisions/ADR-0066-serial-loop-capture-segmentation.md) | Serial actual-journal capture, explicit loop mapping and bounded nominal carry |
 
 ## Invariants
 
@@ -227,14 +230,44 @@ refuses. Pedal/controller state at selection start must be representable by the
 target or projection refuses under the existing expression rule. Thus separate
 pass storage promises neither seamless isolated-pass playback nor silent cuts.
 
-This storage and projection contract does not supply the runtime `PassBoundary`
-producer. ADR-0052 still owns sample-exact wrap
-execution, compiled per-pass identities, repeated catch-up admission and
-precedence with pending activation. Its production consumer must establish the
-above boundary stream without changing the captured physical occurrences.
-ADR-0055 remains in force until that loop work is completed. Synthetic boundary
-logs can test this recorder contract independently; no successful live-loop
-activation or Phase 9 exit is claimed by those tests.
+ADR-0065 supplies sample-exact compiled wraps within an exclusive owner. Its finite
+journal retains successful whole-render boundaries and a terminal endpoint.
+[ADR-0066](../decisions/ADR-0066-serial-loop-capture-segmentation.md) binds that actual
+journal and the exact serial recorder in one `LoopCaptureSession`. It stores one
+continuous raw FIFO log with separate identified half-open pass descriptors. Nominal
+T routes to the new pass without reordering physical occurrence pairing. The caller
+still supplies serial publication order; this is not a concurrent source merge.
+
+Loop context retains the original musical interval and tempo. Their forward frame
+endpoints and rate must match the loop; unsupported mappings refuse. A loop take has
+an explicit mapping kind and no single linear anchor. Automatic note projection
+refuses it until the pass-aware projection contract above is implemented.
+
+Raw sealing waits behind a barrier until actual audio observation ends and all
+participating source fences cover the selected endpoint; interruption additionally
+requires quiescence. Off-thread finalization writes pass/carry metadata before sealing.
+The final prefix is bounded by both raw and actual render endpoints, never worker
+wall time. Accepted raw outside a retrospectively shortened prefix remains retained.
+
+Physical H does not bound nominal carry when accepted timestamps regress. Before
+admitting an interior transition, reconstruct key continuation from accepted onsets
+strictly before T and accepted paired releases not strictly before T. If its count exceeds H,
+finalize Partial at T with `LoopCarryCapacity`; retain its location and all accepted
+raw, and admit neither the next pass nor that transition's carry pair. A stronger
+existing interruption remains Interrupted. Terminal closures use each retained
+onset's admitted field. Sustain remains separate raw state, not extra key-held carry.
+Key metadata alone certifies neither expression nor musical projection.
+
+The combined serial owner and its recording memory share the checked recording
+ceiling; journal heap and compiled-loop storage keep their separate declared budgets.
+P recording identities are reserved at arm, separately from renderer pass identities.
+A pending initial wrap may give an empty initial segment; an exclusive final boundary
+never admits an empty following pass. Reading cannot renew any entitlement.
+
+Concurrent transfer/source fences, loop session controls and physical clocks still
+need their first consumers. ADR-0055 continues to protect ordinary activation-based
+schedulers. No successful live-loop activation or Phase 9 exit follows from this
+serial reference consumer.
 
 ### TAKE-INV-004 — Runtime timing and project projection
 
@@ -584,7 +617,7 @@ and controller/quality refusal. An empty cancelled count-in keeps its unused
 initial controllers without inventing notes. Compile-fail examples hold the
 exclusive projection borrow through last use and actual destruction.
 These tests discharge the finite exact-input lookup and
-note-only projection subset of TAKE-INV-004; runtime loop mapping, physical
+note-only projection subset of TAKE-INV-004; pass-aware loop projection, physical
 compensation and canonical project output remain at their named consumer gates.
 
 P09-S005 connects this recorder to one simulated output generation. The
@@ -684,7 +717,7 @@ allocation/blocking on a callback. Required checks at the remaining consumers ar
   a held/sustained note across them. A release exactly on a boundary closes the
   original occurrence in the next pass. Contiguous projection has one onset;
   isolated carry-in projection refuses, and carry-out trim requires selection.
-  Repeat against the real boundary producer when ADR-0052 is implemented.
+  Repeat against the retained boundary handoff when ADR-0065 capture is integrated.
 - Interrupt audio without a final callback; stop at the last valid watermark,
   preserve source format and prefix, and never label a gapped asset complete.
 
@@ -705,12 +738,18 @@ evidence belongs to ADR-0022; no new EVD result is asserted.
 | TAKE-INV-005 | Revision conflict, failed asset, lost acknowledgement, exactly-once retry and complete undo |
 | TAKE-INV-006 | Every capacity exhausted under worker/GUI stall; retained ownership and off-thread reclamation |
 
+The [ordered host capture extension](spec-host-io-lifecycle.md#ordered-note-capture)
+couples compiled Play/Stop with the same retained recorder under ADR-0062. Its
+conformance record owns the source-queue ordering, allocation and audible-stop
+checks. The older capture-only lane remains a separate fixture; its direct controls
+cannot bypass the coupled owner.
+
 ## Unresolved questions
 
 | Question | Blocking? | ADR or task |
 |---|---|---|
 | Physical mapping, compensation, arrival allowance and workload qualification | Before production recording; exact simulated inputs may proceed | ADR-0022 and Phase 9 capture qualification |
-| Sample-exact runtime loop boundary producer | Before live loop capture and Phase 9 exit; synthetic logs may test this consumer | ADR-0052, ADR-0055 |
+| Retained runtime loop capture-boundary handoff | Before live loop capture and Phase 9 exit; synthetic logs may test this consumer | ADR-0065; ordinary activation retains ADR-0055 |
 | Canonical revisions, transaction service and undo storage | Before shipping the project-commit consumer | Phase 10A/10B, ADR-0035 |
 | Durable assets and crash recovery | Before claiming persisted take/asset recovery | Phase 10A/10D |
 | Additional input token schemes or controller replacement lanes | Before enabling those optional modes; current refusal remains | TAKE-INV-002, TAKE-INV-005 |

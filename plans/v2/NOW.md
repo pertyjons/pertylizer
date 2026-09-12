@@ -1,6 +1,6 @@
 # Core V2: Current Work
 
-Last updated: 2026-09-11
+Last updated: 2026-09-12
 
 This file contains only active Core V2 state, blockers and next actions. Durable
 contracts live in ADRs and specifications; completed Phase 3 coordination
@@ -165,16 +165,65 @@ waits for source/backend fences without another callback. Reconnection retains
 unresolved results and does not resume capture. Its bounded checks and remaining
 consumer gates are in the
 [host I/O specification](specs/spec-host-io-lifecycle.md#conformance-tests).
-The next Phase 9 implementation slice remains to be selected.
 P09-S006 adds a bounded serial lane for ordered capture start/end boundaries,
 with source-fence waiting and explicit cancellation after host loss. Its checks
 and remaining audible-transport scope are recorded in the
 [recording specification](specs/spec-recording-takes-and-commit.md#conformance-tests).
-Loop capture and physical adapters remain separately gated.
+Concurrent loop capture and physical adapters remain separately gated.
 Input lifecycle, independent clocks and monitoring still require IO-INV-004 and
 IO-INV-005 checks before their first consumers. Concurrent backend fences,
-ordered session transport, live swaps, runtime loops, production hardware timing
-and project transactions retain their named first-consumer gates.
+concurrent input/capture, held-note swaps, production hardware timing and project
+transactions retain their named first-consumer gates.
+
+### Selected work — ordered transport through live I/O
+
+P09-S007 builds ordered compiled Play/Stop, resume and coupled exact-input note
+capture. The [session contract](specs/spec-host-io-lifecycle.md#ordered-note-capture)
+records its bounded serial checks. The non-shipping
+[Linux output harness](specs/spec-host-io-lifecycle.md#linux-output-custody-harness)
+adds actual ALSA callback custody under ADR-0063. The
+[split compiled session](specs/spec-host-io-lifecycle.md#split-compiled-session)
+separates control preparation/collection from audio ownership under ADR-0064, with
+concrete command and completion queues in the Linux harness. Stopped plan readmission
+preserves device time and refuses outstanding note obligations in the split core.
+The Linux harness supplies latest-wins plan publication, off-thread collection and
+joined recovery of all mailbox cells. The
+[exclusive loop owner](specs/spec-sound-core-render-contract.md#exclusive-compiled-loops)
+adds sample-exact compiled playback. Session/capture integration and physical timing
+qualification remain open; held-note swaps remain gated.
+Its [finite journal](decisions/ADR-0065-exclusive-sample-exact-loop-owner.md#retained-finite-observations)
+retains successful render boundaries through worker stalls. The
+[serial loop recorder](decisions/ADR-0066-serial-loop-capture-segmentation.md) adds
+raw pass segmentation and bounded key carry; concurrent capture still needs source
+ordering and transfer.
+The Linux harness also runs this owner through its `loops` output mode under
+[ADR-0063](decisions/ADR-0063-linux-cpal-callback-custody.md#exclusive-loop-output-consumer).
+
+The user selected these three work items on 2026-09-11, in this order:
+
+1. P09-S007: connect audible transport and recording to ordered session boundaries.
+   Identical input and boundaries must produce identical audio and raw takes under
+   whole, 64-frame, 256-frame and irregular callbacks. Accepted commands retain
+   identified outcomes through source stalls and device loss.
+2. Publish prepared plans across threads, retain the last valid plan on compile
+   failure and reclaim retired resources off-thread. Resolve live-note ownership
+   before enabling plan changes with sounding notes.
+3. Implement sample-exact loop playback and pass identity, input lifecycle, audio
+   capture and monitoring with independent clocks. Qualify physical adapters only
+   against retained platform timing evidence and complete producer calibration.
+
+Each item is implemented in bounded slices with the repository's risk-selected
+checks and independent reviews. ADR-0065 resolves the standalone loop boundary;
+controls and capture need integration within its exclusive ownership contract. The initial
+physical target is Linux with CPAL and the existing V1 device-selection behavior,
+as selected by the user, using this computer's built-in audio device. The user
+confirmed that no physical MIDI device is available on this computer; local MIDI
+verification continues with simulated sources. Physical MIDI qualification remains
+open. The
+[Linux timing evidence](evidence/phase-03/EVD-0016-host-time-mapping.md)
+rejects the current direct candidate under F4; ADR-0022 qualification remains open.
+Simulator and transport work proceed before physical qualification. Phase 0B and
+Phase 10 work remain with their existing owners.
 
 ## Active streams
 
@@ -196,7 +245,7 @@ Phase 3 is complete. Its exit review accepted these bounded residuals:
 
 | ID | Residual | Pull-forward rule |
 |---|---|---|
-| P03-R001 | Sample-exact runtime loop wrap and per-pass note identity remain undecided in [ADR-0052](decisions/ADR-0052-loop-wrap-note-identity.md) | [ADR-0055](decisions/ADR-0055-refuse-unimplemented-loop-playback.md) refuses loop playback meanwhile. Resolve before any V2 loop consumer; Phase 9 cannot exit without it |
+| P03-R001 | [ADR-0065](decisions/ADR-0065-exclusive-sample-exact-loop-owner.md) supplies the standalone sample-exact loop owner | Session controls and concurrent capture remain; ordinary activation retains ADR-0055's refusal |
 | P03-R002 | Current producer shares, event cap, release holds and live-ingress depth remain provisional | [ADR-0054](decisions/ADR-0054-staged-producer-capacity-calibration.md) measures each first real authored/internal producer and requires complete reselection before production live ingress |
 | P03-R003 | Note events carry identity but not typed pitch and velocity | **Closed.** A note-on carries a validated key and velocity, resolves the key through the plan's prepared tuning, expands to the control writes its scope declares, and a saved note's own magnitudes reach it. Phase 6 still owns the full composition law, which the work list is explicit this does not decide |
 | P03-R004 | Numeric note-index and generation widths are safe by checked bounds and fail-closed exhaustion, but not endurance-qualified against a real live workload | Validate the widths before a production live adapter; generation exhaustion retires and reports instead of aliasing |
@@ -206,7 +255,7 @@ Phase 3 is complete. Its exit review accepted these bounded residuals:
 - Phase 6 owned `P04-R001`'s composition law and `SOUND-INV-021`'s **bend** clause; both are
   built (`P06-S003`, `P06-S004`).
 - Phase 9 owns ADR-0022 acceptance against retained platform/adapter evidence,
-  P03-R001 before loop playback or phase exit, P03-R004 before production live
+  P03-R001 before integrated loop capture or phase exit, P03-R004 before production live
   ingress, and ADR-0050 clause 8's release-hold redemption and activation-time
   minter ownership before activation can coexist with live ingress.
 - ADR-0051's shared-gate ownership law is required before two producers can

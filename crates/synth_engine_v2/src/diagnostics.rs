@@ -942,6 +942,16 @@ impl std::fmt::Display for CompileWarning {
 /// they silence the output, invalidate the carries, and publish `needs_reprepare`.
 #[derive(Debug, Clone, Copy, PartialEq, Error)]
 pub enum RenderError {
+    /// A caller supplied one explicit quantum map for a different render span.
+    #[error(
+        "a mapped timeline requires one new quantum and empty carry (quanta={quanta}, carry={carry})"
+    )]
+    MappedTimelineSpan {
+        /// New quanta requested by the output block.
+        quanta: usize,
+        /// Already rendered frames still waiting for delivery.
+        carry: FrameCount,
+    },
     /// The caller delivered more frames than the profile's maximum block.
     ///
     /// ADR-0021 part 3's terminal stream-contract fault: output silence, both

@@ -7,9 +7,9 @@
 //! [`StreamControl::plan_activation`](crate::stream::StreamControl::plan_activation): an
 //! interval joins ADR-0050's atomic set only by passing through it, so "already admitted" is
 //! a fact about the value rather than a rule someone has to remember.
-//! [`SessionScheduler`](crate::session::SessionScheduler) still re-anchors at a wrap without
-//! carrying one, because a wrap is not implemented — the activation records the interval in
-//! force and nothing repeats it yet.
+//! Ordinary activation still refuses loop playback. The exclusive
+//! [`CompiledLoopStream`](crate::looping::CompiledLoopStream) additionally admits
+//! repeated Session work and the initial suffix junction under ADR-0065.
 //!
 //! ADR-0046 clause 4. A compiled plan is admitted against the compiled share, and the check
 //! is not "how many events land in each absolute quantum" — that is the wrong question,

@@ -511,10 +511,10 @@ fn the_retired_schedule_comes_back_rather_than_being_dropped() {
 }
 
 #[test]
-fn runtime_loop_playback_fails_closed_until_sample_exact_wraps_exist() {
-    // The off-thread checks can admit the interval's density and polyphony, but the runtime
-    // has no sample-exact wrap mechanism. The offer must refuse instead of recording a loop
-    // and then playing silently past its end.
+fn ordinary_activation_refuses_loops_despite_the_separate_exclusive_owner() {
+    // Off-thread checks admit density and polyphony, but this scheduler cannot wrap.
+    // ADR-0065's separate owner does not let an ordinary activation advertise a loop
+    // and then play silently past its end.
     let plan = plan();
     let (mut control, mut renderer) =
         StreamControl::open(plan.clone(), ORIGIN).expect("the stream opens");
@@ -538,7 +538,7 @@ fn runtime_loop_playback_fails_closed_until_sample_exact_wraps_exist() {
         .expect("the candidate passes the off-thread loop bounds");
     let (activation, refusal) = scheduler
         .offer(&mut renderer, activation)
-        .expect_err("runtime loop playback is not implemented");
+        .expect_err("ordinary activation cannot play a loop");
     assert_eq!(
         refusal,
         ActivationRefused::LoopPlaybackUnsupported {

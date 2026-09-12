@@ -6,10 +6,10 @@
 | Status | Active |
 | Phase | 09 exit evidence; historical `phase-03` path retained for stable links |
 | Created | 2026-08-25 |
-| Last reviewed | 2026-08-25 |
+| Last reviewed | 2026-09-12 |
 | Supersedes | — |
 | Superseded by | — |
-| Source revision | `f3df8b2e` — harness source only; no physical acceptance artifact is claimed |
+| Source revision | Historical harness: `f3df8b2e`; retained Linux observation: `1ac24ff620bc092793d78cf9e488050399a19bbe` |
 | Retention | Permanent |
 | Related | ADR-0022; ADR-0001 clauses 7, 11, and 16; ADR-0032 clauses 12-14 and 17-22; Phase 9 physical-ingress qualification and exit gate |
 | Artifacts | [`evd_0016_host_time.rs`](../../../../crates/synth_engine_v2/examples/evd_0016_host_time.rs), [`evd_0016_cpal_timestamps.rs`](../../../../crates/pertylizer/examples/evd_0016_cpal_timestamps.rs), [`evd_0016_analyse.py`](evd_0016_analyse.py), [`evd_0016_endpoint_policy.tsv`](../../../../crates/pertylizer/examples/evd_0016_endpoint_policy.tsv); retained callback artifacts are still required for the final three-platform result |
@@ -472,6 +472,64 @@ no repository gate can re-derive it after those bytes disappear. The digest
 only permits verification while an identical external copy exists. This is why
 the table cannot satisfy acceptance even though the analyzer produced it.
 
+## Retained Linux observation, 2026-09-12
+
+The existing final-method probe was rebuilt and run from clean source revision
+`1ac24ff620bc092793d78cf9e488050399a19bbe`, after the repository gate completed.
+This is a new observation; it does not retroactively retain the earlier diagnostic
+trace above. The complete [compressed callback CSV](evd_0016_linux_2026_09_12.csv.gz),
+[analyzer output](evd_0016_linux_2026_09_12_analysis.csv), and
+[provenance and device listing](evd_0016_linux_2026_09_12_provenance.txt) are retained.
+Only callback/bridge timestamps and metadata were collected; input audio samples
+were not retained.
+
+The probe used CPAL 0.18.2 on Fedora 44, kernel
+`7.2.4-200.fc44.x86_64`, with direct `alsa:hw:CARD=0,DEV=0` in both directions
+on the sof-hda-dsp device. Both streams negotiated stereo 48 kHz and 512-frame
+periods; output was I32 and input I24. The existing one-negotiated-period freshness
+bound remains 512 frames per direction. The callback priority path still reports
+no CPAL promotion by build contract, and the observer priority is normal.
+No controlled-load or physical-loopback fixture was introduced. The 1/5/15-minute
+load averages were 1.33/10.26/11.54 before and 0.70/7.37/10.36 after recording;
+these snapshots describe the environment, not a qualified workload envelope.
+
+| Direction | Retained callbacks | Observer bridges | Bridged uncertainty, frames | F4 |
+|---|---|---|---|---|
+| Input | 10,003 | 5,008 | 584 | Not supported |
+| Output | 10,002 | 5,008 | 601 | Not supported |
+
+The duplex sum is **1,185 frames**, above F4's strict `< 64` requirement. Both
+callback streams have consecutive records and zero reported errors, lost records,
+xruns, device-unavailable, stream-invalidated and route-change events. The probe
+exited **0**, and the analyzer exited **1** because the observed uncertainty fires
+F4; this is a retained failed criterion, not successful qualification.
+
+The gzip is deterministic (`mtime=0`) and preserves every original CSV byte,
+including device-name whitespace. The uncompressed CSV SHA-256 is
+`58ee00ecd460055a61f88e915bb9ba9c801d428c23d8cd8f5e4ea6363f6fb833`.
+The release probe binary SHA-256 is
+`b573fb17b6760a21d9d74de9d3d80f8336f21caaa42d3241765d0c0ef5f0e73f`.
+Re-derive the result from the retained bytes with:
+
+```bash
+gzip -dc plans/v2/evidence/phase-03/evd_0016_linux_2026_09_12.csv.gz \
+  > /tmp/evd_0016_linux_2026_09_12.csv
+python3 -B plans/v2/evidence/phase-03/evd_0016_analyse.py \
+  /tmp/evd_0016_linux_2026_09_12.csv
+# Expected exit: 1, with F4 Not supported in both directions and duplex.
+```
+
+This supplies retained, revision-bound Linux data for the current direct candidate.
+It does not provide a supported replacement mapping, analog round-trip latency,
+MIDI arrival/reference calibration, an adapter connection-clock bridge, or macOS
+and Windows observations. The evidence remains Active and ADR-0022 Deferred.
+
+An independent read-only Claude Sonnet review checked the raw populations,
+metadata, retained analysis and provenance, and found no false claim, contradiction
+or unsupported conclusion. Hash/decompression checks and exact analyzer-output
+reproduction were run by the author; the reader independently inspected the
+identical decompressed artifact and plaintext metadata.
+
 ## Limitations
 
 - A simulated clock can establish arithmetic, partition, correction, and epoch
@@ -495,11 +553,10 @@ the table cannot satisfy acceptance even though the analyzer produced it.
 
 ## Conclusion
 
-`Not supported` for the direct candidate under the measured Linux
-callback-priority configuration: the diagnostic observation fires F4 at 582
-input and 602 output frames, with a 1,184-frame duplex sum. This is not a universal Linux result, and the wider
-record remains incomplete because final-revision retained platform observations,
-per-adapter arrival measurements, hardware-clock bridges, and a replacement
-mapping are absent. ADR-0022 remains `Deferred`; this does not block the active
-Phase 3 scheduler, but it does block Phase 9 exit and every physical live-timing
-qualification.
+The direct candidate remains `Not supported` on the measured Linux configuration.
+The retained 2026-09-12 observation fires F4 at 584 input and 601 output frames,
+with a 1,185-frame duplex sum. It preserves the complete raw artifact and its
+source revision; it does not qualify a deployment envelope or generalize to every
+Linux endpoint. macOS/Windows observations, per-adapter arrival/reference and
+connection-clock measurements, and a supported replacement mapping remain absent.
+ADR-0022 stays `Deferred`; physical live timing and Phase 9 exit remain blocked.

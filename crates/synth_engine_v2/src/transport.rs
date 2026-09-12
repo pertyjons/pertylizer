@@ -14,9 +14,9 @@
 //! activation never puts two streams' events in one of them.
 //!
 //! **Adoption is an infallible move** (clause 3). Everything that can refuse happens while
-//! the candidate is built, or at the **offer**, where there are five: a schedule paired with
-//! another stream's renderer, a stream that has already faulted, a stale epoch, a superseded
-//! sequence, and an occupied exchange slot. Once an offer is accepted, nothing between it and
+//! the candidate is built, or at the **offer**: renderer and candidate epoch/table pairing,
+//! stream faults, unsupported loops, occupied exchange slots and superseded sequences are
+//! checked before acceptance. Once an offer is accepted, nothing between it and
 //! the boundary can invalidate the candidate.
 //!
 //! **The exchange is one slot used in both directions.** It holds the pending candidate
@@ -96,8 +96,8 @@ impl LoopInterval {
     /// A loop, or `None` where the interval is not positive.
     ///
     /// An interval carried by an activation is admitted off-thread, then refused at the
-    /// runtime offer under ADR-0055. No interval enters active transport state until the
-    /// sample-exact wrap and note-identity contract in ADR-0052 is implemented.
+    /// runtime offer under ADR-0055. The separate exclusive owner in ADR-0065 implements
+    /// sample-exact wraps; ordinary activation-based transport still refuses them.
     ///
     /// What **is** proved when the candidate is built is two bounds on the pass a wrap would
     /// produce, answering to two records: ADR-0046 clause 4's event density against the
@@ -143,6 +143,18 @@ impl LoopInterval {
 /// that can fail.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
 pub enum ActivationRefused {
+    /// The renderer belongs to a different prepared table, even in the same epoch.
+    #[error("the schedule owns table {schedule}, but the renderer owns {renderer}")]
+    ForeignRendererTable {
+        schedule: crate::identity::TableId,
+        renderer: crate::identity::TableId,
+    },
+    /// The candidate belongs to another prepared identity table.
+    #[error("the activation owns table {candidate}, but the schedule owns {schedule}")]
+    ForeignCandidateTable {
+        candidate: crate::identity::TableId,
+        schedule: crate::identity::TableId,
+    },
     /// The candidate was built for another stream.
     #[error("the activation belongs to {candidate}, but the stream is {stream}")]
     StaleEpoch {
@@ -188,13 +200,13 @@ pub enum ActivationRefused {
     #[error("the stream has faulted and is waiting to be re-prepared")]
     StreamFaulted,
 
-    /// Runtime loop playback is not implemented yet.
+    /// Ordinary activation-based transport cannot play a loop.
     ///
     /// A loop interval can be checked off-thread for density and polyphony, but the current
     /// scheduler has no sample-exact wrap mechanism. Accepting it would therefore record a
-    /// loop while continuing past its end. Refusal keeps the experimental transport
-    /// fail-closed until the sample-exact owner replaces this guard.
-    #[error("loop playback for [{start}, {end}) is not implemented")]
+    /// loop while continuing past its end. ADR-0065's separate exclusive loop owner
+    /// does not remove this scheduler's ADR-0055 guard.
+    #[error("ordinary activation cannot play the loop [{start}, {end})")]
     LoopPlaybackUnsupported {
         /// The loop's first frame.
         start: PlanPosition,

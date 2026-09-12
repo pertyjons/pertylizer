@@ -47,6 +47,27 @@ impl SimulatedHost {
             output.silence();
             return Ok(());
         }
+        #[cfg(feature = "simulated-ingress")]
+        if let Some(session) = prepared.session.as_mut() {
+            let result = session.render(
+                &mut prepared.renderer,
+                output.reborrow(),
+                self.note_capture
+                    .as_mut()
+                    .filter(|capture| capture.host_generation == Some(generation)),
+            );
+            connection.status.clock = prepared.renderer.clock();
+            connection.status.needs_reprepare = prepared.renderer.diagnostics().needs_reprepare();
+            if let Err(error) = result {
+                output.silence();
+                if connection.status.failure.is_none() {
+                    connection.status.failure = Some(HostFailure::Session(error));
+                }
+                connection.status.state = ConnectionState::Quiescing;
+                return Err(CallbackError::Session(error));
+            }
+            return Ok(());
+        }
         let result = prepared
             .renderer
             .render(output.reborrow(), TimedEvents::new(&[]));

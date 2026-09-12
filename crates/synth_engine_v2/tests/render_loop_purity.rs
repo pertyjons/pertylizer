@@ -46,11 +46,20 @@ use std::path::{Path, PathBuf};
 /// never sees.
 /// `src/host/hot.rs` adds the simulated output callback, including silence and
 /// fault paths that run before entering the renderer.
-const REGION: [&str; 18] = [
+/// `src/host/session/hot.rs` adds ordered transport at each new quantum boundary.
+const REGION: [&str; 26] = [
+    "src/recording/notes/loop_capture/hot.rs",
+    "src/looping/journal/hot.rs",
+    "src/looping/hot.rs",
+    "src/time/timeline.rs",
     "src/recording/hot.rs",
     "src/recording/notes/hot.rs",
     "src/recording/notes/session/hot.rs",
     "src/host/hot.rs",
+    "src/host/session/hot.rs",
+    "src/host/session/transfer/hot.rs",
+    "src/host/session/transfer/replacement/hot.rs",
+    "src/host/session/source/hot.rs",
     "src/render/hot.rs",
     "src/render/slot.rs",
     "src/observe/hot.rs",
@@ -781,6 +790,10 @@ fn every_call_the_render_loop_makes_is_inside_the_checked_region() {
     // counters, plus `new` on the checked time and count newtypes. Each is a field read
     // or a saturating add.
     let crate_accessors = [
+        // SessionCommandId::serial is a Copy field read used by owning packet admission.
+        "serial",
+        // Renderer table_id delegates to LiveNotes::id, a Copy field read.
+        "table_id",
         "new",
         // ADR-0050's adoption path, all `const fn` field reads or saturating counters.
         //
@@ -951,6 +964,12 @@ fn every_call_the_render_loop_makes_is_inside_the_checked_region() {
         // owns rather than new work.
         "diagnostics",
         "count_clock_exhaustion",
+        // The offer path increments a saturating diagnostic counter, reads the
+        // candidate's Copy loop interval and matches the three exchange variants.
+        // None of these operations transfers ownership or allocates.
+        "count_refused_activation",
+        "loop_interval",
+        "occupied",
         // Phase 2's additions: the compiled step's slots, the prepared table, and the
         // one method that moves a control. Each is a field read or an assignment.
         // ControllerChange::slot and ControllerSlot::parameter are const field reads.

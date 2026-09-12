@@ -18,7 +18,7 @@ use crate::render::AudioBlockMut;
 use crate::tempo::{Bpm, MusicalTick, TempoMap};
 use crate::time::{FrameCount, PlanPosition, StreamAnchor, issue_epoch};
 
-fn limits(events: u32, results: u32) -> RecordingLimits {
+pub(in crate::host) fn limits(events: u32, results: u32) -> RecordingLimits {
     RecordingLimits::new(
         HeldNoteCount::limit(2).unwrap(),
         EventCount::limit(events).unwrap(),
@@ -39,7 +39,13 @@ fn limits(events: u32, results: u32) -> RecordingLimits {
     )
     .unwrap()
 }
-fn prepare(host: &mut SimulatedHost) -> ConnectionGeneration {
+pub(in crate::host) fn prepare(host: &mut SimulatedHost) -> ConnectionGeneration {
+    prepare_with_bound(host, FrameCount::new(256))
+}
+pub(in crate::host) fn prepare_with_bound(
+    host: &mut SimulatedHost,
+    bound: FrameCount,
+) -> ConnectionGeneration {
     let format = OutputFormat {
         rate: SampleRate::new(48_000.0).unwrap(),
         layout: ChannelLayout::Mono,
@@ -56,7 +62,7 @@ fn prepare(host: &mut SimulatedHost) -> ConnectionGeneration {
             id: endpoint,
             display_name: "Output".to_owned(),
             format,
-            callback_bound: CallbackBound::Guaranteed(FrameCount::new(256)),
+            callback_bound: CallbackBound::Guaranteed(bound),
             open_succeeds: true,
         }],
         default_output: None,
@@ -102,7 +108,7 @@ fn setup(
     ];
     (host, generation, sources, epoch)
 }
-fn context(epoch: StreamEpoch, start: u64, end: u64) -> NoteArmContext {
+pub(in crate::host) fn context(epoch: StreamEpoch, start: u64, end: u64) -> NoteArmContext {
     NoteArmContext::prepare(NoteArmInput {
         target: FixtureTargetId::new(11).unwrap(),
         expected_revision: FixtureRevision::new(7),

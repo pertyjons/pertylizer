@@ -148,7 +148,7 @@ fn the_monitor_kernel_passes_its_input_through_in_every_input_state() {
             out: &mut out,
             channels: ChannelLayout::Mono,
             inputs,
-            position: None,
+            timeline: crate::time::QuantumTimeline::linear(None),
             controls: &[],
             ramps: &[],
             samples: &[],

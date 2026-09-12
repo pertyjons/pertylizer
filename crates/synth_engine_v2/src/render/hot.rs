@@ -84,6 +84,18 @@ impl PreparedRenderer {
         self.fault(output);
     }
 
+    /// The exclusive loop owner retains the exact terminal cause in its status.
+    pub(crate) fn terminal_loop_fault(
+        &mut self,
+        output: &mut AudioBlockMut<'_>,
+        fault: crate::looping::LoopFault,
+    ) {
+        if matches!(fault, crate::looping::LoopFault::Publication(_)) {
+            self.diagnostics.count_publication_fault();
+        }
+        self.fault(output);
+    }
+
     /// Attribute the exclusive authored owner's fault without mislabelling other causes
     /// as publication overruns. Publication failures contribute to both named counters.
     pub(crate) fn terminal_authored_fault(
@@ -1232,7 +1244,7 @@ impl PreparedRenderer {
     /// run, each modulated row advancing once its last edge has been composed. `cursor` is
     /// where this quantum's events begin in the scratch, which the collection that follows
     /// walks from the same place.
-    fn render_prepass(&mut self, cursor: usize) {
+    fn render_prepass(&mut self, cursor: usize, timeline: crate::time::QuantumTimeline<'_>) {
         for (values, slot) in self.script_values.iter_mut().zip(&self.parameter_slots) {
             values.automated = slot.automated();
         }
@@ -1273,8 +1285,7 @@ impl PreparedRenderer {
             }
         }
 
-        let plan_start = self.plan_position_of(self.clock);
-        self.walk_ops(0, self.plan.prepass_ops(), plan_start, true);
+        self.walk_ops(0, self.plan.prepass_ops(), timeline, true);
     }
 
     /// Run `ops[first..end]`, in order. In the pre-pass a node step is handed its
@@ -1284,7 +1295,7 @@ impl PreparedRenderer {
         &mut self,
         first: usize,
         end: usize,
-        plan_start: Option<PlanPosition>,
+        timeline: crate::time::QuantumTimeline<'_>,
         prepass: bool,
     ) {
         let quantum = QUANTUM_FRAMES as usize;
@@ -1364,7 +1375,7 @@ impl PreparedRenderer {
                         &mut self.buffers,
                         self.plan.regions(),
                         step,
-                        plan_start,
+                        timeline,
                         gates,
                         ramps,
                         kernels::NodeResources {
@@ -1427,20 +1438,18 @@ impl PreparedRenderer {
         }
     }
 
-    fn render_quantum(&mut self) -> Result<(), RenderError> {
+    fn render_quantum(
+        &mut self,
+        timeline: crate::time::QuantumTimeline<'_>,
+    ) -> Result<(), RenderError> {
         let quantum = QUANTUM_FRAMES as usize;
-        let quantum_start = self.clock;
-
-        // The plan position of this quantum's first sample. Anchoring is the only
-        // place engine time and plan time meet.
-        let plan_start = self.plan_position_of(quantum_start);
 
         // The main walk: everything after the pre-pass, whose rows were advanced and whose
         // sources were run by `render_prepass` before this quantum's controls were placed.
         self.walk_ops(
             self.plan.prepass_ops(),
             self.plan.ops().len(),
-            plan_start,
+            timeline,
             false,
         );
 
@@ -1492,24 +1501,43 @@ impl Renderer for PreparedRenderer {
 }
 
 impl PreparedRenderer {
-    /// Render one caller block, pushing each rendered quantum of every subscribed tap into
-    /// the observers' rings (`HOST-INV-023`).
+    /// Render silent engine quanta without advancing DSP state or consuming events.
     ///
-    /// The store is a parameter for the reason the ingress store is: the host owns it, and
-    /// the renderer neither allocates nor keeps it. With `None` this is [`Renderer::render`]
-    /// exactly, and with a store the audio is the same — the push is a copy out of the arena
-    /// after the schedule walk, which `tests/observation.rs` holds bit for bit.
-    pub fn render_observed(
+    /// Already rendered carry remains audible at its original time. This primitive
+    /// does not pause or re-anchor a musical schedule: the session must replace the
+    /// dormant schedule through an activation before it resumes musical playback.
+    /// Clock, layout, callback bounds and terminal faults use the normal render path.
+    pub fn render_idle(&mut self, mut output: AudioBlockMut<'_>) -> Result<(), RenderError> {
+        let quanta = self.validate_output(&mut output)?;
+        for _ in 0..quanta {
+            let next = match self.clock.checked_advance_quantum() {
+                Ok(next) => next,
+                Err(error) => {
+                    self.diagnostics.count_clock_exhaustion();
+                    self.fault(&mut output);
+                    return Err(RenderError::ClockExhausted(error));
+                }
+            };
+            let start = self.carry_frames * self.channels;
+            let end = start + QUANTUM_FRAMES as usize * self.channels;
+            if let Some(samples) = self.output_carry.get_mut(start..end) {
+                samples.fill(0.0);
+            }
+            self.carry_frames += QUANTUM_FRAMES as usize;
+            self.clock = next;
+        }
+        self.deliver_carry(output);
+        Ok(())
+    }
+
+    pub(crate) fn validate_output(
         &mut self,
-        mut output: AudioBlockMut<'_>,
-        events: TimedEvents<'_>,
-        mut observers: Option<&mut crate::observe::ObservationSubscriptions>,
-    ) -> Result<(), RenderError> {
+        output: &mut AudioBlockMut<'_>,
+    ) -> Result<usize, RenderError> {
         if self.diagnostics.needs_reprepare() {
             output.samples.fill(0.0);
             return Err(RenderError::NeedsReprepare);
         }
-
         if output.layout() != self.plan.channel_layout() {
             let needed = output.frames().saturating_mul(self.channels);
             return Err(RenderError::OutputBufferShape {
@@ -1519,21 +1547,73 @@ impl PreparedRenderer {
                 needed,
             });
         }
-
         let frames = output.frames();
         let maximum = self.plan.maximum_block_size();
         if frames as u64 > maximum.as_u64() {
             // ADR-0021 part 3: a terminal stream-contract fault. The engine makes no
             // claim that the old input epoch continues.
             self.diagnostics.count_oversized_callback();
-            self.fault(&mut output);
+            self.fault(output);
             return Err(RenderError::OversizedCallback {
                 frames: FrameCount::new(frames as u64),
                 maximum,
             });
         }
+        Ok(self.quanta_needed_for(frames))
+    }
 
-        let quanta = self.quanta_needed_for(frames);
+    fn deliver_carry(&mut self, output: AudioBlockMut<'_>) {
+        let frames = output.frames();
+        let samples = frames * self.channels;
+        if let Some(source) = self.output_carry.get(..samples) {
+            output.samples.copy_from_slice(source);
+        }
+        let live = self.carry_frames * self.channels;
+        self.output_carry.copy_within(samples..live, 0);
+        self.carry_frames -= frames;
+    }
+
+    /// Render one caller block, pushing each rendered quantum of every subscribed tap into
+    /// the observers' rings (`HOST-INV-023`).
+    ///
+    /// The store is a parameter for the reason the ingress store is: the host owns it, and
+    /// the renderer neither allocates nor keeps it. With `None` this is [`Renderer::render`]
+    /// exactly, and with a store the audio is the same — the push is a copy out of the arena
+    /// after the schedule walk, which `tests/observation.rs` holds bit for bit.
+    pub fn render_observed(
+        &mut self,
+        output: AudioBlockMut<'_>,
+        events: TimedEvents<'_>,
+        observers: Option<&mut crate::observe::ObservationSubscriptions>,
+    ) -> Result<(), RenderError> {
+        self.render_with_timeline(output, events, observers, None)
+    }
+
+    /// Only the exclusive loop owner supplies a map and its matching sealed events.
+    /// This is not a public renderer-only reanchor operation.
+    pub(crate) fn render_loop_quantum(
+        &mut self,
+        output: AudioBlockMut<'_>,
+        events: TimedEvents<'_>,
+        positions: &[PlanPosition; QUANTUM_FRAMES as usize],
+    ) -> Result<(), RenderError> {
+        self.render_with_timeline(output, events, None, Some(positions))
+    }
+
+    fn render_with_timeline(
+        &mut self,
+        mut output: AudioBlockMut<'_>,
+        events: TimedEvents<'_>,
+        mut observers: Option<&mut crate::observe::ObservationSubscriptions>,
+        positions: Option<&[PlanPosition; QUANTUM_FRAMES as usize]>,
+    ) -> Result<(), RenderError> {
+        let quanta = self.validate_output(&mut output)?;
+        if positions.is_some() && (quanta != 1 || self.carry_frames != 0) {
+            return Err(RenderError::MappedTimelineSpan {
+                quanta,
+                carry: FrameCount::new(self.carry_frames as u64),
+            });
+        }
         let pending = self.resolve_events(events, quanta)?;
 
         // Committed only now that the call cannot be rejected.
@@ -1561,16 +1641,20 @@ impl PreparedRenderer {
         let mut timed = 0;
         for _ in 0..quanta {
             let boundary = self.clock;
+            let timeline = match positions {
+                Some(positions) => crate::time::QuantumTimeline::mapped(positions),
+                None => crate::time::QuantumTimeline::linear(self.plan_position_of(boundary)),
+            };
             cursor = self.apply_control_events(boundary, cursor);
             // `SOUND-INV-027`: the modulation sources and every composition run **before**
             // the quantum's positioned writes are placed, so a write inside the quantum is
             // composed with this quantum's modulation rather than the last one's.
-            self.render_prepass(timed);
+            self.render_prepass(timed, timeline);
             // After the boundary controls and before the quantum: the edges are a property
             // of the samples about to be written, and the kernel that writes them is what
             // places each one.
             self.collect_timed_controls(&mut timed);
-            if let Err(error) = self.render_quantum() {
+            if let Err(error) = self.render_quantum(timeline) {
                 if matches!(error, RenderError::ClockExhausted(_)) {
                     self.diagnostics.count_clock_exhaustion();
                     self.fault(&mut output);
@@ -1598,13 +1682,23 @@ impl PreparedRenderer {
         // partitioned its callbacks. That is precisely what ADR-0001 exists to prevent.
         self.apply_control_events(SampleTime::new(u64::MAX), cursor);
 
-        let samples = frames * self.channels;
-        if let Some(source) = self.output_carry.get(..samples) {
-            output.samples.copy_from_slice(source);
-        }
-        let live = self.carry_frames * self.channels;
-        self.output_carry.copy_within(samples..live, 0);
-        self.carry_frames -= frames;
+        self.deliver_carry(output);
         Ok(())
+    }
+}
+
+#[cfg(feature = "simulated-ingress")]
+impl PreparedRenderer {
+    /// Only compiled-session readmission can inspect this registry as a whole.
+    pub(crate) fn has_replacement_obligations(&self) -> bool {
+        self.live_notes.has_live()
+    }
+
+    /// Seed a fresh renderer after the outgoing carry reached zero. This removes
+    /// only the new pair's priming silence, never already rendered old samples.
+    pub(crate) fn install_stopped_clock(&mut self, anchor: crate::time::StreamAnchor) {
+        self.clock = anchor.time();
+        self.anchor = anchor;
+        self.carry_frames = 0;
     }
 }

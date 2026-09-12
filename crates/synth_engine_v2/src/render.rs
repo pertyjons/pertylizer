@@ -974,6 +974,11 @@ impl PreparedRenderer {
         self.epoch
     }
 
+    /// Identity table owned by this prepared renderer.
+    pub(crate) const fn table_id(&self) -> crate::identity::TableId {
+        self.live_notes.id()
+    }
+
     /// Write one parameter slot's modulation sum, in its law's units.
     ///
     /// **`P05-S007a`'s seam, off the audio thread.** The production writer of the layer is
@@ -1179,3 +1184,7 @@ mod parameter_slot_tests;
 #[cfg(test)]
 #[path = "tests/taps.rs"]
 mod tap_tests;
+
+#[cfg(test)]
+#[path = "render/idle_tests.rs"]
+mod idle_tests;

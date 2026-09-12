@@ -1254,8 +1254,8 @@ pub struct NodeIo<'a> {
     pub channels: ChannelLayout,
     /// The buffers it reads, in port order.
     pub inputs: [InputBuffer<'a>; MAX_INPUTS],
-    /// The plan position of this quantum's first frame, where the anchor reaches it.
-    pub position: Option<PlanPosition>,
+    /// The plan position of each frame in this quantum.
+    pub timeline: crate::time::QuantumTimeline<'a>,
     /// This node's sample-positioned control changes, due inside this quantum.
     ///
     /// ADR-0001 clause 14, as ADR-0043 restated it: a note-on, note-off, gate or
@@ -1357,7 +1357,7 @@ pub fn bind<'a>(
     buffers: &'a mut [f32],
     regions: &[BufferRegion],
     step: &NodeStep,
-    position: Option<PlanPosition>,
+    timeline: crate::time::QuantumTimeline<'a>,
     controls: &'a [TimedControl],
     ramps: &'a [f32],
     resources: NodeResources<'a>,
@@ -1419,7 +1419,7 @@ pub fn bind<'a>(
         out: out?,
         channels: step.out_layout(),
         inputs,
-        position,
+        timeline,
         controls,
         ramps,
         history: resources.history,
@@ -1441,13 +1441,21 @@ pub fn constant(prepared: &PreparedNode, _state: &mut NodeState, io: &mut NodeIo
     io.out.fill(level.as_f32());
 }
 
-/// One sample of `1.0` where the plan position falls inside this quantum.
+/// A sample of `1.0` at every frame that visits the prepared plan position.
 pub fn impulse(prepared: &PreparedNode, _state: &mut NodeState, io: &mut NodeIo<'_>) {
     let PreparedNode::Impulse { position } = prepared else {
         return;
     };
     io.out.fill(0.0);
-    let Some(start) = io.position else {
+    if let Some(positions) = io.timeline.mapped_positions() {
+        for (frame, sample) in io.out.iter_mut().enumerate() {
+            if positions.get(frame) == Some(position) {
+                *sample = 1.0;
+            }
+        }
+        return;
+    }
+    let Some(start) = io.timeline.position_at(QuantumOffset::ZERO) else {
         return;
     };
     let Some(offset) = position.as_u64().checked_sub(start.as_u64()) else {

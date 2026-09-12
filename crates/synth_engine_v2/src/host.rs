@@ -5,7 +5,8 @@
 //! does not prove a real backend's callback fence or concurrent publication mechanism.
 //! P09-S005 attaches serial exact-input note capture and retains it across output loss.
 //! P09-S006 orders explicit capture boundaries through the bounded serial session lane.
-//! Physical input, live ingress, audible session transport and automatic retries retain their
+//! P09-S007 adds ordered compiled Play/Stop coupled to retained exact-input note capture.
+//! Physical input, live ingress and automatic retries retain their
 //! first-consumer IO/TAKE and ADR-0022/0050/0054 gates.
 
 #[cfg(feature = "simulated-ingress")]
@@ -14,6 +15,8 @@ mod capture;
 pub use capture::NoteCaptureControl;
 
 mod hot;
+#[cfg(feature = "simulated-ingress")]
+pub mod session;
 mod types;
 pub use types::*;
 
@@ -46,6 +49,8 @@ pub(crate) fn issue_capture_source_generation() -> Result<ConnectionGeneration, 
 struct PreparedOutput {
     control: StreamControl,
     renderer: PreparedRenderer,
+    #[cfg(feature = "simulated-ingress")]
+    session: Option<session::SessionRuntime>,
 }
 
 struct Connection {
@@ -227,6 +232,15 @@ impl SimulatedHost {
     /// Stop transport without retiring the device or creating another epoch.
     pub fn stop(&mut self, generation: ConnectionGeneration) -> Result<(), HostError> {
         #[cfg(feature = "simulated-ingress")]
+        if self
+            .active_mut(generation)?
+            .prepared
+            .as_ref()
+            .is_some_and(|prepared| prepared.session.is_some())
+        {
+            return Err(session::SessionError::OrderedTransport.into());
+        }
+        #[cfg(feature = "simulated-ingress")]
         if self.note_capture.as_ref().is_some_and(|capture| {
             capture.host_generation == Some(generation) && capture.is_active()
         }) {
@@ -259,6 +273,8 @@ impl SimulatedHost {
         }
         connection.status.state = ConnectionState::Quiescing;
         #[cfg(feature = "simulated-ingress")]
+        self.close_ordered_session(generation)?;
+        #[cfg(feature = "simulated-ingress")]
         self.interrupt_note_capture(generation)?;
         Ok(())
     }
@@ -284,6 +300,8 @@ impl SimulatedHost {
             .get_or_insert(HostFailure::DeviceLost);
         connection.status.state = ConnectionState::Quiescing;
         #[cfg(feature = "simulated-ingress")]
+        self.close_ordered_session(generation)?;
+        #[cfg(feature = "simulated-ingress")]
         self.interrupt_note_capture(generation)?;
         Ok(())
     }
@@ -298,6 +316,10 @@ impl SimulatedHost {
         if self.connection_mut(generation)?.status.state != ConnectionState::Quiescing {
             return Err(HostError::WrongState);
         }
+        #[cfg(feature = "simulated-ingress")]
+        self.close_ordered_session(generation)?;
+        #[cfg(feature = "simulated-ingress")]
+        self.require_session_collected(generation)?;
         #[cfg(feature = "simulated-ingress")]
         self.interrupt_note_capture(generation)?;
         #[cfg(feature = "simulated-ingress")]
@@ -347,7 +369,12 @@ fn prepare_output(
         plan,
         StreamAnchor::new(SampleTime::ZERO, PlanPosition::ZERO),
     )?;
-    Ok(PreparedOutput { control, renderer })
+    Ok(PreparedOutput {
+        control,
+        renderer,
+        #[cfg(feature = "simulated-ingress")]
+        session: None,
+    })
 }
 
 #[cfg(test)]

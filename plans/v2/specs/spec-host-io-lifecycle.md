@@ -5,8 +5,8 @@
 | Status | Current |
 | Phase | 9 |
 | Created | 2026-09-11 |
-| Last reviewed | 2026-09-11 |
-| Based on | ADR-0036, ADR-0024, ADR-0021, ADR-0032, ADR-0038, ADR-0054 |
+| Last reviewed | 2026-09-12 |
+| Based on | ADR-0036, ADR-0024, ADR-0021, ADR-0032, ADR-0038, ADR-0054, ADR-0061, ADR-0062, ADR-0063, ADR-0064 |
 | Invariant prefix | IO |
 | Supersedes | — |
 | Superseded by | — |
@@ -48,6 +48,8 @@ not guaranteed capabilities.
 | [ADR-0032](../decisions/ADR-0032-sample-time-and-event-timestamps.md) | Epoch configuration and time scope |
 | [ADR-0038](../decisions/ADR-0038-engine-egress-queue-classification.md) | Custodial results versus lossy observation |
 | [ADR-0054](../decisions/ADR-0054-staged-producer-capacity-calibration.md) | Producer qualification before production live ingress |
+| [ADR-0061](../decisions/ADR-0061-ordered-compiled-session-ownership.md) | Ordered compiled transport and retained command ownership |
+| [ADR-0062](../decisions/ADR-0062-coupled-transport-and-note-capture.md) | Total source ordering and coupled capture outcomes |
 
 ## Invariants
 
@@ -329,7 +331,8 @@ P09-S006 adds the [ordered capture-boundary lane](spec-recording-takes-and-commi
 Host interruption retains each queued command until dispatch returns its
 cancellation receipt, including after output retirement or replacement. Pending
 receipts block recording-storage release. Capture commands do not operate the
-output's transport latch; ordered audible transport retains its first-consumer gate.
+output's transport latch; the [ordered compiled owner](#ordered-compiled-transport)
+provides that separate consumer.
 It has no concurrent pending source queue, hardware input, monitoring or audio
 capture. IO-INV-005 remains unimplemented. Physical input loss, backend capture
 fences, independent clocks, worker backpressure and actual telemetry/retirement
@@ -340,11 +343,103 @@ production live adapter is enabled.
 | Invariant | Full check still required beyond P09-S001/S005 |
 |---|---|
 | IO-INV-001 | Concurrent publication and backend callback fences; independently opened input generations |
-| IO-INV-002 | Ordered session stop, real backend shutdown when pause is unsupported, concurrent off-thread retirement |
+| IO-INV-002 | Concurrent session stop, real backend shutdown when pause is unsupported, concurrent off-thread retirement |
 | IO-INV-003 | Evidence establishing any physical backend callback bound before activation |
 | IO-INV-004 | Physical input loss, concurrent retained capture with/without final callback, and bounded automatic retry if implemented |
 | IO-INV-005 | Independent clocks, bounded stalled-worker input and distinct monitoring/capture loss |
 | IO-INV-006 | Saturated concurrent telemetry preserves faults and acknowledgements; input backlog and timing provenance |
+
+## Ordered compiled transport
+
+[ADR-0061](../decisions/ADR-0061-ordered-compiled-session-ownership.md) defines the
+optional ordered transport mode in `SimulatedHost`. Enable it on a fresh Ready
+renderer; device `start` begins callbacks, while session Play/Stop independently
+control musical playback. The legacy transport stop refuses this mode. The
+[ordered capture extension](#ordered-note-capture) attaches note capture through
+the same owner; direct capture control remains unavailable in that mode.
+
+A stopped session holds its playhead while silent quanta advance the renderer's
+sole engine clock. Play prepares a new activation from that position, cuts crossing
+notes and applies normal parameter catch-up. Commands name aligned engine times in
+nondecreasing submission order. Whole-callback shape and maximum length validation
+precedes every command. Carry delivery applies no commands; each new quantum
+handles its boundary before the scheduler is called. Already rendered carry retains
+its normal one-quantum latency across Stop.
+
+`SessionLimits` admits the command descriptor array, runtime descriptor and retained
+scalar outcomes against an explicit byte budget. Scheduler, arbiter and activation
+payloads retain their existing preparation admission. One outstanding Play retains
+its activation until off-thread receipt collection, and cannot consume the final
+command slot. Already accepted Stop effects do not depend on receipt consumption.
+Same-time commands plus Play's complete catch-up cost must fit the session share;
+this is conservative even for a subsequently cancelled Play. Command identities
+combine the connection generation with a checked serial; refusal consumes neither.
+
+A same-time Stop cancels a Play only while it remains pre-offer. Accepted scheduler
+offers are irrevocable. Their retired resources stay in the original command slot
+until off-thread promotion or withdrawal. Loss cancels unapplied commands, preserves
+applied outcomes and blocks resource retirement until all receipts are collected.
+Callback faults silence the complete output and close admission through Quiescing.
+If the final playhead cannot be represented, closure reports the fault once and
+marks playback Unavailable; retained outcomes remain collectable on the next call.
+
+`tests/host_session.rs` checks audible boundaries, resume, crossing and later notes,
+partitions of 512/256/64/37/1 frames, delayed receipts, cancellation, loss without a
+callback, invalid boundaries and whole-buffer rejection. `src/host/session/tests.rs`
+checks first-use allocation/deallocation, identity exhaustion, producer-share
+refusal and byte-budget refusal before ownership is latched. The purity scan covers
+the session callback and scheduler offer/retirement transfer. These are serial
+checks; concurrent publication and hardware timing remain gated.
+
+## Ordered note capture
+
+[ADR-0062](../decisions/ADR-0062-coupled-transport-and-note-capture.md) extends the
+compiled transport owner. `prepare_ordered_capture` attaches the retained recorder
+and a fixed source queue while Ready. Its descriptors and action/outcome slots use
+`SessionSourceLimits`; recorder arrays and tempo contexts retain their recording
+byte admission. Preparation and arm are off-thread. No direct start, stop, publish
+or fence method escapes through `SessionCaptureControl`.
+
+A recording Play requires an armed context matching its stopped position, exact
+requested start, rate and epoch. Its immutable ticket and each Stop's captured ticket
+travel with the command. Rearm waits for every command/source receipt to be collected.
+Stop snapshots only the recorder's currently active ticket; a sealed or discarded
+take cannot attach itself to later ordinary commands. Already queued Stops keep
+their original tickets. Ordinary Play does not start recording; `offer_session_recording_play` explicitly
+couples both operations. Stop ends the associated armed or recording take.
+
+Source actions use nondecreasing publication/frontier times. All equal-time fences
+must be offered before equal-time publications; a later fence refuses without
+spending identity. Dispatch preserves publication order and original capture stamps.
+The serial owner supplies each explicit fence's actually consumed source sequence.
+No source frontier is synthesized. This is an exclusive-borrow prefix proof, not a
+physical backend acknowledgement.
+
+A same-time Play followed by Stop cancels before fences or capture start. Stop runs
+before equal-time fences. A surviving recording Play then drains the complete fence
+prefix, checks activation admission and starts capture before its infallible offer.
+A missing start fence yields a capture-refusal outcome and leaves Play unoffered;
+there is no delayed start. The pending take remains owned for an explicit end.
+Remaining source actions before the quantum end follow the command group.
+
+Every command carries an optional, separate `SessionCaptureOutcome`. Routine capture
+refusals never propagate as output faults. Stop changes audible state even when its
+capture result refuses or source fences delay sealing. Only an invariant failure
+between successful activation preflight and offer enters the terminal session-fault
+channel. Every source action likewise retains Published, Fenced, Refused or Cancelled
+until collection. Loss preserves both receipt lanes; output retirement and capture
+result disposal cannot bypass still-held outcomes.
+
+`src/host/session/capture/tests.rs` checks callback partitions of 512/256/64/37/1,
+identical audio and selected raw notes, allocation/deallocation from first callback,
+missing start fences, same-time cancellation, an independently lagging source,
+ordinary capture-stop refusal, saturated source/result slots and loss without a
+final callback. Publication occurrence counters are compared within each source;
+connection generations intentionally differ between independent fixtures.
+
+This consumer uses exact simulated sources with zero lateness and supplied audition
+traces. Standalone punch-in/disarm, live audition, audio input, loop passes and
+concurrent or physical source timing require their subsequent consumer checks.
 
 ## Unresolved questions
 
@@ -353,4 +448,124 @@ production live adapter is enabled.
 | Platform clock mapping, drift law and latency evidence | Before production timing consumption and Phase 9 exit; simulated lifecycle work may proceed | ADR-0022 |
 | Seamless plan changes, crossfades and live-note migration | Before the first consumer of each live change | ADR-0009, ADR-0010, ADR-0050 |
 | Complete producer capacity calibration | Before a production live adapter | ADR-0054 |
-| Backend capability and callback-quiescence proof | Before enabling that backend; unknown required bounds refuse | IO-INV-002, IO-INV-003 |
+| Backend capability and callback-quiescence proof | Before enabling that backend; unknown required bounds refuse. The [Linux output harness](#linux-output-custody-harness) proves the bounded ALSA output-custody subset under ADR-0063; input and physical clock qualification remain open; ADR-0064 covers its concurrent compiled-session queues | IO-INV-002, IO-INV-003 |
+
+## Linux output custody harness
+
+[ADR-0063](../decisions/ADR-0063-linux-cpal-callback-custody.md) fixes the first
+physical callback ownership mechanism in the non-shipping `v2_cpal_output`
+example. It enumerates only ALSA endpoints and opens an exact ID. Run:
+
+```bash
+cargo run -p pertylizer --example v2_cpal_output -- list
+cargo run -p pertylizer --example v2_cpal_output -- run alsa:hw:CARD=0,DEV=0 100
+cargo run -p pertylizer --example v2_cpal_output -- transport alsa:hw:CARD=0,DEV=0 100
+cargo run -p pertylizer --example v2_cpal_output -- plans alsa:hw:CARD=0,DEV=0 100
+cargo run -p pertylizer --example v2_cpal_output -- loops alsa:hw:CARD=0,DEV=0 100
+```
+
+The endpoint above is an example, not a default or an assertion that this card is
+present. The command uses the endpoint's default mono/stereo F32 or I32 format;
+other formats refuse explicitly. It prepares a silent graph at the selected rate
+and actual negotiated period. Its 8192-frame preparation ceiling is a memory
+budget, separate from the ALSA period contract. The data callback borrows the
+retained state, validates the entire output shape, renders to prepared scratch
+and converts samples into the device buffer. Failures leave prefilled silence,
+retain scalar diagnostics and cause the command to fail. Counters cannot wrap.
+
+The `transport` mode queues initial Play before Ready, then collects four applied
+Play/Stop/Play/Stop receipts. Later commands use a fixed 8192-frame scheduling lead,
+which is a harness choice, not a latency guarantee. A late/refused command or a
+callback target reached before all four receipts makes the run fail explicitly.
+
+The `loops` mode chooses the exclusive compiled loop owner before Ready, with
+interval `[0,513)`, entry zero and a four-pass observation journal. It has no
+ordinary transport or plan-control owner. Each whole backend callback is one
+journal render call; an early successful quantum cannot conceal a later failure
+in that callback. The reported clock is the last whole-call acknowledgement.
+Observation exhaustion preserves its first terminal endpoint while playback
+continues. Joined close finishes observation without another callback and reports
+the initial state, retained boundaries and terminal before propagating a run error.
+Backend faults remain separate diagnostics; observation finish is not a complete
+recorded take or a hardware-time certificate.
+
+Ready follows preparation and initial publication. Shutdown clears Ready and joins
+the ALSA stream
+before any renderer, control, plan, buffer or diagnostic backing can be finally
+released. The callback may already be in flight when shutdown begins. Both
+explicit close and owner destruction enforce the order, including failures
+between open and play and loss without a final callback. The owner is private,
+neither `Send` nor `Sync`, and exposes no loose pair of lifetime handles.
+
+The command reports negotiated period, delivered frame count, render clock,
+callback count, faults and observed CPAL error categories after join. Success is a
+bounded output/custody run,
+not accepted physical timestamp calibration or Phase 9 exit evidence. Proxy
+endpoints can exercise the harness but cannot qualify physical timing. Input,
+MIDI, held-note plan swaps and loop session/capture integration remain separate consumers. The `plans`
+mode exercises four stopped silent-plan publications, latest-wins delivery and
+withdrawal, retaining every identified receipt. The example tests pin CPAL,
+ringbuf, triple_buffer and crossbeam-utils behind this lifecycle proof.
+
+## Split compiled session
+
+[ADR-0064](../decisions/ADR-0064-concurrent-compiled-session-handoff.md) adds
+`SessionControl` and `SessionAudio` under `host::session::transfer`. Fresh
+preparation checks plan/profile geometry and publication bounds and uses the same
+runtime builder as the serial host. Control owns the minter and admitted list;
+audio owns renderer, registry, scheduler and slots. Only an immutable plan is
+shared. The control metadata and command boxes are separately bounded; queue
+storage remains a concrete host charge.
+
+Preparing a command reserves one credit through delivery and collection. One
+outstanding Play and the Stop reserve apply across all packet locations, including
+unpublished and returned packets. An unpublished or rejected-send packet must be
+returned through `cancel`; a completed one through `collect`. Collection resolves
+the retained activation off-thread before returning credit. Failure returns the
+owning packet. Older collected serials cannot overwrite a newer playback snapshot.
+
+Command origins include the prepared table identity. Epoch and plan equality alone
+cannot identify a table, including when one compiled plan is cloned and prepared
+again. Scheduler and activation collection also preflight table identity.
+
+A host drains a bounded queue prefix at its declared callback ingress cut, then
+renders. Publication after the cut waits for a later callback. Commands delivered
+before their requested boundaries preserve the serial host's FIFO, same-time
+cancellation and sample behavior. Late delivery yields `DeliveryRefused`, including
+for Stop; it does not silently apply later. A surviving Play must still match its
+prepared stopped position at the actual boundary. These ordinary refusals never
+fault the renderer or erase other audio. Protocol/origin/order/full errors return
+the packet without insertion, and a host must retain any failed transfer.
+
+`take_completed` moves a command box without freeing it. Backend shutdown closes
+admission, fences callbacks and only then calls `close_after_quiescence`; remaining
+runtime commands become retained cancellations. The host also recovers queued and
+unpublished packets. A stalled completion reader cannot delay an already admitted
+Stop. A terminal render fault silences the complete buffer, prevents later rendering
+and leaves commands collectable after the fence.
+
+The core tests use two OS threads and allocation-guarded callback operations, with
+blocking test rendezvous outside those operations. The Linux example separately
+exercises the [queue owner](../decisions/ADR-0064-concurrent-compiled-session-handoff.md):
+control and both queue backing allocations survive through ALSA join, while the
+occupied callback pool retains audio and failed transfers. Saturation, ingress-cut
+ordering and disappearance without a final callback have their own tests. Capture,
+live ingress and loops remain unavailable on the split pair until their separate
+consumer contracts are built. Stopped plan readmission is specified below.
+
+
+### Stopped compiled-plan readmission
+
+The split session's stopped-only replacement follows
+[ADR-0064](../decisions/ADR-0064-concurrent-compiled-session-handoff.md#stopped-prepared-plan-readmission).
+Five credits bound all prepared candidates and their owning retirements, including
+unpublished values. Ordinary transport admission remains frozen until every credit
+is resolved off-thread. Installation preserves device epoch and actual clock,
+requires empty outgoing carry and no note obligations, and returns an identified
+installed/refused outcome with the owning resources. The Linux example supplies
+the [concrete mailbox](../decisions/ADR-0064-concurrent-compiled-session-handoff.md#linux-latest-wins-plan-mailbox):
+three optional owning cells, a one-slot return queue and retained failure storage.
+It compiles before publishing, immediately cancels overwritten candidates off-thread
+and defers installation under retirement pressure. Withdrawal needs no extra credit.
+Joined cleanup recovers every cell without requiring another callback. Other hosts
+must establish their own transport and custody proof.

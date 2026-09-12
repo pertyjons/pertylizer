@@ -80,7 +80,7 @@ impl ProjectionTable {
         context: &NoteArmContext,
         time: SampleTime,
     ) -> Result<TickProjection, ProjectionError> {
-        let anchor = context.anchor();
+        let anchor = context.anchor().ok_or(ProjectionError::LoopMapping)?;
         let frames = time
             .as_u64()
             .checked_sub(anchor.time().as_u64())

@@ -6,7 +6,7 @@
 | Status | Accepted |
 | Phase | 3 |
 | Created | 2026-08-27 |
-| Last reviewed | 2026-09-01 |
+| Last reviewed | 2026-09-12 |
 | Related | ADR-0001, ADR-0021, ADR-0032, ADR-0043, ADR-0046, ADR-0047, ADR-0055, `SPEC` sound-core render contract, `SPEC` host profile and render limits |
 | Supersedes | — |
 | Amends | ADR-0047 clause 7, for the transport-activation case only |
@@ -634,3 +634,26 @@ explicit amendment of it. The fourth round found no unfillable contract hole for
 
 Stopping rule: false conclusion-affecting fact, contradiction, unfillable contract, safety/correctness defect, or
 evidence incapable of supporting the claim. Editorial detail does not block.
+
+
+## Prepared-table preflight
+
+A stream epoch identifies the device timeline, not one identity-table instance.
+Before same-epoch readmission can be enabled, the scheduler records the table it
+was prepared against and checks it alongside the renderer epoch before rendering
+or accepting an activation. Candidate working tables must match that same table.
+A wrong renderer is refused before any adoption, output write or diagnostic on
+that renderer; a wrong candidate is returned and counted on the correct renderer.
+
+Off-thread `adopted` and `withdraw` also check the working table before consuming
+an activation. A refusal returns the owning box without changing the receiving
+control's minter, anchor or sequence. The split session's opaque command origin
+includes table identity as well as generation, epoch and plan, so cloning a plan
+cannot make a packet from another prepared instance eligible.
+
+`src/stream/table_tests.rs` constructs same-epoch, same-plan pairs with distinct
+tables through a private test seam and checks render, offer, withdrawal and
+collection refusals, including allocation-guarded callback preflight. The split
+session has a corresponding command-origin regression. Public stream construction
+still issues a fresh epoch; this prerequisite does not itself enable plan swapping
+or relax ADR-0047's refusal of a rebuild with outstanding obligations.

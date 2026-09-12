@@ -14,6 +14,7 @@ use super::{CompiledEventScheduler, ScheduledRenderError};
 use crate::publish::{ProducerClass, PublicationArbiter};
 use crate::render::{AudioBlockMut, EventEnvelope, PreparedRenderer, Renderer, TimedEvent};
 use crate::time::{FrameCount, QUANTUM_FRAMES, SampleTime};
+use crate::transport::ActivationRefused;
 
 /// The first quantum boundary at or after `time`, or `None` where engine time has none.
 ///
@@ -182,6 +183,12 @@ impl CompiledEventScheduler {
             return Err(ScheduledRenderError::EpochMismatch {
                 schedule: self.epoch,
                 renderer: renderer.epoch(),
+            });
+        }
+        if self.table != renderer.table_id() {
+            return Err(ScheduledRenderError::TableMismatch {
+                schedule: self.table,
+                renderer: renderer.table_id(),
             });
         }
 
@@ -485,6 +492,13 @@ impl CompiledEventScheduler {
         // charging anyway faulted an ordinary seek, which an independent review found. The
         // debt is not spent until it is paid, so it simply waits for the next call.
         if quanta > 0 {
+            for _ in 0..self.session_operations.get() {
+                if let Err(fault) = publication.charge_operation(ProducerClass::Session, clock) {
+                    renderer.terminal_fault(&mut output);
+                    return Err(ScheduledRenderError::Publication(fault));
+                }
+            }
+            self.session_operations = crate::quantities::EventCount::measured(0);
             // ADR-0050 clause 5's boundary mass release: **one** operation charged to the
             // session share, never one event per voice. It ended its notes inside `adopt`;
             // this is the accounting, and without it the share's occupancy and high-water
@@ -564,5 +578,140 @@ impl CompiledEventScheduler {
         }
         self.next = end;
         Ok(())
+    }
+}
+
+impl CompiledEventScheduler {
+    #[cfg(feature = "simulated-ingress")]
+    pub(crate) fn set_session_operations(&mut self, operations: crate::quantities::EventCount) {
+        self.session_operations = operations;
+    }
+    /// Offer an activation, which the next boundary at or after its time adopts.
+    ///
+    /// **Every refusal is here**, which is what makes adoption infallible. Checks cover
+    /// renderer epoch/table pairing, a faulted stream, candidate epoch/table identity,
+    /// unsupported loop playback, an occupied exchange slot, and a superseded sequence.
+    /// The last two are in that order deliberately: an uncollected retirement is *why*
+    /// a candidate is superseded, so reporting the
+    /// consequence would send a reader after a racing seek when the fix is that the
+    /// off-thread half has not collected. Each leaves the stream running on the state in
+    /// force, and the candidate comes back so the control can withdraw it — which means
+    /// dropping the working copy it stamped against and restoring nothing because nothing
+    /// was taken.
+    ///
+    /// **Pairing refusals are not counted; other refusals are**, so pairing is decided
+    /// first: the counters belong to the stream that was offered to, and a renderer that is
+    /// not this schedule's half is not that stream. Counting matters because a stream that
+    /// silently declines every seek and one that adopts them are otherwise
+    /// indistinguishable.
+    pub fn offer(
+        &mut self,
+        renderer: &mut PreparedRenderer,
+        activation: Box<crate::transport::TransportActivation>,
+    ) -> Result<
+        (),
+        (
+            Box<crate::transport::TransportActivation>,
+            ActivationRefused,
+        ),
+    > {
+        if let Err(refusal) = self.check_offer(renderer, &activation) {
+            if !matches!(
+                refusal,
+                ActivationRefused::ForeignRenderer { .. }
+                    | ActivationRefused::ForeignRendererTable { .. }
+            ) {
+                renderer.count_refused_activation();
+            }
+            return Err((activation, refusal));
+        }
+        // ADR-0050 clause 1's lateness, decided **here**: the clock has already passed the
+        // time this candidate names, so building it took longer than the time it asked for.
+        // This is the only moment the question has a stable answer — by the call that adopts,
+        // the clock stands on the boundary and every off-grid request looks late.
+        let mut activation = activation;
+        activation.late = activation.requested() < renderer.clock();
+        self.exchange = crate::transport::Exchange::Pending(activation);
+        Ok(())
+    }
+
+    /// Shared pure preflight; an exclusive session can validate before capture start.
+    pub(crate) fn check_offer(
+        &self,
+        renderer: &PreparedRenderer,
+        activation: &crate::transport::TransportActivation,
+    ) -> Result<(), ActivationRefused> {
+        // Pairing comes first: offer must not count a refusal in another renderer.
+        if self.epoch != renderer.epoch() {
+            let refusal = ActivationRefused::ForeignRenderer {
+                schedule: self.epoch,
+                renderer: renderer.epoch(),
+            };
+            return Err(refusal);
+        }
+        if self.table != renderer.table_id() {
+            return Err(ActivationRefused::ForeignRendererTable {
+                schedule: self.table,
+                renderer: renderer.table_id(),
+            });
+        }
+        // A faulted epoch adopts nothing ever again, so accepting a candidate into it would
+        // trap the candidate: adoption never comes, `collect` never yields it, and the control
+        // cannot withdraw a value it no longer holds.
+        if renderer.diagnostics().needs_reprepare() {
+            return Err(ActivationRefused::StreamFaulted);
+        }
+        if activation.epoch != self.epoch {
+            let refusal = ActivationRefused::StaleEpoch {
+                candidate: activation.epoch,
+                stream: self.epoch,
+            };
+            return Err(refusal);
+        }
+        if activation.minter.id() != self.table {
+            return Err(ActivationRefused::ForeignCandidateTable {
+                candidate: activation.minter.id(),
+                schedule: self.table,
+            });
+        }
+        // The interval has already passed its off-thread density and polyphony checks, but
+        // this scheduler has no runtime wrap. Accepting it would expose a loop as active
+        // while the schedule continues beyond its end. ADR-0065's exclusive loop owner
+        // does not enable wraps in ordinary activation-based transport.
+        if let Some(interval) = activation.loop_interval() {
+            let refusal = ActivationRefused::LoopPlaybackUnsupported {
+                start: interval.start(),
+                end: interval.end(),
+            };
+            return Err(refusal);
+        }
+        // **The slot is asked before the sequence**, and the order is the diagnostic rather
+        // than an arbitrary choice. An uncollected retired value is *why* the control's idea
+        // of what is in force is stale, so a candidate built in that window is superseded as
+        // a consequence. Reporting the consequence would send a reader to look for a racing
+        // seek when the actual fix is that the off-thread half has not collected — and it
+        // would leave `RetiredUncollected` unreachable, which is a rule nobody checks.
+        if let Some(refusal) = self.exchange.occupied() {
+            return Err(refusal);
+        }
+        if activation.supersedes != self.in_force {
+            let refusal = ActivationRefused::Superseded {
+                supersedes: activation.supersedes,
+                in_force: self.in_force,
+            };
+            return Err(refusal);
+        }
+        Ok(())
+    }
+
+    /// Move one retired allocation into its already reserved host result slot.
+    pub(crate) fn take_retired(&mut self) -> Option<Box<crate::transport::TransportActivation>> {
+        match core::mem::take(&mut self.exchange) {
+            crate::transport::Exchange::Retired(retired) => Some(retired),
+            other => {
+                self.exchange = other;
+                None
+            }
+        }
     }
 }

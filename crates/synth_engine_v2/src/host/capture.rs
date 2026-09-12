@@ -27,6 +27,13 @@ impl SimulatedHost {
         limits: RecordingLimits,
     ) -> Result<(), HostError> {
         let connection = self.active_mut(generation)?;
+        if connection
+            .prepared
+            .as_ref()
+            .is_some_and(|prepared| prepared.session.is_some())
+        {
+            return Err(super::session::SessionError::OrderedTransport.into());
+        }
         if connection.status.state != ConnectionState::Ready {
             return Err(HostError::WrongState);
         }
@@ -63,6 +70,9 @@ impl SimulatedHost {
             return Err(HostError::WrongState);
         }
         let prepared = connection.prepared.as_ref().ok_or(HostError::WrongState)?;
+        if prepared.session.is_some() {
+            return Err(super::session::SessionError::OrderedTransport.into());
+        }
         let rate = prepared.control.plan().sample_rate();
         let anchor = prepared.control.anchor();
         Ok(NoteCaptureControl {
@@ -123,6 +133,7 @@ impl SimulatedHost {
             .failure
             .get_or_insert(HostFailure::CaptureSourceLost(source));
         connection.status.state = ConnectionState::Quiescing;
+        self.close_ordered_session(generation)?;
         self.interrupt_note_capture(generation)
     }
 
@@ -153,6 +164,16 @@ impl SimulatedHost {
         ticket: TakeReservation,
         quality: CaptureQuality,
     ) -> Result<(), HostError> {
+        if self
+            .active
+            .as_ref()
+            .filter(|connection| connection.status.generation == generation)
+            .and_then(|connection| connection.prepared.as_ref())
+            .and_then(|prepared| prepared.session.as_ref())
+            .is_some_and(super::session::SessionRuntime::has_retained_outcomes)
+        {
+            return Err(super::session::SessionError::RetainedOutcomes.into());
+        }
         self.owned_capture(generation)?.discard(ticket, quality)?;
         Ok(())
     }
@@ -235,7 +256,7 @@ impl NoteCaptureControl<'_> {
         if context.tempo().sample_rate() != self.rate {
             return Err(NoteCaptureError::HostSampleRate);
         }
-        if context.anchor() != self.anchor {
+        if context.anchor() != Some(self.anchor) {
             return Err(NoteCaptureError::HostAnchor);
         }
         self.recorder.arm(context, sources)
@@ -272,4 +293,4 @@ impl NoteCaptureControl<'_> {
 }
 
 #[cfg(test)]
-mod tests;
+pub(super) mod tests;

@@ -31,9 +31,13 @@
 //! two values, so nothing in the type system stops someone pairing one stream's control with
 //! another's renderer. That pairing is refused where it becomes wrong: a schedule carries the
 //! epoch of the control that stamped it, and `CompiledEventScheduler::render` refuses a
-//! renderer whose epoch differs. The refusal is the whole schedule rather than each of its
+//! renderer whose epoch or prepared table differs. The refusal is the whole schedule, rather
+//! than each of its
 //! events discarded as stale, which is the difference between a diagnosable error and a
 //! silent nothing.
+
+#[cfg(test)]
+mod table_tests;
 
 use std::sync::Arc;
 
@@ -213,6 +217,12 @@ pub enum ActivationBuildError {
 /// the outstanding set together, so a partial one would be worse than none.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
 pub enum ActivationCollectError {
+    /// A same-epoch candidate belongs to another prepared identity table.
+    #[error("the activation table is {candidate}, but this control owns {stream}")]
+    ForeignTable {
+        candidate: crate::identity::TableId,
+        stream: crate::identity::TableId,
+    },
     /// The value was retired by another stream.
     #[error("the activation belongs to {candidate}, but this control is {stream}")]
     ForeignStream {
@@ -517,7 +527,14 @@ impl StreamControl {
         plan: CompiledPlan,
         anchor: StreamAnchor,
     ) -> Result<(Self, PreparedRenderer), CompileError> {
-        let epoch = issue_epoch()?;
+        Self::open_in_epoch(plan, anchor, issue_epoch()?)
+    }
+
+    fn open_in_epoch(
+        plan: CompiledPlan,
+        anchor: StreamAnchor,
+        epoch: StreamEpoch,
+    ) -> Result<(Self, PreparedRenderer), CompileError> {
         // ADR-0047 clause 3's identity partition, from what admission copied into the plan.
         // A plan with no note-on producers gets an empty partition, which is right: nothing
         // can start a note, so nothing can name an occurrence.
@@ -541,9 +558,48 @@ impl StreamControl {
         Ok((control, renderer))
     }
 
+    /// Only the opaque compiled-session replacement owns both returned halves.
+    #[cfg(feature = "simulated-ingress")]
+    pub(crate) fn replace_compiled(
+        &self,
+        plan: CompiledPlan,
+    ) -> Result<(Self, PreparedRenderer), CompileError> {
+        if let Some(program) = plan
+            .prepared_scripts()
+            .iter()
+            .find(|program| program.domain == crate::script::ScriptDomain::Note)
+        {
+            return Err(CompileError::Script {
+                node: program.node,
+                fault: crate::script::ScriptFault::NoteSourceRequired,
+            });
+        }
+        Self::open_in_epoch(
+            plan,
+            StreamAnchor::new(SampleTime::ZERO, crate::time::PlanPosition::ZERO),
+            self.epoch,
+        )
+    }
+
+    /// Both stamped obligations and separately prepared activations block readmission.
+    #[cfg(feature = "simulated-ingress")]
+    pub(crate) fn has_replacement_obligations(&self) -> bool {
+        self.minter.live() != 0 || self.live_candidates != 0 || self.live_notes_open.get() != 0
+    }
+
+    /// The new stopped pair has already installed this anchor on audio.
+    #[cfg(feature = "simulated-ingress")]
+    pub(crate) fn synchronize_replacement_anchor(&mut self, anchor: StreamAnchor) {
+        self.anchor = anchor;
+    }
+
     /// This stream's epoch.
     pub const fn epoch(&self) -> StreamEpoch {
         self.epoch
+    }
+
+    pub(crate) const fn table_id(&self) -> crate::identity::TableId {
+        self.minter.id()
     }
 
     /// The plan this stream renders.
@@ -1090,6 +1146,13 @@ impl StreamControl {
             };
             return Err((retired, error));
         }
+        if retired.minter.id() != self.table_id() {
+            let error = ActivationCollectError::ForeignTable {
+                candidate: retired.minter.id(),
+                stream: self.table_id(),
+            };
+            return Err((retired, error));
+        }
         let Some(effective) = retired.effective else {
             return Err((retired, ActivationCollectError::NotAdopted));
         };
@@ -1143,6 +1206,13 @@ impl StreamControl {
             let error = ActivationCollectError::ForeignStream {
                 candidate: activation.epoch,
                 stream: self.epoch,
+            };
+            return Err((activation, error));
+        }
+        if activation.minter.id() != self.table_id() {
+            let error = ActivationCollectError::ForeignTable {
+                candidate: activation.minter.id(),
+                stream: self.table_id(),
             };
             return Err((activation, error));
         }
@@ -1567,7 +1637,6 @@ impl StreamControl {
     /// come from different plans. The mark the second check sets lives on the **store**, so
     /// the audio-thread half verifies the same adoption instead of keeping a latch of its
     /// own that could disagree with this one.
-    #[cfg(feature = "simulated-ingress")]
     fn latch_store(
         &mut self,
         store: &mut crate::ingress::PerformanceIngress,

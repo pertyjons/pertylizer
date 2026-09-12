@@ -229,6 +229,17 @@ impl IdentityTable {
 }
 
 impl LiveNotes {
+    /// At most the admitted identity partition is inspected; no table is mutated.
+    #[cfg(feature = "simulated-ingress")]
+    pub(crate) fn has_live(&self) -> bool {
+        for slot in &self.slots {
+            if slot.is_some() {
+                return true;
+            }
+        }
+        false
+    }
+
     /// Which table's occurrences this registry accepts.
     pub const fn id(&self) -> super::TableId {
         self.id

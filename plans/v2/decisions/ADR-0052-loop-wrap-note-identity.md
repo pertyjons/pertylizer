@@ -3,17 +3,22 @@
 | Field | Value |
 |---|---|
 | ID | ADR-0052 |
-| Status | Proposed |
+| Status | Superseded |
 | Phase | 3 |
 | Created | 2026-08-31 |
-| Last reviewed | 2026-09-01 |
+| Last reviewed | 2026-09-12 |
 | Related | ADR-0023, ADR-0032, ADR-0046, ADR-0047, ADR-0050, ADR-0055, `SPEC` sound core render contract, `SPEC` host profile and render limits |
 | Supersedes | — |
-| Superseded by | — |
+| Superseded by | ADR-0065 |
 
 ## Status note
 
-**This record is `Proposed` and deliberately takes no decision.** Three designs were put to independent design
+Superseded by [ADR-0065](ADR-0065-exclusive-sample-exact-loop-owner.md) for the
+exclusive compiled-loop consumer. The constraints and rejected options below
+preserve the earlier design consultations; ordinary activation still retains
+ADR-0055's loop-offer refusal.
+
+**This record was `Proposed` and deliberately took no decision.** Three designs were put to independent design
 consultation and all three were refuted against the accepted contract and the code. What the rounds established is
 a **coupled boundary** the topic cannot be decided without: a loop wrap is correct only at a granularity ADR-0050
 clause 1 deferred. `PROCESS.md` is explicit that an option which "cannot be implemented safely until another

@@ -42,7 +42,7 @@ fn run_with(
         out: &mut out,
         channels: crate::quantities::ChannelLayout::Mono,
         inputs: [InputBuffer::Unpatched; MAX_INPUTS],
-        position: None,
+        timeline: crate::time::QuantumTimeline::linear(None),
         controls,
         ramps: &ramps,
         samples: &[],
@@ -65,6 +65,58 @@ fn amplitude_of(prepared: &PreparedNode) -> f32 {
 
 /// The rate the envelope fixtures convert their segment frames at.
 const RATE: f64 = 48_000.0;
+
+#[test]
+fn impulse_visits_every_mapped_frame_including_multiple_turns_inside_a_quantum() {
+    use crate::time::{PlanPosition, QuantumTimeline};
+
+    for length in [1_u64, 2, 63, 64, 65, 127] {
+        for phase in [0, length - 1] {
+            let positions =
+                std::array::from_fn(|frame| PlanPosition::new((phase + frame as u64) % length));
+            for target in [0, length - 1] {
+                let prepared = PreparedNode::Impulse {
+                    position: PlanPosition::new(target),
+                };
+                let mut state = NodeState::initial(&prepared);
+                let mut out = [9.0_f32; 64];
+                let allocator_events = crate::render_allocation::count_allocs(|| {
+                    crate::node::kernels::impulse(
+                        &prepared,
+                        &mut state,
+                        &mut NodeIo {
+                            out: &mut out,
+                            channels: crate::quantities::ChannelLayout::Mono,
+                            inputs: [InputBuffer::Unpatched; MAX_INPUTS],
+                            timeline: QuantumTimeline::mapped(&positions),
+                            controls: &[],
+                            ramps: &[],
+                            samples: &[],
+                            scripts: crate::script::ScriptResources::default(),
+                            history: &mut [],
+                        },
+                    );
+                });
+                assert_eq!(allocator_events, 0);
+                let mut expected = [0.0_f32; 64];
+                let first = if target >= phase {
+                    target - phase
+                } else {
+                    length - phase + target
+                };
+                let mut frame = first;
+                while frame < 64 {
+                    expected[frame as usize] = 1.0;
+                    frame += length;
+                }
+                assert_eq!(
+                    out, expected,
+                    "length={length}, phase={phase}, target={target}"
+                );
+            }
+        }
+    }
+}
 
 /// `frames` frames at [`RATE`], as the seconds the prepared record now carries: the kernel
 /// rounds the product back to exactly `frames`.
@@ -451,7 +503,7 @@ fn the_widening_writes_every_channel_of_every_frame() {
             out: &mut out,
             channels: layout,
             inputs,
-            position: None,
+            timeline: crate::time::QuantumTimeline::linear(None),
             controls: &[],
             ramps: &[],
             samples: &[],
@@ -775,7 +827,7 @@ fn a_latency_reset_invalidates_history_without_clearing_the_line() {
                 out: &mut out,
                 channels: crate::quantities::ChannelLayout::Mono,
                 inputs,
-                position: None,
+                timeline: crate::time::QuantumTimeline::linear(None),
                 controls: &controls,
                 ramps: &[],
                 history: &mut history,
@@ -815,7 +867,7 @@ fn a_latency_keeps_stereo_order_in_place_and_resets_at_the_positioned_sample() {
             out: &mut out,
             channels: crate::quantities::ChannelLayout::Stereo,
             inputs,
-            position: None,
+            timeline: crate::time::QuantumTimeline::linear(None),
             controls: &controls,
             ramps: &[],
             history: &mut history,

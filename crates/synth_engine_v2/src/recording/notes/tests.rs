@@ -30,7 +30,11 @@ pub(super) fn limits(bytes: u64) -> RecordingLimits {
 }
 
 pub(super) fn context(epoch: StreamEpoch) -> NoteArmContext {
-    NoteArmContext::prepare(NoteArmInput {
+    NoteArmContext::prepare(context_input(epoch)).unwrap()
+}
+
+pub(super) fn context_input(epoch: StreamEpoch) -> NoteArmInput {
+    NoteArmInput {
         target: FixtureTargetId::new(1).unwrap(),
         expected_revision: FixtureRevision::new(0),
         interval: MusicalInterval::new(MusicalTick::new(1), MusicalTick::new(5)).unwrap(),
@@ -44,8 +48,7 @@ pub(super) fn context(epoch: StreamEpoch) -> NoteArmContext {
             SampleRate::new(48_000.0).unwrap(),
         )
         .unwrap(),
-    })
-    .unwrap()
+    }
 }
 
 fn setup() -> (SimulatedNoteRecorder, ConnectionGeneration, TakeReservation) {

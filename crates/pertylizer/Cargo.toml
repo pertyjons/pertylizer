@@ -12,6 +12,10 @@ default-run = "pertylizer"
 name = "evd_0016_cpal_timestamps"
 test = true
 
+[[example]]
+name = "v2_cpal_output"
+test = true
+
 [lints]
 workspace = true
 
@@ -144,6 +148,10 @@ winit = { workspace = true, features = ["wayland-csd-adwaita"], optional = true 
 chrono = { workspace = true }
 
 [dev-dependencies]
+# Used only by the Linux V2 callback test binary; no shipping allocator change.
+allocation-counter = { workspace = true }
+# Stopped-plan mailbox for the non-shipping Linux V2 adapter.
+triple_buffer = { workspace = true }
 jsonschema = { workspace = true }
 hound = { workspace = true }
 # EVD-0014 compares V1 against V2 in one binary, and EVD-0016 embeds V2's quantum

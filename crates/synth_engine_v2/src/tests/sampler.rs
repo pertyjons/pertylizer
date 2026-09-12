@@ -810,7 +810,7 @@ fn the_kernel_alone_plays_from_the_on_edge() {
         out: &mut out,
         channels: ChannelLayout::Mono,
         inputs: [InputBuffer::Unpatched; MAX_INPUTS],
-        position: None,
+        timeline: crate::time::QuantumTimeline::linear(None),
         controls: &controls,
         ramps: &ramps,
         samples: &samples,

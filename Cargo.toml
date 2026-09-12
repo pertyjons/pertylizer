@@ -37,6 +37,8 @@ repository = "https://github.com/pertyjons/pertylizer"
 description = "Pertylizer — a modular synthesizer with 75 module types (including 26 effects) and MCP integration"
 
 [workspace.dependencies]
+allocation-counter = "0.8.1"
+triple_buffer = "=9.0.0"
 # Core dependencies
 # "rc" enables Serialize/Deserialize for Rc/Arc (used by AutomationTarget's
 # Arc<str> param id). Inert for existing types — a serialized struct holding

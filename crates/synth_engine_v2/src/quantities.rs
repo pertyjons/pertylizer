@@ -178,6 +178,12 @@ counted_quantity!(
     "Retained capture segments, including empty passes."
 );
 counted_quantity!(
+    LoopPassCount,
+    u32,
+    "observed loop passes",
+    "Loop passes retained by a finite journal, including an empty initial pass."
+);
+counted_quantity!(
     CaptureResultCount,
     u32,
     "capture results",
