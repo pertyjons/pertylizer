@@ -6,7 +6,7 @@
 | Status        | Proposed                                                     |
 | Phase         | 0B                                                           |
 | Created       | 2026-08-13                                                   |
-| Last reviewed | 2026-09-08                                                   |
+| Last reviewed | 2026-09-19                                                   |
 | Related       | P00B-T003, P00A-T001, ADR-0008, ADR-0016, ADR-0017, ADR-0034 |
 | Supersedes    | —                                                            |
 | Superseded by | —                                                            |
@@ -18,7 +18,7 @@ saved file would carry the old encoding.
 
 ## Context
 
-The [identity inventory](../inventories/identities.md) records 31 identities and
+The [identity inventory](../inventories/identities.md) records identities and
 references crossing the project, GUI, MCP, history, serialization, import, and
 engine boundaries; its dated audit table records the inspected source revisions. This record decides how a persistent
 identity is generated, encoded, and scoped in Project Core V2.
@@ -62,9 +62,10 @@ types and open for `script` and `audio_script`, whose knobs the user declares �
 see the uncertainty section below, which is where that was established. Asset and sample identity
 (`IDN-0010`, `IDN-0030`) is ADR-0017's. What a track or bus *is* (`IDN-0002`,
 `IDN-0005`, `IDN-0021`) is ADR-0034's; this record decides only how such a thing
-is named. Unknown-field and enum-ordinal policy (`IDN-0014`) is ADR-0016's. How
-a script's random stream is seeded once identity stops seeding it is ADR-0008's,
-and clause 11 states the requirement this record hands it.
+is named. Unknown-field and enum-ordinal policy (`IDN-0014`) is ADR-0016's.
+Accepted ADR-0008 owns experimental script-state seeding and includes node
+identity as an input. It has not accepted proposed clause 11's audio-independence
+requirement; their reconciliation is an open acceptance question below.
 
 ## Decision drivers
 
@@ -197,14 +198,14 @@ of the name itself belongs to ADR-0016, not to this record.
 ## Decision
 
 Proposed, not accepted. Thirteen clauses. The open acceptance questions below
-qualify the duplication and merge claims; the proposed clauses do not yet form
-an implementable contract for those cases.
+qualify the duplication, merge and audio-state claims; the proposed clauses do
+not yet form an implementable contract for those cases.
 
 ### Open acceptance questions
 
 The [2026-09-08 identity inspection](../inventories/identities.md#source-inspection-2026-09-08)
 supplies proposed rules for every ledger row, not acceptance of this record.
-Two counterexamples remain to resolve before this proposal can be accepted:
+Three questions remain to resolve before this proposal can be accepted:
 
 - **Duplicating inside one document.** Clause 8 describes a new document with
   a new allocation origin and retained entity IDs. It also says "duplicate",
@@ -224,11 +225,22 @@ Two counterexamples remain to resolve before this proposal can be accepted:
   conflict/deduplication behavior for identities from every retained origin,
   regardless of which origin currently allocates. That fork/edit/merge is the
   falsifier; no conflict policy is selected by this inventory update.
+- **Persistent identity and script seed identity.** Proposed clause 11's
+  prohibition on identity-derived audio conflicts with accepted
+  [ADR-0008](ADR-0008-yams-state-identity-and-seeds.md)
+  clause 3, which derives experimental VM seeds from project seed, node identity,
+  stable voice index and script-state identity. The accepted runtime rule stands.
+  Before this proposal can govern conversion or copying, define how persistent
+  entity identity maps to runtime seed inputs and which operation preserves or
+  changes the random stream. A claimed sound-preserving conversion that changes
+  the stream solely through identity reassignment falsifies that claim. No seed
+  mapping, V1 random-stream fidelity or successor runtime rule is selected here.
 
 These questions block acceptance of the affected contract, not Phase 7's
 experimental work. The no-remapping claims in the options and consequences
 remain conditional on resolving them. Script seeds and reload stay with
-ADR-0008 and their first consumers; no audio-state rule changes here.
+ADR-0008 and their first consumers; the proposed audio-independence claims are
+not accepted guarantees and no audio-state rule changes here.
 
 ### The identity
 
@@ -311,8 +323,9 @@ ADR-0008 and their first consumers; no audio-state rule changes here.
 11. **Nothing derives audio state from an identity.** `script_seed_base`'s
     dependence on type and instance number is forbidden: a node's random stream
     is seeded from data the node carries, persisted explicitly, and preserved
-    across renumbering. ADR-0008 owns what that seed is; this record fixes only
-    that it may not be the identity. **The V1 conversion must carry the seed, not
+    across renumbering. This remains a proposal requiring the seed-boundary
+    resolution above; accepted ADR-0008 does not implement this prohibition.
+    **The V1 conversion must carry the seed, not
     the id** — a converted project whose scripts sound different is a conversion
     defect. The current shared-instrument corpus case deliberately does not claim
     to cover this random-stream conversion rule.
@@ -377,8 +390,10 @@ generates, and clause 10 is the backstop if one slips through.
   in a document; it is why the compiled plan uses compact indices instead.
 - Ordinals are not dense, so nothing may use them as array indices — which is
   the point, and also a trap for anyone who assumes otherwise.
-- The V1 conversion must carry per-node seeds it currently does not store, so it
-  cannot be a pure syntactic rewrite.
+- If clause 11's proposed storage rule is selected after seed-boundary
+  reconciliation, V1 conversion would need per-node seed data absent from V1's
+  saved document. That option would require more than a syntactic rewrite;
+  neither the storage choice nor its fidelity is established here.
 - A document copied outside the application keeps its allocation origin, so two
   copies can mint colliding identities. Nothing in the format can prevent it;
   clause 10 detects it at merge, which is later than one would like.
@@ -391,10 +406,11 @@ generates, and clause 10 is the backstop if one slips through.
   conversion is driven from the identity inventory, and a round-trip fixture per
   entry class fails when a reference is dropped — the Phase 0B fixtures
   P00B-T005 begins.
-- **Risk: the seed obligation in clause 11 is forgotten**, and converted projects
-  quietly change sound. Control: a corpus case with a script whose output
-  depends on its seed, converted and compared. It does not exist yet; the
-  `yams-control-patch` category is where it belongs.
+- **Conditional risk: a later conversion claims random-stream preservation
+  without proving its seed mapping.** If that claim is selected after the open
+  seed-boundary decision, its control is a converted-and-compared corpus case
+  whose script output depends on its seed. No such conversion evidence exists
+  here; `yams-control-patch` is the intended category for that future check.
 - **Risk: clause 2 erodes.** An opaque identity with visible structure invites a
   reader to parse it. Control: the string form is produced and consumed by one
   pair of functions, and no other code constructs it from parts.
@@ -426,7 +442,7 @@ generates, and clause 10 is the backstop if one slips through.
 | Round-trip fixture: delete the highest ordinal, reload, allocate, assert no reuse             | 10A   | Not started |
 | Fork-and-merge fixture: same-origin collision is refused, naming both ordinals                | 10A   | Not started |
 | Rejection tests for non-canonical identity spellings, and for ordinal exhaustion              | 10A   | Not started |
-| Persist per-node script seeds so clause 11 can hold (ADR-0008)                                | 7/10A | Not started |
+| Reconcile proposed clause 11 with accepted ADR-0008 before selecting conversion seed storage or claiming random-stream preservation | 0B/10A | Not started |
 | Author the deterministic shared-instrument corpus case; random-script seed conversion remains separate | 0A | Complete |
 
 ## Revisit conditions

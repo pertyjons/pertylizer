@@ -4,7 +4,7 @@
 |---------------|------------|
 | Status        | Active     |
 | Phase         | 00B        |
-| Last reviewed | 2026-09-08 |
+| Last reviewed | 2026-09-19 (public client and transaction identities only) |
 
 This ledger records identities and references crossing project, GUI, MCP, history, serialization, import, duplication,
 and engine boundaries.
@@ -22,7 +22,7 @@ and engine boundaries.
 
 ## Ledger
 
-Entries use `IDN-NNNN` identifiers. Next free identifier: `IDN-0032`.
+Entries use `IDN-NNNN` identifiers. Next free identifier: `IDN-0034`.
 
 Pass 1 derived producers, consumers, and encodings from the committed project schema (`schemas/project.schema.json`) and
 the declaring Rust types. `Migration` remains open for the owning identity, asset, editor-state and format decisions
@@ -34,6 +34,10 @@ prevent treating its duplication and merge claims as a complete contract. Type n
 new Rust APIs. Existing entry statuses remain unchanged: source inspection and proposed rules alone do not satisfy
 `Classified` or `Verified`. Script seeds and reload stay with ADR-0008 and its first consumers; effect semantics
 remain Phase 8's, and asset/editor policy stays with its named owner. This pass does not close P00B-T003 or Phase 0B.
+
+The [2026-09-19 inspection](#public-client-and-transaction-identities-2026-09-19) adds the two previously
+uninspected public identities as IDN-0032/0033. The ledger now has 33 entries, each with a proposed rule.
+Neither new row is a persisted entity identity or an accepted migration decision. External consumers remain unknown.
 
 Source abbreviations in proposal cells: `song.rs`, `ids.rs`, `pattern.rs`, `note.rs`, `automation.rs` and
 `mod_grid.rs` are in `crates/synth_sequencer/src/`; `commands.rs` and `graph.rs` are in
@@ -102,16 +106,99 @@ Source abbreviations in proposal cells: `song.rs`, `ids.rs`, `pattern.rs`, `note
 | IDN-0030 | Sample identity inside a bundle                | `SampleId` as the ZIP entry filename (`1.wav`) plus `BundleSampleEntry.id`                                               | Bundle save                                       | `load_bundle`                                                                     | `.ptz.zip`                                     | Two copies of the same identity in one archive — the filename and the metadata `id` — with nothing enforcing agreement. `load_bundle` clears the library first, so there is no merge case and therefore no remapping rule to get wrong; equally, there is no way to import a bundle's samples *into* an existing session.                                                                                                                                                                                                                                                        | One declared sample entity identity consistently binds archive content and metadata; check missing, duplicate and disagreeing entries before committing reconstructed state. Source/boundary: `bundle.rs::load_bundle` filename parsing and metadata lookup; `library.rs::add_with_id`; ADR-0017/format work. |           | ADR-0017           | Investigating |
 | IDN-0031 | Track selected by display name                 | `TrackSelector` — "id or unique name"                                                                                    | `pertylizer render --solo-track` / `--mute-track` | Render CLI and reference corpus | Not in the song document; serialized in corpus `solo_tracks`/`mute_tracks` | Names are convenience selectors requiring exactly one match. `render/mix.rs::resolve` diagnoses zero or multiple matches before `apply_mix_selection` mutates the song. The same input content and selector do not become ambiguous without a content change; renaming or adding tracks can change resolution. `TrackSelector` is serialized in corpus manifests (`corpus/mod.rs:383,386`), so its contract extends beyond CLI arguments. ADR-0030 owns the external-surface decision before Phase 10E. | Resolve a convenience name once against the captured input, requiring exactly one match; domain operations use typed `TrackId`. Preserve manifest selector semantics until explicitly changed. Source/boundary: `render/mix.rs::resolve`; `corpus/mod.rs::solo_tracks`/`mute_tracks`; ADR-0030 owns the external-surface decision before Phase 10E. |           | ADR-0030           | Investigating |
 
-## Boundaries still not inspected
+### Public client and operation identities
+
+| ID | Concept/reference | Current type/encoding | Producers | Consumers | Persistence | Known problem | Proposed V2 newtype/rule | Migration | ADR | Status |
+|---|---|---|---|---|---|---|---|---|---|---|
+| IDN-0032 | Hub client registration | `ClientId(pub u64)`; `PRIMARY = 0` | `EngineHub::register_primary`, per-hub atomic counter in `register_client`; public tuple construction | Hub command permission lookup, exclusive control, unregister and loss counters; `ClientHandle.id`; public Rust consumers | No repository serialization found; runtime hub registration | Equal IDs exist in separate hubs; the public ID carries no hub scope. Re-registering primary replaces the map entry without disconnecting the old handle. Counter exhaustion is unchecked. See [inspection](#client-identity-idn-0032). | If a successor is selected, use a typed registration identity bound to its service/session lifetime, separate from persisted entities and authorization credentials. Refuse stale or foreign registrations and exhaustion; define primary replacement explicitly. | Open: follows CAP-0017 and proposed ADR-0039; Phase 10E or an earlier service consumer must decide omission/replacement and its compatibility boundary. | ADR-0029, ADR-0030, ADR-0039 | Investigating |
+| IDN-0033 | Engine command-batch correlation | `TransactionId(pub u64)` from a process-local static atomic counter starting at 1 | `TransactionId::new`/`Default`, `CommandBatch::new`, `BatchBuilder`; public tuple construction | `CommandBatch.id`, caller-supplied `BatchResult.id`; public Rust consumers | No repository serialization found; counter restarts with the process | Public construction permits duplicates; generated IDs wrap on exhaustion and have no restart namespace. A matching result ID proves neither execution nor atomicity. This is not MCP's batch result. See [inspection](#transaction-identity-idn-0033). | Keep typed operation/result correlation separate from project revision, entity identity and client identity. The operation-result contract must state its lifetime, retry/replay behavior and exhaustion; do not inherit this counter as a durable receipt or idempotency key. | Open: CAP-0510 records the public helper surface. P00B-T006/ADR-0035 owns the operation-result proposal before Phase 10B; ADR-0030/Phase 10E owns any public API removal or replacement. | ADR-0030, ADR-0035 | Investigating |
+
+## Remaining coverage and decision work
 
 Pass 1 covered the project document; pass 2 added undo, duplication, engine identity, the bundle format, and the one
-name-as-identity path. The 2026-09-08 pass adds the inspections below. What remains:
+name-as-identity path. The dated inspections below extend that coverage. What remains:
 
-- **`TransactionId` and `ClientId`** (`synth_engine`) — the multi-client hub's identities. Their reachability in a
-  shipped path is itself unestablished (`CAP-0017`), so they are deliberately deferred until that is settled (ADR-0029,
-  ADR-0035).
+- **Public-service migration decisions** — IDN-0032/0033 now distinguish client registration from command-batch
+  correlation. Repository reachability is inspected; external use, compatibility decisions and successor contracts
+  remain with CAP-0017/CAP-0510 and their named owners. These IDs must not be folded into ADR-0014's persisted entities.
+- **Stable-ID contract** — [ADR-0014's open acceptance questions](../decisions/ADR-0014-persistent-id-generation-and-encoding.md#open-acceptance-questions)
+  now include its seed conflict with accepted ADR-0008 alongside in-document copy and retained-identity merge.
+  They block treating the proposed rules as a conversion or audio-equivalence guarantee; this audit changes
+  neither contract.
 - **Tracker-module import** — lives on the unmerged `feat/tracker-import` branch and is **not present at
   `dd69b657`**. Out of scope for an audit of `main`; it must be re-audited before that branch merges.
+
+## Public client and transaction identities 2026-09-19
+
+Source revision: `d12727544e119d3bb7cee398a6b54b59ec6fd535`. This bounded source inspection extends the existing
+audit method; it adds no runtime experiment or migration implementation. It follows declarations, constructors,
+consumers and exports for the two previously omitted public identities, and distinguishes identically named MCP
+types. Existing unit tests were read, not run. No row is promoted to `Classified` or `Verified`.
+
+**Falsifier and stopping rule:** a workspace production caller, a serialized use, or a contrary constructor/consumer
+invalidates the corresponding source claim below. Treating a public API as removable merely because local callers
+are absent, or treating a batch label as proof of atomic execution, blocks acceptance of the audit. Optional
+successor implementation detail is not required to record the current boundary.
+
+The search covers repository Rust files, including examples and tests:
+
+```bash
+rg -n '\b(ClientId|TransactionId|EngineHub|ClientHandle|CommandBatch|BatchBuilder|BatchResult|TransactionalCommand)\b' --glob '*.rs'
+ast-grep run --lang rust --pattern 'EngineHub::new($$$ARGS)' crates
+ast-grep run --lang rust --pattern 'CommandBatch::new($$$ARGS)' crates
+```
+
+[synth_engine exports](../../../crates/synth_engine/src/lib.rs) expose both modules and their types.
+[Pertylizer](../../../crates/pertylizer/src/lib.rs) re-exports `synth_engine` itself and also exposes `EngineHub`
+directly. Searches and inspection found no workspace caller of the hub or the transaction batch types outside
+their defining modules and exports. This bounds repository reachability, not the existence of external users;
+CAP-0017 retains that distinction and CAP-0510 adds the separate batch helper surface.
+
+### Client identity (IDN-0032)
+
+In [hub.rs](../../../crates/synth_engine/src/hub.rs), each `EngineHub::new` initializes its own counter to 1.
+`register_primary` uses 0, while `register_client` uses unchecked atomic `fetch_add`. `ClientId` exposes its numeric
+field and has no hub identity, epoch or serialization implementation. Hub operations look up the supplied ID in
+that hub's map; the integer is not an authentication credential.
+
+Two newly created hubs therefore issue equal first non-primary IDs. Passing one hub's ID to the other can select
+the other's registration rather than be recognized as foreign. Registering primary twice replaces the entry at 0;
+the old handle retains its own `Arc<ClientInfo>`, whose connected flag is not cleared by that replacement. Those
+are source-derived counterexamples, not executed reproductions. Wrapping the counter can also reach reserved or
+previously issued IDs; no exhaustion refusal appears at allocation.
+
+The existing `test_client_registration`, `test_client_unregister` and `test_exclusive_control` tests exercise ordinary
+single-hub registration and control. They do not establish cross-hub rejection, primary replacement semantics or
+exhaustion behavior. Before a V2 service consumes a registration identity, its owner must specify and test those
+cases, including stale handles after disconnection/reconnection. The proposed hub omission is still not an accepted
+public API break.
+
+### Transaction identity (IDN-0033)
+
+[transactions.rs](../../../crates/synth_engine/src/transactions.rs) owns `NEXT_TRANSACTION_ID`, a static counter
+starting at 1. `CommandBatch::new` obtains an ID, and `BatchBuilder` constructs a batch. `BatchResult::success` and
+`failure` accept whichever ID the caller supplies; they do not execute or validate a batch. Both the ID's tuple
+field and `CommandBatch.id` are public. Normal allocation distinguishes successive calls before exhaustion, but
+public construction, process restart and unchecked wrap prevent a durable/global uniqueness claim.
+
+The module provides command ordering, extraction and reverse-command helpers. Its atomic-batch documentation is
+not an execution guarantee: no workspace batch executor or receipt consumer was found. `extract_commands` skips
+non-clonable commands by design; `into_commands` transfers all commands. `is_fully_reversible` checks flags, whereas
+`rollback_commands` collects only supplied reverse commands that can be cloned. None of these establishes a
+revisioned Application Core transaction. Existing `test_transaction_id` and `test_batch_result` check ordinary
+allocation and result fields, not restart, exhaustion, replay, execution or atomicity.
+
+MCP's [BatchResult](../../../crates/synth_mcp/src/types.rs) instead serves bulk tools such as `add_note`, carrying
+item counts and per-item results with no engine `TransactionId`. The separate MCP
+[batch_execute](../../../crates/synth_mcp/src/server/tools/batch.rs) returns `BatchExecResult`: it dispatches tools
+and uses bridge snapshot/restore for requested rollback. Neither MCP result type uses the engine's
+`TransactionId`, and `batch_execute` does not use `CommandBatch`. The operation-result work must audit all three
+result surfaces rather than infer shared transaction semantics from their names.
+
+For P00B-T006, the unresolved choices are correlation scope, whether retries share an operation identity, retention
+of outcomes and the relation to canonical revision. Tests belong to the selected successor and must include stale
+or replayed IDs and failure/partial-effect reporting. This pass neither selects those policies nor removes the V1
+helper API.
 
 ## Source inspection 2026-09-08
 
@@ -156,3 +243,4 @@ optional implementation detail does not. These are checks on the proposals, not 
 | 2026-08-12 | `dd69b657`      | Undo/redo (`undo.rs`, `undo_flow.rs`), duplication (`song.rs`, `pattern.rs`), engine identity (`synth_engine/src/commands.rs`, `graph.rs`), bundle format (`bundle.rs`, `schemas/bundle-metadata.schema.json`), legacy-address upgrade (`patch.rs`), render CLI selectors (`main.rs`). | 5 entries added (`IDN-0027`..`IDN-0031`); 4 pass-1 entries resolved by reading the code rather than the schema. Two pass-1 hypotheses were **wrong and are corrected in place**: pattern duplication does remap note ids (`IDN-0025`), and the module-instance counter is reconciled by `max()` rather than repaired heuristically (`IDN-0026`). One heuristic repair does exist, elsewhere (`IDN-0028`). Method limit: this pass read the code paths it named and did not execute them, so `IDN-0027` is a reading of the dispatch, not an observed reproduction. | Pending `EVD` record for P00B-T003 |
 | 2026-08-29 | `3a72dd0c` | The two format questions ADR-0014 owed: `schemas/project.schema.json`'s `ModuleState` `oneOf` walked mechanically; `bin/gen_schemas.rs:72,664`; `session.rs:115-134,1195-1212,1265-1290`; `project_apply.rs:264-313`; `synth_engine/src/instrument.rs:1148-1176`; `synth_engine/src/graph.rs:241-244`; `mcp_bridge.rs:109-112,232,285,517-532`; `mcp_bridge/instrument_build.rs:273-282`; `synth_sequencer/src/automation.rs:324-355`. | **Both answered, and the first answer was wrong until an independent review corrected it.** The parameter set is closed for 73 of the 75 module types — 372 names, generated from the descriptors — and **open for `script` and `audio_script`**, whose knobs are declared in the user's own program and saved into the same map. The pass first reported a flat closed set of 372, because a mechanical schema walk cannot see a descriptor built at load time. **A schema defect fell out of the correction**: those two variants declare zero properties with `additionalProperties: false`, so a project with a script knob is invalid against its own published schema. Enforcement is not uniform either — one path reports, the engine apply, and at least three skip silently: the master and return chains, the GUI patch-editor restoration, and visualizer and `SignalMonitor` modules, which are skipped before a parameter is looked at — and a lane whose parameter vanished is caught by the rebuild tool though not by ordinary load or playback. The module-id overlap is real but **conditional**: two owners holding the same module type give it the same id (`rev-1`), which is harmless only because every reference is qualified by its owner — also why no automation lane can address a master or return-chain module. For ADR-0014 it is a conversion requirement: map by `(owner, id string)`, never by the string. Method limit: every path was read, not executed, and the three rows keep `Investigating` because their `Proposed V2 newtype/rule` column is still blank — that column is the rest of P00B-T003. | Pending `EVD` record for P00B-T003 |
 | 2026-09-08 | `51be9577` | V1 identity declarations, tracker layout, category decoding, group membership, selector resolution/manifests, application and graph allocation, mod-graph/sample duplication, and standalone/project schema comparison; see [source inspection](#source-inspection-2026-09-08). | All 31 proposed-rule cells filled without promoting any entry status or accepting ADR-0014. Five misleading claims corrected (IDN-0014, IDN-0016/0026, IDN-0022, IDN-0023, IDN-0031). Three source-inspection gaps closed; runtime/migration verification and decisions remain open. | Source inspection and JSON comparison only; runtime/migration EVD remains pending. |
+| 2026-09-19 | `d1272754` | Public client registration and command-batch correlation; declarations, allocation, consumers, exports and distinct MCP batch types. | Added IDN-0032/0033; 33 entries now have proposed rules. Closed the two named source-inspection gaps without claiming external consumers absent, accepting an API break or closing P00B-T003. | [Source inspection](#public-client-and-transaction-identities-2026-09-19); no runtime or migration test executed. |

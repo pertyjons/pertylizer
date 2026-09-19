@@ -4,7 +4,7 @@
 |---------------|------------|
 | Status        | Active     |
 | Phase         | 00B        |
-| Last reviewed | 2026-09-12 (MCP discovery subset only) |
+| Last reviewed | 2026-09-19 (public command-batch helper surface only) |
 
 This ledger covers every shipped or externally consumed capability and assigns it a deliberate V2 disposition.
 
@@ -38,7 +38,7 @@ subsystems.
 
 ## Ledger
 
-Entries use `CAP-NNNN` identifiers. Next free identifier: `CAP-0510`.
+Entries use `CAP-NNNN` identifiers. Next free identifier: `CAP-0511`.
 
 Passes 1 and 2 were a **surface census**; pass 3 added the per-item enumeration the master plan requires.
 The [2026-09-09 project-action inspection](#project-actions-2026-09-09) assigns `Migrate` to seven existing
@@ -128,6 +128,7 @@ checks to pass; source inspection alone does not establish implemented V2 behavi
 | CAP-0044 | Protocol   | OSC telemetry — 19 addresses under `/synth/*` and `/viz/*` (meta, RMS, peak, FFT, centroid, flux, note on/off, CC, transport, voice count, CPU, event drops, viz ping/pong/camera) | `osc` feature (default), UDP |             |                      | External standalone visualizer consumes `/viz/*`; it is not in this repository           | Investigating |
 | CAP-0045 | Formats    | `.ptz` project (JSON), `.ptz.zip` bundle, `.json` patch, `.json` group template, `settings.json`, recovery snapshots                                                               | File dialogs, CLI, MCP       |             |                      | Three committed JSON Schemas: `project`, `patch`, `bundle-metadata`                      | Investigating |
 | CAP-0046 | Public API | **23** `pub mod` in `crates/pertylizer/src/lib.rs` plus 11 further workspace crates, all with public surfaces | Rust consumers | | | Facade scope is ADR-0030; the planned runtime library is `plans/game-runtime-library.md` | Investigating |
+| CAP-0510 | Public API | Command-batch helpers: `CommandBatch`, `BatchBuilder`, `TransactionalCommand`, `BatchResult` and `TransactionId` | `synth_engine::transactions` and root exports, also accessible through Pertylizer's crate re-export; no workspace consumer outside the defining module/exports found; external use unknown |  | P00B-T006 / Phase 10B operation-result contract; ADR-0030 / Phase 10E public-facade decision | [IDN-0033 source inspection](identities.md#transaction-identity-idn-0033); helper construction/extraction is not atomic execution, and MCP's batch surface is separate | Investigating |
 | CAP-0047 | Build      | Cargo features — `gui-egui`, `mcp`, `osc` (default), `rt-profiling`, `egui-inspection` (opt-in); MSRV 1.98; CI checks `--no-default-features` and `--all-features`                 | Build matrix                 |             |                      | Supported matrix is ADR-0031                                                             | Discovered    |
 
 ### GUI actions (pass 2)
@@ -1420,6 +1421,7 @@ the complete P00B-T002/Phase 0B exit remain open.
 | 2026-09-11 | `bab84945` | Used the existing source-inspection method to follow four project-tool handlers through direct/batch dispatch, ProjectBridge, project/sample mutation, save builders and GUI notification consumers; read the cited tests without running them. | CAP-0172, CAP-0173, CAP-0205 and CAP-0206 are `Migrate`/`Classified`, with source limits and pending migration checks. Recorded the catalog/patch-refusal discrepancy, nontransactional load/reset and save capture limits; corrected the project-tool rollup. Sixteen rows now have supporting dispositions; P00B-T002 remains incomplete. | [MCP project-operation source inspection](#mcp-project-operations-2026-09-11) |
 | 2026-09-12 | `ee5c6600` | Followed five default MCP handlers and batch routes through cleanup, lint aggregation, built-in catalog lookup, shared patch application and the GUI pending-patch consumer; read the named tests without running them. | Classified CAP-0084, CAP-0153, CAP-0156, CAP-0171 and CAP-0178 with owners and pending checks. Recorded silent cleanup failures, lint coverage limits and the load/apply diagnostic and GUI-target differences. Twenty-one rows have supporting dispositions; P00B-T002 remains incomplete. | [Cleanup, lint and example-patch inspection](#mcp-cleanup-lint-and-example-patches-2026-09-12) |
 | 2026-09-12 | `3fb94fb4` | Followed five discovery handlers and batch routes into enum/factory catalogs, descriptor builders, search filters/ranking, port compatibility and the embedded schema; inspected JSON branches and read named tests without running Rust. | Classified CAP-0140, CAP-0143, CAP-0162, CAP-0167 and CAP-0208 with V2 owners and pending checks. Recorded type/instance limits, post-build search truncation and schema publication/correctness limits. Twenty-six rows have supporting dispositions; P00B-T002 remains incomplete. | [Discovery inspection](#mcp-discovery-2026-09-12) |
+| 2026-09-19 | `d1272754` | Read public command-batch declarations, helpers and exports alongside IDN-0033; distinguished engine helpers from MCP bulk tools and batch dispatch. | Added CAP-0510 as a previously unlisted public surface; migration remains open and no existing classification changes. | [Source inspection](identities.md#transaction-identity-idn-0033); no runtime or migration test executed. |
 
 Completion requires each discovered entry to have reachability, disposition, V2 ownership, and verification. Matching
 the seed counts alone is insufficient.
