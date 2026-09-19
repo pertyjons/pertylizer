@@ -235,16 +235,14 @@ Phase 0B remains `Active, parallel`; Phase 10 still waits for its exit.
 |---|---|---|
 | P00B-T001 | Complete | Closed 2026-08-29; 64 state entries are `Classified` and coverage-gated |
 | P00B-T002 | Paused | Resume by assigning reachability and migration dispositions in the capability inventory |
-| P00B-T003 | Active | All 33 identity entries have proposed rules. [ADR-0014](decisions/ADR-0014-persistent-id-generation-and-encoding.md) now separates copy/fork, refuses shared-origin imports and follows ADR-0008 seed inputs; it remains Proposed. Next: map V1 identity/reference classes through the proposal and name unsupported conversion cases. |
+| P00B-T003 | Complete | Identity/reference audit and proposed conversion dispositions closed in [EVD-0023](evidence/phase-00b/EVD-0023-identity-reference-coverage.md). Implementation and format/API approval remain with the named consumers. |
 | P00B-T004–T007, P00B-T009 | Not started | Follow the frozen Phase 0B decomposition |
 | P00B-T008 | Not started | Re-scope the former all-ADR task under `PROCESS.md` decision timing |
 
-The next P00B-T003 slice records source-qualified conversion keys, created entity
-IDs, reference remapping and refusal cases in the identity inventory. Equal V1
-local IDs under different owners must remain distinct; every supported reference
-must reach its intended target. Runtime verification and format/API approval
-remain required before a converter is enabled. Public client and operation IDs
-retain their separate service and operation-result owners in IDN-0032/0033.
+Next for Phase 0B: resume P00B-T002 with reachability and migration dispositions
+in the [capability inventory](inventories/capabilities.md). P00B-T006 and
+P00B-T007 still own the operation-result and format contracts; the completed
+identity audit supplies their conversion cases and first-consumer obligations.
 
 ## Phase 3 residual obligations
 
@@ -275,8 +273,8 @@ Phase 3 is complete. Its exit review accepted these bounded residuals:
 
 ## Current blockers
 
-Phase 8 has no remaining exit blocker. Phase 0B continues with `P00B-T003`
-selected; Phase 9 has completed P09-S001 through P09-S006.
+Phase 8 has no remaining exit blocker. Phase 0B next resumes `P00B-T002`;
+Phase 9 has completed P09-S001 through P09-S006.
 The accepted residuals above block their named first consumers.
 Session share 128 and total cap 360 remain provisional until
 Phase 9's complete reselection under ADR-0054.

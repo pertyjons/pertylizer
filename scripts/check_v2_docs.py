@@ -496,16 +496,13 @@ def check_evidence_dependency_pins(errors: list[str]) -> None:
         errors.append(f"EVD-0016 CPAL version declarations disagree: {detail}")
 
 
-def check_state_ownership_coverage(errors: list[str]) -> None:
-    """Run EVD-0018's coverage check as part of the gate.
-
-    The ledger's exactly-once claim is only enforced if something runs it, so the
-    checker and its own mutation tests belong here rather than beside the record
-    that introduced them.
-    """
+def check_inventory_coverage(errors: list[str]) -> None:
+    """Run EVD-0018 and EVD-0023 coverage guards and their negative controls."""
     for command, label in (
         (["scripts/check_state_ownership_coverage.py"], "state-ownership coverage"),
-        (["-m", "unittest", "scripts/test_check_state_ownership_coverage.py"], "its mutation tests"),
+        (["-m", "unittest", "scripts/test_check_state_ownership_coverage.py"], "state coverage controls"),
+        (["-m", "unittest", "scripts/test_check_identity_coverage.py"], "identity coverage controls"),
+        (["scripts/check_identity_coverage.py"], "identity coverage"),
     ):
         completed = subprocess.run(
             [sys.executable, "-B", *command],
@@ -647,7 +644,7 @@ def main(argv: list[str] | None = None) -> int:
         check_evidence_simulators(errors)
     check_evidence_dependency_pins(errors)
     check_spec_prefixes(errors)
-    check_state_ownership_coverage(errors)
+    check_inventory_coverage(errors)
     check_active_document_width(errors)
     check_derived_source_citations(errors)
     if errors:

@@ -65,7 +65,7 @@ class DocumentationCheckerTests(unittest.TestCase):
             "check_evidence_harnesses",
             "check_evidence_dependency_pins",
             "check_spec_prefixes",
-            "check_state_ownership_coverage",
+            "check_inventory_coverage",
             "check_active_document_width",
             "check_derived_source_citations",
         )
@@ -80,6 +80,18 @@ class DocumentationCheckerTests(unittest.TestCase):
             simulator.assert_not_called()
             self.assertEqual(CHECKER.main(["--evidence"]), 0)
             simulator.assert_called_once()
+
+    def test_identity_coverage_failure_reaches_documentation_gate(self) -> None:
+        def completed(command, **kwargs):
+            failed = command[-1] == "scripts/check_identity_coverage.py"
+            return subprocess.CompletedProcess(command, int(failed), "", "changed declaration" if failed else "")
+
+        with mock.patch.object(CHECKER.subprocess, "run", side_effect=completed) as run:
+            errors: list[str] = []
+            CHECKER.check_inventory_coverage(errors)
+        self.assertEqual(errors, ["identity coverage failed: changed declaration"])
+        self.assertTrue(any("scripts/test_check_identity_coverage.py" in call.args[0]
+                            for call in run.call_args_list))
 
     def test_same_document_fragments_are_checked(self) -> None:
         self.write(

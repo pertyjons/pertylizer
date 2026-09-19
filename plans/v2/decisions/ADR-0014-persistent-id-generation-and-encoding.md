@@ -309,8 +309,9 @@ Before implementation is enabled, the owning phases must demonstrate:
 | 10D format | Round trips preserve allocator history and references; invalid spellings, zero entity ordinals, missing/duplicate/unknown fields and unapproved old-version input are rejected |
 
 No new copy/import surface is enabled until its owning schema, limits, operation
-result and tests exist. Phase 0B's identity audit and format/operation work remain
-open; this design review is not the phase exit.
+result and tests exist. Phase 0B's identity audit is recorded in
+[EVD-0023](../evidence/phase-00b/EVD-0023-identity-reference-coverage.md);
+format/operation work remains open. This proposal is not the phase exit.
 
 ## Revisit conditions
 
