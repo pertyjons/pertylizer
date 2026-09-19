@@ -1,458 +1,322 @@
 # ADR-0014: Persistent ID Generation and Encoding
 
-| Field         | Value                                                        |
-|---------------|--------------------------------------------------------------|
-| ID            | ADR-0014                                                     |
-| Status        | Proposed                                                     |
-| Phase         | 0B                                                           |
-| Created       | 2026-08-13                                                   |
-| Last reviewed | 2026-09-19                                                   |
-| Related       | P00B-T003, P00A-T001, ADR-0008, ADR-0016, ADR-0017, ADR-0034 |
-| Supersedes    | —                                                            |
-| Superseded by | —                                                            |
+| Field | Value |
+|---|---|
+| ID | ADR-0014 |
+| Status | Proposed |
+| Phase | 0B/10A |
+| Created | 2026-08-13 |
+| Last reviewed | 2026-09-20 |
+| Related | P00B-T003, P00A-T001, ADR-0008, ADR-0016, ADR-0017, ADR-0034 |
+| Supersedes | — |
+| Superseded by | — |
 
-**Class: `Contract`.** It defines types, an encoding, a scope boundary, and error
-behavior, so tests 1 and 3 of the [reversibility test](../ADR.md#the-reversibility-test)
-both fail. Nothing about it is a value whose later change costs a rebuild: every
-saved file would carry the old encoding.
+**Class: `Contract`.** Acceptance would bind persisted identity, copying and
+conversion across phases. This revision is a proposal, not approval to change
+an existing file format, public API, manifest or protocol. No runtime behavior
+changes with this document; accepted ADR-0008 remains authoritative for scripts.
 
-## Context
+## Boundary and readiness
 
-The [identity inventory](../inventories/identities.md) records identities and
-references crossing the project, GUI, MCP, history, serialization, import, and
-engine boundaries; its dated audit table records the inspected source revisions. This record decides how a persistent
-identity is generated, encoded, and scoped in Project Core V2.
+Phase 0B needs a coherent stable-ID proposal before its current contract can be
+written. The previous draft conflated copying with forking, allowed conflicting
+retained identities to merge, and prohibited a seed input accepted by ADR-0008.
+This revision replaces those claims together. It keeps the existing thirteen
+clause numbers for inventory references.
 
-Five properties of V1's model are load-bearing, and each is an entry in that
-ledger.
+The scope is persistent entity identity and the identity part of authoring
+operations. Parameter/port vocabularies, assets, editor-state ownership,
+track/channel ownership and transaction results keep their named owners. In
+particular, IDN-0032/0033 are service/operation identities, not persisted entities.
+This record supplies no generic merge of project settings, asset contents,
+history, live VM state or two edited versions of one entity.
 
-- **Identity encodes type.** A module's identity is the string `osc-1`, and that
-  is not a serialization convenience: the runtime type is literally
-  `ModuleId { module_type: ModuleType, instance: u16 }`, whose own doc comment
-  states the format. The persisted string is a faithful encoding of the engine's
-  key (`IDN-0016`, `IDN-0029`).
-- **Identity is load-bearing for audio.** `script_seed_base` folds **both** the
-  type and the instance number into a per-(voice, module) PRNG seed, so
-  renumbering a module *or changing its type* changes its script's random stream
-  (`IDN-0029`). Identity is not merely referential.
-- **Allocator cursors are persisted.** Six `next_*_id` counters live in the song
-  and one `next_note_id` in each pattern (`IDN-0024`, `IDN-0025`). A counter
-  below an existing id silently produces duplicates, and nothing validates it on
-  load.
-- **Scope is inconsistent.** `NoteId` is unique within a pattern, so it is not
-  addressable alone (`IDN-0004`); module instance numbers are per *graph*, so a
-  patch and the master effect chain allocate from different namespaces
-  (`IDN-0021`, `IDN-0026`).
-- **Width is inconsistent.** `InstrumentId(u64)`, `PatternId(u32)`,
-  `TrackId(u16)`, `ReturnBusId(u16)`, `NoteId(u64)`, and `ModuleId.instance(u16)`
-  — three storage widths for one kind of concept, with `u16` exhaustion an unhandled
-  wrap in release builds (`LIMIT-0058`).
+## Evidence and factual premises
 
-Around these sit the ordinary problems the ledger's own checklist names: raw
-primitives where a newtype exists (`IDN-0011`..`IDN-0013`), composite and
-ordered references (`IDN-0019`..`IDN-0022`), one load-time heuristic repair
-(`IDN-0028`), and display-name selection at a service and manifest boundary
-(`IDN-0031`). `IDN-0023` is a typed tracker-layout index, not a routing or
-entity identity; the inventory's 2026-09-08 pass corrects that distinction.
+The [identity inventory](../inventories/identities.md) owns the source audits:
 
-**Outside this decision.** Parameter and port names (`IDN-0015`, `IDN-0017`,
-`IDN-0018`) are a *vocabulary declared by a node type*, not entity identities;
-ADR-0007 and the node contract own them. It is closed for 73 of the 75 module
-types and open for `script` and `audio_script`, whose knobs the user declares —
-see the uncertainty section below, which is where that was established. Asset and sample identity
-(`IDN-0010`, `IDN-0030`) is ADR-0017's. What a track or bus *is* (`IDN-0002`,
-`IDN-0005`, `IDN-0021`) is ADR-0034's; this record decides only how such a thing
-is named. Unknown-field and enum-ordinal policy (`IDN-0014`) is ADR-0016's.
-Accepted ADR-0008 owns experimental script-state seeding and includes node
-identity as an input. It has not accepted proposed clause 11's audio-independence
-requirement; their reconciliation is an open acceptance question below.
+- IDN-0004/0025: V1 note identity is local to a pattern; conversion lookup must
+  qualify the old ID by its pattern.
+- IDN-0006/0007 and the 2026-09-08 inspection: graph duplication copies local
+  node IDs and internal references. Document-wide node identity needs explicit
+  remapping of that owned content.
+- IDN-0016/0021/0026: V1 module IDs encode type and are owner-local. Conversion
+  keys must include the owning patch or effect chain; deleted allocator history
+  cannot be reconstructed from surviving modules.
+- IDN-0024/0027: allocator state and restoring an existing identity are separate
+  from creating a new entity. Undo must restore the original identity.
+- IDN-0029: V1's script seed depends on its module identity. This does not prove
+  any conversion preserves V1's random stream.
 
-## Decision drivers
+At `a83cd92e`, [the experimental IR](../../../crates/synth_engine_v2/src/ir.rs)
+uses `NodeId(u32)`. [ScriptIdentity and ScriptProgram::seed](../../../crates/synth_engine_v2/src/script.rs)
+retain that node identity and combine project seed, node identity and script-state
+identity; `ScriptSeed::for_voice` adds stable voice identity. These source facts
+agree with [ADR-0008](ADR-0008-yams-state-identity-and-seeds.md). They do not provide
+a persisted 128-bit identity implementation. No copying, merge or conversion
+experiment was executed for this proposal.
 
-- **Merge and import must not need remapping.** The plan's Phase 10 imports V1
-  projects, and tracker import already exists on a branch. Two documents whose
-  identities are drawn from per-document counters cannot be combined without
-  rewriting one side's references — the failure mode `IDN-0024` describes.
-- **Fixtures must be byte-stable.** The reference corpus rebuilds its inputs
-  from code and compares them to committed bytes. An identity scheme that draws
-  randomly per entity makes every fixture regeneration a diff.
-- **Identity must stop affecting audio.** `IDN-0029` shows that a random script's
-  sound can depend on its instance number. A comparison that uses such a script
-  remains blocked until that dependence is severed. It does not block the
-  deterministic shared-instrument fixture, which exercises two track references
-  to one instrument without a random script.
-- **The document must be self-consistent without a cursor.** A saved allocator
-  position is state that can disagree with the data it allocates for.
-- **An identity must be inert.** Nothing may parse it, order by it, or infer a
-  type, a position, or a name from it.
+## Options and rationale
 
-## Options considered
+- **Owner-local counters:** small, but require owner-qualified references and
+  remapping when content is combined. Surviving maxima alone lose deletion history.
+- **Random per-entity IDs:** viable with collision checks and a controlled fixture
+  generator; they do not themselves solve fork conflicts or copy semantics.
+- **Origin plus monotonic ordinal (proposed):** one active allocator for all entity
+  kinds, with retained origin history. Fixtures can supply a fixed origin. Random
+  origins are not a mathematical uniqueness proof; validation and refusal remain
+  necessary.
 
-### Option A: Document-scoped monotonic counters, as V1 has
+The proposal chooses fresh identities for independent copies, preserved identities
+for document forks, and a deliberately limited identity-preserving import between
+**disjoint origin histories**. Overlapping histories refuse even if their surviving
+entities look equal. Content equality cannot prove ancestry or distinguish a
+retired identity from a colliding allocation in an independently edited file.
+An explicit copy/import-as-copy remains available once its reference bindings are
+complete. No operation silently falls back from preserving identity to copying.
 
-Keep integer ids allocated from a counter per document, with the counter either
-persisted or re-derived. Cheapest migration and smallest encoding, and the
-inventory shows the re-derivation half already works: `add_module_with_id`
-raises the per-type counter by `max()` when a loaded id exceeds it, which is a
-sound reconciliation for a well-formed file.
-
-It cannot answer merge. Two documents both start at 1, so every combination
-needs a remap pass over every reference, and a remap pass is exactly where a
-missed reference becomes a silently dangling one. It also keeps `IDN-0024`'s
-duplicate-on-low-counter failure unless load validates the cursor.
-
-### Option B: Random identity per entity — UUIDv4 or a random `u64`
-
-Merge-safe with no coordination, and no cursor to persist. Widely understood.
-
-It makes fixtures non-reproducible unless the generator is seeded, which turns
-"random" into "seeded deterministic" and loses the property that motivated it.
-It also gives up ordering: nothing about two ids says which was created first,
-which the history and diagnostics surfaces would have to carry separately. And
-collision safety is probabilistic per *entity*, so the bound scales with how
-many entities exist rather than with how many documents do.
-
-### Option C: Origin-namespaced monotonic identity
-
-An identity is a pair: an **origin**, drawn once per document-creation event,
-and an **ordinal**, monotonic within that origin. Two documents created
-independently have different origins, so their identities cannot collide and a
-merge needs no remapping at all. Within one origin, allocation is a counter, so
-a fixture that fixes its origin is byte-reproducible.
-
-It does not remove persisted allocation state, and an earlier revision of this
-record wrongly claimed it did. A document has to carry the origin it mints from
-and the highest ordinal it has ever minted, because deriving the next ordinal
-from surviving content reissues the ordinal of a deleted entity. What it removes
-is seven *unvalidated per-kind* cursors, replacing them with one record checked
-against the document on load.
-
-Costs a wider identity than either alternative, and puts a structure inside the
-identity that a reader may be tempted to interpret. Its sharp edge is a document
-copied outside the application: two files then mint from one origin with nothing
-able to observe the copy, so the merge path has to detect the collision rather
-than assume distinct origins.
-
-### Status quo
-
-No V2-specific decision. The project format keeps `osc-1`, identity keeps
-feeding the PRNG seed, seven allocator cursors stay in the document, and Phase
-10's import path has to invent a remapping rule per entity kind under deadline —
-which is how `IDN-0028`'s load-time heuristic repair came to exist in the first
-place.
-
-## Evidence
-
-- The [identity inventory](../inventories/identities.md) at `dd69b657`: 31
-  entries over two passes, the second of which corrected two pass-1 hypotheses
-  by reading the code rather than the schema.
-- Source reads at `e2a05028` confirming the four claims this record leans on
-  hardest: `synth_engine/src/commands.rs:29-33` (`ModuleId` carries the type),
-  `synth_engine/src/graph.rs:24-28` (`script_seed_base` folds type *and*
-  instance into the seed), `graph.rs:176-181` (per-type counter, increment
-  only), `graph.rs:236-245` (`max()` reconciliation on load).
-- Width survey at the same revision: `synth_core/src/types/identifiers.rs:20`,
-  `synth_sequencer/src/ids.rs:32,636,666,679`.
-- `LIMIT-0058` in the [resource inventory](../inventories/resource-limits.md):
-  `ModuleId.instance` is a `u16` incremented with no ceiling check, so
-  exhaustion panics in debug and wraps in release.
-
-**A ledger entry this record found stale.** `IDN-0027` says undo re-adds a
-deleted note under a *fresh* id, so identity does not survive a delete/undo
-cycle. That is fixed at `e2a05028`: the `AddNote` arm calls `restore_note` with
-the original note, and its comment states the reason. The entry needs
-correcting, and this record does not depend on it either way.
-
-**Uncertainty that remains.** No option here has been prototyped, and nothing
-has been measured.
-
-The two format questions this record owed Phase 0B are **answered**, on
-2026-08-29, and neither changes the option selected.
-
-*Can a master or return chain's module id collide with a patch's* (`IDN-0021`)?
-**Yes.** Three counters allocate independently — a patch graph's, the master
-chain's, and one per return bus — so any two owners that each hold a module of
-the same type give it the same id: a reverb in a patch and one in the master
-chain are both `rev-1`. It is harmless in V1 only because every reference is
-qualified by its owner. What it adds here is a **conversion requirement**: the V1
-mapping must be keyed by `(owner, id string)`. Keyed by the string alone it
-merges those modules into one identity and re-points every reference at whichever
-survives — the dropped-reference risk below, in its worst form, because nothing
-would report it.
-
-*What is the closed set of parameter-name strings* (`IDN-0015`)? **Closed for 73
-of the 75 module types, and open for the other two.** For the 73 it is derived
-rather than authored: the published schema models a module as a `oneOf` over
-every type, each declaring its own parameter object with
-`additionalProperties: false`, 372 distinct names in all, generated from the
-module descriptors. For `script` and `audio_script` the set is **per instance and
-user-authored** — one knob per `param` declaration in the module's own program,
-installed into a rebuilt descriptor and saved into the same parameter map.
-
-That bounds what a conversion can verify, and it is the half that matters here: a
-parameter name can be checked against the descriptor set for 73 types, and for
-the other two the descriptor does not exist until the script is compiled, so the
-conversion must carry the program before it can validate the knobs. Enforcement
-of the name itself belongs to ADR-0016, not to this record.
+For script determinism, the proposal follows ADR-0008's stable node identity as a
+seed input. It withdraws the earlier blanket demand that identity never affect
+audio. New independent copies may produce different random output; rearranging
+storage or recompiling the same identities must not change their seed inputs.
+The user selected independent deterministic random sequences for duplicates on
+2026-09-19; this does not approve the separate persisted-format/API break.
 
 ## Decision
 
-Proposed, not accepted. Thirteen clauses. The open acceptance questions below
-qualify the duplication, merge and audio-state claims; the proposed clauses do
-not yet form an implementable contract for those cases.
-
-### Open acceptance questions
-
-The [2026-09-08 identity inspection](../inventories/identities.md#source-inspection-2026-09-08)
-supplies proposed rules for every ledger row, not acceptance of this record.
-Three questions remain to resolve before this proposal can be accepted:
-
-- **Duplicating inside one document.** Clause 8 describes a new document with
-  a new allocation origin and retained entity IDs. It also says "duplicate",
-  but V1's pooled-graph duplication adds a second graph inside the same
-  document (IDN-0006/0007). Under clause 7's document-scoped node IDs, copying
-  the original node IDs would alias two independently editable nodes. The
-  proposal needs a distinct in-document copy operation with fresh copied-node
-  IDs and a mapping for internal references and node-keyed metadata; its
-  external-reference retain/clear policy is still open. A falsifying example
-  duplicates a graph and edits a copied node: the original must remain a
-  distinct entity. The existing fork rule does not specify this operation.
-- **Merging retained identities across different allocation origins.** Fork
-  under clause 8, then edit an existing node differently in the two documents.
-  Their allocation origins differ but the edited node's identity is retained
-  in both. Clause 9's concatenation leaves conflicting content under one ID,
-  while clause 10 only covers shared allocation origins. The proposal needs
-  conflict/deduplication behavior for identities from every retained origin,
-  regardless of which origin currently allocates. That fork/edit/merge is the
-  falsifier; no conflict policy is selected by this inventory update.
-- **Persistent identity and script seed identity.** Proposed clause 11's
-  prohibition on identity-derived audio conflicts with accepted
-  [ADR-0008](ADR-0008-yams-state-identity-and-seeds.md)
-  clause 3, which derives experimental VM seeds from project seed, node identity,
-  stable voice index and script-state identity. The accepted runtime rule stands.
-  Before this proposal can govern conversion or copying, define how persistent
-  entity identity maps to runtime seed inputs and which operation preserves or
-  changes the random stream. A claimed sound-preserving conversion that changes
-  the stream solely through identity reassignment falsifies that claim. No seed
-  mapping, V1 random-stream fidelity or successor runtime rule is selected here.
-
-These questions block acceptance of the affected contract, not Phase 7's
-experimental work. The no-remapping claims in the options and consequences
-remain conditional on resolving them. Script seeds and reload stay with
-ADR-0008 and their first consumers; the proposed audio-independence claims are
-not accepted guarantees and no audio-state rule changes here.
+Proposed, not accepted. The rules below are one candidate contract; acceptance
+and implementation requirements are listed under the retained anchor below.
 
 ### The identity
 
-1. **A persistent identity is an opaque pair** — an `Origin` and an `Ordinal`,
-   both 64-bit — carried by one generic newtype per entity kind:
-   `InstrumentId`, `TrackId`, `PatternId`, `NoteId`, `NodeId`, `BusId`,
-   `GraphId`, and so on. **Distinct kinds are distinct types**; an identity of
-   one kind may never be assigned to, compared with, or converted into another.
-2. **An identity is inert.** Nothing may parse it, infer a type or a position
-   from it, sort domain data by it, or reconstruct it from a display name. Its
-   only operations are equality, hashing, and canonical serialization. This is
-   the proposed replacement for type-encoded entity identity in `IDN-0016`.
-   A declared key, processing-order position, layout index or convenience
-   selector is not itself an entity identity: `IDN-0018`, `IDN-0023` and
-   `IDN-0031` keep those concepts distinct from the identities they reference.
-3. **One width, everywhere.** The three current storage widths collapse to one. A kind
-   that today uses `u16` gains range rather than keeping a narrower ceiling for
-   compactness, and `LIMIT-0058`'s unhandled wrap ceases to exist.
+1. **A persistent entity ID is an opaque `(Origin, Ordinal)` pair**, both 64-bit,
+   with distinct domain newtypes such as `InstrumentId`, `TrackId`, `PatternId`,
+   `NoteId`, `NodeId` and `GraphId`. Kind is carried by the type/schema, never
+   inferred from the pair. Entity ordinals start at 1; zero is reserved for an
+   empty allocator high-water mark, not a valid entity ID.
+2. **Identity is independent of type, name, ownership and display/storage order.**
+   Application behavior does not parse IDs to derive those concepts. Equality,
+   checked reference resolution, hashing and canonical serialization are allowed.
+   Canonical map ordering is allowed but is not musical processing order. Using
+   the full stable node identity as a deterministic seed input follows clause 11;
+   a compact execution slot, display index or declared parameter key is separate.
+3. **Persistent entity kinds use the same width.** This does not turn local
+   parameter/port keys, tracker lanes, counts, runtime slots or service IDs into
+   entity IDs. The owning canonical schema declares which fields are entity
+   identities, owned children, references or intentional order values. A copy or
+   conversion consumer with an unclassified field is refused before publication.
 
 ### Allocation
 
-4. **A document carries exactly one `AllocationRecord`**: the origin new
-   identities are minted from, and the highest ordinal ever minted from it. Both
-   are persisted. Every identity in the document may carry *any* origin — its
-   own, or one inherited through a merge — but only the allocation origin ever
-   mints.
-5. **Ordinal is monotonic within an origin, and is never reused.** Deleting an
-   entity does not free its ordinal, and the high-water mark in clause 4 is what
-   makes that hold across a save and a reload.
-6. **The allocation record is validated against the document, not trusted.** On
-   load, no identity bearing the allocation origin may have an ordinal above the
-   high-water mark; a document that violates this is **refused**, naming the
-   offending identity. The record may legitimately sit *above* the highest
-   surviving ordinal — that is precisely the deletion case — so the check is
-   one-sided.
-7. **Identity is document-scoped, never container-scoped.** A `NoteId` addresses
-   a note without its pattern, and a `NodeId` addresses a node without its
-   graph. `IDN-0004`'s "must always be paired with a `PatternId`" and
-   `IDN-0026`'s per-graph namespace both go away.
+4. **One active origin, retained history for every origin.** Proposed
+   `AllocationRecord` contains a typed active origin and a canonical map from
+   `Origin` to the highest committed ordinal for that origin. The active origin
+   is present even at high-water zero. All other entries are retired for allocation
+   in this document, including origins brought in by a fork or import. They never
+   become active again. The map is retained when entities are removed; it is not
+   rebuilt from survivors. This replaces per-kind cursors, not all allocation state.
+5. **Committed ordinals are never reused for new entities.** One checked counter
+   under the active origin serves all persistent entity kinds. Delete, undo/redo,
+   history truncation and save/reload neither reduce high-water marks nor remove
+   known origins. Undo can restore the same entity and ID through retained history;
+   it cannot reuse the ID for a new entity. A failed staged operation exposes no
+   candidate IDs and publishes neither content nor allocator changes. Private
+   candidates are not committed identities and may be discarded.
+6. **Validate the complete allocation/reference boundary.** Every entity's origin
+   must be recorded, and its ordinal must be positive and no larger than that
+   origin's high-water mark. Duplicate pairs, even across kinds, are refused.
+   Every required reference resolves to the declared kind and permitted owner;
+   explicit absence is allowed only where its field contract permits it. Map
+   keys are unique and the active origin exists. Missing, unknown or invalid
+   representation fields fail under the eventual versioned schema. A bound below
+   an existing ordinal is refused, not repaired by guessing a new cursor.
+7. **Entity identity is document-wide, not container-local.** A note or node can
+   be addressed without its pattern or graph, but authorization and ownership
+   checks still apply. V1 conversion maps `(old kind, old owner, old local ID)`
+   to a fresh typed identity. It cannot collapse equal local numbers or module
+   strings from different owners. Restoration is an operation on known retained
+   identity, not another route to allocate into a retired origin.
 
-   **A first revision of this record derived the next ordinal as `max(seen) + 1`
-   with nothing persisted, and called that an improvement on V1's cursors.** It
-   is not: deleting the highest-ordinal entity lowers `max`, so the next
-   allocation reissues a retired ordinal and clause 5 is contradicted by clause
-   6. The master plan forbids exactly that outcome — a reference must never
-   silently point at the object that later occupies a reused slot. V1's own
-   `max()` reconciliation, which that revision cited as prior art, carries the
-   same hole; the ledger's "sound for a well-formed file" quietly assumes the
-   highest id is never deleted. **What replaces seven unvalidated per-kind
-   cursors is therefore one validated record, not nothing.**
+Origin generation uses an injected system-random source in normal authoring and
+explicit origins in deterministic fixtures. A candidate equal to any retained
+origin is rejected. The eventual implementation bounds retries and origin-history
+storage and reports exhaustion/entropy failure before changing the document.
+It cannot discard history to meet a capacity limit. No cross-document uniqueness
+is assumed merely because a random draw succeeded locally.
 
-### Forking and merging
+### Forking, copying and merging
 
-8. **Forking mints a new allocation origin and remaps nothing.** Save As,
-   duplicate, template instantiate, and project conversion give the new document
-   a freshly drawn origin and a high-water mark of zero. Every existing identity
-   keeps the origin it already had, so no reference is rewritten and the two
-   documents can never mint colliding identities afterwards. This is the cheap
-   half of the master plan's central duplication/remapping service: the
-   remapping case remains for asset and cross-document references, but entity
-   identity does not need it.
-9. **A merge concatenates and never remaps.** The result's allocation record is
-   the *receiving* document's, unchanged; the merged-in document's origins
-   survive as identity namespaces that no longer mint.
-10. **Two documents sharing an allocation origin may be merged only when one's
-    ordinal range for that origin is an ancestor of the other's** — that is, no
-    ordinal appears in both bound to different content. Otherwise the merge is
-    **refused, naming the colliding ordinals**, because concatenating would
-    silently alias two entities.
+8. **Fork and copy are different operations.**
 
-    **Shared origins are not confined to deliberately fixed fixtures**, which an
-    earlier revision of this record claimed. Copying a file outside the
-    application produces two independently editable documents with the same
-    allocation origin, and clause 8 cannot intercept that because nothing
-    observes the copy. Clause 8 removes the case for every in-application path;
-    clause 10 is what remains for the paths outside it.
+   **Document fork:** retain the entity content, all entity IDs, allocation history,
+   project seed and local script-state/parameter identities. Add a fresh origin
+   with high-water zero and make only it active in the new document. The source
+   is unchanged. This is the identity policy for a new project fork, not a choice
+   about Save As path handling, envelope/revision identity or recovery association;
+   those belong to their application/format owners. No running VM state is copied.
+
+   **Independent copy, including template instantiation/import-as-copy:** select
+   roots and the complete transitive closure of their owned entities from one
+   immutable source snapshot. Stage fresh destination IDs for every entity in that
+   closure. Build one injective old-to-new mapping before rewriting anything.
+   Remap ownership, connection endpoints, group membership, node-keyed metadata
+   and every internal reference through that map, preserving explicit array order.
+   A repeated reference maps to one copied entity; shared referenced entities do
+   not become owned children merely because they are referenced.
+
+   For an in-document copy, references outside the closure retain their existing
+   targets after kind/ownership validation. This includes external track bindings;
+   duplicating an assigned graph may therefore add another active contributor.
+   For a cross-document copy, every external reference requires an explicit typed
+   destination binding, or an explicit absent value where the field permits it.
+   Equal names, numbers or content are never automatic bindings. Missing mappings
+   and unsupported asset/editor/reference policies refuse the whole operation.
+   Existing references outside the copy still point to the originals.
+
+   Copy the script's local state identity and parameter namespace, including removed
+   key reservations, under its **new** node identity. The destination project seed
+   applies. Commit the rewritten content, allocation changes and returned mapping
+   together; any collision, unresolved reference or resource failure leaves the
+   destination unchanged. A copied root must be attached by the owning application
+   operation before the result is valid; this rule does not invent attachment/order
+   behavior for an undecided entity kind.
+
+9. **Identity-preserving import requires disjoint retained origin histories.**
+   This is an additive import of selected entity content, not reconciliation of
+   two project versions. Validate source and destination snapshots first. Compare
+   **all keys of both allocation histories**, including origins with no surviving
+   entities and the active origins. A nonempty intersection refuses the operation,
+   naming the overlapping origins. It does not compare payloads, deduplicate,
+   overwrite, resolve a deletion or infer ancestry. The check catches forks with
+   different active origins but shared retained identities as well as external file
+   copies that kept the same active origin. It also conservatively refuses harmless
+   overlap; that limitation is deliberate.
+
+   With disjoint histories, preserve the selected entities' IDs and their internal
+   references. Bring in the source's entire origin/high-water map as retired
+   allocation history, even for a partial import. Keep the destination's active
+   origin and its high-water mark unchanged. External references and attachment
+   require the same explicit checks as cross-document copy. Destination project
+   settings and project seed remain the destination's. Publish the complete result
+   atomically only after combined validation. Re-importing from that lineage will
+   refuse; the caller may explicitly request import-as-copy instead.
+10. **Refusal is the conflict policy for shared origins in this first contract.**
+    No same-ID content deduplication, three-way merge, last-writer-wins or deletion
+    resurrection is inferred. Copy/import-as-copy allocates new entities rather
+    than pretending a conflicting entity is the same object. A future true version
+    merge needs its own ancestry, deletion and conflict contract before relaxing
+    clause 9. History restoration within one document remains clause 5's distinct
+    operation and cannot be requested by supplying an arbitrary external snapshot.
 
 ### The audio consequence
 
-11. **Nothing derives audio state from an identity.** `script_seed_base`'s
-    dependence on type and instance number is forbidden: a node's random stream
-    is seeded from data the node carries, persisted explicitly, and preserved
-    across renumbering. This remains a proposal requiring the seed-boundary
-    resolution above; accepted ADR-0008 does not implement this prohibition.
-    **The V1 conversion must carry the seed, not
-    the id** — a converted project whose scripts sound different is a conversion
-    defect. The current shared-instrument corpus case deliberately does not claim
-    to cover this random-stream conversion rule.
+11. **Preserve seed inputs when identity is preserved; copying creates new inputs.**
+    For Control and Audio, ADR-0008 remains the runtime law: project seed, full
+    stable node identity, stable voice identity and explicit script-state identity
+    participate in seeding. The Note domain follows
+    [ADR-0060](ADR-0060-bounded-note-yams-source.md)'s authored-occurrence input;
+    assigned voice and list order are not its seed inputs.
+    Reordering declarations or assigning different compact execution slots changes
+    none of those inputs. A document fork preserves them for corresponding nodes
+    and voices. This promises the same initial seed inputs, not a copy of running
+    VM history or identical output under different events, routing or programs.
+
+    Independent copies get new node identities; preserving their old random stream
+    is not promised. Identity-preserving import retains node identity but adopts
+    the destination project seed, so it also makes no sound-preservation promise.
+    Different input identities do not mathematically guarantee distinct finite PRNG
+    seeds. Script-state identity is local to its node for copying; it is not a reason
+    to retain the copied node's persistent entity ID.
+
+    The canonical-to-Sound-Core consumer in Phase 10A must carry the **full pair**
+    as the logical node identity, separate from compact execution slots. The
+    existing experimental `NodeId(u32)` is insufficient: truncation, hashing into
+    a compact *identity*, and numbering by declaration order are not adapters.
+    Extend the experimental logical identity representation and deterministic seed
+    mixing to consume both components before enabling this consumer, with tests
+    for equal ordinals under distinct origins and recompilation/reordering. Hashing
+    the full typed inputs to obtain a PRNG seed remains allowed. This document does
+    not change that Rust API or its current numeric mixer, freeze new seed bytes,
+    or claim cross-version experimental bit equality.
+
+    V1 script conversion remains a separate fidelity obligation. The converter
+    must diagnose an unrepresented random-stream law and exclude a parity verdict
+    under the [lowering contract](../specs/spec-project-lowering-and-fidelity.md).
+    Neither preserving V1's old module number nor this new ID scheme establishes
+    that its output is preserved. No per-node seed storage or seed-preserving copy
+    mode is introduced by this proposal.
 
 ### Encoding and exhaustion
 
-12. **The canonical serialized form is a string**, `<origin>-<ordinal>`, because
-    JSON numbers cannot carry 128 bits and a two-field object multiplies every
-    reference site in the format. The grammar is exact, and parsing is fallible:
+12. **One canonical string encoding:** `<origin>-<ordinal>`. Origin is exactly 16
+    lowercase hexadecimal digits; ordinal is 1–16 lowercase hexadecimal digits
+    without leading zero. Entity ordinal zero is rejected. The high-water value
+    uses the same ordinal grammar but allows the single digit `0`. Origin-map keys
+    use the origin grammar. Duplicate keys and noncanonical spellings are rejected,
+    never normalized. Canonical map order is ascending numeric origin, with entity
+    sets ordered by their typed IDs only for serialization; authored ordered lists
+    keep their explicit order. Exact envelope field names and version belong to
+    ADR-0016/Phase 10D; no existing format version gains these meanings.
+13. **Exhaustion refuses, never wraps.** Allocation past `u64::MAX`, unavailable
+    fresh origin, or a resource limit fails before publication. An explicit
+    allocator rotation can retire the active origin and add a fresh one at zero
+    without remapping entities, using the same origin-history rules as a fork.
+    It does not clear history or bypass any storage limit. Deterministic fixtures
+    use explicit distinct origins; production never substitutes a fixture origin
+    after random-source failure.
 
-    - `origin` is **exactly 16 lowercase hexadecimal digits**, zero-padded;
-    - `ordinal` is **1 to 16 lowercase hexadecimal digits with no leading zero**,
-      except that zero itself is the single digit `0`;
-    - the separator is one `-`, and nothing else may appear.
+## Open acceptance questions
 
-    **A non-canonical spelling is rejected, not normalized.** Uppercase digits, a
-    padded ordinal, an over-long field, and a trailing separator are all parse
-    errors. One encoding per identity is what keeps a document's bytes
-    deterministic and its digests meaningful; accepting two spellings of one
-    identity would make equality depend on which one a writer chose. Construction
-    is `TryFrom` at every external boundary, per the repository's newtype rules.
-    Format version and unknown-field behavior are ADR-0016's.
-13. **Ordinal exhaustion is a refusal, never a wrap.** An allocation that would
-    take the high-water mark past `u64::MAX` fails with an error naming the
-    document and its allocation origin; the remedy is a fresh allocation origin
-    under clause 8, which costs nothing and remaps nothing. Reaching 2^64
-    allocations in one origin is unreachable in practice, and turning the
-    unreachable case into a refusal is what keeps the invariant total — the same
-    treatment ADR-0032 gives `StreamEpoch` exhaustion.
+The three defects identified before this revision have proposed resolutions:
 
-**Deterministic authoring is a fixed origin, not a special mode.** A corpus
-fixture or a generated example declares its allocation origin as a constant, and
-its ordinals then follow from build order, so its bytes are reproducible. Two
-fixtures must not share a constant; the generator asserts that across the set it
-generates, and clause 10 is the backstop if one slips through.
+| Question | Proposed resolution | Falsifier |
+|---|---|---|
+| Copy inside a document versus fork | Clause 8 allocates and remaps the owned copy closure; a fork retains entities | Editing a copied node changes the original, or an internal copied reference targets the original |
+| Fork/edit/merge across active origins | Clauses 4–6 retain origin history; clauses 9–10 refuse any overlap | Differently edited retained entities are silently deduplicated or overwritten, including after deletion/save/reload |
+| Identity versus script seed | Clause 11 follows ADR-0008 and makes changed copy inputs explicit | A compact slot or truncated ID substitutes for stable identity, or unrepresented V1 randomness receives a parity verdict |
 
-## Consequences
+These are **design counterexamples and future checks**, not executed evidence.
+This proposal can be reviewed without implementing Project Core. Acceptance still
+requires explicit approval of the intended persisted-format/API break before its
+implementation; approval to work on Phase 0B does not itself grant that break.
+The exact format envelope, supported ownership schemas and conversion coverage
+remain with their named owners, and block their first consumers. They do not
+license a partial copy, an ambiguous reference or a silent format reinterpretation.
 
-### Positive
+## Consequences and verification obligations
 
-- Merge and import stop being a remapping problem, which removes the class of
-  bug `IDN-0028`'s heuristic repair belongs to.
-- Seven unvalidated per-kind allocator cursors become **one record that load
-  validates against the document**, so the duplicate-on-low-counter failure
-  nothing currently checks becomes a refusal that names the offending identity.
-  The cursor does not disappear — an earlier revision of this record claimed it
-  would, and that claim is what made the never-reuse guarantee unfulfillable.
-- A module can change type without changing identity, and a plan can renumber
-  nodes without changing what the project sounds like.
-- Corpus comparisons involving random script streams become authorable without
-  conflating identity reassignment with an audio regression.
-- One width and one shape make an identity conversion at any boundary either
-  correct or a compile error.
+- The allocator is one active counter plus retained per-origin high-water history,
+  rather than the previous draft's single origin record. That history has a bounded,
+  explicitly refused growth path and survives undo/deletion. It is not a render
+  allocation or audio-thread operation.
+- Copying requires a complete typed reference traversal. Identity-preserving import
+  avoids entity remapping only for disjoint histories and may refuse benign overlap.
+- New entities may sound different when scripts use randomness. Retaining a node
+  preserves a seed input, not a universal equivalence or migration verdict.
+- Acceptance would change persisted entity encodings. No current schema or reader
+  is modified here, and no migration disposition is marked verified.
 
-### Negative
+Before implementation is enabled, the owning phases must demonstrate:
 
-- **Every persisted reference in the format changes.** This is the widest
-  breaking change in the project format, touching `IDN-0001`..`IDN-0009`,
-  `IDN-0011`..`IDN-0013`, `IDN-0016`..`IDN-0022`, and `IDN-0024`..`IDN-0026`.
-  `IDN-0023` remains a layout index; this identity proposal does not change it.
-- Identities grow from 2–8 bytes to 16, plus their string encoding. Immaterial
-  in a document; it is why the compiled plan uses compact indices instead.
-- Ordinals are not dense, so nothing may use them as array indices — which is
-  the point, and also a trap for anyone who assumes otherwise.
-- If clause 11's proposed storage rule is selected after seed-boundary
-  reconciliation, V1 conversion would need per-node seed data absent from V1's
-  saved document. That option would require more than a syntactic rewrite;
-  neither the storage choice nor its fidelity is established here.
-- A document copied outside the application keeps its allocation origin, so two
-  copies can mint colliding identities. Nothing in the format can prevent it;
-  clause 10 detects it at merge, which is later than one would like.
+| Owner / check | Required observation |
+|---|---|
+| 10A allocation and 10C history | Delete highest ID, undo/redo, truncate history, save/reload, then allocate: no new entity receives a committed old pair; undo restores the original |
+| 10A copy traversal | Graph copy remaps nodes, edges, groups and metadata; original external references stay put; unresolved external bindings refuse without any content/allocator mutation |
+| 10A preserving import | Disjoint histories combine with source origins retired; shared active or retained origins refuse even when payloads are equal or all shared entities were deleted |
+| 10A failed operations | Exhaustion, entropy failure, mapping errors and history-capacity limits publish neither partial content nor candidate IDs |
+| 10A Sound Core bridge | Full origin/ordinal identity reaches node lookup and seed inputs; changing slot/order does not change inputs; distinct-origin equal-ordinal entities never alias |
+| 10A/10D V1 conversion | Owner-qualified mapping covers every supported ID/reference; unsupported seed/asset/ownership semantics produce named refusals, not parity claims |
+| 10D format | Round trips preserve allocator history and references; invalid spellings, zero entity ordinals, missing/duplicate/unknown fields and unapproved old-version input are rejected |
 
-### Risks and controls
-
-- **Risk: the conversion drops a reference.** Every V1 id form appears in
-  connections, groups, exposed ports, effect-chain order, Mod Matrix slot
-  addresses, sends, automation targets, and the arrangement. Control: the
-  conversion is driven from the identity inventory, and a round-trip fixture per
-  entry class fails when a reference is dropped — the Phase 0B fixtures
-  P00B-T005 begins.
-- **Conditional risk: a later conversion claims random-stream preservation
-  without proving its seed mapping.** If that claim is selected after the open
-  seed-boundary decision, its control is a converted-and-compared corpus case
-  whose script output depends on its seed. No such conversion evidence exists
-  here; `yams-control-patch` is the intended category for that future check.
-- **Risk: clause 2 erodes.** An opaque identity with visible structure invites a
-  reader to parse it. Control: the string form is produced and consumed by one
-  pair of functions, and no other code constructs it from parts.
-- **Risk: the high-water mark and the document disagree** after a hand edit, a
-  partial write, or a bad conversion, and allocation silently reissues a retired
-  ordinal. Control: clause 6's one-sided load check, and a round-trip fixture
-  that deletes the highest-ordinal entity, saves, reloads, allocates, and
-  asserts the new identity is above the deleted one.
-- **Risk: two copies of one document both mint**, which clause 8 cannot see.
-  Control: clause 10's ancestor test at merge, plus a fixture that forks a
-  document, edits both sides, and asserts the merge is refused with both
-  colliding ordinals named.
-- **Risk: a non-canonical spelling is accepted somewhere** and two strings
-  denote one identity, which would make a digest depend on the writer. Control:
-  one fallible parser, rejection tests for uppercase, padded, over-long, and
-  truncated forms, and no second construction path.
-
-## Follow-up work
-
-| Task                                                                                          | Phase | Status      |
-|-----------------------------------------------------------------------------------------------|-------|-------------|
-| Correct `IDN-0027`: undo restores a note under its own id at `e2a05028`                       | 0B    | Complete    |
-| Answer `IDN-0021`: can a master/return chain's module id collide with a patch's?              | 0B    | Complete    |
-| Establish the closed parameter-name set `IDN-0015` leaves open                                | 0B    | Complete    |
-| Fill the ledger's `Proposed V2 newtype/rule` column, keeping decisions explicitly proposed | 0B | Complete |
-| Resolve the in-document copy and retained-identity merge questions before acceptance | 0B/10A | Not started |
-| Fill the ledger's `Migration` column, which needs the conversion mapping below                 | 10A   | Not started |
-| Specify the conversion mapping per identity class, driven from the inventory                  | 10A   | Not started |
-| Round-trip fixture: delete the highest ordinal, reload, allocate, assert no reuse             | 10A   | Not started |
-| Fork-and-merge fixture: same-origin collision is refused, naming both ordinals                | 10A   | Not started |
-| Rejection tests for non-canonical identity spellings, and for ordinal exhaustion              | 10A   | Not started |
-| Reconcile proposed clause 11 with accepted ADR-0008 before selecting conversion seed storage or claiming random-stream preservation | 0B/10A | Not started |
-| Author the deterministic shared-instrument corpus case; random-script seed conversion remains separate | 0A | Complete |
+No new copy/import surface is enabled until its owning schema, limits, operation
+result and tests exist. Phase 0B's identity audit and format/operation work remain
+open; this design review is not the phase exit.
 
 ## Revisit conditions
 
-- A merge or synchronization requirement appears that needs identities to be
-  *comparable across origins* — a total order, or a happens-before — which the
-  origin/ordinal pair deliberately does not provide.
-- Measurement shows 16-byte identities to be a material cost in the document
-  model or in an operation log, which would reopen the width in clause 3 rather
-  than the model.
-- The closed-vocabulary boundary in *Outside this decision* proves wrong: if a
-  parameter name turns out to need entity identity rather than a declared name,
-  clause 1's kind list is incomplete.
+- The product needs repeated identity-preserving import or reconciliation of two
+  forks rather than explicit copy: decide ancestry/deletion/conflict semantics.
+- The product needs seed-preserving independent copies: decide a separate random
+  identity policy with ADR-0008's successor before promising it.
+- Measured identity/history storage costs require a different representation;
+  do not recover space by silently forgetting retired origins or ordinals.

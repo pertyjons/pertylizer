@@ -1,6 +1,6 @@
 # Core V2: Current Work
 
-Last updated: 2026-09-19
+Last updated: 2026-09-20
 
 This file contains only active Core V2 state, blockers and next actions. Durable
 contracts live in ADRs and specifications; completed Phase 3 coordination
@@ -235,20 +235,16 @@ Phase 0B remains `Active, parallel`; Phase 10 still waits for its exit.
 |---|---|---|
 | P00B-T001 | Complete | Closed 2026-08-29; 64 state entries are `Classified` and coverage-gated |
 | P00B-T002 | Paused | Resume by assigning reachability and migration dispositions in the capability inventory |
-| P00B-T003 | Active | All 33 identity entries have proposed rules; the [public identity inspection](inventories/identities.md#public-client-and-transaction-identities-2026-09-19) closes the client/transaction source gap. Next: resolve the stable-ID proposal's copy/merge questions and seed boundary before drafting its current contract. |
+| P00B-T003 | Active | All 33 identity entries have proposed rules. [ADR-0014](decisions/ADR-0014-persistent-id-generation-and-encoding.md) now separates copy/fork, refuses shared-origin imports and follows ADR-0008 seed inputs; it remains Proposed. Next: map V1 identity/reference classes through the proposal and name unsupported conversion cases. |
 | P00B-T004–T007, P00B-T009 | Not started | Follow the frozen Phase 0B decomposition |
 | P00B-T008 | Not started | Re-scope the former all-ADR task under `PROCESS.md` decision timing |
 
-The next P00B-T003 slice addresses
-[ADR-0014's open questions](decisions/ADR-0014-persistent-id-generation-and-encoding.md#open-acceptance-questions).
-It must distinguish an in-document copy from a document fork, detect conflicting
-retained identities across allocation origins, and reconcile the proposed seed
-rule with accepted [ADR-0008](decisions/ADR-0008-yams-state-identity-and-seeds.md).
-Copying and editing a graph must not change the original; merging diverged copies
-must not silently choose content; any claimed seed preservation needs an explicit
-mapping to the accepted runtime rule. These are proposal checks, not an approved
-format/API break or a Phase 0B exit. Public client and operation identities retain
-their separate service and operation-result owners in IDN-0032/0033.
+The next P00B-T003 slice records source-qualified conversion keys, created entity
+IDs, reference remapping and refusal cases in the identity inventory. Equal V1
+local IDs under different owners must remain distinct; every supported reference
+must reach its intended target. Runtime verification and format/API approval
+remain required before a converter is enabled. Public client and operation IDs
+retain their separate service and operation-result owners in IDN-0032/0033.
 
 ## Phase 3 residual obligations
 
