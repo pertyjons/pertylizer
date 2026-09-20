@@ -1378,7 +1378,9 @@ remains immutable. No raw mutable renderer/minter split is exposed.
 partition-equivalent audio and boundary traces, source-history note behavior,
 fresh identities, admission and storage ceilings, exhaustion and guarded first
 use. This consumer does not qualify physical timing or close Phase 9; concurrent
-capture, restart and mixed live ownership still need integration.
+source merging, restart and mixed live ownership still need integration. The
+[finite transfer consumer](spec-host-io-lifecycle.md#finite-loop-recording-transfer) in ADR-0068
+keeps the whole serial renderer/journal/recorder under one exclusive audio owner.
 
 ## Types and ownership
 

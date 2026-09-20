@@ -1,5 +1,5 @@
 use super::*;
-mod ordered;
+pub(super) mod ordered;
 use crate::{
     compile::{RenderConfig, compile},
     ir::{ExecutionScope, GraphIr, IrNodeKind, NodeId, PortId, SignalDomain},

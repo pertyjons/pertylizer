@@ -1,21 +1,22 @@
 //! A finite simulated session owns ordered transport, loop observations and capture.
 
+mod admission;
 mod hot;
+pub mod transfer;
 
 use super::{LoopCaptureError, LoopCaptureSession};
 use crate::{
     host::{
         ConnectionGeneration,
         session::{
-            SessionBoundary, SessionCaptureOutcome, SessionCommand, SessionCommandId, SessionError,
-            SessionLimits, SessionOutcome, SessionReceipt, SessionSourceAction, SessionSourceId,
-            SessionSourceLimits, SessionSourceReceipt, source::SourceQueue,
+            SessionBoundary, SessionCaptureOutcome, SessionError, SessionLimits, SessionOutcome,
+            SessionReceipt, SessionSourceLimits, SessionSourceReceipt, source::SourceQueue,
         },
     },
     looping::LoopSnapshot,
     quantities::{EventCount, PreparedBytes},
     recording::{CaptureQuality, notes::NoteCaptureResult},
-    time::{QUANTUM_FRAMES, SampleTime},
+    time::SampleTime,
 };
 use thiserror::Error;
 
@@ -165,10 +166,6 @@ impl LoopRecordingSession {
         Ok((lane, sources))
     }
 
-    pub const fn generation(&self) -> ConnectionGeneration {
-        self.commands.generation
-    }
-
     pub const fn command_bytes(&self) -> PreparedBytes {
         self.commands.bytes
     }
@@ -185,109 +182,11 @@ impl LoopRecordingSession {
         self.capture.observation_end()
     }
 
-    pub fn offer(
-        &mut self,
-        at: SampleTime,
-        command: SessionCommand,
-    ) -> Result<SessionCommandId, LoopSessionError> {
-        let lane = &mut self.commands;
-        if lane.closed {
-            return Err(SessionError::Closed.into());
-        }
-        if at < self.capture.acknowledged().clock
-            || !at.as_u64().is_multiple_of(u64::from(QUANTUM_FRAMES))
-            || lane.last_offer.is_some_and(|last| at < last)
-        {
-            return Err(SessionError::Boundary.into());
-        }
-        if command == SessionCommand::Play
-            && (lane.play_offered || lane.stopped || at != self.capture.initial().clock)
-        {
-            return Err(LoopSessionError::FinitePlay);
-        }
-        let reserve = usize::from(command == SessionCommand::Play);
-        if lane.held >= lane.slots.len() - reserve {
-            return Err(SessionError::Full.into());
-        }
-        let mut charge = 1_u64;
-        for offset in lane.completed..lane.held {
-            let index = (lane.head + offset) % lane.slots.len();
-            if lane
-                .slots
-                .get(index)
-                .and_then(Option::as_ref)
-                .is_some_and(|entry| entry.boundary.at == at)
-            {
-                charge += 1;
-            }
-        }
-        if charge > u64::from(lane.share.get()) {
-            return Err(SessionError::SessionShare.into());
-        }
-        let id = SessionCommandId::after(lane.generation, lane.serial)?;
-        let serial = id.serial();
-        let index = (lane.head + lane.held) % lane.slots.len();
-        lane.slots[index] = Some(CommandEntry {
-            boundary: SessionBoundary {
-                id,
-                at,
-                command,
-                capture: self.capture.ticket,
-            },
-            outcome: None,
-            capture: None,
-        });
-        lane.held += 1;
-        lane.serial = serial;
-        lane.last_offer = Some(at);
-        lane.play_offered |= command == SessionCommand::Play;
-        Ok(id)
-    }
-
-    pub fn offer_source(
-        &mut self,
-        action: SessionSourceAction,
-    ) -> Result<SessionSourceId, LoopSessionError> {
-        if self.commands.closed {
-            return Err(SessionError::Closed.into());
-        }
-        let _sequence = self.capture.source_sequence(action.source())?;
-        if action.epoch() != self.capture.initial().epoch {
-            return Err(LoopSessionError::Capture(LoopCaptureError::Capture(
-                crate::recording::notes::NoteCaptureError::ForeignEpoch,
-            )));
-        }
-        // Stopped workers may deliver a delayed fence for the stopped endpoint.
-        // SourceQueue and the recorder still enforce consumed FIFO/frontier order.
-        let earliest = if self.commands.stopped {
-            SampleTime::ZERO
-        } else {
-            self.acknowledged().clock
-        };
-        Ok(self.sources.offer(earliest, action)?)
-    }
-
     pub fn collect(&mut self) -> Option<SessionReceipt> {
-        let lane = &mut self.commands;
-        if lane.completed == 0 {
-            return None;
-        }
-        let entry = lane.slots.get_mut(lane.head)?.as_mut()?;
-        let outcome = entry.outcome?;
-        let receipt = SessionReceipt {
-            boundary: entry.boundary,
-            outcome,
-            capture: entry.capture.take(),
-        };
-        lane.slots[lane.head] = None;
-        lane.head = (lane.head + 1) % lane.slots.len();
-        lane.held -= 1;
-        lane.completed -= 1;
-        Some(receipt)
+        self.take_command_receipt()
     }
-
     pub fn collect_source(&mut self) -> Option<SessionSourceReceipt> {
-        self.sources.collect()
+        self.take_source_receipt()
     }
 
     pub fn finalize(&mut self) -> Result<(), LoopSessionError> {

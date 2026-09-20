@@ -1,4 +1,4 @@
-//! Off-thread source-action admission and receipt collection.
+//! Fixed-storage source actions; preparation is off-thread and receipt moves are hot-safe.
 mod hot;
 mod types;
 use super::SessionError;
@@ -56,59 +56,11 @@ impl SourceQueue {
             bytes: required,
         })
     }
-    pub(crate) fn offer(
-        &mut self,
-        clock: SampleTime,
-        action: SessionSourceAction,
-    ) -> Result<SessionSourceId, SessionError> {
-        let at = action.at();
-        let is_publication = matches!(action, SessionSourceAction::Publish { .. });
-        if at < clock
-            || self.last_offer.is_some_and(|(last, published)| {
-                at < last || (at == last && published && !is_publication)
-            })
-        {
-            return Err(SessionError::SourceOrder);
-        }
-        if self.held == self.slots.len() {
-            return Err(SessionError::Full);
-        }
-        let serial = self
-            .serial
-            .checked_add(1)
-            .ok_or(SessionError::IdentityExhausted)?;
-        let id = SessionSourceId {
-            generation: self.generation,
-            serial,
-        };
-        let index = (self.head + self.held) % self.slots.len();
-        self.slots[index] = Some(SourceEntry {
-            id,
-            action,
-            outcome: None,
-        });
-        self.held += 1;
-        self.serial = serial;
-        self.last_offer = Some((at, is_publication));
-        Ok(id)
-    }
     pub(crate) fn collect(&mut self) -> Option<SessionSourceReceipt> {
-        if self.completed == 0 {
-            return None;
-        }
-        let entry = self.slots.get_mut(self.head)?.take()?;
-        let Some(outcome) = entry.outcome else {
-            self.slots[self.head] = Some(entry);
-            return None;
-        };
-        self.head = (self.head + 1) % self.slots.len();
-        self.held -= 1;
-        self.completed -= 1;
-        Some(SessionSourceReceipt {
-            id: entry.id,
-            action: entry.action,
-            outcome,
-        })
+        self.take_receipt()
+    }
+    pub(crate) fn capacity(&self) -> usize {
+        self.slots.len()
     }
     pub(crate) fn has_held(&self) -> bool {
         self.held != 0

@@ -1,3 +1,4 @@
+mod transfer;
 use super::*;
 use crate::host::session::{
     LoopRecordingSession, LoopSessionError, SessionCaptureOutcome, SessionCommand,
@@ -34,7 +35,8 @@ fn armed() -> (LoopCaptureSession, [ConnectionGeneration; 2]) {
     (owner, sources)
 }
 
-fn setup() -> (LoopRecordingSession, [ConnectionGeneration; 2]) {
+pub(in crate::recording::notes::loop_capture) fn setup()
+-> (LoopRecordingSession, [ConnectionGeneration; 2]) {
     let (capture, sources) = armed();
     (
         LoopRecordingSession::prepare(capture, command_limits(4, 16384), source_limits(32, 32768))

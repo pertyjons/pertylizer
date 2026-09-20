@@ -91,3 +91,11 @@ progress and the related lifecycle/admission repairs with no remaining blocking
 defects. The complete repository gate passed without warnings or errors.
 False claims, contradictions, unfillable contracts and safety/correctness defects
 block acceptance; optional implementation detail does not.
+
+## Subsequent finite transfer consumer
+
+[ADR-0068](ADR-0068-finite-loop-recording-transfer.md) adds bounded owning packet
+transfer around this intact serial owner. It preserves the finite transport,
+whole-callback authority and source-retirement rules while adding a control credit
+ledger and joined reunion barrier before worker finalization. This record's serial
+constructor and no-mutable-inner-owner rule remain in force.

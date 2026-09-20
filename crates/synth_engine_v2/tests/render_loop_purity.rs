@@ -47,8 +47,12 @@ use std::path::{Path, PathBuf};
 /// `src/host/hot.rs` adds the simulated output callback, including silence and
 /// fault paths that run before entering the renderer.
 /// `src/host/session/hot.rs` adds ordered transport at each new quantum boundary.
-const REGION: [&str; 27] = [
+/// `ordered/admission.rs` adds fixed-slot serial admission and receipt moves used on audio.
+/// `ordered/transfer/hot.rs` adds owning packet handoff around that same serial runtime.
+const REGION: [&str; 29] = [
     "src/recording/notes/loop_capture/ordered/hot.rs",
+    "src/recording/notes/loop_capture/ordered/transfer/hot.rs",
+    "src/recording/notes/loop_capture/ordered/admission.rs",
     "src/recording/notes/loop_capture/hot.rs",
     "src/looping/journal/hot.rs",
     "src/looping/hot.rs",
@@ -594,6 +598,8 @@ fn every_call_the_render_loop_makes_is_inside_the_checked_region() {
         "fill",
         "len",
         "is_empty",
+        // Primitive remainder test; the quantum divisor is nonzero.
+        "is_multiple_of",
         "copied",
         "copy_within",
         "copy_from_slice",

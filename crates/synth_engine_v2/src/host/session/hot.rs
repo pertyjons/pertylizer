@@ -321,3 +321,15 @@ impl SessionRuntime {
         Ok(())
     }
 }
+
+impl super::SessionCommandId {
+    pub(crate) fn after(
+        generation: crate::host::ConnectionGeneration,
+        previous: u64,
+    ) -> Result<Self, super::SessionError> {
+        let serial = previous
+            .checked_add(1)
+            .ok_or(super::SessionError::IdentityExhausted)?;
+        Ok(Self { generation, serial })
+    }
+}

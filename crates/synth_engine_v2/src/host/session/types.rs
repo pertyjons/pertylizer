@@ -38,16 +38,6 @@ pub struct SessionCommandId {
     pub(super) serial: u64,
 }
 impl SessionCommandId {
-    pub(crate) fn after(
-        generation: ConnectionGeneration,
-        previous: u64,
-    ) -> Result<Self, SessionError> {
-        let serial = previous
-            .checked_add(1)
-            .ok_or(SessionError::IdentityExhausted)?;
-        Ok(Self { generation, serial })
-    }
-
     pub const fn generation(self) -> ConnectionGeneration {
         self.generation
     }

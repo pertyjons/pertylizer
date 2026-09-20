@@ -499,8 +499,55 @@ irregular callbacks. It covers Stop at an exact loop boundary, missing start fen
 same-time cancellation, queue/result pressure, exact storage ceilings, lagging sources
 and loss without another callback. Concurrent transfer, physical timing, live audition,
 restart, held-note swaps and pass-aware musical projection remain separate consumers.
+The finite transfer consumer below adds the bounded thread handoff without changing this serial API.
 After normal sealing, `close_completed` closes publication and cancels pending actions;
 source quiescence and explicit quality acknowledgement then permit result discard.
+
+## Finite loop recording transfer
+
+[ADR-0068](../decisions/ADR-0068-finite-loop-recording-transfer.md) adds the finite
+`loop_transfer` consumer. A fresh empty-lane `LoopRecordingSession` splits into
+`LoopRecordingControl` and `LoopRecordingAudio`. Audio exclusively retains the existing
+renderer, journal, raw recorder and serial lanes. Control owns a separate fixed credit ledger.
+The callback uses the serial whole-callback algorithm and bounded admission/receipt moves.
+
+Each opaque owning packet has a checked `LoopTransferId`, distinct from the eventual serial
+command/source identity. Each split issues a fresh transfer generation, including a repeated split
+of an untouched reunited session. C command credits and S source credits cover every unresolved location,
+including caller-held packets, concrete queues, audio cells and unread completions. Play reserves
+one command credit for Stop; source traffic cannot consume it. Cancellation returns an unpublished
+packet's ID. Only control cancellation or collection returns a credit. Protocol refusals return
+the packet, while semantic delivery refusals retain an identified completion. No late boundary moves.
+Acknowledged snapshots cannot rewind when completions are collected out of order.
+
+One off-thread merger publishes ordered source actions. The concrete host captures one ingress FIFO
+prefix before each callback and admits only that prefix. A fence arriving behind acknowledged audio
+before Stop is refused; after Stop, explicit delayed source progress follows the serial recorder's
+rules. The caller must collect that refusal and explicitly re-offer the needed fence after Stop,
+or interrupt if the source cannot provide it. An unresolved fence keeps finalization unavailable.
+Neither an ingress cut nor joining audio supplies a source acknowledgement.
+
+After normal Stop, callback access joins before worker custody. Closing control publication leaves
+serial source admission open for already queued or delayed fences. The joined owner may admit and
+drain those packets without rendering, then return their completions. `reunite` requires matching
+origins, an empty control credit ledger and empty runtime receipt cells, returning both intact owners
+on refusal. The worker then owns the serial session and may finalize after explicit final fences.
+Normal sealing precedes serial `close_completed`, source-quality retirement and explicit discard.
+No result/discard API is available on split audio; a completion in a return queue still blocks reunion.
+
+Device loss instead closes serial admission after callback join, freezes acknowledged selection and
+cancels pending work. Every queued, unpublished, failed-transfer and runtime outcome must be resolved.
+Independent source quiescence is still required before interrupted finalization. No final callback
+is needed. Concrete queue backing and both owners must survive callback join; the core handles alone
+are not a physical-backend lifetime proof.
+
+Transfer metadata has an explicit byte ceiling in addition to existing session storage. Concrete
+host queues require separate bounds. The development ringbuf harness checks real OS-thread transfer,
+whole/64/256/irregular callback equivalence, exact-boundary Stop, completion pressure, late-fence retry
+and recovery after stalls or loss. Repeated split/reunion must never reuse a transfer ID.
+Core hot methods join the source-level purity scan; concrete queue
+operations are allocation/destruction guarded. This consumer does not qualify physical timing,
+independent-clock source merging, live raw observation, restart, audio capture or monitoring.
 
 ## Unresolved questions
 

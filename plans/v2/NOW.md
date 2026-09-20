@@ -169,7 +169,7 @@ P09-S006 adds a bounded serial lane for ordered capture start/end boundaries,
 with source-fence waiting and explicit cancellation after host loss. Its checks
 and remaining audible-transport scope are recorded in the
 [recording specification](specs/spec-recording-takes-and-commit.md#conformance-tests).
-Concurrent loop capture and physical adapters remain separately gated.
+Independent-clock source merging and physical adapters remain separately gated.
 Input lifecycle, independent clocks and monitoring still require IO-INV-004 and
 IO-INV-005 checks before their first consumers. Concurrent backend fences,
 concurrent input/capture, held-note swaps, production hardware timing and project
@@ -196,8 +196,10 @@ retains successful render boundaries through worker stalls. The
 raw pass segmentation and bounded key carry.
 [Ordered serial loop recording](specs/spec-host-io-lifecycle.md#ordered-serial-loop-recording)
 adds finite coupled Play/Stop, retained command/source outcomes and finalization after
-source stalls or loss without another callback under ADR-0067. Concurrent capture still
-needs source ordering and transfer; restart and live audition remain separate consumers.
+source stalls or loss without another callback under ADR-0067.
+[Finite loop recording transfer](specs/spec-host-io-lifecycle.md#finite-loop-recording-transfer)
+adds bounded command/source custody across threads and joined worker finalization under ADR-0068.
+Independent-clock source merging, restart and live audition remain separate consumers.
 The Linux harness also runs this owner through its `loops` output mode under
 [ADR-0063](decisions/ADR-0063-linux-cpal-callback-custody.md#exclusive-loop-output-consumer).
 
@@ -252,7 +254,7 @@ Phase 3 is complete. Its exit review accepted these bounded residuals:
 
 | ID | Residual | Pull-forward rule |
 |---|---|---|
-| P03-R001 | [ADR-0065](decisions/ADR-0065-exclusive-sample-exact-loop-owner.md) supplies the standalone sample-exact loop owner | Session controls and concurrent capture remain; ordinary activation retains ADR-0055's refusal |
+| P03-R001 | [ADR-0065](decisions/ADR-0065-exclusive-sample-exact-loop-owner.md) supplies the standalone sample-exact loop owner | ADR-0067/0068 add finite serial controls and thread transfer; independent source merging remains |
 | P03-R002 | Current producer shares, event cap, release holds and live-ingress depth remain provisional | [ADR-0054](decisions/ADR-0054-staged-producer-capacity-calibration.md) measures each first real authored/internal producer and requires complete reselection before production live ingress |
 | P03-R003 | Note events carry identity but not typed pitch and velocity | **Closed.** A note-on carries a validated key and velocity, resolves the key through the plan's prepared tuning, expands to the control writes its scope declares, and a saved note's own magnitudes reach it. Phase 6 still owns the full composition law, which the work list is explicit this does not decide |
 | P03-R004 | Numeric note-index and generation widths are safe by checked bounds and fail-closed exhaustion, but not endurance-qualified against a real live workload | Validate the widths before a production live adapter; generation exhaustion retires and reports instead of aliasing |

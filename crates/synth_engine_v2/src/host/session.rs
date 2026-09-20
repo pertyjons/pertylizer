@@ -9,6 +9,7 @@ pub use source::*;
 mod tests;
 pub mod transfer;
 mod types;
+pub use crate::recording::notes::loop_capture::ordered::transfer as loop_transfer;
 pub use crate::recording::notes::loop_capture::ordered::{
     LoopRecordingSession, LoopSessionError, LoopSessionPrepareError,
 };

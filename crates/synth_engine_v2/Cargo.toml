@@ -46,3 +46,6 @@ thiserror = { workspace = true }
 # crates reach *this* one — the two questions are separate.)
 [dev-dependencies]
 sha2 = { workspace = true }
+
+# Concrete bounded SPSC queues for the finite loop-transfer thread tests (ADR-0068).
+ringbuf = { workspace = true }
