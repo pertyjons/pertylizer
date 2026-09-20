@@ -22,11 +22,17 @@ use crate::{
     time::SampleTime,
 };
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum InputDelivery {
+    Serial(SessionSourceId),
+    Transfer(super::transfer::LoopTransferId),
+}
+
 struct InputEntry {
     id: InputEventId,
     observation: InputObservation,
     nominal: SampleTime,
-    forwarded: Option<SessionSourceId>,
+    forwarded: Option<InputDelivery>,
     outcome: Option<InputOutcome>,
 }
 

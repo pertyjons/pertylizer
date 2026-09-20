@@ -49,6 +49,10 @@ pub struct LoopTransferPacket {
     action: Action,
 }
 impl LoopTransferPacket {
+    pub(super) const fn is_source(&self) -> bool {
+        matches!(self.action, Action::Source(_))
+    }
+
     pub const fn id(&self) -> LoopTransferId {
         self.id
     }
@@ -70,6 +74,10 @@ pub struct LoopTransferCompletion {
     snapshot: LoopSnapshot,
 }
 impl LoopTransferCompletion {
+    pub(super) const fn is_source(&self) -> bool {
+        self.packet.is_source()
+    }
+
     pub const fn id(&self) -> LoopTransferId {
         self.packet.id
     }

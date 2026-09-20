@@ -50,7 +50,9 @@ use std::path::{Path, PathBuf};
 /// `ordered/admission.rs` adds fixed-slot serial admission and receipt moves used on audio.
 /// `ordered/transfer/hot.rs` adds owning packet handoff around that same serial runtime.
 /// ADR-0069 adds synthetic input admission, clock arithmetic and callback delegation.
-const REGION: [&str; 32] = [
+/// ADR-0070 adds the borrowed terminal signal and split input/audio callback wrapper.
+const REGION: [&str; 33] = [
+    "src/recording/notes/loop_capture/ordered/input/capture/transfer/hot.rs",
     "src/recording/notes/loop_capture/ordered/input/hot.rs",
     "src/recording/notes/loop_capture/ordered/input/clock.rs",
     "src/recording/notes/loop_capture/ordered/input/capture/hot.rs",
@@ -558,6 +560,10 @@ fn every_call_the_render_loop_makes_is_inside_the_checked_region() {
     // loop indexes without panicking, and `sort_unstable_by_key` is the non-allocating
     // sort where `sort_by_key` would allocate.
     let std_calls = [
+        // ADR-0070's prepared AtomicU8 terminal signal: a load and one bounded
+        // exchange, no reset, allocation, lock or retry loop. Arc is only borrowed.
+        "load",
+        "compare_exchange",
         // VM scalar math and bounded iterator traversal; no allocator or fallible index.
         "any",
         "rev",

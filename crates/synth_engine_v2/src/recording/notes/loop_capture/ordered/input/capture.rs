@@ -1,7 +1,8 @@
 //! Exclusive composition; allocation, merging, reconciliation and recovery are off-callback.
 mod hot;
+mod transfer;
 use super::super::{LoopRecordingSession, LoopSessionError};
-use super::{InputError, InputOutcome, SimulatedNoteInput};
+use super::{InputDelivery, InputError, InputOutcome, SimulatedNoteInput};
 use crate::{
     host::{
         ConnectionGeneration, ConnectionState,
@@ -11,6 +12,7 @@ use crate::{
     recording::notes::{CaptureDisposition, NoteCaptureResult},
 };
 use thiserror::Error;
+pub use transfer::*;
 
 #[derive(Debug, Error)]
 pub enum InputCaptureError {
@@ -18,6 +20,8 @@ pub enum InputCaptureError {
     Input(#[from] InputError),
     #[error(transparent)]
     Recording(#[from] LoopSessionError),
+    #[error(transparent)]
+    Transfer(#[from] super::super::transfer::LoopTransferError),
 }
 
 /// Failed attachment or release retains both the take and every input observation.
@@ -53,6 +57,55 @@ impl InputCaptureOwnerError {
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 struct InputPortOrder(usize);
+
+/// One selection rule for serial admission and threaded packet preparation.
+fn next_source(
+    inputs: &[SimulatedNoteInput],
+) -> Result<
+    Option<(
+        InputPortOrder,
+        usize,
+        crate::host::session::SessionSourceAction,
+    )>,
+    InputError,
+> {
+    if inputs
+        .iter()
+        .any(|input| input.state != ConnectionState::Running)
+    {
+        return Err(InputError::State);
+    }
+    let frontier = inputs
+        .iter()
+        .map(|input| input.frontier)
+        .min()
+        .ok_or(InputError::Attachment)?;
+    let mut selected = None;
+    for (port, input) in inputs.iter().enumerate() {
+        for (slot, entry) in input.slots.iter().enumerate() {
+            let Some(entry) = entry else {
+                continue;
+            };
+            if entry.forwarded.is_some() || entry.outcome.is_some() {
+                continue;
+            }
+            let action = input.action(entry).ok_or(InputError::Attachment)?;
+            let message = matches!(
+                action,
+                crate::host::session::SessionSourceAction::Publish { .. }
+            );
+            if action.at() > frontier || (message && action.at() == frontier) {
+                continue;
+            }
+            // Array order is only this prepared merger's deterministic tie-break.
+            let key = (action.at(), message, InputPortOrder(port), entry.id.serial);
+            if selected.as_ref().is_none_or(|(prior, _, _)| key < *prior) {
+                selected = Some((key, slot, action));
+            }
+        }
+    }
+    Ok(selected.map(|((_, _, port, _), slot, action)| (port, slot, action)))
+}
 
 /// A finite serial oracle. No concurrent callback access or physical fence is implied.
 /// Input owners cannot escape while they still participate in this retained take.
@@ -183,53 +236,13 @@ impl InputCaptureSession {
         if self.closed {
             return Ok(());
         }
-        if self
-            .inputs
-            .iter()
-            .any(|input| input.state != ConnectionState::Running)
-        {
-            return Err(InputError::State.into());
-        }
-        let frontier = self
-            .inputs
-            .iter()
-            .map(|input| input.frontier)
-            .min()
-            .ok_or(InputError::Attachment)?;
-        loop {
-            let mut selected = None;
-            for (port, input) in self.inputs.iter().enumerate() {
-                for (slot, entry) in input.slots.iter().enumerate() {
-                    let Some(entry) = entry else {
-                        continue;
-                    };
-                    if entry.forwarded.is_some() || entry.outcome.is_some() {
-                        continue;
-                    }
-                    let action = input.action(entry).ok_or(InputError::Attachment)?;
-                    let message = matches!(
-                        action,
-                        crate::host::session::SessionSourceAction::Publish { .. }
-                    );
-                    if action.at() > frontier || (message && action.at() == frontier) {
-                        continue;
-                    }
-                    // Array order is only this prepared merger's deterministic tie-break.
-                    let key = (action.at(), message, InputPortOrder(port), entry.id.serial);
-                    if selected.as_ref().is_none_or(|(prior, _, _)| key < *prior) {
-                        selected = Some((key, slot, action));
-                    }
-                }
-            }
-            let Some(((_, _, InputPortOrder(port), _), slot, action)) = selected else {
-                break;
-            };
+        while let Some((InputPortOrder(port), slot, action)) = next_source(&self.inputs)? {
             match self.session.offer_source(action) {
                 Ok(id) => {
                     let entry = self.inputs[port].slots[slot]
                         .as_mut()
                         .ok_or(InputError::ReceiptOwner)?;
-                    entry.forwarded = Some(id);
+                    entry.forwarded = Some(InputDelivery::Serial(id));
                 }
                 Err(LoopSessionError::Session(SessionError::Full)) => break,
                 Err(error) => {
@@ -255,7 +268,7 @@ impl InputCaptureSession {
                 for (slot, entry) in input.slots.iter().enumerate() {
                     if entry
                         .as_ref()
-                        .is_some_and(|entry| entry.forwarded == Some(id))
+                        .is_some_and(|entry| entry.forwarded == Some(InputDelivery::Serial(id)))
                     {
                         target = Some((port, slot));
                     }

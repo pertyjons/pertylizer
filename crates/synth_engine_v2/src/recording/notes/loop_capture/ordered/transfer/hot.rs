@@ -13,6 +13,20 @@ enum ReadyReceipt {
 }
 
 impl LoopRecordingAudio {
+    pub(crate) const fn is_closed(&self) -> bool {
+        self.session.commands.closed
+    }
+
+    pub(crate) fn halt(
+        &mut self,
+        reason: crate::recording::notes::CaptureStopReason,
+    ) -> Result<(), LoopSessionError> {
+        if !self.is_closed() {
+            self.session.interrupt(reason)?;
+        }
+        Ok(())
+    }
+
     pub const fn acknowledged(&self) -> LoopSnapshot {
         self.session.acknowledged()
     }

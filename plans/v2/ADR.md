@@ -3,7 +3,7 @@
 This is the compact status index for durable Core V2 decisions. Individual ADRs own rationale and evidence; current
 specifications own implementation semantics. Do not copy review history or measurement results into this file.
 
-Next free identifier: `ADR-0069`.
+Next free identifier: `ADR-0071`.
 
 ## Status vocabulary
 
@@ -120,6 +120,7 @@ the durable-decision test in `PROCESS.md` and normally do not need an ADR.
 | ADR-0067 | Ordered serial loop recording | Accepted | 9 | [ADR](decisions/ADR-0067-ordered-serial-loop-recording.md) | One finite Play/Stop owner, retained outcomes and whole-callback capture authority |
 | ADR-0068 | Finite loop recording transfer | Accepted | 9 | [ADR](decisions/ADR-0068-finite-loop-recording-transfer.md) | Bounded command/source custody across threads and joined result recovery |
 | ADR-0069 | Simulated input clock and capture | Accepted | 9 | [ADR](decisions/ADR-0069-simulated-input-clock-and-capture.md) | Independent synthetic clocks, explicit source prefixes and retained input lifecycle |
+| ADR-0070 | Threaded simulated input capture | Accepted | 9 | [ADR](decisions/ADR-0070-threaded-simulated-input-capture.md) | Merger/audio ownership, independent terminal halt and joined quality reconciliation |
 
 ### Reversible decisions
 

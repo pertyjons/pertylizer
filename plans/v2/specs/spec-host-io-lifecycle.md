@@ -707,5 +707,54 @@ simulated quiescence acknowledgement; finalization needs no later audio callback
 Normal completion also closes sources before retirement. Release returns the intact
 take and input owners only after all receipts and quiescence are resolved. Callback
 paths allocate and deallocate nothing; all observation storage has explicit byte ceilings.
-The ADR names the executable conformance checks. Physical clocks, concurrent input,
-audio capture and monitoring remain separately gated by IO-INV-004/005 and ADR-0022.
+The ADR names the serial conformance checks. The split consumer below supplies
+concurrent simulated input; physical clocks, qualified worker timing, audio capture
+and monitoring remain separately gated by IO-INV-004/005 and ADR-0022.
+
+## Threaded simulated input capture
+
+[ADR-0070](../decisions/ADR-0070-threaded-simulated-input-capture.md) joins the input
+merger to finite loop transfer. A fresh `InputCaptureSession` splits into
+`InputCaptureControl`, `InputCaptureAudio` and an independent terminal halt handle.
+The merger owns input cells and core transfer credits; audio owns the complete
+renderer, journal and recorder. Prepared budgets cover both halves and shared
+signal storage. The host separately charges fixed queues and failed-send cells.
+
+Producer queue acceptance precedes model admission. The host retains every
+queued original observation through admission or an explicit returned refusal.
+The merger assigns input identities and retains original clocks/observations until
+input-receipt collection, including while core packets or completions are in transit.
+A returned core completion frees its core credit, not its input cell. Source
+cancellation interrupts instead of silently omitting accepted input from a Complete
+take. The serial and split consumers share the explicit-prefix arrival-order rule.
+
+A monotone terminal signal works independently of queue space or worker progress.
+Audio polls before packet admission and rendering, and publishes closure after an
+audio-originated fault. A pending halt refuses new packet custody; rendering or joined recovery then
+closes lanes, retains outcomes and freezes
+the last whole acknowledged callback. A racing later request is handled at the next
+poll or after callback join; successful audio is never retroactively silenced.
+Terminal Stop produces Interrupted, without an ordered Stop receipt. Normal queued
+Stop retains its timestamped outcome. The first requested terminal cause wins;
+retained input diagnostics may describe a later different cause. When the merger
+observes a terminal signal, previously undiagnosed inputs receive `PeerInterrupted`.
+Here that marker denotes imposed closure, including user Stop and backend halt;
+it does not identify a failed peer. Original diagnostics remain intact.
+
+No result, mutable inner owner or source-quiescence operation escapes either half.
+After joining callback access, the host resolves all transfers and reunites ownership.
+Merger-side late/uncertain diagnostics reach the raw recorder before results become
+readable. Uncertainty attribution for an interrupted active take uses its final
+frozen selection; a diagnostic outside that interval remains retained without a
+quality marker. Finalization is unavailable while split, so even a fault after ordered Stop
+interrupts before a Complete result can escape. After normal reunion/finalization,
+the serial late/uncertain Partial rule still applies until source retirement.
+The host joins each producer and resolves its queued observations
+before explicitly acknowledging that source; audio join alone is insufficient.
+
+Failed owning operations preserve their owners, including an opaque serial owner
+if quality reconciliation cannot complete. Reconnect still requires retirement and
+a fresh generation, returns Ready, and cannot reuse a previous terminal signal.
+The ADR names real-thread, pressure, fault, recovery and allocation conformance tests.
+This consumer does not qualify complete recording under arbitrary worker delay,
+physical clocks, live audition, restart, audio capture, monitoring or Phase 9 exit.

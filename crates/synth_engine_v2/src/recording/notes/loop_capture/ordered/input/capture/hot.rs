@@ -66,7 +66,9 @@ impl InputCaptureSession {
         }
         let mut reason = None;
         for input in &self.inputs {
-            if let Some(fault) = input.discontinuity {
+            if let Some(fault) = input.discontinuity
+                && fault.reason != InputError::PeerInterrupted
+            {
                 // Known exact late refusals still owe the recorder's quality
                 // attribution, even after normal sealing. Mapping failures use only
                 // conservative diagnostic bounds, never a fabricated exact stamp.
@@ -112,7 +114,10 @@ impl InputCaptureSession {
             }
         }
         if let Some(reason) = reason {
-            self.session.interrupt(reason)?;
+            // A split owner may already have halted audio before joined quality attribution.
+            if !self.session.commands.closed {
+                self.session.interrupt(reason)?;
+            }
             for input in &mut self.inputs {
                 if input.discontinuity.is_none() {
                     input.fail(InputError::PeerInterrupted, None);

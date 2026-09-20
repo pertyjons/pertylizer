@@ -280,9 +280,13 @@ overlaps the selection retains `first_uncertain_source`; its quality makes a sea
 Complete result effectively Partial without asserting an exact timestamp. The same
 quality rule covers the valid-domain portion of a refused mapping interval; diagnostic
 intersection never admits clipped input.
-Physical clocks, concurrent input and restart still need their first consumers. ADR-0055 continues
-to protect ordinary activation-based schedulers. No concurrent live-loop activation or
-Phase 9 exit follows from this serial reference consumer.
+[Threaded simulated input](spec-host-io-lifecycle.md#threaded-simulated-input-capture)
+under ADR-0070 preserves observations and outcomes across merger/audio transfer.
+Joined recovery applies quality before exposing results; uncertain observations
+outside an interrupted take's final frozen selection remain diagnostic-only.
+Physical clocks, qualified worker deadlines and restart retain their first-consumer
+gates. ADR-0055 continues to protect ordinary activation-based schedulers. No
+concurrent live-loop activation or Phase 9 exit follows from these finite consumers.
 
 ### TAKE-INV-004 — Runtime timing and project projection
 
