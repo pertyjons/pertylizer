@@ -441,6 +441,67 @@ This consumer uses exact simulated sources with zero lateness and supplied audit
 traces. Standalone punch-in/disarm, live audition, audio input, loop passes and
 concurrent or physical source timing require their subsequent consumer checks.
 
+## Ordered serial loop recording
+
+[ADR-0067](../decisions/ADR-0067-ordered-serial-loop-recording.md) adds the finite
+`LoopRecordingSession` under the session API. It consumes an armed, unstarted, fresh
+`LoopCaptureSession` at engine clock zero with intact priming carry, retaining
+exclusive ownership of the renderer, journal, recorder
+and both receipt lanes. Its generation uses the simulator's checked common issuer.
+Standalone loop constructors and the ordinary linear session retain their contracts.
+Every preparation refusal returns the original capture owner, including any existing
+take; attempting to convert an active or already rendered fixture cannot discard it.
+
+One recording Play is admitted at the prepared initial engine clock. Stops are ordered,
+quantum-aligned commands using the existing session identities and outcomes. A new Play,
+rearm or plan replacement cannot reuse this finite owner's stopped state. Play reserves
+one command slot for Stop; collection is required before occupied receipt slots are reused.
+Each same-time command group fits the loop's Session share. A successful Play uses the
+already admitted initial restore; cancelled/refused Play and Stops are charged as bounded
+operations in a stopped quantum without compiled-loop publication.
+
+Stop precedes an equal-time loop wrap and freezes the actual loop-source position.
+It selects silence for subsequent quanta without advancing DSP state. Existing output
+carry keeps its original delivery order and priming latency. Dormant note identities stay
+exclusively owned until off-thread destruction; no resume or plan swap can redeem them.
+Equal-time Play followed by Stop cancels Play; Play after an earlier Stop also cancels.
+A surviving Play drains the same-time source-fence prefix before starting capture.
+A missing start fence yields a retained capture refusal and no delayed playback start.
+Stop changes playback even when the source has stalled or capture refuses its request.
+
+Only a successful whole callback commits its journal boundaries and Stop endpoint.
+Stop closes observation with `Finished` at the pre-wrap snapshot; an earlier terminal
+remains immutable. A terminal callback failure silences the complete output and closes
+observation at the previous successful frontier. Applied receipts describe executed
+controls, not delivered audio. The take's minimum endpoint and strongest outcome still
+bound capture selection, including raw input accepted during a subsequently failed call.
+
+The existing serial source FIFO preserves stamps and identified outcomes. After Stop,
+delayed source actions may still be offered in FIFO order; `drain_stopped_sources` consumes
+the finite admitted source FIFO, including explicit source frontiers beyond the last
+audio clock. This advances neither engine time nor the selected audio endpoint and
+manufactures no source frontier. Off-thread finalization waits for
+all participating fences and writes pass/carry metadata before sealing.
+
+Device/source loss closes command and source admission, cancels pending actions and
+freezes selection at the minimum acknowledged audio/source endpoints. Each source must
+acknowledge quiescence before interrupted finalization. Neither retirement acknowledgement
+nor finalization needs another audio callback. Results and both receipt lanes remain
+readable, and result discard refuses outstanding command or source outcomes.
+
+The command budget charges its fixed slots and additional wrapper inline storage.
+Source queue storage, recording storage, journal heap and the loop renderer retain their
+own existing byte ceilings. Hot operations allocate and deallocate nothing.
+
+`recording::notes::loop_capture::tests::ordered` checks identical actual audio, raw records,
+pass/carry descriptors and normalized receipts under whole, 64-frame, 256-frame and
+irregular callbacks. It covers Stop at an exact loop boundary, missing start fences,
+same-time cancellation, queue/result pressure, exact storage ceilings, lagging sources
+and loss without another callback. Concurrent transfer, physical timing, live audition,
+restart, held-note swaps and pass-aware musical projection remain separate consumers.
+After normal sealing, `close_completed` closes publication and cancels pending actions;
+source quiescence and explicit quality acknowledgement then permit result discard.
+
 ## Unresolved questions
 
 | Question | Blocking? | ADR or task |

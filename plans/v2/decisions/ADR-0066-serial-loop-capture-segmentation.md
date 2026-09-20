@@ -128,3 +128,12 @@ or bounded carry law. A fresh uncommitted code/specification review found no blo
 reread accepted the repair separating accepted raw releases from refused physical
 pairing diagnostics, the typed owner-byte charge and the added boundary/rate tests. Concurrent transfer, loop Play/Stop, pass-aware
 projection, audio capture/monitoring and ADR-0022 qualification remain later consumers.
+
+## Subsequent finite serial control consumer
+
+[ADR-0067](ADR-0067-ordered-serial-loop-recording.md) resolves the deferred finite
+serial Play/Stop recording consumer while retaining this standalone constructor's
+contract. Its current rules live in the
+[host I/O specification](../specs/spec-host-io-lifecycle.md#ordered-serial-loop-recording).
+Concurrent transfer, restart, physical timing and mixed live ownership remain outside
+that consumer.

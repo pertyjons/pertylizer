@@ -172,6 +172,47 @@ fn partially_advanced_failed_callback_contributes_no_boundaries_or_frontier() {
 }
 
 #[test]
+fn failed_controlled_callback_does_not_commit_tentative_stop_or_boundaries() {
+    use crate::{looping::LoopRenderControl, quantities::EventCount};
+    let mut owner = journal(50, 0, 100);
+    owner
+        .render(AudioBlockMut::new(&mut [0.0; 128], 128, ChannelLayout::Mono).unwrap())
+        .unwrap();
+    let before = owner.acknowledged();
+    let retained: Vec<_> = owner.boundaries().copied().collect();
+    let mut output = [9.0; 256];
+    let mut result = Ok(());
+    assert_eq!(
+        crate::render_allocation::count_allocs(|| {
+            result = owner.render_controlled(
+                AudioBlockMut::new(&mut output, 256, ChannelLayout::Mono).unwrap(),
+                |snapshot| {
+                    if snapshot.clock == SampleTime::new(192) {
+                        return Err(LoopFault::PreparedState);
+                    }
+                    Ok(LoopRenderControl {
+                        playing: snapshot.clock < SampleTime::new(128),
+                        finish: snapshot.clock == SampleTime::new(128),
+                        idle_operations: EventCount::NONE,
+                    })
+                },
+            );
+        }),
+        0
+    );
+    assert_eq!(result, Err(LoopFault::PreparedState));
+    assert_eq!(output, [0.0; 256]);
+    assert_eq!(owner.acknowledged(), before);
+    assert_eq!(owner.boundaries().copied().collect::<Vec<_>>(), retained);
+    let end = owner.end().unwrap();
+    assert_eq!(end.at, before.clock);
+    assert_eq!(
+        end.reason,
+        LoopJournalEndReason::RenderFault(LoopFault::PreparedState)
+    );
+}
+
+#[test]
 fn shape_refusal_does_not_duplicate_old_borrowed_boundaries() {
     let mut owner = journal(3, 0, 100);
     owner

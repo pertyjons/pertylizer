@@ -2,13 +2,16 @@
 
 mod capture;
 mod hot;
-mod source;
+pub(crate) mod source;
 pub use capture::SessionCaptureControl;
 pub use source::*;
 #[cfg(test)]
 mod tests;
 pub mod transfer;
 mod types;
+pub use crate::recording::notes::loop_capture::ordered::{
+    LoopRecordingSession, LoopSessionError, LoopSessionPrepareError,
+};
 pub use types::*;
 
 use super::{ConnectionGeneration, ConnectionState, HostError, SimulatedHost};

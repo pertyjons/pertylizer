@@ -264,10 +264,13 @@ P recording identities are reserved at arm, separately from renderer pass identi
 A pending initial wrap may give an empty initial segment; an exclusive final boundary
 never admits an empty following pass. Reading cannot renew any entitlement.
 
-Concurrent transfer/source fences, loop session controls and physical clocks still
-need their first consumers. ADR-0055 continues to protect ordinary activation-based
-schedulers. No successful live-loop activation or Phase 9 exit follows from this
-serial reference consumer.
+[ADR-0067](../decisions/ADR-0067-ordered-serial-loop-recording.md) adds the finite
+[ordered serial loop recording consumer](spec-host-io-lifecycle.md#ordered-serial-loop-recording).
+Its coupled Play/Stop, retained receipts, whole-callback audio authority and stopped
+source drain preserve these pass/carry and sealing rules. Concurrent transfer/source
+fences, physical clocks and restart still need their first consumers. ADR-0055 continues
+to protect ordinary activation-based schedulers. No concurrent live-loop activation or
+Phase 9 exit follows from this serial reference consumer.
 
 ### TAKE-INV-004 — Runtime timing and project projection
 

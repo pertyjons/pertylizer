@@ -311,6 +311,11 @@ pub struct PublicationArbiter {
 }
 
 impl PublicationArbiter {
+    #[cfg(feature = "simulated-ingress")]
+    pub(crate) const fn session_share(&self) -> EventCount {
+        self.shares[ProducerClass::Session.index()]
+    }
+
     /// Prepare the store for one stream, allocating everything it will ever use.
     ///
     /// This is the only allocation. Every later call opens, fills and seals inside it.

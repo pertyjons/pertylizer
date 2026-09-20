@@ -227,3 +227,12 @@ is reflected in the coverage list above.
 Stopping rule: a false claim, internal contradiction, unfillable contract,
 identity/real-time defect or unsupported evidence blocks acceptance. Optional
 implementation detail does not.
+
+## Subsequent finite serial control consumer
+
+[ADR-0067](ADR-0067-ordered-serial-loop-recording.md) resolves the deferred finite
+serial Play/Stop recording consumer while retaining this standalone constructor's
+contract. Its current rules live in the
+[host I/O specification](../specs/spec-host-io-lifecycle.md#ordered-serial-loop-recording).
+Concurrent transfer, restart, physical timing and mixed live ownership remain outside
+that consumer.

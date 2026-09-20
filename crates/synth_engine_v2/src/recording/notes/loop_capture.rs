@@ -3,6 +3,7 @@
 
 mod finalize;
 mod hot;
+pub(crate) mod ordered;
 #[cfg(test)]
 mod tests;
 

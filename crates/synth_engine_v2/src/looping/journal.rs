@@ -60,6 +60,20 @@ pub struct JournaledLoopStream {
 }
 
 impl JournaledLoopStream {
+    #[cfg(feature = "simulated-ingress")]
+    pub(crate) fn is_fresh(&self) -> bool {
+        self.initial.clock == SampleTime::ZERO
+            && self.acknowledged == self.initial
+            && self.end.is_none()
+            && !self.stream.source.started
+            && self.stream.renderer.carry_frames() == crate::time::QUANTUM_FRAMES as usize
+    }
+
+    #[cfg(feature = "simulated-ingress")]
+    pub(crate) const fn session_share(&self) -> crate::quantities::EventCount {
+        self.stream.arbiter.session_share()
+    }
+
     /// Take exclusive ownership off-thread, including a loop that has already
     /// rendered. The initial position may equal the end, with a wrap still pending.
     /// P passes reserve P-1 interior boundary cells and an inline terminal cell.

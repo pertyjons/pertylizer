@@ -12,7 +12,7 @@ struct SourceEntry {
     action: SessionSourceAction,
     outcome: Option<SessionSourceOutcome>,
 }
-pub(super) struct SourceQueue {
+pub(crate) struct SourceQueue {
     generation: ConnectionGeneration,
     slots: Box<[Option<SourceEntry>]>,
     head: usize,
@@ -23,7 +23,7 @@ pub(super) struct SourceQueue {
     bytes: PreparedBytes,
 }
 impl SourceQueue {
-    pub(super) fn prepare(
+    pub(crate) fn prepare(
         generation: ConnectionGeneration,
         limits: SessionSourceLimits,
     ) -> Result<Self, SessionError> {
@@ -56,7 +56,7 @@ impl SourceQueue {
             bytes: required,
         })
     }
-    pub(super) fn offer(
+    pub(crate) fn offer(
         &mut self,
         clock: SampleTime,
         action: SessionSourceAction,
@@ -92,7 +92,7 @@ impl SourceQueue {
         self.last_offer = Some((at, is_publication));
         Ok(id)
     }
-    pub(super) fn collect(&mut self) -> Option<SessionSourceReceipt> {
+    pub(crate) fn collect(&mut self) -> Option<SessionSourceReceipt> {
         if self.completed == 0 {
             return None;
         }
@@ -110,19 +110,10 @@ impl SourceQueue {
             outcome,
         })
     }
-    pub(super) fn has_held(&self) -> bool {
+    pub(crate) fn has_held(&self) -> bool {
         self.held != 0
     }
-    pub(super) fn bytes(&self) -> PreparedBytes {
+    pub(crate) fn bytes(&self) -> PreparedBytes {
         self.bytes
-    }
-    pub(super) fn close(&mut self) {
-        for offset in self.completed..self.held {
-            let index = (self.head + offset) % self.slots.len();
-            if let Some(entry) = self.slots.get_mut(index).and_then(Option::as_mut) {
-                entry.outcome = Some(SessionSourceOutcome::Cancelled);
-            }
-        }
-        self.completed = self.held;
     }
 }

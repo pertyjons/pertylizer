@@ -2,7 +2,7 @@
 
 use super::{
     CompiledLoopStream, HeldToken, LoopBoundary, LoopEvent, LoopFault, LoopPassId, LoopPayload,
-    LoopProgram, LoopSnapshot, LoopSource, NoteToken, PassProgram,
+    LoopProgram, LoopRenderControl, LoopSnapshot, LoopSource, NoteToken, PassProgram,
 };
 use crate::{
     identity::{NoteIdentity, Resolution},
@@ -276,7 +276,15 @@ impl CompiledLoopStream {
 
     /// Render a full host callback through fixed quanta. Any terminal source or
     /// render fault silences the entire outer block and all later calls.
-    pub fn render(&mut self, mut output: AudioBlockMut<'_>) -> Result<(), LoopFault> {
+    pub fn render(&mut self, output: AudioBlockMut<'_>) -> Result<(), LoopFault> {
+        self.render_controlled(output, |_| Ok(LoopRenderControl::PLAY))
+    }
+
+    pub(crate) fn render_controlled(
+        &mut self,
+        mut output: AudioBlockMut<'_>,
+        mut control: impl FnMut(LoopSnapshot) -> Result<LoopRenderControl, LoopFault>,
+    ) -> Result<(), LoopFault> {
         if let Some(fault) = self.fault {
             output.silence();
             return Err(fault);
@@ -311,7 +319,11 @@ impl CompiledLoopStream {
                     .render(window, TimedEvents::EMPTY)
                     .map_err(LoopFault::Render)
             } else {
-                self.render_quantum(window)
+                match control(self.snapshot()) {
+                    Ok(action) if action.playing => self.render_quantum(window),
+                    Ok(action) => self.render_stopped(window, action),
+                    Err(error) => Err(error),
+                }
             };
             if let Err(fault) = result {
                 return self.fail(&mut output, fault);
@@ -319,6 +331,25 @@ impl CompiledLoopStream {
             delivered += frames;
         }
         Ok(())
+    }
+
+    fn render_stopped(
+        &mut self,
+        output: AudioBlockMut<'_>,
+        action: LoopRenderControl,
+    ) -> Result<(), LoopFault> {
+        let clock = self.renderer.clock();
+        let mut publication = self
+            .arbiter
+            .open(clock, 1)
+            .map_err(LoopFault::Publication)?;
+        for _ in 0..action.idle_operations.get() {
+            publication
+                .charge_operation(ProducerClass::Session, clock)
+                .map_err(LoopFault::Publication)?;
+        }
+        let _batch = publication.seal();
+        self.renderer.render_idle(output).map_err(LoopFault::Render)
     }
 
     fn render_quantum(&mut self, output: AudioBlockMut<'_>) -> Result<(), LoopFault> {

@@ -226,6 +226,22 @@ struct LoopSource {
     boundary_len: usize,
 }
 
+/// Private control of the exclusive loop owner; no external renderer/minter split.
+#[derive(Clone, Copy)]
+pub(crate) struct LoopRenderControl {
+    pub playing: bool,
+    pub finish: bool,
+    pub idle_operations: crate::quantities::EventCount,
+}
+
+impl LoopRenderControl {
+    pub(crate) const PLAY: Self = Self {
+        playing: true,
+        finish: false,
+        idle_operations: crate::quantities::EventCount::NONE,
+    };
+}
+
 impl CompiledLoopStream {
     #[cfg(feature = "simulated-ingress")]
     pub(crate) fn sample_rate(&self) -> crate::quantities::SampleRate {

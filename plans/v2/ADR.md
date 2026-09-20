@@ -3,7 +3,7 @@
 This is the compact status index for durable Core V2 decisions. Individual ADRs own rationale and evidence; current
 specifications own implementation semantics. Do not copy review history or measurement results into this file.
 
-Next free identifier: `ADR-0067`.
+Next free identifier: `ADR-0068`.
 
 ## Status vocabulary
 
@@ -117,6 +117,7 @@ the durable-decision test in `PROCESS.md` and normally do not need an ADR.
 
 | ADR-0065 | Exclusive sample-exact loop owner | Accepted | 9 | [ADR](decisions/ADR-0065-exclusive-sample-exact-loop-owner.md) | Coupled per-sample timeline, fresh note identity and repeated boundary admission |
 | ADR-0066 | Serial loop capture segmentation | Accepted | 9 | [ADR](decisions/ADR-0066-serial-loop-capture-segmentation.md) | Actual render authority, continuous raw pairing and bounded nominal carry |
+| ADR-0067 | Ordered serial loop recording | Accepted | 9 | [ADR](decisions/ADR-0067-ordered-serial-loop-recording.md) | One finite Play/Stop owner, retained outcomes and whole-callback capture authority |
 
 ### Reversible decisions
 

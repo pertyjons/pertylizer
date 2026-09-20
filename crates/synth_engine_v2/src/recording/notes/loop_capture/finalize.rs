@@ -74,7 +74,6 @@ impl LoopCaptureSession {
         let mut pass_id = self.first_pass.ok_or(LoopCaptureError::State)?;
         let mut rendered = initial.pass;
         let mut position = initial.position;
-        let mut start = initial.clock;
         let layout = &self.recorder.store.layout;
         let ordinary_start = layout.starts[CaptureBuffer::Ordinary.index()];
         let ordinary_end = ordinary_start + layout.lengths[CaptureBuffer::Ordinary.index()];
@@ -95,9 +94,9 @@ impl LoopCaptureSession {
             .ok_or(LoopCaptureError::State)?
             .window;
         let mut end = window.end();
-        // Source interruption can select before initial.clock: ordinary empty-window
-        // finalization already moved the start back. Never emit a reversed pass interval.
-        start = start.min(end);
+        // Interruption can move an empty window before initial.clock; a refused Play
+        // can move it forward to Stop. The selected raw window owns both endpoints.
+        let mut start = window.start();
         for boundary in self.journal.boundaries() {
             if boundary.at >= end {
                 break;

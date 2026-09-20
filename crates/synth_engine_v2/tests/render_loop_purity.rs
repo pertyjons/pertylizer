@@ -47,7 +47,8 @@ use std::path::{Path, PathBuf};
 /// `src/host/hot.rs` adds the simulated output callback, including silence and
 /// fault paths that run before entering the renderer.
 /// `src/host/session/hot.rs` adds ordered transport at each new quantum boundary.
-const REGION: [&str; 26] = [
+const REGION: [&str; 27] = [
+    "src/recording/notes/loop_capture/ordered/hot.rs",
     "src/recording/notes/loop_capture/hot.rs",
     "src/looping/journal/hot.rs",
     "src/looping/hot.rs",

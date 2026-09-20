@@ -189,13 +189,15 @@ preserves device time and refuses outstanding note obligations in the split core
 The Linux harness supplies latest-wins plan publication, off-thread collection and
 joined recovery of all mailbox cells. The
 [exclusive loop owner](specs/spec-sound-core-render-contract.md#exclusive-compiled-loops)
-adds sample-exact compiled playback. Session/capture integration and physical timing
-qualification remain open; held-note swaps remain gated.
+adds sample-exact compiled playback. Physical timing qualification remains open; held-note swaps remain gated.
 Its [finite journal](decisions/ADR-0065-exclusive-sample-exact-loop-owner.md#retained-finite-observations)
 retains successful render boundaries through worker stalls. The
 [serial loop recorder](decisions/ADR-0066-serial-loop-capture-segmentation.md) adds
-raw pass segmentation and bounded key carry; concurrent capture still needs source
-ordering and transfer.
+raw pass segmentation and bounded key carry.
+[Ordered serial loop recording](specs/spec-host-io-lifecycle.md#ordered-serial-loop-recording)
+adds finite coupled Play/Stop, retained command/source outcomes and finalization after
+source stalls or loss without another callback under ADR-0067. Concurrent capture still
+needs source ordering and transfer; restart and live audition remain separate consumers.
 The Linux harness also runs this owner through its `loops` output mode under
 [ADR-0063](decisions/ADR-0063-linux-cpal-callback-custody.md#exclusive-loop-output-consumer).
 
@@ -214,7 +216,7 @@ The user selected these three work items on 2026-09-11, in this order:
 
 Each item is implemented in bounded slices with the repository's risk-selected
 checks and independent reviews. ADR-0065 resolves the standalone loop boundary;
-controls and capture need integration within its exclusive ownership contract. The initial
+ADR-0067 integrates finite serial controls and capture within its exclusive ownership contract. The initial
 physical target is Linux with CPAL and the existing V1 device-selection behavior,
 as selected by the user, using this computer's built-in audio device. The user
 confirmed that no physical MIDI device is available on this computer; local MIDI
