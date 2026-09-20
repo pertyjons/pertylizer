@@ -500,6 +500,68 @@ impl SimulatedNoteRecorder {
         Ok(())
     }
 
+    /// An input adapter may reject a known exact late observation before serial
+    /// admission. Preserve the same quality custody, including already sealed takes.
+    pub(super) fn attribute_refused_input(
+        &mut self,
+        generation: ConnectionGeneration,
+        stamp: CaptureStamp,
+    ) -> Result<(), NoteCaptureError> {
+        if stamp.epoch != self.epoch {
+            return Err(NoteCaptureError::ForeignEpoch);
+        }
+        let source = self.source_copy(generation)?;
+        if source.quiescent {
+            return Err(NoteCaptureError::RebindRequired);
+        }
+        if source
+            .fence
+            .is_some_and(|frontier| stamp.nominal < frontier)
+        {
+            self.attribute_late(generation, stamp)?;
+        }
+        Ok(())
+    }
+
+    /// Attribute an uncertain refused observation conservatively to any retained
+    /// selected interval it could overlap. Never manufacture an exact late time.
+    pub(super) fn attribute_uncertain_input(
+        &mut self,
+        generation: ConnectionGeneration,
+        earliest: SampleTime,
+        latest: SampleTime,
+    ) -> Result<(), NoteCaptureError> {
+        if earliest > latest {
+            return Err(NoteCaptureError::MappingRange);
+        }
+        let source = self.source_copy(generation)?;
+        if source.quiescent {
+            return Err(NoteCaptureError::RebindRequired);
+        }
+        for index in 0..self.store.slots.len() {
+            let state = self.store.slots.get(index).and_then(|slot| slot.state);
+            if let Some(state) = state {
+                let ticket = TakeReservation {
+                    id: state.id,
+                    slot: index,
+                };
+                if self.participates(ticket, generation)
+                    && state.window.start < state.window.end
+                    && earliest < state.window.end
+                    && latest >= state.window.start
+                {
+                    let slot = self.store.slot_mut(ticket)?;
+                    if let Some(state) = &mut slot.state
+                        && state.quality.first_uncertain_source.is_none()
+                    {
+                        state.quality.first_uncertain_source = Some(generation);
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
     fn attribute_late(
         &mut self,
         generation: ConnectionGeneration,
@@ -1122,5 +1184,22 @@ impl RecordedSourceState {
         } else {
             None
         }
+    }
+}
+
+impl CaptureStamp {
+    pub fn exact_fixture(
+        epoch: StreamEpoch,
+        nominal: SampleTime,
+        published_at: SampleTime,
+    ) -> Result<Self, NoteCaptureError> {
+        if nominal > published_at {
+            return Err(NoteCaptureError::FutureInput);
+        }
+        Ok(Self {
+            epoch,
+            nominal,
+            published_at,
+        })
     }
 }

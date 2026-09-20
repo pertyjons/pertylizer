@@ -2,6 +2,7 @@
 
 mod admission;
 mod hot;
+pub mod input;
 pub mod transfer;
 
 use super::{LoopCaptureError, LoopCaptureSession};

@@ -165,20 +165,6 @@ pub struct CaptureStamp {
     pub(super) published_at: SampleTime,
 }
 impl CaptureStamp {
-    pub fn exact_fixture(
-        epoch: StreamEpoch,
-        nominal: SampleTime,
-        published_at: SampleTime,
-    ) -> Result<Self, NoteCaptureError> {
-        if nominal > published_at {
-            return Err(NoteCaptureError::FutureInput);
-        }
-        Ok(Self {
-            epoch,
-            nominal,
-            published_at,
-        })
-    }
     pub const fn epoch(self) -> StreamEpoch {
         self.epoch
     }

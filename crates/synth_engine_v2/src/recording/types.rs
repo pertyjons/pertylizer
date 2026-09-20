@@ -121,19 +121,28 @@ pub struct LateCaptureInput {
 #[must_use]
 pub struct CaptureQuality {
     pub(super) first_late: Option<LateCaptureInput>,
+    pub(super) first_uncertain_source: Option<ConnectionGeneration>,
     pub(super) late_count: DiagnosticCount,
 }
 impl CaptureQuality {
     pub const fn first_late(self) -> Option<LateCaptureInput> {
         self.first_late
     }
+    /// A refused uncertainty interval overlapped this selected capture interval.
+    /// This identifies its source without manufacturing an exact late timestamp.
+    pub const fn first_uncertain_source(self) -> Option<ConnectionGeneration> {
+        self.first_uncertain_source
+    }
     pub const fn late_count(self) -> DiagnosticCount {
         self.late_count
     }
     pub const fn effective_outcome(self, sealed: CaptureOutcome) -> CaptureOutcome {
-        match (sealed, self.first_late) {
-            (CaptureOutcome::Complete, Some(_)) => CaptureOutcome::Partial,
-            _ => sealed,
+        if matches!(sealed, CaptureOutcome::Complete)
+            && (self.first_late.is_some() || self.first_uncertain_source.is_some())
+        {
+            CaptureOutcome::Partial
+        } else {
+            sealed
         }
     }
 }

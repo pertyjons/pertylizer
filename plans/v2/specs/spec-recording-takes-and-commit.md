@@ -269,8 +269,18 @@ never admits an empty following pass. Reading cannot renew any entitlement.
 Its coupled Play/Stop, retained receipts, whole-callback audio authority and stopped
 source drain preserve these pass/carry and sealing rules.
 [Finite loop transfer](spec-host-io-lifecycle.md#finite-loop-recording-transfer) under ADR-0068
-retains them across bounded thread handoff and joined worker finalization. Independent source
-merging, physical clocks and restart still need their first consumers. ADR-0055 continues
+retains them across bounded thread handoff and joined worker finalization.
+[Simulated input](spec-host-io-lifecycle.md#simulated-input-clock-and-capture) under ADR-0069
+adds independent synthetic clocks and arrival-ordered merging behind explicit source
+prefixes. Input exhaustion and late delivery retain their observations and interrupt
+the take; no-final-callback loss still waits for every input quiescence acknowledgement.
+Exact refused input behind a consumed fence retains the existing late-quality
+attribution after sealing. An uncertain refused message whose possible interval
+overlaps the selection retains `first_uncertain_source`; its quality makes a sealed
+Complete result effectively Partial without asserting an exact timestamp. The same
+quality rule covers the valid-domain portion of a refused mapping interval; diagnostic
+intersection never admits clipped input.
+Physical clocks, concurrent input and restart still need their first consumers. ADR-0055 continues
 to protect ordinary activation-based schedulers. No concurrent live-loop activation or
 Phase 9 exit follows from this serial reference consumer.
 

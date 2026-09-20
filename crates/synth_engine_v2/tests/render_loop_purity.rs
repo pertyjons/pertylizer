@@ -49,7 +49,11 @@ use std::path::{Path, PathBuf};
 /// `src/host/session/hot.rs` adds ordered transport at each new quantum boundary.
 /// `ordered/admission.rs` adds fixed-slot serial admission and receipt moves used on audio.
 /// `ordered/transfer/hot.rs` adds owning packet handoff around that same serial runtime.
-const REGION: [&str; 29] = [
+/// ADR-0069 adds synthetic input admission, clock arithmetic and callback delegation.
+const REGION: [&str; 32] = [
+    "src/recording/notes/loop_capture/ordered/input/hot.rs",
+    "src/recording/notes/loop_capture/ordered/input/clock.rs",
+    "src/recording/notes/loop_capture/ordered/input/capture/hot.rs",
     "src/recording/notes/loop_capture/ordered/hot.rs",
     "src/recording/notes/loop_capture/ordered/transfer/hot.rs",
     "src/recording/notes/loop_capture/ordered/admission.rs",

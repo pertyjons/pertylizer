@@ -178,7 +178,7 @@ impl LoopRecordingSession {
         Ok(())
     }
 
-    fn interrupt(&mut self, reason: CaptureStopReason) -> Result<(), LoopSessionError> {
+    pub(super) fn interrupt(&mut self, reason: CaptureStopReason) -> Result<(), LoopSessionError> {
         self.commands.close();
         self.sources.close();
         let terminal = self.capture.journal.finish();

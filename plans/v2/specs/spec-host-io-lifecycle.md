@@ -677,3 +677,35 @@ It compiles before publishing, immediately cancels overwritten candidates off-th
 and defers installation under retirement pressure. Withdrawal needs no extra credit.
 Joined cleanup recovers every cell without requiring another callback. Other hosts
 must establish their own transport and custody proof.
+
+## Simulated input clock and capture
+
+[ADR-0069](../decisions/ADR-0069-simulated-input-clock-and-capture.md) adds a finite
+serial `host::input::InputCaptureSession` over the loop recorder. Each input owns an
+independent connection generation, selected endpoint, configured synthetic clock and
+fixed observation/receipt cells. Preparation returns Ready; start is explicit.
+Retirement and a new same-endpoint attempt require resolved observations and input
+quiescence. Stale callbacks cannot affect a replacement or restart the old take.
+
+The clock maps synthetic ticks using a declared rational rate and source origin;
+only uncertainty wholly inside one engine-frame bucket yields an exact simulated stamp.
+Each message retains its original tick and arrival. Frontiers promise both that every
+prior arrival is strictly earlier and every future nominal is at or after the frontier.
+The merger orders by arrival, fences first at equal time, and withholds equal-frontier
+messages until every participating source advances. These promises preserve the existing
+zero-lateness recorder contract. They are not hardware calibration or queue observations.
+
+Full input storage retains accepted cells and the first refused observation. A full
+serial source lane leaves cells queued; other delivery refusals retain their actual
+identified outcomes and interrupt. Stop cannot wait for a stalled source. Delayed
+fences may finish after Stop, but queued arrivals behind the recorder's Stop floor
+remain explicit refusals. Peer-source withholding itself can cause that lateness even when the other producer
+honors its frontier promises. Complete recording under arbitrary worker delay is not promised.
+
+Loss closes admission and freezes acknowledged selection. Each input needs its own
+simulated quiescence acknowledgement; finalization needs no later audio callback.
+Normal completion also closes sources before retirement. Release returns the intact
+take and input owners only after all receipts and quiescence are resolved. Callback
+paths allocate and deallocate nothing; all observation storage has explicit byte ceilings.
+The ADR names the executable conformance checks. Physical clocks, concurrent input,
+audio capture and monitoring remain separately gated by IO-INV-004/005 and ADR-0022.

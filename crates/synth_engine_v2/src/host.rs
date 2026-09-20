@@ -12,6 +12,8 @@
 #[cfg(feature = "simulated-ingress")]
 mod capture;
 #[cfg(feature = "simulated-ingress")]
+pub use crate::recording::notes::loop_capture::ordered::input;
+#[cfg(feature = "simulated-ingress")]
 pub use capture::NoteCaptureControl;
 
 mod hot;
