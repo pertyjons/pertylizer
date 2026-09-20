@@ -169,6 +169,16 @@ impl InputCaptureControl {
         }
     }
 
+    /// Correlate an outstanding source packet with its retaining input cell.
+    /// Returns `None` for commands or packets without a matching retained input
+    /// in this control owner, including packets belonging to another owner.
+    /// Preparation is not delivery: a host may report a queued source frontier
+    /// only after this packet and every preceding FIFO packet were sent successfully.
+    pub fn packet_input_id(&self, packet: &LoopTransferPacket) -> Option<InputEventId> {
+        let (port, slot) = self.target(packet.id())?;
+        Some(self.inputs.get(port)?.slots.get(slot)?.as_ref()?.id)
+    }
+
     fn target(&self, id: LoopTransferId) -> Option<(usize, usize)> {
         for (port, input) in self.inputs.iter().enumerate() {
             for (slot, entry) in input.slots.iter().enumerate() {

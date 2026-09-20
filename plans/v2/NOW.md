@@ -204,7 +204,9 @@ adds independently generated inputs, configured synthetic clocks, explicit sourc
 and retained loss/reconnect outcomes under ADR-0069.
 [Threaded simulated input capture](specs/spec-host-io-lifecycle.md#threaded-simulated-input-capture)
 connects the merger and audio owners with bounded custody and independent halt under ADR-0070.
-Qualified worker timing, restart and live audition remain separate consumers.
+The [continuous delivery experiment](specs/spec-host-io-lifecycle.md#continuous-simulated-delivery-experiment)
+checks recurring input against explicit logical delivery and queue budgets.
+OS timing qualification, restart and live audition remain separate consumers.
 The Linux harness also runs this owner through its `loops` output mode under
 [ADR-0063](decisions/ADR-0063-linux-cpal-callback-custody.md#exclusive-loop-output-consumer).
 

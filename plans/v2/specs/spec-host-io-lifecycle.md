@@ -758,3 +758,68 @@ a fresh generation, returns Ready, and cannot reuse a previous terminal signal.
 The ADR names real-thread, pressure, fault, recovery and allocation conformance tests.
 This consumer does not qualify complete recording under arbitrary worker delay,
 physical clocks, live audition, restart, audio capture, monitoring or Phase 9 exit.
+
+### Continuous simulated delivery experiment
+
+The internal continuous test host exercises ADR-0070 over repeated callback cuts.
+Two input producers, one merger and one audio owner remain on separate threads for
+one finite take. Only Play, Stop and initial source fences are queued before audio
+starts. Eight waves of new observations are then generated after audio captures
+its prefix for each service period. Audio proceeds without waiting for those
+producers or the merger; packets sent after the cut wait for the next period.
+Fixture channels coordinate the logical schedule outside callback work. Actual
+wall-clock overlap depends on OS scheduling and is not an acceptance condition.
+
+`InputCaptureControl::packet_input_id` correlates an outstanding source packet
+with its retaining input cell. The host reports an explicit producer frontier
+only after successfully pushing that packet and every preceding FIFO packet.
+Packet preparation, queue occupancy and returned-credit counts cannot substitute
+for that proof. Command and foreign packets have no local input correlation.
+
+The tested profile uses 256 device-output frames per logical service period,
+512 frames of synthetic lookahead, and the existing 64-frame prepared silence.
+A wave generated after period r's cut must be queued before period r+2's cut.
+The merger may service it during r or r+1; servicing it during r+2 is too late
+for that cut. The host requests ADR-0070's terminal halt before rendering across
+a missed cut. Original timestamps are never moved to rescue the take.
+
+| Resource | Admitted test-host ceiling |
+|---|---|
+| Input cells per source | 16, including retained input receipts |
+| Core source credits | 32, including packet and completion transit |
+| Command credits | 4, with the existing Stop reservation |
+| Producer queue per source | 9 observations; 12 fixed producer retry cells |
+| Merger-to-audio queue | 32 packets |
+| Audio-to-merger queue | 8 completions |
+| Transport backing and association storage | 64 KiB; fixture channels and result logs are separate |
+
+These are selected sufficient capacities for this finite fixture, not minimal or
+production-live sizes. The eight waves contain 32 note messages and 16 explicit
+frontiers, plus two initial frontier receipts. Stop is at frame 2816; output spans
+3072 frames. The same original independent-clock input produces identical PCM,
+raw records, pass/carry metadata, 50 input receipts and two command outcomes under
+256-frame, 64-frame and irregular callback partitions at either supported merger
+service delay. Occupancy observations can vary with thread interleaving; assertions
+check the declared ceilings, not an invariant benchmark high-water number.
+
+The tests run late-delivery and undersized-queue controls before the supported
+matrix. A missed deadline, stalled source frontier or stalled merger interrupts
+without losing an accepted observation or a returned refusal. Recovery joins
+producers and audio, resolves queue/retry cells and receipts, and requires each
+source's explicit quiescence acknowledgement. A loss case supplies no final
+callback and verifies old-take retention and fresh-generation reconnect.
+
+The executable checks are `continuous_delivery_controls_precede_supported_deadline_and_capacity_matrix`,
+`continuous_source_and_worker_stalls_halt_at_the_declared_cut`,
+`continuous_no_final_callback_loss_retains_old_take_and_reconnects_explicitly`, and
+`packet_correlation_identifies_only_its_retaining_input_owner` in
+[`threads/continuous.rs`][continuous-input-tests].
+Run them with `cargo test -p synth_engine_v2 continuous --lib`.
+
+[continuous-input-tests]: ../../../crates/synth_engine_v2/src/recording/notes/loop_capture/tests/ordered/input/threads/continuous.rs
+
+This is a logical delivery-budget experiment with an enumerated fixture and
+controlled service delays. The driver can wait between logical periods, and the
+claims exclude OS response-time guarantees, hardware timestamps, production
+buffer sizing and arbitrary load. Physical timing, live audition and the complete
+producer qualification remain under their existing first-consumer gates.

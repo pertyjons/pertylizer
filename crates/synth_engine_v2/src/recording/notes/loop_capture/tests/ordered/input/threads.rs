@@ -1,3 +1,4 @@
+mod continuous;
 use super::*;
 use crate::host::{
     input::{InputCaptureAudio, InputCaptureControl, InputCaptureHalt},
@@ -152,6 +153,21 @@ fn queues(
         },
     )
 }
+fn receipt_text(receipt: crate::host::input::InputReceipt) -> String {
+    format!(
+        "{} {:?} {:?}",
+        receipt.id.serial(),
+        receipt.observation,
+        match receipt.outcome {
+            InputOutcome::Delivered(SessionSourceOutcome::Published(p)) => format!(
+                "published {:?} {:?}",
+                p.capture,
+                p.occurrence.map(|id| id.serial())
+            ),
+            other => format!("{other:?}"),
+        }
+    )
+}
 fn receipts(
     owner: &mut InputCaptureSession,
     generations: [ConnectionGeneration; 2],
@@ -159,19 +175,7 @@ fn receipts(
     let mut receipts = Vec::new();
     for generation in generations {
         while let Some(receipt) = owner.collect_input(generation).unwrap() {
-            receipts.push(format!(
-                "{} {:?} {:?}",
-                receipt.id.serial(),
-                receipt.observation,
-                match receipt.outcome {
-                    InputOutcome::Delivered(SessionSourceOutcome::Published(p)) => format!(
-                        "published {:?} {:?}",
-                        p.capture,
-                        p.occurrence.map(|id| id.serial())
-                    ),
-                    other => format!("{other:?}"),
-                }
-            ));
+            receipts.push(receipt_text(receipt));
         }
     }
     receipts
