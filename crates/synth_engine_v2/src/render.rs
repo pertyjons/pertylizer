@@ -69,6 +69,14 @@ pub fn identity_bytes(producer_ranges: &[crate::quantities::HeldNoteCount]) -> u
     indices.saturating_mul(per_index).saturating_add(spans)
 }
 
+/// Bound a group of eight releases before taking the maximum with parameter fanout.
+/// Multiplying the already fanned-out parameter width would charge that fanout twice.
+pub fn release_group_writes(
+    writes: crate::quantities::WritesPerNote,
+) -> crate::quantities::WritesPerNote {
+    crate::quantities::WritesPerNote::at_least(writes.get().saturating_mul(8))
+}
+
 /// How many bytes preparing a renderer will allocate for the sample-positioned
 /// control scratch, given a plan's per-quantum event capacity and how many records it
 /// schedules.
@@ -77,6 +85,8 @@ pub fn identity_bytes(producer_ranges: &[crate::quantities::HeldNoteCount]) -> u
 /// state what preparation takes, and two formulas for one allocation drift. One quantum's
 /// events bound how many sample-positioned changes that quantum can carry, and the two
 /// index tables are one entry per scheduled record plus a terminator.
+/// `writes_per_note` is the widest source operation, including [`release_group_writes`],
+/// parameter fanout and steal expansion.
 #[must_use]
 pub fn timed_control_scratch_bytes(
     max_events_per_quantum: EventCount,
@@ -233,6 +243,11 @@ impl<'a> AudioBlockMut<'a> {
         })
     }
 
+    /// The validated interleaved span, for a host mixing separately owned renderers.
+    pub fn samples_mut(&mut self) -> &mut [f32] {
+        self.samples
+    }
+
     /// How many frames the caller asked for.
     pub const fn frames(&self) -> usize {
         self.frames
@@ -353,6 +368,8 @@ impl NoteEdge {
 /// be used to escape the other's.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum EventPayload {
+    /// One admitted source operation lowering all member gates and triggers.
+    ReleaseGroup(crate::ingress::ReleaseGroup),
     /// Replace a declared controller source's base layer, preserving automation beneath it.
     Controller(crate::controller::ControllerChange),
     /// Restore both layers of a controller source at an activation boundary.
@@ -495,22 +512,18 @@ pub(crate) struct DueEvent {
     pub(crate) position: SampleTime,
     pub(crate) arrival: u32,
     pub(crate) payload: EventPayload,
-    /// The node and control this event moves, resolved once.
-    ///
-    /// **Resolved before the quantum passes and cached, rather than resolved in each.** A
-    /// note edge's node comes from the live-note registry, which the same walk mutates, so a
-    /// second resolution would read a different registry and could disagree with the first —
-    /// and the two passes agreeing is what makes the counts they produce describe the writes
-    /// they perform. `None` is an event with no sample-positioned effect: an orphan release,
-    /// or a parameter whose target is control-rate.
-    pub(crate) target: Option<ResolvedTarget>,
-    /// The node a bend's or a release's occurrence sounds on, resolved once with the target
-    /// above and for the same reason: the registry the passes would otherwise read is
-    /// mutated by the same walk, and a bend followed in one call by its note's release
-    /// would find the note gone and move nothing. An independent read found the passes
-    /// reading the registry. A release carries it since ADR-0026, for the trigger
-    /// destinations its off edge reaches.
-    pub(crate) note_of: Option<crate::plan::NoteSlot>,
+    /// Cached once in render order, before the count/write passes mutate anything.
+    /// A group needs only note-slot indices: identity and table stay in its payload.
+    resolved: ResolvedEvent,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum ResolvedEvent {
+    Ordinary {
+        target: Option<ResolvedTarget>,
+        note: Option<crate::plan::NoteSlot>,
+    },
+    Group([Option<std::num::NonZeroU32>; crate::ingress::RELEASE_GROUP_CAPACITY]),
 }
 
 /// Where a sample-positioned event's effect lands, resolved once per call.
@@ -536,9 +549,11 @@ impl DueEvent {
     /// allocate, but a `Vec::push` is still a call that can.
     const FILL: Self = Self {
         position: SampleTime::ZERO,
-        note_of: None,
+        resolved: ResolvedEvent::Ordinary {
+            target: None,
+            note: None,
+        },
         arrival: 0,
-        target: None,
         payload: EventPayload::SetParameter {
             // Never read: `scratch_len` bounds every read of the scratch. The identity
             // is the first a process can issue, so even if it were read it would name a
@@ -867,8 +882,7 @@ impl PreparedRenderer {
         // What the widest of this plan's events writes: a note-on's expansion, gate included,
         // or a sample-positioned parameter write fanned out over the instances of the widest
         // group such a write can address (`P06-S001`).
-        let writes_per_note = plan
-            .max_writes_per_note()
+        let writes_per_note = release_group_writes(plan.max_writes_per_note())
             .fanned_out(plan.sample_positioned_fan_out())
             .widest(plan.steal_expansion())
             .get() as usize;

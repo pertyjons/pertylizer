@@ -43,7 +43,10 @@ impl SessionRuntime {
             if entry.boundary.at != at {
                 return false;
             }
-            if entry.boundary.command == SessionCommand::Stop {
+            if matches!(
+                entry.boundary.command,
+                SessionCommand::Stop | SessionCommand::Panic
+            ) {
                 return true;
             }
         }
@@ -95,7 +98,12 @@ impl SessionRuntime {
                 });
             }
             match boundary.command {
-                SessionCommand::Stop => {
+                SessionCommand::Stop | SessionCommand::Panic => {
+                    let reason = if boundary.command == SessionCommand::Panic {
+                        CaptureStopReason::Panic
+                    } else {
+                        CaptureStopReason::Stop
+                    };
                     let position = self.stop_at(at)?;
                     // Offer admission bounded this group, including Play catch-up.
                     self.operations = EventCount::measured(self.operations.get() + 1);
@@ -103,7 +111,7 @@ impl SessionRuntime {
                         let outcome = match capture
                             .as_deref_mut()
                             .map_or(Err(NoteCaptureError::NotActive), |recorder| {
-                                recorder.stop(ticket, at, CaptureStopReason::Stop)
+                                recorder.stop(ticket, at, reason)
                             }) {
                             Ok(()) => SessionCaptureOutcome::Applied,
                             Err(error) => SessionCaptureOutcome::Refused(error),

@@ -596,6 +596,30 @@ storage assigned to compiled signal lifetimes.
     candidate be built while the stream renders, without a lock the real-time rules
     forbid. SOUND-INV-030 adds an exclusive authored owner that takes both fresh
     halves onto one render thread and exposes no concurrent control or activation.
+    [ADR-0072](../decisions/ADR-0072-finite-live-audition-and-count-in.md) adds the
+    simulated audition owner: one immutable plan, one live producer of at
+    most eight voices, no stealing and no activation. Only bounded live offers and
+    identity operations run on that callback; preparation still runs off-thread.
+
+    Its sealed `ReleaseGroup` carries distinct owned identities. One source
+    operation spends Session for Stop or Live for panic/sustain lift. Gate and
+    trigger fanout is charged in scratch admission before publication. All members
+    are validated before any mutation. The exclusive owner redeems N release holds
+    and frees minter entries at offer time; the renderer's separate registry applies
+    the event in sample order. This exception permits subsequent identity reuse in
+    that order, and grants no hold redemption across activation.
+    [ADR-0073](../decisions/ADR-0073-continuous-simulated-live-input.md) makes its
+    observation cells reusable, adds channel bend and a separate parameter lane.
+    Pending traces reconcile after settled input or joined recovery before sealing.
+    [ADR-0009](../decisions/ADR-0009-plan-swap-crossfade-and-latency.md) adds a
+    separate two-owner simulation: fresh epoch, copied physical-key tombstones and
+    controllers, a Q-frame fade and rendered old-note release before retirement.
+    It transfers no minter identity and adds no output carry.
+    [ADR-0074](../decisions/ADR-0074-concurrent-live-host-and-duplex-capture.md)
+    adds a bounded concurrent host mailbox. Unstaged observations move into fresh
+    owner cells; completed old-epoch outcomes remain until raw reconciliation.
+    Stop prevents subsequent installation, and candidate refusal preserves playback.
+    Compatible DSP state migration remains outside this consumer.
 19. **SOUND-INV-019 — Tempo conversion law.** The tempo map converts a musical
     position into a `PlanPosition` and never into an engine time. Its law uses only
     the four IEEE-754 arithmetic operations, comparison, and rounding, per

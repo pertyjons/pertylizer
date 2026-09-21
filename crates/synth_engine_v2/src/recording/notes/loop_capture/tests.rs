@@ -1,4 +1,6 @@
 use super::*;
+#[path = "tests/projection.rs"]
+mod loop_projection;
 pub(super) mod ordered;
 use crate::{
     compile::{RenderConfig, compile},

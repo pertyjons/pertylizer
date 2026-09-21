@@ -32,7 +32,7 @@ impl LoopCaptureSession {
             return Ok(());
         }
         let terminal = self.journal.end().ok_or(LoopCaptureError::AwaitingAudio)?;
-        let (outcome, reason) = match terminal.reason {
+        let (outcome, mut reason) = match terminal.reason {
             LoopJournalEndReason::Finished | LoopJournalEndReason::PassLimit => {
                 (CaptureOutcome::Complete, CaptureStopReason::Stop)
             }
@@ -41,6 +41,14 @@ impl LoopCaptureSession {
                 CaptureStopReason::LoopRenderFault,
             ),
         };
+        if outcome == CaptureOutcome::Complete
+            && let Some(ActiveCapture {
+                stage: CaptureStage::Stopping { reason: prior, .. },
+                ..
+            }) = self.recorder.active
+        {
+            reason = prior;
+        }
         self.recorder
             .stop_at(ticket, terminal.at, outcome, reason)?;
         let active = self.recorder.active.ok_or(LoopCaptureError::State)?;

@@ -25,13 +25,17 @@ impl InputCaptureHalt {
             .compare_exchange(0, code, Ordering::AcqRel, Ordering::Acquire)
             .is_ok();
     }
+    pub fn is_requested(&self) -> bool {
+        self.signal.load(Ordering::Acquire) != 0
+    }
     pub fn request_stop(&self) {
         self.request(CaptureStopReason::Stop);
     }
     pub fn request_device_lost(&self) {
         self.request(CaptureStopReason::DeviceLost);
     }
-    pub(super) fn request_invalid(&self) {
+    /// A host delivery failure interrupts capture without impersonating user Stop.
+    pub fn request_invalid(&self) {
         self.request(CaptureStopReason::SourceInvalid);
     }
     pub(super) fn reason(&self) -> Option<CaptureStopReason> {
@@ -45,6 +49,24 @@ impl InputCaptureHalt {
 }
 
 impl InputCaptureAudio {
+    /// Reconcile mutable raw metadata before returning a live outcome credit.
+    pub fn resolve_audition(
+        &mut self,
+        id: crate::host::live::AuditionId,
+        outcome: crate::host::live::AuditionOutcome,
+    ) -> Result<crate::quantities::EventCount, LoopSessionError> {
+        self.core.resolve_audition(id, outcome)
+    }
+
+    pub fn applied_end(
+        &self,
+    ) -> Option<(
+        crate::time::SampleTime,
+        crate::host::session::SessionCommand,
+    )> {
+        self.core.applied_end()
+    }
+
     pub const fn acknowledged(&self) -> LoopSnapshot {
         self.core.acknowledged()
     }

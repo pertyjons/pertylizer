@@ -1688,7 +1688,7 @@ fn inserted_latency_state_and_reset_scratch_are_charged_as_allocated() {
         plan.arena_samples() as u64,
         renderer.prepared_record_count(),
         &ranges,
-        ir.max_writes_per_note()
+        crate::render::release_group_writes(ir.max_writes_per_note())
             .fanned_out(ir.sample_positioned_fan_out())
             .widest(plan.steal_expansion()),
         ir.modulated_sample_positioned_rows(),

@@ -182,6 +182,28 @@ fn rational_clock_oracle_checks_hand_authored_frames_and_uncertainty() {
 }
 
 #[test]
+fn exact_start_tick_matches_exhaustive_rational_clock_oracle() {
+    let epoch = stream(0, 2048).snapshot().epoch;
+    for (frames, ticks) in [(1, 1), (2, 1), (3, 2), (1, 10)] {
+        for uncertainty in [0, 1, 3] {
+            let clock = clock(epoch, 73, frames, ticks, uncertainty);
+            for frame in 0..20 {
+                let time = SampleTime::new(frame);
+                let expected = (73..400)
+                    .map(InputTick::new)
+                    .find(|tick| clock.map(*tick) == Ok(time));
+                assert_eq!(clock.exact_tick(time).ok(), expected, "{clock:?} {time:?}");
+            }
+        }
+    }
+    assert!(
+        clock(epoch, 0, 1, 1, 1)
+            .exact_tick(SampleTime::ZERO)
+            .is_err()
+    );
+}
+
+#[test]
 fn independent_clocks_arrival_order_and_callback_partitions_match() {
     let mut reference = None;
     for partitions in [&[512][..], &[64], &[256], &[1, 37, 128, 3, 256], &[1]] {
@@ -842,6 +864,61 @@ fn uncertain_input_after_sealing_cannot_leave_an_unqualified_complete_take() {
             retained.discard(quality).unwrap();
         } else {
             retained.discard(prior_quality).unwrap();
+        }
+    }
+}
+
+#[test]
+fn scheduled_composition_refuses_an_unreachable_start_but_plain_arm_keeps_its_admission() {
+    for (start, frames, uncertainty, accepted) in
+        [(64, 3, 0, false), (64, 1, 1, false), (0, 1, 1, true)]
+    {
+        let mut capture = LoopCaptureSession::prepare(
+            stream(0, 2048),
+            limits(2, 64, 1_048_576),
+            PreparedBytes::measured(8192),
+        )
+        .unwrap();
+        let mut input = SimulatedNoteInput::new(
+            EndpointId::new("fence-check".to_string()).unwrap(),
+            InputLimits {
+                cells: InputCapacity::new(4).unwrap(),
+                bytes: PreparedBytes::measured(65536),
+            },
+        )
+        .unwrap();
+        let generation = input.begin().unwrap();
+        input
+            .prepare(
+                generation,
+                clock(capture.initial().epoch, 0, frames, 1, uncertainty),
+            )
+            .unwrap();
+        let source = input
+            .bind_capture(generation, &mut capture, ControllerSnapshot::neutral())
+            .unwrap();
+        let _ticket = if start == 0 {
+            capture.arm(super::input(), &[source])
+        } else {
+            capture.arm_at(super::input(), &[source], SampleTime::new(start))
+        }
+        .unwrap();
+        let session = LoopRecordingSession::prepare(
+            capture,
+            command_limits(4, 16384),
+            source_limits(32, 32768),
+        )
+        .unwrap();
+        let linked = InputCaptureSession::prepare(
+            session,
+            vec![input].into_boxed_slice(),
+            PreparedBytes::measured(8192),
+        );
+        assert_eq!(linked.is_ok(), accepted);
+        if let Err(error) = linked {
+            let (session, inputs, _) = error.into_parts();
+            assert!(session.result().is_err(), "unsealed take stays owned");
+            assert_eq!(inputs[0].generation(), Some(generation));
         }
     }
 }

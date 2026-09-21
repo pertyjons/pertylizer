@@ -1159,6 +1159,171 @@ pub struct CompiledPlan {
 }
 
 impl CompiledPlan {
+    /// Additional retained table capacity for an owning host. Compiler resource rows
+    /// cover DSP payloads/scratch, not every Vec backing and the shared plan container.
+    /// Some outer tables overlap those rows; charging both is deliberately conservative.
+    #[cfg(feature = "simulated-ingress")]
+    pub(crate) fn host_table_bytes(&self) -> Option<u64> {
+        let mut bytes = u64::try_from(size_of::<Self>() + 256).ok()?;
+        bytes = bytes.checked_add(
+            u64::try_from(self.ops.capacity().checked_mul(size_of::<PlanOp>())?).ok()?,
+        )?;
+        bytes = bytes.checked_add(
+            u64::try_from(
+                self.regions
+                    .capacity()
+                    .checked_mul(size_of::<BufferRegion>())?,
+            )
+            .ok()?,
+        )?;
+        bytes = bytes.checked_add(
+            u64::try_from(
+                self.prepared_scripts
+                    .capacity()
+                    .checked_mul(size_of::<crate::script::PreparedScript>())?,
+            )
+            .ok()?,
+        )?;
+        bytes = bytes.checked_add(
+            u64::try_from(
+                self.prepared_nodes
+                    .capacity()
+                    .checked_mul(size_of::<PreparedNode>())?,
+            )
+            .ok()?,
+        )?;
+        bytes = bytes.checked_add(
+            u64::try_from(
+                self.node_timings
+                    .capacity()
+                    .checked_mul(size_of::<(crate::ir::NodeId, crate::node::NodeTiming)>())?,
+            )
+            .ok()?,
+        )?;
+        bytes = bytes.checked_add(
+            u64::try_from(
+                self.parameter_targets
+                    .capacity()
+                    .checked_mul(size_of::<ParameterTarget>())?,
+            )
+            .ok()?,
+        )?;
+        bytes = bytes.checked_add(
+            u64::try_from(
+                self.parameter_addresses
+                    .capacity()
+                    .checked_mul(size_of::<ParameterAddress>())?,
+            )
+            .ok()?,
+        )?;
+        bytes = bytes.checked_add(
+            u64::try_from(self.taps.capacity().checked_mul(size_of::<TapTarget>())?).ok()?,
+        )?;
+        bytes = bytes.checked_add(
+            u64::try_from(
+                self.tap_addresses
+                    .capacity()
+                    .checked_mul(size_of::<TapAddress>())?,
+            )
+            .ok()?,
+        )?;
+        bytes = bytes.checked_add(
+            u64::try_from(
+                self.channels
+                    .capacity()
+                    .checked_mul(size_of::<ChannelRecord>())?,
+            )
+            .ok()?,
+        )?;
+        bytes = bytes.checked_add(
+            u64::try_from(self.buses.capacity().checked_mul(size_of::<BusRecord>())?).ok()?,
+        )?;
+        bytes = bytes.checked_add(
+            u64::try_from(self.sends.capacity().checked_mul(size_of::<SendRecord>())?).ok()?,
+        )?;
+        bytes = bytes.checked_add(
+            u64::try_from(
+                self.note_targets
+                    .capacity()
+                    .checked_mul(size_of::<NoteTarget>())?,
+            )
+            .ok()?,
+        )?;
+        bytes = bytes.checked_add(
+            u64::try_from(
+                self.note_addresses
+                    .capacity()
+                    .checked_mul(size_of::<NoteAddress>())?,
+            )
+            .ok()?,
+        )?;
+        bytes = bytes.checked_add(
+            u64::try_from(
+                self.note_magnitudes
+                    .capacity()
+                    .checked_mul(size_of::<NoteMagnitudeTarget>())?,
+            )
+            .ok()?,
+        )?;
+        bytes = bytes.checked_add(
+            u64::try_from(
+                self.prepared_tunings
+                    .capacity()
+                    .checked_mul(size_of::<crate::tuning::PreparedTuning>())?,
+            )
+            .ok()?,
+        )?;
+        bytes = bytes.checked_add(
+            u64::try_from(
+                self.prepared_samples
+                    .capacity()
+                    .checked_mul(size_of::<crate::sample::PreparedSample>())?,
+            )
+            .ok()?,
+        )?;
+        bytes = bytes.checked_add(
+            u64::try_from(
+                self.note_producer_ranges
+                    .capacity()
+                    .checked_mul(size_of::<HeldNoteCount>())?,
+            )
+            .ok()?,
+        )?;
+        bytes = bytes.checked_add(
+            u64::try_from(
+                self.note_producer_holds
+                    .capacity()
+                    .checked_mul(size_of::<EventCount>())?,
+            )
+            .ok()?,
+        )?;
+        bytes = bytes.checked_add(
+            u64::try_from(
+                self.authored_sources
+                    .capacity()
+                    .checked_mul(size_of::<crate::ir::AuthoredSourceDeclaration>())?,
+            )
+            .ok()?,
+        )?;
+        bytes = bytes.checked_add(
+            u64::try_from(
+                self.instance_groups
+                    .capacity()
+                    .checked_mul(size_of::<NodeSlot>())?,
+            )
+            .ok()?,
+        )?;
+        bytes = bytes.checked_add(
+            u64::try_from(
+                self.sum_groups
+                    .capacity()
+                    .checked_mul(size_of::<NodeSlot>())?,
+            )
+            .ok()?,
+        )?;
+        bytes.checked_add(self.path_latencies.prepared_bytes())
+    }
+
     pub(crate) fn install_scripts(&mut self, scripts: Vec<crate::script::PreparedScript>) {
         self.prepared_scripts = scripts.into_boxed_slice().into_vec();
     }

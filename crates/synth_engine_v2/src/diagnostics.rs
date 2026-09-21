@@ -942,6 +942,9 @@ impl std::fmt::Display for CompileWarning {
 /// they silence the output, invalidate the carries, and publish `needs_reprepare`.
 #[derive(Debug, Clone, Copy, PartialEq, Error)]
 pub enum RenderError {
+    /// A prepared note target cannot fit the group's cached index representation.
+    #[error("prepared note target index {index} is not representable")]
+    NoteTargetUnrepresentable { index: usize },
     /// A caller supplied one explicit quantum map for a different render span.
     #[error(
         "a mapped timeline requires one new quantum and empty carry (quanta={quanta}, carry={carry})"

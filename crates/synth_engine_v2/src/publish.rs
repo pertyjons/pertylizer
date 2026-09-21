@@ -395,6 +395,27 @@ impl PublicationArbiter {
         self.events.len()
     }
 
+    /// Allocated publication storage, excluding the inline owner.
+    pub(crate) fn storage_bytes(&self) -> Option<crate::quantities::PreparedBytes> {
+        let bytes = self
+            .events
+            .capacity()
+            .checked_mul(size_of::<TimedEvent>())?
+            .checked_add(
+                self.ledger
+                    .capacity()
+                    .checked_mul(size_of::<EventCount>())?,
+            )?
+            .checked_add(
+                self.totals
+                    .capacity()
+                    .checked_mul(size_of::<EventCount>())?,
+            )?;
+        Some(crate::quantities::PreparedBytes::measured(
+            u64::try_from(bytes).ok()?,
+        ))
+    }
+
     /// The highest occupancy one class has reached over this stream.
     ///
     /// Recorded on **every** stream rather than only after a fault, because a partition

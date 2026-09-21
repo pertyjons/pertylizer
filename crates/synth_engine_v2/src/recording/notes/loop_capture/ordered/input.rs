@@ -29,6 +29,7 @@ enum InputDelivery {
 }
 
 struct InputEntry {
+    audition: crate::recording::notes::AuditionTrace,
     id: InputEventId,
     observation: InputObservation,
     nominal: SampleTime,
@@ -153,6 +154,7 @@ impl SimulatedNoteInput {
         // not a timestamp observation subject to message uncertainty.
         self.clock = Some(clock);
         self.slots[0] = Some(InputEntry {
+            audition: crate::recording::notes::AuditionTrace::NotOffered,
             id: InputEventId {
                 generation,
                 serial: 1,
@@ -236,7 +238,7 @@ impl SimulatedNoteInput {
                 )
                 .ok()?,
                 input,
-                audition: crate::recording::notes::AuditionTrace::NotOffered,
+                audition: entry.audition,
             },
         })
     }

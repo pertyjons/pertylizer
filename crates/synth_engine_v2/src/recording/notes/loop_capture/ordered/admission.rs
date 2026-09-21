@@ -33,7 +33,7 @@ impl LoopRecordingSession {
             return Err(LoopSessionError::Session(SessionError::Boundary));
         }
         if command == SessionCommand::Play
-            && (lane.play_offered || lane.stopped || at != self.capture.initial().clock)
+            && (lane.play_offered || lane.stopped || at != self.capture.start)
         {
             return Err(LoopSessionError::FinitePlay);
         }

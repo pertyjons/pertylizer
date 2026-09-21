@@ -143,6 +143,7 @@ impl SimulatedNoteInput {
             .ok_or(InputError::IdentityExhausted)?;
         let id = InputEventId { generation, serial };
         self.slots[index] = Some(InputEntry {
+            audition: crate::recording::notes::AuditionTrace::NotOffered,
             id,
             observation,
             nominal,
@@ -173,6 +174,7 @@ impl SimulatedNoteInput {
         let entry = self.slots.get_mut(index)?.as_mut()?;
         let outcome = entry.outcome.take()?;
         let receipt = InputReceipt {
+            audition: entry.audition,
             id: entry.id,
             observation: entry.observation,
             clock,

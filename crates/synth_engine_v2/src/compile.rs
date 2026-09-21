@@ -663,7 +663,7 @@ fn build_rows(
         arena_samples,
         ir.state_records(inserted_records),
         &declared_note_ranges,
-        ir.max_writes_per_note()
+        crate::render::release_group_writes(ir.max_writes_per_note())
             .fanned_out(ir.sample_positioned_fan_out())
             .widest(crate::quantities::WritesPerNote::at_least(
                 ir.steal_expansion()

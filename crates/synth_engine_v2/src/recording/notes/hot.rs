@@ -1065,6 +1065,12 @@ impl SimulatedNoteRecorder {
                 return Ok(());
             }
         }
+        if slot.data.iter().flatten().any(|cell| {
+            matches!(cell,
+            NoteCell::Input { record, .. } if matches!(record.audition, AuditionTrace::Pending(_)))
+        }) {
+            return Err(NoteCaptureError::PendingAudition);
+        }
         self.finalize_selected_metadata(active.ticket, at, reason)?;
         self.store.seal_fixture(active.ticket, outcome, at)?;
         // A completed session boundary constrains future segments, including fresh sources.
@@ -1201,5 +1207,36 @@ impl CaptureStamp {
             nominal,
             published_at,
         })
+    }
+}
+
+impl SimulatedNoteRecorder {
+    /// Reconcile identified audition metadata before sealing; nominal raw data is immutable.
+    /// Zero matches means the observation was not retained by this capture consumer.
+    pub fn resolve_audition(
+        &mut self,
+        ticket: TakeReservation,
+        id: crate::host::live::AuditionId,
+        outcome: crate::host::live::AuditionOutcome,
+    ) -> Result<crate::quantities::EventCount, NoteCaptureError> {
+        if self.active.is_none_or(|active| active.ticket != ticket) {
+            return Err(NoteCaptureError::NotActive);
+        }
+        let begin = self.store.layout.starts[CaptureBuffer::Ordinary.index()];
+        let length = self.store.layout.lengths[CaptureBuffer::Ordinary.index()];
+        let slot = self.store.slot_mut(ticket)?;
+        let mut resolved = 0_u32;
+        for index in begin..begin + length {
+            let Some(Some(cell)) = slot.data.get_mut(index) else {
+                continue;
+            };
+            if let NoteCell::Input { record, .. } = cell
+                && record.audition == AuditionTrace::Pending(id)
+            {
+                record.audition = AuditionTrace::Resolved(outcome);
+                resolved += 1;
+            }
+        }
+        Ok(crate::quantities::EventCount::measured(resolved))
     }
 }

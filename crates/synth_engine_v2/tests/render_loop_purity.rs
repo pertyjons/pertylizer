@@ -51,7 +51,7 @@ use std::path::{Path, PathBuf};
 /// `ordered/transfer/hot.rs` adds owning packet handoff around that same serial runtime.
 /// ADR-0069 adds synthetic input admission, clock arithmetic and callback delegation.
 /// ADR-0070 adds the borrowed terminal signal and split input/audio callback wrapper.
-const REGION: [&str; 33] = [
+const REGION: [&str; 41] = [
     "src/recording/notes/loop_capture/ordered/input/capture/transfer/hot.rs",
     "src/recording/notes/loop_capture/ordered/input/hot.rs",
     "src/recording/notes/loop_capture/ordered/input/clock.rs",
@@ -78,6 +78,14 @@ const REGION: [&str; 33] = [
     "src/publish/hot.rs",
     "src/identity/hot.rs",
     "src/ingress/hot.rs",
+    "src/ingress/offers.rs",
+    "src/ingress/release.rs",
+    "src/stream/live.rs",
+    "src/host/live/hot.rs",
+    "src/host/live/parameter_hot.rs",
+    "src/host/live/swap_hot.rs",
+    "src/host/audio_input/hot.rs",
+    "src/host/pulse/hot.rs",
     "src/node/kernels.rs",
     "src/script/hot.rs",
     "src/authored/hot.rs",
@@ -807,6 +815,12 @@ fn every_call_the_render_loop_makes_is_inside_the_checked_region() {
     // counters, plus `new` on the checked time and count newtypes. Each is a field read
     // or a saturating add.
     let crate_accessors = [
+        // HostProfile::capabilities is a Copy field read. AudioBlockMut::samples_mut
+        // borrows its already validated, bounded sample slice without allocation.
+        "capabilities",
+        // PerformanceIngress::holds_outstanding reads its Copy reservation count.
+        "holds_outstanding",
+        "samples_mut",
         // SessionCommandId::serial is a Copy field read used by owning packet admission.
         "serial",
         // Renderer table_id delegates to LiveNotes::id, a Copy field read.
@@ -839,6 +853,19 @@ fn every_call_the_render_loop_makes_is_inside_the_checked_region() {
         // Lazy Option/Iterator adapters over bounded slices; no collection or allocation.
         "ok_or_else",
         "filter_map",
+        // Stack-only iterator adapters over the two admitted live owners' outcome cells.
+        // The mapper is LiveInputStream::outcomes, a bounded Option/entry projection.
+        "chain",
+        "flat_map",
+        // Bounded iterator cardinality; does not collect or allocate.
+        "count",
+        // StealingPolicy Copy variant/field reads and Midi1Input's validated enum read.
+        "steals",
+        "fade",
+        "event",
+        // Local fixed-storage eligibility and ordering closures, whose bodies are scanned.
+        "eligible",
+        "order",
         // StreamControl field borrows, now owned exclusively by the authored render path.
         "anchor",
         "minter_mut",

@@ -106,6 +106,26 @@ impl InputCaptureControl {
         result.map_err(|error| (observation, error))
     }
 
+    /// Attach a retained live-audition token before this observation is forwarded.
+    pub fn set_audition(
+        &mut self,
+        id: InputEventId,
+        trace: crate::recording::notes::AuditionTrace,
+    ) -> Result<(), InputError> {
+        let port = self.port(id.generation())?;
+        let entry = self.inputs[port]
+            .slots
+            .iter_mut()
+            .flatten()
+            .find(|entry| entry.id == id)
+            .ok_or(InputError::ReceiptOwner)?;
+        if entry.forwarded.is_some() || entry.outcome.is_some() {
+            return Err(InputError::ReceiptOwner);
+        }
+        entry.audition = trace;
+        Ok(())
+    }
+
     pub fn device_lost(&mut self, generation: ConnectionGeneration) -> Result<(), InputError> {
         let port = self.port(generation)?;
         self.inputs[port].device_lost(generation)?;

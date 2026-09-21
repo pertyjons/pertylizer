@@ -62,6 +62,8 @@ impl LoopSettings {
 
 #[derive(Debug, Error)]
 pub enum LoopPrepareError {
+    #[error("live release groups cannot enter a compiled loop template")]
+    LiveReleaseGroup,
     #[error("loop entry lies outside the interval")]
     Entry,
     #[error("loop profile does not match the compiled plan")]

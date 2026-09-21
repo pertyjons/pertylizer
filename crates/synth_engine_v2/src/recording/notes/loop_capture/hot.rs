@@ -12,7 +12,7 @@ use crate::{
 
 impl LoopCaptureSession {
     pub fn start(&mut self) -> Result<(), LoopCaptureError> {
-        if self.started {
+        if self.started || self.start != self.journal.acknowledged().clock {
             return Err(LoopCaptureError::State);
         }
         self.recorder

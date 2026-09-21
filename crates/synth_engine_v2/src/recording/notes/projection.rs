@@ -6,7 +6,9 @@
 //! borrow also prevents simultaneous uncharged projections and stale quality reads.
 //! A later concurrent worker/commit consumer needs its own custody and quality protocol.
 
+mod loops;
 mod table;
+pub use loops::{ProjectedLoopNote, ProjectedLoopTake};
 #[cfg(test)]
 mod tests;
 
@@ -42,6 +44,8 @@ impl TickProjection {
 /// The closure's provenance, without carrying an engine timestamp into musical data.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ProjectedEnding {
+    /// This pass ends while the same performed occurrence continues in the next.
+    LoopContinuation,
     KeyRelease,
     Synthetic {
         reason: CaptureStopReason,
@@ -50,7 +54,7 @@ pub enum ProjectedEnding {
     },
 }
 
-/// One whole, validated note. Raw timing and release velocity remain in the take.
+/// One validated note or loop-pass segment. Raw timing remains in the take.
 #[derive(Debug, Clone, Copy, PartialEq)]
 #[must_use]
 pub struct ProjectedNote {

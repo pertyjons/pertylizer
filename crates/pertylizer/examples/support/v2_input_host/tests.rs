@@ -1,0 +1,1248 @@
+use super::*;
+use synth_engine_v2::{
+    compile::{RenderConfig, compile},
+    host::{
+        EndpointId,
+        input::{
+            InputCapacity, InputLimits, InputRate, InputTick, InputTickSpan, SimulatedInputClock,
+            SimulatedNoteInput,
+        },
+        session::{
+            LoopRecordingSession, SessionCommandCapacity, SessionLimits, SessionOutcome,
+            SessionSourceCapacity, SessionSourceLimits,
+        },
+    },
+    ir::{ExecutionScope, GraphIr, IrNodeKind, NodeId, PortId, SignalDomain},
+    looping::{CompiledLoopStream, LoopSettings},
+    profile::{CaptureLimits, CaptureLimitsInput, HostProfile, RecordingLimits},
+    quantities::{
+        CapturePassCount, CaptureResultCount, CaptureSourceCount, ChannelLayout, EventCount,
+        HeldNoteCount, PreparedBytes, ProjectionTickCount, SampleRate, TrackedInputNoteCount,
+    },
+    recording::{
+        CaptureOutcome,
+        notes::{
+            CaptureMode, CaptureQuantization, ControllerSnapshot, FixtureRevision, FixtureTargetId,
+            Midi1Input, MusicalInterval,
+            loop_capture::{LoopCaptureSession, LoopNoteArmInput},
+        },
+    },
+    schedule::AdmittedCompiledStream,
+    tempo::{Bpm, MusicalTick, TempoMap},
+    time::{FrameCount, PlanPosition},
+    transport::LoopInterval,
+};
+
+fn fixture() -> (LiveControl, LiveAudio, [ConnectionGeneration; 2]) {
+    let rate = SampleRate::new(48000.0).unwrap();
+    let profile = HostProfile::harness(rate, FrameCount::new(8192), ChannelLayout::Mono).unwrap();
+    let graph = GraphIr::builder()
+        .node(
+            NodeId::new(1),
+            IrNodeKind::Impulse {
+                position: PlanPosition::ZERO,
+            },
+            ExecutionScope::Global,
+        )
+        .node(NodeId::new(2), IrNodeKind::Output, ExecutionScope::Global)
+        .connect(
+            (NodeId::new(1), PortId::FIRST),
+            (NodeId::new(2), PortId::FIRST),
+            SignalDomain::Audio,
+        )
+        .build()
+        .unwrap();
+    let plan = compile(&graph, &RenderConfig::new(profile))
+        .into_plan()
+        .unwrap();
+    let events = AdmittedCompiledStream::admit(&plan, &[]).unwrap();
+    let stream = CompiledLoopStream::prepare(
+        plan,
+        events,
+        profile,
+        LoopSettings::new(
+            LoopInterval::new(PlanPosition::ZERO, PlanPosition::new(200)).unwrap(),
+            PlanPosition::ZERO,
+            PreparedBytes::measured(1_000_000),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    let limits = RecordingLimits::new(
+        HeldNoteCount::limit(4).unwrap(),
+        EventCount::limit(64).unwrap(),
+    )
+    .unwrap()
+    .with_capture(
+        CaptureLimits::new(CaptureLimitsInput {
+            max_tracked_input_notes: TrackedInputNoteCount::limit(8).unwrap(),
+            max_capture_sources: CaptureSourceCount::limit(2).unwrap(),
+            max_capture_passes: CapturePassCount::limit(32).unwrap(),
+            max_pending_capture_results: CaptureResultCount::limit(1).unwrap(),
+            max_capture_bytes: PreparedBytes::measured(1_048_576),
+            max_audio_capture_frames: FrameCount::new(1),
+            max_projection_ticks: ProjectionTickCount::limit(100).unwrap(),
+            capture_lateness_allowance: FrameCount::ZERO,
+        })
+        .unwrap(),
+    )
+    .unwrap();
+    let mut capture =
+        LoopCaptureSession::prepare(stream, limits, PreparedBytes::measured(8192)).unwrap();
+    let mut inputs = Vec::new();
+    let mut sources = Vec::new();
+    let mut generations = Vec::new();
+    for port in 0..2 {
+        let mut input = SimulatedNoteInput::new(
+            EndpointId::new(format!("simulated-{port}")).unwrap(),
+            InputLimits {
+                cells: InputCapacity::new(32).unwrap(),
+                bytes: PreparedBytes::measured(65536),
+            },
+        )
+        .unwrap();
+        let generation = input.begin().unwrap();
+        input
+            .prepare(
+                generation,
+                SimulatedInputClock::new(
+                    capture.initial().epoch,
+                    SampleTime::ZERO,
+                    InputTick::new(0),
+                    InputRate::new(FrameCount::new(1), InputTickSpan::new(port + 1)).unwrap(),
+                    InputTickSpan::new(0),
+                ),
+            )
+            .unwrap();
+        sources.push(
+            input
+                .bind_capture(generation, &mut capture, ControllerSnapshot::neutral())
+                .unwrap(),
+        );
+        generations.push(generation);
+        inputs.push(input);
+    }
+    let _ticket = capture
+        .arm_at(
+            LoopNoteArmInput {
+                target: FixtureTargetId::new(1).unwrap(),
+                expected_revision: FixtureRevision::new(1),
+                interval: MusicalInterval::new(MusicalTick::ZERO, MusicalTick::new(8)).unwrap(),
+                mode: CaptureMode::Overdub,
+                quantization: CaptureQuantization::Off,
+                tempo: TempoMap::new(Bpm::new(120.0).unwrap(), &[], rate).unwrap(),
+            },
+            &sources,
+            SampleTime::new(256),
+        )
+        .unwrap();
+    let session = LoopRecordingSession::prepare(
+        capture,
+        SessionLimits {
+            commands: SessionCommandCapacity::new(4).unwrap(),
+            command_bytes: PreparedBytes::measured(16384),
+        },
+        SessionSourceLimits {
+            actions: SessionSourceCapacity::new(32).unwrap(),
+            bytes: PreparedBytes::measured(32768),
+        },
+    )
+    .unwrap();
+    let composition = InputCaptureSession::prepare(
+        session,
+        inputs.into_boxed_slice(),
+        PreparedBytes::measured(8192),
+    )
+    .unwrap();
+    let (mut control, audio, halt) = composition.split(PreparedBytes::measured(65536)).unwrap();
+    for &generation in &generations {
+        control.start_input(generation).unwrap();
+    }
+    let (mut control, audio) = LiveControl::attach(control, audio, halt);
+    // Initial frame-zero fences must reach the callback before its first render.
+    control.pump().unwrap();
+    (control, audio, [generations[0], generations[1]])
+}
+
+fn collect(control: &mut LiveControl, commands: &mut Vec<String>) {
+    while control.has_completions() {
+        if let Some((_id, outcome)) = control.collect().unwrap() {
+            commands.push(format!("{outcome:?}"));
+        }
+    }
+}
+fn render(audio: &mut LiveAudio, total: usize, partitions: &[usize]) -> Vec<f32> {
+    let mut samples = vec![9.0; total];
+    let mut offset = 0;
+    let mut part = 0;
+    let measured = allocation_counter::measure(|| {
+        while offset < total {
+            let count = partitions[part % partitions.len()].min(total - offset);
+            audio
+                .render(
+                    AudioBlockMut::new(
+                        &mut samples[offset..offset + count],
+                        count,
+                        ChannelLayout::Mono,
+                    )
+                    .unwrap(),
+                )
+                .unwrap();
+            offset += count;
+            part += 1;
+        }
+    });
+    assert_eq!((measured.count_total, measured.count_current), (0, 0));
+    samples
+}
+fn frontier(control: &mut LiveControl, generations: [ConnectionGeneration; 2], at: u64) {
+    for (port, generation) in generations.into_iter().enumerate() {
+        let _id = control
+            .offer(
+                generation,
+                InputObservation::Frontier {
+                    tick: InputTick::new(at * (port as u64 + 1)),
+                },
+            )
+            .unwrap();
+    }
+}
+fn message(control: &mut LiveControl, generation: ConnectionGeneration, at: u64, bytes: [u8; 3]) {
+    let _id = control
+        .offer(
+            generation,
+            InputObservation::Message {
+                tick: InputTick::new(at),
+                arrival: SampleTime::new(at),
+                input: Midi1Input::from_bytes(bytes).unwrap(),
+            },
+        )
+        .unwrap();
+}
+fn reunited(control: LiveControl, audio: LiveAudio) -> InputCaptureSession {
+    match control.reunite(audio, |_, _| {}) {
+        Ok(owner) => owner,
+        Err(ReuniteError::Pending(_)) => panic!("outstanding host custody"),
+        Err(ReuniteError::Core(error, _, _)) => panic!("core reunion: {}", error.error()),
+        Err(ReuniteError::Audition(_, _, _, error)) => panic!("audition reunion: {error}"),
+    }
+}
+
+#[test]
+fn reusable_host_accepts_transport_after_rendering_and_retains_input_outcomes() {
+    let mut reference = None;
+    for partitions in [&[512][..], &[64], &[256], &[1, 37, 128, 3]] {
+        let (mut control, mut audio, generations) = fixture();
+        let mut pcm = render(&mut audio, 192, partitions);
+        assert_eq!(audio.clock(), SampleTime::new(128));
+        let _play = control
+            .command(SampleTime::new(256), SessionCommand::Play)
+            .unwrap();
+        frontier(&mut control, generations, 256);
+        message(&mut control, generations[0], 280, [0x90, 60, 100]);
+        message(&mut control, generations[0], 360, [0x80, 60, 0]);
+        frontier(&mut control, generations, 768);
+        control.pump().unwrap();
+        pcm.extend(render(&mut audio, 320, partitions));
+        let _stop = control
+            .command(SampleTime::new(768), SessionCommand::Stop)
+            .unwrap();
+        pcm.extend(render(&mut audio, 384, partitions));
+        let mut outcomes = Vec::new();
+        collect(&mut control, &mut outcomes);
+        assert_eq!(outcomes.len(), 2);
+        control
+            .finish_after_join(&mut audio, |_, _| panic!("commands already collected"))
+            .unwrap();
+        let mut received = 0;
+        for generation in generations {
+            while let Some(receipt) = control.collect_input(generation).unwrap() {
+                assert!(
+                    matches!(
+                        receipt.outcome,
+                        synth_engine_v2::host::input::InputOutcome::Delivered(_)
+                    ),
+                    "{receipt:?}"
+                );
+                received += 1;
+            }
+        }
+        // Two initial source-frontier receipts plus the six explicit observations.
+        assert_eq!(received, 8);
+        let mut owner = reunited(control, audio);
+        owner.finalize().unwrap();
+        assert_eq!(
+            owner.result().unwrap().sealed_outcome(),
+            CaptureOutcome::Complete
+        );
+        assert_eq!(owner.result().unwrap().records().count(), 2);
+        if let Some(expected) = &reference {
+            assert_eq!(&pcm, expected);
+        } else {
+            reference = Some(pcm);
+        }
+    }
+}
+
+#[test]
+fn fresh_attempt_cannot_be_changed_by_old_handles_and_retention_is_bounded() {
+    use super::archive::{ArchiveError, RetainedRuns};
+    let mut retained = RetainedRuns::prepare(
+        CaptureResultCount::limit(1).unwrap(),
+        PreparedBytes::measured(4_000_000),
+        PreparedBytes::measured(8_100_000),
+    )
+    .unwrap();
+    assert!(retained.bytes().get() <= 8_100_000);
+    let (mut old, mut audio, generations) = fixture();
+    let old_epoch = audio.core.acknowledged().epoch;
+    retained.reserve_for_test(old_epoch).unwrap();
+    let old_halt = old.halt_handle();
+    old.recover(&mut audio, |_, _| {}).unwrap();
+    for generation in generations {
+        while old.collect_input(generation).unwrap().is_some() {}
+    }
+    let mut old = reunited(old, audio);
+    for generation in generations {
+        old.acknowledge_input_quiescence(generation).unwrap();
+    }
+    old.finalize().unwrap();
+    assert!(retained.retain(old).is_ok());
+    let (mut fresh, mut audio, fresh_generations) = fixture();
+    let fresh_epoch = audio.core.acknowledged().epoch;
+    assert_ne!(old_epoch, fresh_epoch);
+    assert!(matches!(
+        retained.reserve_for_test(fresh_epoch),
+        Err(ArchiveError::Full)
+    ));
+    let old = retained.take(old_epoch).unwrap();
+    assert!(retained.take(old_epoch).is_none());
+    retained.reserve_for_test(fresh_epoch).unwrap();
+    assert!(matches!(
+        retained.reserve_for_test(fresh_epoch),
+        Err(ArchiveError::Duplicate)
+    ));
+    old_halt.request_device_lost();
+    assert!(
+        fresh
+            .offer(
+                generations[0],
+                InputObservation::Frontier {
+                    tick: InputTick::new(0)
+                }
+            )
+            .is_err()
+    );
+    let _play = fresh
+        .command(SampleTime::new(256), SessionCommand::Play)
+        .unwrap();
+    frontier(&mut fresh, fresh_generations, 256);
+    fresh.pump().unwrap();
+    let pcm = render(&mut audio, 512, &[37]);
+    assert_eq!(pcm[320], 1.0);
+    assert_eq!(
+        old.result().unwrap().sealed_outcome(),
+        CaptureOutcome::Interrupted
+    );
+}
+
+#[test]
+fn producer_queue_full_and_joined_shutdown_return_every_original_observation() {
+    use super::source::SourceInbox;
+    let (mut control, mut audio, generations) = fixture();
+    assert!(SourceInbox::storage_bytes().get() < 65536);
+    let (mut producer, mut inbox) = SourceInbox::prepare(generations[0], control.halt_handle());
+    let producer = std::thread::spawn(move || {
+        let mut refused = None;
+        for at in 1..=17 {
+            let observation = InputObservation::Frontier {
+                tick: InputTick::new(at),
+            };
+            if let Err(original) = producer.send(observation) {
+                refused = Some(original);
+            }
+        }
+        (producer, refused)
+    });
+    let (_joined, refused) = producer.join().unwrap();
+    assert_eq!(
+        refused,
+        Some(InputObservation::Frontier {
+            tick: InputTick::new(17)
+        })
+    );
+    control.halt_handle().request_device_lost();
+    let mut refusals = Vec::new();
+    inbox.service(&mut control, |outcome| {
+        refusals.push(outcome.unwrap_err().0)
+    });
+    assert_eq!(refusals.len(), 16);
+    assert!(inbox.is_empty());
+    for (index, observation) in refusals.into_iter().enumerate() {
+        assert_eq!(
+            observation,
+            InputObservation::Frontier {
+                tick: InputTick::new(index as u64 + 1)
+            }
+        );
+    }
+    control.recover(&mut audio, |_, _| {}).unwrap();
+}
+
+#[test]
+fn managed_attempt_enforces_source_join_archive_capacity_and_measured_byte_admission() {
+    use super::{archive::RetainedRuns, managed::ManagedRun, prepare::PreparedAttempt};
+    let prepare = || {
+        PreparedAttempt::new(
+            HostProfile::harness(
+                SampleRate::new(48000.0).unwrap(),
+                FrameCount::new(8192),
+                ChannelLayout::Mono,
+            )
+            .unwrap(),
+            SampleTime::new(256),
+            IrNodeKind::Impulse {
+                position: PlanPosition::ZERO,
+            },
+        )
+        .unwrap()
+    };
+    let mut prepared = None;
+    let allocation = allocation_counter::measure(|| prepared = Some(prepare()));
+    let prepared = prepared.unwrap();
+    // Granted live heap, including the compiled renderer and all retained capture,
+    // must fit the charge computed by the recipe, not a number asserted by its caller.
+    assert!(u64::try_from(allocation.bytes_current).unwrap() <= prepared.bytes().get());
+    let epoch = prepared.epoch();
+    let per_attempt = prepared.bytes();
+    let ceiling = PreparedBytes::measured(per_attempt.get() * 2 + 65536);
+    let mut archive =
+        RetainedRuns::prepare(CaptureResultCount::limit(1).unwrap(), per_attempt, ceiling).unwrap();
+    let (mut managed, mut audio, producers) = ManagedRun::start(&mut archive, prepared).unwrap();
+    // The first callback must work without merger service after start.
+    let _silence = render(&mut audio, 192, &[64]);
+    let _play = managed
+        .command(SampleTime::new(256), SessionCommand::Play)
+        .unwrap();
+    let [mut first, mut second] = producers;
+    for (producer, scale) in [(&mut first, 1), (&mut second, 2)] {
+        producer
+            .send(InputObservation::Frontier {
+                tick: InputTick::new(256 * scale),
+            })
+            .unwrap();
+    }
+    first
+        .send(InputObservation::Message {
+            tick: InputTick::new(280),
+            arrival: SampleTime::new(280),
+            input: Midi1Input::from_bytes([0x90, 60, 100]).unwrap(),
+        })
+        .unwrap();
+    first
+        .send(InputObservation::Message {
+            tick: InputTick::new(360),
+            arrival: SampleTime::new(360),
+            input: Midi1Input::from_bytes([0x80, 60, 0]).unwrap(),
+        })
+        .unwrap();
+    for (producer, scale) in [(&mut first, 1), (&mut second, 2)] {
+        producer
+            .send(InputObservation::Frontier {
+                tick: InputTick::new(768 * scale),
+            })
+            .unwrap();
+    }
+    first
+        .send(InputObservation::Message {
+            tick: InputTick::new(800),
+            arrival: SampleTime::new(800),
+            input: Midi1Input::from_bytes([0x90, 64, 100]).unwrap(),
+        })
+        .unwrap();
+    // Returning a live endpoint cannot acknowledge a queue which has not been resolved.
+    first = managed
+        .close_source(first)
+        .expect_err("queued source cannot close");
+    managed
+        .service(
+            |result| {
+                assert!(result.is_ok());
+            },
+            |_, _| {},
+            |_| {},
+        )
+        .unwrap();
+    let _pcm = render(&mut audio, 320, &[64]);
+    let _stop = managed
+        .command(SampleTime::new(768), SessionCommand::Stop)
+        .unwrap();
+    let _pcm = render(&mut audio, 384, &[37]);
+    managed
+        .service(
+            |result| {
+                assert!(result.is_ok());
+            },
+            |_, _| {},
+            |_| {},
+        )
+        .unwrap();
+    assert!(managed.close_source(first).is_ok());
+    // Source 2 is still live, even though its ring is empty and audio has joined.
+    let error = managed
+        .finish(audio, false, &mut archive, |_, _| {}, |_| {}, |_, _| {})
+        .unwrap_err();
+    let super::managed::FinishFailure::Pending(owners, HostError::SourcesOpen) = *error else {
+        panic!("missing source endpoint must retain owners");
+    };
+    let (mut managed, audio) = *owners;
+    assert!(managed.close_source(second).is_ok());
+    let mut final_receipts = Vec::new();
+    managed
+        .finish(
+            audio,
+            false,
+            &mut archive,
+            |_, _| {},
+            |receipt| final_receipts.push(receipt),
+            |_, _| {},
+        )
+        .unwrap();
+    assert!(final_receipts.iter().any(|receipt| matches!(
+        receipt.outcome,
+        synth_engine_v2::host::input::InputOutcome::Cancelled
+    )));
+    assert!(ManagedRun::start(&mut archive, prepare()).is_err());
+    let owner = archive.take(epoch).unwrap();
+    assert_eq!(
+        owner.result().unwrap().sealed_outcome(),
+        CaptureOutcome::Complete
+    );
+    assert_eq!(owner.result().unwrap().records().count(), 2);
+    let (mut next, audio, [first, second]) = ManagedRun::start(&mut archive, prepare()).unwrap();
+    next.halt_handle().request_device_lost();
+    next.service(
+        |result| {
+            assert!(result.is_err());
+        },
+        |_, _| {},
+        |_| {},
+    )
+    .unwrap();
+    assert!(next.close_source(first).is_ok());
+    assert!(next.close_source(second).is_ok());
+    next.finish(audio, true, &mut archive, |_, _| {}, |_| {}, |_, _| {})
+        .unwrap();
+    let tiny = PreparedAttempt::new(
+        HostProfile::harness(
+            SampleRate::new(48000.0).unwrap(),
+            FrameCount::new(8192),
+            ChannelLayout::Mono,
+        )
+        .unwrap(),
+        SampleTime::new(256),
+        IrNodeKind::Silence,
+    )
+    .unwrap();
+    let mut small = RetainedRuns::prepare(
+        CaptureResultCount::limit(1).unwrap(),
+        PreparedBytes::measured(1),
+        PreparedBytes::measured(100000),
+    )
+    .unwrap();
+    assert!(ManagedRun::start(&mut small, tiny).is_err());
+    let candidate = prepare();
+    let cancelled = candidate.epoch();
+    let mut cancelled_archive =
+        RetainedRuns::prepare(CaptureResultCount::limit(1).unwrap(), per_attempt, ceiling).unwrap();
+    cancelled_archive.admit(&candidate).unwrap();
+    cancelled_archive.cancel_preparation(cancelled).unwrap();
+    assert!(cancelled_archive.admit(&candidate).is_ok());
+}
+
+#[test]
+fn loss_without_a_final_callback_recovers_packets_and_take() {
+    let (mut control, mut audio, generations) = fixture();
+    let _play = control
+        .command(SampleTime::new(256), SessionCommand::Play)
+        .unwrap();
+    frontier(&mut control, generations, 256);
+    control.pump().unwrap();
+    let _pcm = render(&mut audio, 384, &[64]);
+    let _stop = control
+        .command(SampleTime::new(1024), SessionCommand::Stop)
+        .unwrap();
+    control.halt_handle().request_device_lost();
+    let mut outcomes = Vec::new();
+    control
+        .recover(&mut audio, |id, outcome| outcomes.push((id, outcome)))
+        .unwrap();
+    assert!(outcomes.iter().any(|(_, outcome)| matches!(outcome,
+        HostOutcome::Delivered(LoopTransferOutcome::Command(receipt)) if matches!(receipt.outcome, SessionOutcome::Applied { .. }))));
+    for generation in generations {
+        while control.collect_input(generation).unwrap().is_some() {}
+    }
+    let mut owner = reunited(control, audio);
+    for generation in generations {
+        owner.acknowledge_input_quiescence(generation).unwrap();
+    }
+    owner.finalize().unwrap();
+    assert_eq!(
+        owner.result().unwrap().sealed_outcome(),
+        CaptureOutcome::Interrupted
+    );
+}
+
+#[test]
+fn queue_charge_covers_actual_preparation_and_pending_reunion_retains_owners() {
+    let (control, audio, _) = fixture();
+    assert!(LiveControl::storage_bytes().get() < 65536);
+    let measured = allocation_counter::measure(|| {
+        let _packets = Arc::new(HeapRb::<LoopTransferPacket>::new(CELLS));
+        let _completions = Arc::new(HeapRb::<LoopTransferCompletion>::new(CELLS));
+    });
+    assert!(measured.bytes_total <= LiveControl::storage_bytes().get());
+    let mut control = control;
+    let _play = control
+        .command(SampleTime::new(256), SessionCommand::Play)
+        .unwrap();
+    let Err(ReuniteError::Pending(owners)) = control.reunite(audio, |_, _| {}) else {
+        panic!("queued command lost");
+    };
+    let (mut control, mut audio) = *owners;
+    control.recover(&mut audio, |_, _| {}).unwrap();
+    let _owner = reunited(control, audio);
+}
+
+#[test]
+fn audible_capture_uses_real_voices_sustain_panic_and_resolved_raw_receipts() {
+    use synth_engine_v2::{host::live::AuditionOutcome, recording::notes::AuditionTrace};
+    let mut reference = None;
+    for partitions in [&[8192][..], &[64], &[256], &[1, 37, 128, 3]] {
+        let (mut control, mut audio, generations) = fixture();
+        let profile = HostProfile::harness(
+            SampleRate::new(48000.0).unwrap(),
+            FrameCount::new(8192),
+            ChannelLayout::Mono,
+        )
+        .unwrap();
+        let (live_control, live_audio, _bytes) = super::audition::AuditionControl::prepare(
+            profile,
+            audio.core.acknowledged().epoch,
+            generations,
+        )
+        .unwrap();
+        control.audition = Some(live_control);
+        audio.audition = Some(live_audio);
+        let mut pcm = render(&mut audio, 192, partitions);
+        let _play = control
+            .command(SampleTime::new(256), SessionCommand::Play)
+            .unwrap();
+        frontier(&mut control, generations, 256);
+        for (at, bytes) in [
+            (280, [0x90, 60, 100]),
+            (300, [0xb0, 64, 127]),
+            (360, [0x80, 60, 0]),
+            (500, [0xb0, 64, 0]),
+            (600, [0x90, 64, 100]),
+        ] {
+            message(&mut control, generations[0], at, bytes);
+        }
+        frontier(&mut control, generations, 768);
+        control.pump().unwrap();
+        pcm.extend(render(&mut audio, 320, partitions));
+        let _panic = control
+            .command(SampleTime::new(768), SessionCommand::Panic)
+            .unwrap();
+        pcm.extend(render(&mut audio, 512, partitions));
+        assert!(
+            pcm[430..500].iter().any(|sample| sample.abs() > 0.001),
+            "pedal keeps a real voice sounding after key-up"
+        );
+        assert!(pcm[564..664].iter().all(|sample| *sample == 0.0));
+        assert!(
+            pcm[832..].iter().all(|sample| *sample == 0.0),
+            "panic ends held notes after Q carry"
+        );
+        if let Some(expected) = &reference {
+            assert_eq!(&pcm, expected);
+        } else {
+            reference = Some(pcm);
+        }
+        control.finish_after_join(&mut audio, |_, _| {}).unwrap();
+        for generation in generations {
+            while control.collect_input(generation).unwrap().is_some() {}
+        }
+        let mut heard = Vec::new();
+        let mut owner = match control.reunite(audio, |id, outcome| heard.push((id, outcome))) {
+            Ok(owner) => owner,
+            Err(_) => panic!("joined reunion failed"),
+        };
+        owner.finalize().unwrap();
+        owner.close_completed().unwrap();
+        for generation in generations {
+            owner.acknowledge_input_quiescence(generation).unwrap();
+        }
+        owner.finalize().unwrap();
+        let result = owner.result().unwrap();
+        assert_eq!(result.sealed_outcome(), CaptureOutcome::Complete);
+        assert_eq!(heard.len(), 5);
+        assert!(
+            heard
+                .iter()
+                .all(|(_, outcome)| matches!(outcome, AuditionOutcome::Executed { .. }))
+        );
+        assert!(result.records().all(|record| matches!(
+            record.audition(),
+            AuditionTrace::Resolved(AuditionOutcome::Executed { .. })
+        )));
+    }
+}
+
+#[test]
+fn count_in_metronome_recording_and_panic_share_one_clock_without_callback_allocation() {
+    use super::{archive::RetainedRuns, managed::ManagedRun, prepare::PreparedAttempt};
+    let mut reference = None;
+    for partitions in [&[8192][..], &[256], &[37, 128, 3]] {
+        let profile = HostProfile::harness(
+            SampleRate::new(48000.0).unwrap(),
+            FrameCount::new(8192),
+            ChannelLayout::Mono,
+        )
+        .unwrap();
+        let mut prepared = None;
+        let measured = allocation_counter::measure(|| {
+            prepared = Some(
+                PreparedAttempt::counted(profile, MusicalTick::new(960))
+                    .unwrap()
+                    .with_audition()
+                    .unwrap(),
+            )
+        });
+        let prepared = prepared.unwrap();
+        assert!(
+            u64::try_from(measured.bytes_current).unwrap() <= prepared.bytes().get(),
+            "all three renderers and their metadata must fit admission"
+        );
+        let start = prepared.start();
+        assert_eq!(start, SampleTime::new(24000));
+        let epoch = prepared.epoch();
+        let charge = prepared.bytes();
+        let mut archive = RetainedRuns::prepare(
+            CaptureResultCount::limit(1).unwrap(),
+            charge,
+            PreparedBytes::measured(charge.get() * 2 + 65536),
+        )
+        .unwrap();
+        let (mut run, mut audio, [mut first, mut second]) =
+            ManagedRun::start(&mut archive, prepared).unwrap();
+        let mut pcm = render(&mut audio, 192, partitions);
+        assert!(
+            pcm[65..].iter().any(|sample| *sample != 0.0),
+            "count-in sounds while song transport is stopped"
+        );
+        let _play = run.command(start, SessionCommand::Play).unwrap();
+        let end = SampleTime::new(24128);
+        for (producer, scale) in [(&mut first, 1), (&mut second, 2)] {
+            producer
+                .send(InputObservation::Frontier {
+                    tick: InputTick::new(start.as_u64() * scale),
+                })
+                .unwrap();
+        }
+        first
+            .send(InputObservation::Message {
+                tick: InputTick::new(24032),
+                arrival: SampleTime::new(24032),
+                input: Midi1Input::from_bytes([0x90, 60, 100]).unwrap(),
+            })
+            .unwrap();
+        for (producer, scale) in [(&mut first, 1), (&mut second, 2)] {
+            producer
+                .send(InputObservation::Frontier {
+                    tick: InputTick::new(end.as_u64() * scale),
+                })
+                .unwrap();
+        }
+        run.service(|value| assert!(value.is_ok()), |_, _| {}, |_| {})
+            .unwrap();
+        let _panic = run.command(end, SessionCommand::Panic).unwrap();
+        pcm.extend(render(&mut audio, 24576 - 192, partitions));
+        assert!(
+            pcm[24192..].iter().all(|sample| *sample == 0.0),
+            "panic cuts the sounding click and the held voice"
+        );
+        if let Some(expected) = &reference {
+            assert_eq!(&pcm, expected);
+        } else {
+            reference = Some(pcm);
+        }
+        run.service(|value| assert!(value.is_ok()), |_, _| {}, |_| {})
+            .unwrap();
+        assert!(run.close_source(first).is_ok());
+        assert!(run.close_source(second).is_ok());
+        run.finish(audio, false, &mut archive, |_, _| {}, |_| {}, |_, _| {})
+            .unwrap();
+        let mut owner = archive.take(epoch).unwrap();
+        let result = owner.result().unwrap();
+        assert_eq!(result.sealed_outcome(), CaptureOutcome::Complete);
+        assert_eq!(
+            result.records().count(),
+            1,
+            "count-in never creates recorded notes"
+        );
+        let projected = owner.project_notes().unwrap();
+        assert_eq!(projected.notes().len(), 1);
+    }
+}
+
+#[test]
+fn source_cells_recycle_beyond_64_with_audition_and_recover_without_a_last_callback() {
+    use super::{archive::RetainedRuns, managed::ManagedRun, prepare::PreparedAttempt};
+    use synth_engine_v2::host::live::AuditionOutcome;
+    let mut reference = None;
+    for audible in [false, true] {
+        let profile = HostProfile::harness(
+            SampleRate::new(48000.0).unwrap(),
+            FrameCount::new(8192),
+            ChannelLayout::Mono,
+        )
+        .unwrap();
+        let mut prepared =
+            PreparedAttempt::new(profile, SampleTime::new(256), IrNodeKind::Silence).unwrap();
+        if audible {
+            prepared = prepared.with_audition().unwrap();
+        }
+        let epoch = prepared.epoch();
+        let bytes = prepared.bytes();
+        let mut archive = RetainedRuns::prepare(
+            CaptureResultCount::limit(1).unwrap(),
+            bytes,
+            PreparedBytes::measured(bytes.get() * 2 + 65536),
+        )
+        .unwrap();
+        let (mut run, mut audio, [mut first, mut second]) =
+            ManagedRun::start(&mut archive, prepared).unwrap();
+        let _play = run
+            .command(SampleTime::new(256), SessionCommand::Play)
+            .unwrap();
+        first
+            .send(InputObservation::Frontier {
+                tick: InputTick::new(256),
+            })
+            .unwrap();
+        second
+            .send(InputObservation::Frontier {
+                tick: InputTick::new(512),
+            })
+            .unwrap();
+        second
+            .send(InputObservation::Frontier {
+                tick: InputTick::new(16384),
+            })
+            .unwrap();
+        first
+            .send(InputObservation::Message {
+                tick: InputTick::new(280),
+                arrival: SampleTime::new(280),
+                input: Midi1Input::from_bytes([0x90, 60, 100]).unwrap(),
+            })
+            .unwrap();
+        run.service(|r| assert!(r.is_ok()), |_, _| {}, |_| {})
+            .unwrap();
+        let _pcm = render(&mut audio, 320, &[64]);
+        for step in 0..61 {
+            first
+                .send(InputObservation::Frontier {
+                    tick: InputTick::new(320 + step * 64),
+                })
+                .unwrap();
+            run.service(|r| assert!(r.is_ok()), |_, _| {}, |_| {})
+                .unwrap();
+            let _pcm = render(&mut audio, 64, &[37]);
+        }
+        // Observation 64 is a release; uncollected audition outcomes cannot block it.
+        first
+            .send(InputObservation::Message {
+                tick: InputTick::new(4200),
+                arrival: SampleTime::new(4200),
+                input: Midi1Input::from_bytes([0x80, 60, 0]).unwrap(),
+            })
+            .unwrap();
+        run.service(|r| assert!(r.is_ok()), |_, _| {}, |_| {})
+            .unwrap();
+        let pcm = render(&mut audio, 192, &[64]);
+        assert!(pcm[128..].iter().all(|sample| *sample == 0.0));
+        let refused = InputObservation::Frontier {
+            tick: InputTick::new(5000),
+        };
+        assert_eq!(first.send(refused), Ok(()), "no lifetime observation quota");
+        run.service(|r| assert!(r.is_ok()), |_, _| {}, |_| {})
+            .unwrap();
+        assert!(!run.halt_handle().is_requested());
+        run.halt_handle().request_device_lost();
+        // No callback follows device loss. Endpoint joins and recovery suffice.
+        assert!(run.close_source(first).is_ok());
+        assert!(run.close_source(second).is_ok());
+        let mut outcomes = Vec::new();
+        run.finish(
+            audio,
+            true,
+            &mut archive,
+            |_, _| {},
+            |_| {},
+            |_, outcome| outcomes.push(outcome),
+        )
+        .unwrap();
+        if audible {
+            assert_eq!(outcomes.len(), 2);
+            assert!(
+                outcomes
+                    .iter()
+                    .all(|o| matches!(o, AuditionOutcome::Executed { .. }))
+            );
+        }
+        let owner = archive.take(epoch).unwrap();
+        let result = owner.result().unwrap();
+        let retained = (
+            result.effective_outcome(),
+            result
+                .records()
+                .map(|r| (r.input(), r.stamp().nominal()))
+                .collect::<Vec<_>>(),
+        );
+        assert_eq!(retained.0, CaptureOutcome::Interrupted);
+        if let Some(expected) = &reference {
+            assert_eq!(&retained, expected);
+        } else {
+            reference = Some(retained);
+        }
+    }
+}
+
+#[test]
+fn failed_source_start_returns_all_prepared_sound_owners() {
+    use super::{
+        archive::RetainedRuns,
+        managed::{ManagedRun, StartOwners},
+        prepare::PreparedAttempt,
+    };
+    let profile = HostProfile::harness(
+        SampleRate::new(48000.0).unwrap(),
+        FrameCount::new(8192),
+        ChannelLayout::Mono,
+    )
+    .unwrap();
+    let mut prepared = PreparedAttempt::counted(profile, MusicalTick::new(960))
+        .unwrap()
+        .with_audition()
+        .unwrap();
+    // Inject a duplicated start request after normal preparation. The second start
+    // fails after the first input changed state; every prepared owner must return.
+    prepared.generations[1] = prepared.generations[0];
+    let bytes = prepared.bytes();
+    let mut archive = RetainedRuns::prepare(
+        CaptureResultCount::limit(1).unwrap(),
+        bytes,
+        PreparedBytes::measured(bytes.get() * 2 + 65536),
+    )
+    .unwrap();
+    let failure = match ManagedRun::start(&mut archive, prepared) {
+        Err(error) => error,
+        Ok(_) => panic!("duplicate start accepted"),
+    };
+    let StartOwners::Split(_core, sound) = failure.owners else {
+        panic!("wrong failure stage")
+    };
+    assert!(sound.audition.is_some());
+    assert!(sound.metronome.is_some());
+}
+
+#[test]
+fn long_preroll_reuses_audition_credits_with_slow_collection_and_joined_recovery() {
+    use super::{archive::RetainedRuns, managed::ManagedRun, prepare::PreparedAttempt};
+    let profile = HostProfile::harness(
+        SampleRate::new(48000.0).unwrap(),
+        FrameCount::new(8192),
+        ChannelLayout::Mono,
+    )
+    .unwrap();
+    let prepared = PreparedAttempt::new(profile, SampleTime::new(65536), IrNodeKind::Silence)
+        .unwrap()
+        .with_audition()
+        .unwrap();
+    let epoch = prepared.epoch();
+    let bytes = prepared.bytes();
+    let mut archive = RetainedRuns::prepare(
+        CaptureResultCount::limit(1).unwrap(),
+        bytes,
+        PreparedBytes::measured(bytes.get() * 2 + 65536),
+    )
+    .unwrap();
+    let (mut run, mut audio, [mut first, mut second]) =
+        ManagedRun::start(&mut archive, prepared).unwrap();
+    let _pcm = render(&mut audio, 64, &[64]);
+    let mut outcomes = Vec::new();
+    for cycle in 0..512 {
+        let at = audio.clock().as_u64();
+        for (offset, bytes) in [(0, [0x90, 60, 100]), (17, [0x80, 60, 0])] {
+            first
+                .send(InputObservation::Message {
+                    tick: InputTick::new(at + offset),
+                    arrival: SampleTime::new(at + offset),
+                    input: Midi1Input::from_bytes(bytes).unwrap(),
+                })
+                .unwrap();
+        }
+        first
+            .send(InputObservation::Frontier {
+                tick: InputTick::new(at + 64),
+            })
+            .unwrap();
+        second
+            .send(InputObservation::Frontier {
+                tick: InputTick::new((at + 64) * 2),
+            })
+            .unwrap();
+        run.service(|result| assert!(result.is_ok()), |_, _| {}, |_| {})
+            .unwrap();
+        let mut block = [0.0; 64];
+        let measurement = allocation_counter::measure(|| {
+            audio
+                .render(AudioBlockMut::new(&mut block, 64, ChannelLayout::Mono).unwrap())
+                .unwrap();
+        });
+        assert_eq!(measurement.count_total, 0);
+        assert_eq!(measurement.count_current, 0);
+        assert!(block[..17].iter().any(|v| *v != 0.0));
+        assert!(block[17..].iter().all(|v| *v == 0.0));
+        if cycle % 16 == 15 {
+            while let Some(outcome) = run.collect_audition() {
+                outcomes.push(outcome);
+            }
+        }
+    }
+    run.service(|result| assert!(result.is_ok()), |_, _| {}, |_| {})
+        .unwrap();
+    assert!(!run.halt_handle().is_requested());
+    run.halt_handle().request_device_lost();
+    assert!(run.close_source(first).is_ok());
+    assert!(run.close_source(second).is_ok());
+    run.finish(
+        audio,
+        true,
+        &mut archive,
+        |_, _| {},
+        |_| {},
+        |id, outcome| outcomes.push((id, outcome)),
+    )
+    .unwrap();
+    assert_eq!(outcomes.len(), 1024);
+    assert!(outcomes.iter().all(|(_, outcome)| matches!(
+        outcome,
+        synth_engine_v2::host::live::AuditionOutcome::Executed { .. }
+    )));
+    let owner = archive.take(epoch).unwrap();
+    assert_eq!(
+        owner.result().unwrap().records().count(),
+        0,
+        "pre-roll never invents a recorded onset"
+    );
+}
+
+#[test]
+fn audition_credit_exhaustion_retains_results_and_refused_release_without_a_final_callback() {
+    use super::{archive::RetainedRuns, managed::ManagedRun, prepare::PreparedAttempt};
+    let profile = HostProfile::harness(
+        SampleRate::new(48000.0).unwrap(),
+        FrameCount::new(8192),
+        ChannelLayout::Mono,
+    )
+    .unwrap();
+    let prepared = PreparedAttempt::new(profile, SampleTime::new(65536), IrNodeKind::Silence)
+        .unwrap()
+        .with_audition()
+        .unwrap();
+    let bytes = prepared.bytes();
+    let mut archive = RetainedRuns::prepare(
+        CaptureResultCount::limit(1).unwrap(),
+        bytes,
+        PreparedBytes::measured(bytes.get() * 2 + 65536),
+    )
+    .unwrap();
+    let (mut run, mut audio, [mut first, mut second]) =
+        ManagedRun::start(&mut archive, prepared).unwrap();
+    let _pcm = render(&mut audio, 64, &[64]);
+    for cycle in 0..64 {
+        let at = audio.clock().as_u64();
+        let tail = if cycle == 63 {
+            [0xb0, 64, 127]
+        } else {
+            [0x80, 60, 0]
+        };
+        for (offset, bytes) in [(0, [0x90, 60, 100]), (17, tail)] {
+            first
+                .send(InputObservation::Message {
+                    tick: InputTick::new(at + offset),
+                    arrival: SampleTime::new(at + offset),
+                    input: Midi1Input::from_bytes(bytes).unwrap(),
+                })
+                .unwrap();
+        }
+        first
+            .send(InputObservation::Frontier {
+                tick: InputTick::new(at + 64),
+            })
+            .unwrap();
+        second
+            .send(InputObservation::Frontier {
+                tick: InputTick::new((at + 64) * 2),
+            })
+            .unwrap();
+        run.service(|result| assert!(result.is_ok()), |_, _| {}, |_| {})
+            .unwrap();
+        let _pcm = render(&mut audio, 64, &[64]);
+    }
+    let at = audio.clock();
+    let release = InputObservation::Message {
+        tick: InputTick::new(at.as_u64()),
+        arrival: at,
+        input: Midi1Input::from_bytes([0x80, 60, 0]).unwrap(),
+    };
+    first.send(release).unwrap();
+    let mut refused = None;
+    run.service(
+        |result| {
+            if let Err(value) = result {
+                refused = Some(value);
+            }
+        },
+        |_, _| {},
+        |_| {},
+    )
+    .unwrap();
+    assert_eq!(refused, Some((release, InputError::Full)));
+    assert!(run.halt_handle().is_requested());
+    assert!(run.close_source(first).is_ok());
+    assert!(run.close_source(second).is_ok());
+    let mut outcomes = Vec::new();
+    run.finish(
+        audio,
+        true,
+        &mut archive,
+        |_, _| {},
+        |_| {},
+        |id, outcome| outcomes.push((id, outcome)),
+    )
+    .unwrap();
+    assert_eq!(outcomes.len(), 128);
+    outcomes.sort_by_key(|(id, _)| id.serial());
+    assert_eq!(outcomes.first().unwrap().0.serial(), 1);
+    assert_eq!(outcomes.last().unwrap().0.serial(), 128);
+}
+
+#[test]
+fn recording_across_swap_preserves_raw_repeated_keys_sustain_and_execution_epochs() {
+    use synth_engine_v2::{host::live::AuditionOutcome, recording::notes::AuditionTrace};
+    let mut reference = None;
+    for partitions in [&[8192][..], &[64], &[256], &[1, 37, 128, 3]] {
+        let (mut control, mut audio, generations) = fixture();
+        let profile = HostProfile::harness(
+            SampleRate::new(48000.0).unwrap(),
+            FrameCount::new(8192),
+            ChannelLayout::Mono,
+        )
+        .unwrap();
+        let (live_control, live_audio, _bytes) = super::audition::AuditionControl::prepare(
+            profile,
+            audio.core.acknowledged().epoch,
+            generations,
+        )
+        .unwrap();
+        control.audition = Some(live_control);
+        audio.audition = Some(live_audio);
+        let mut pcm = render(&mut audio, 192, partitions);
+        let _play = control
+            .command(SampleTime::new(256), SessionCommand::Play)
+            .unwrap();
+        frontier(&mut control, generations, 256);
+        for (at, bytes) in [
+            (280, [0x90, 60, 100]),
+            (300, [0xb0, 64, 127]),
+            (360, [0x80, 60, 0]),
+            (400, [0x90, 60, 100]),
+            (600, [0x90, 60, 100]),
+            (650, [0x80, 60, 0]),
+            (700, [0x80, 60, 0]),
+            (720, [0xb0, 64, 0]),
+        ] {
+            message(&mut control, generations[0], at, bytes);
+        }
+        frontier(&mut control, generations, 768);
+        control.pump().unwrap();
+        pcm.extend(render(&mut audio, 320, partitions));
+        let _plan = control
+            .audition
+            .as_mut()
+            .unwrap()
+            .swaps
+            .publish(&super::audition::live_graph().unwrap())
+            .unwrap();
+        pcm.extend(render(&mut audio, 128, partitions));
+        let _panic = control
+            .command(SampleTime::new(768), SessionCommand::Panic)
+            .unwrap();
+        pcm.extend(render(&mut audio, 384, partitions));
+        assert!(pcm[832..].iter().all(|sample| *sample == 0.0));
+        if let Some(expected) = &reference {
+            assert_eq!(&pcm, expected);
+        } else {
+            reference = Some(pcm);
+        }
+        control.finish_after_join(&mut audio, |_, _| {}).unwrap();
+        for generation in generations {
+            while control.collect_input(generation).unwrap().is_some() {}
+        }
+        let mut heard = Vec::new();
+        let mut owner = match control.reunite(audio, |id, outcome| heard.push((id, outcome))) {
+            Ok(owner) => owner,
+            Err(_) => panic!("joined reunion failed"),
+        };
+        owner.finalize().unwrap();
+        owner.close_completed().unwrap();
+        for generation in generations {
+            owner.acknowledge_input_quiescence(generation).unwrap();
+        }
+        owner.finalize().unwrap();
+        let result = owner.result().unwrap();
+        assert_eq!(result.sealed_outcome(), CaptureOutcome::Complete);
+        assert_eq!(heard.len(), 8);
+        let epochs: std::collections::BTreeSet<_> = heard
+            .iter()
+            .filter_map(|(_, outcome)| {
+                if let AuditionOutcome::Executed { epoch, .. } = outcome {
+                    Some(epoch.as_u32())
+                } else {
+                    None
+                }
+            })
+            .collect();
+        assert_eq!(
+            epochs.len(),
+            2,
+            "recording spans the actual live reset epoch"
+        );
+        assert!(
+            heard
+                .iter()
+                .any(|(_, outcome)| *outcome == AuditionOutcome::NotSounded),
+            "first release consumes the pre-reset key tombstone"
+        );
+        assert_eq!(result.records().count(), 8);
+        assert!(
+            result
+                .records()
+                .all(|record| matches!(record.audition(), AuditionTrace::Resolved(_)))
+        );
+    }
+}

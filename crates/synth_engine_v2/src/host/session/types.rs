@@ -50,6 +50,8 @@ impl SessionCommandId {
 pub enum SessionCommand {
     Play,
     Stop,
+    /// Ordered finite capture end with Panic provenance.
+    Panic,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

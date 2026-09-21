@@ -113,6 +113,7 @@ pub enum InputOutcome {
 #[derive(Debug)]
 #[must_use]
 pub struct InputReceipt {
+    pub audition: crate::recording::notes::AuditionTrace,
     pub id: InputEventId,
     pub observation: InputObservation,
     pub clock: SimulatedInputClock,

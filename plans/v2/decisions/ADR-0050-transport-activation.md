@@ -10,7 +10,7 @@
 | Related | ADR-0001, ADR-0021, ADR-0032, ADR-0043, ADR-0046, ADR-0047, ADR-0055, `SPEC` sound-core render contract, `SPEC` host profile and render limits |
 | Supersedes | — |
 | Amends | ADR-0047 clause 7, for the transport-activation case only |
-| Superseded by | ADR-0055 supersedes clause 3's recorded-but-unenforced loop behavior only |
+| Superseded by | ADR-0055 supersedes clause 3's recorded-but-unenforced loop behavior only; [ADR-0072](ADR-0072-finite-live-audition-and-count-in.md) amends the off-thread-only minter rule and clause 8 for its finite exclusive consumer only |
 
 ## Durable boundary
 

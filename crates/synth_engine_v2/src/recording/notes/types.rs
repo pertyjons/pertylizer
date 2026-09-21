@@ -152,6 +152,10 @@ fn midi_velocity(value: u8) -> Result<NoteVelocity, QuantityError> {
 /// This fixture records the supplied audition result; it does not publish to a renderer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AuditionTrace {
+    /// Integrated live admission, resolved before the raw take can seal.
+    Pending(crate::host::live::AuditionId),
+    /// A final outcome in the separately owned audition stream's epoch.
+    Resolved(crate::host::live::AuditionOutcome),
     NotOffered,
     Refused(IngressRefused),
     Executed(SampleTime),

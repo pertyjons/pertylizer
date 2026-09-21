@@ -3,7 +3,7 @@
 This is the compact status index for durable Core V2 decisions. Individual ADRs own rationale and evidence; current
 specifications own implementation semantics. Do not copy review history or measurement results into this file.
 
-Next free identifier: `ADR-0071`.
+Next free identifier: `ADR-0075`.
 
 ## Status vocabulary
 
@@ -58,7 +58,7 @@ the durable-decision test in `PROCESS.md` and normally do not need an ADR.
 | ADR-0006 | Parameter ramp representation               | Accepted | 5/7                   | [ADR](decisions/ADR-0006-parameter-ramp-representation.md)          | Accepted 2026-09-04 with option 2: a parameter slot's runtime value is a linear segment — current value, target, frames remaining — a retarget starts from the current value, sample-positioned controls are never smoothed, and a kernel reads one value per sample. Creates `SOUND-INV-024`, not built until Phase 5's slice 7 |
 | ADR-0007 | Parameter modulation laws                   | Accepted | 5/7                   | [ADR](decisions/ADR-0007-parameter-modulation-laws.md)              | Accepted 2026-09-04 with option 3: a declaration names one law from a closed set — normalized, bipolar, semitone, decibel and physical additive, multiplicative gain, thresholded boolean, not-modulatable — and the parameter slot composes the layers in the master plan's order; a kernel composes nothing. Ratified from V1's own `set_mod_offset` implementations. Creates `SOUND-INV-023`, not built until Phase 5's slice 7 |
 | ADR-0008 | YAMS state identity and seeds | Accepted | 7 | [ADR](decisions/ADR-0008-yams-state-identity-and-seeds.md) | Identity and seeds accepted for P07-S005; live reload remains deferred to Phase 9. Note invocation identity is extended by ADR-0060 |
-| ADR-0009 | Plan-swap crossfade and latency             | Proposed | 9                     | —                                                                  | —                                        |
+| ADR-0009 | Plan-swap crossfade and latency | Accepted | 9 | [ADR](decisions/ADR-0009-plan-swap-crossfade-and-latency.md) | Reset, one-quantum fade and bounded retirement; concurrent transport extended by ADR-0074 |
 | ADR-0010 | Compatible node-state migration surface     | Proposed | 9                     | —                                                                  | —                                        |
 | ADR-0011 | Shared V1 instrument conversion             | Proposed | 10                    | —                                                                  | —                                        |
 | ADR-0012 | Automation conflict policy                  | Proposed | 10                    | —                                                                  | —                                        |
@@ -121,6 +121,10 @@ the durable-decision test in `PROCESS.md` and normally do not need an ADR.
 | ADR-0068 | Finite loop recording transfer | Accepted | 9 | [ADR](decisions/ADR-0068-finite-loop-recording-transfer.md) | Bounded command/source custody across threads and joined result recovery |
 | ADR-0069 | Simulated input clock and capture | Accepted | 9 | [ADR](decisions/ADR-0069-simulated-input-clock-and-capture.md) | Independent synthetic clocks, explicit source prefixes and retained input lifecycle |
 | ADR-0070 | Threaded simulated input capture | Accepted | 9 | [ADR](decisions/ADR-0070-threaded-simulated-input-capture.md) | Merger/audio ownership, independent terminal halt and joined quality reconciliation |
+| ADR-0071 | Reusable simulated live host | Accepted | 9 | [ADR](decisions/ADR-0071-reusable-simulated-live-host.md) | Reserved delayed start, concrete queue custody and retained fresh attempts |
+| ADR-0072 | Finite live audition and count-in | Accepted | 9 | [ADR](decisions/ADR-0072-finite-live-audition-and-count-in.md) | Exclusive real ingress, sustain, ordered panic and prepared metronome |
+| ADR-0073 | Continuous simulated live input and audio capture | Accepted | 9 | [ADR](decisions/ADR-0073-continuous-simulated-live-input.md) | Reusable live custody, bend, parameter lane, original PCM and independent monitoring |
+| ADR-0074 | Concurrent live host and duplex capture | Accepted | 9 | [ADR](decisions/ADR-0074-concurrent-live-host-and-duplex-capture.md) | Latest-wins reset, capture across swaps and independent PCM owners |
 
 ### Reversible decisions
 

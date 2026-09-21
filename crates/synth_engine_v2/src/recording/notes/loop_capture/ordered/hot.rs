@@ -29,7 +29,10 @@ impl CommandLane {
             if entry.boundary.at != at {
                 return false;
             }
-            if entry.boundary.command == SessionCommand::Stop {
+            if matches!(
+                entry.boundary.command,
+                SessionCommand::Stop | SessionCommand::Panic
+            ) {
                 return true;
             }
         }
@@ -81,15 +84,22 @@ impl CommandLane {
                         ),
                     }
                 }
-                SessionCommand::Stop => {
+                SessionCommand::Stop | SessionCommand::Panic => {
+                    let reason = if boundary.command == SessionCommand::Panic {
+                        CaptureStopReason::Panic
+                    } else {
+                        CaptureStopReason::Stop
+                    };
                     self.playing = false;
                     self.stopped = true;
+                    if self.end.is_none() {
+                        self.end = Some((snapshot.clock, boundary.command));
+                    }
                     finish = true;
-                    let capture =
-                        match recorder.stop(ticket, snapshot.clock, CaptureStopReason::Stop) {
-                            Ok(()) => SessionCaptureOutcome::Applied,
-                            Err(error) => SessionCaptureOutcome::Refused(error),
-                        };
+                    let capture = match recorder.stop(ticket, snapshot.clock, reason) {
+                        Ok(()) => SessionCaptureOutcome::Applied,
+                        Err(error) => SessionCaptureOutcome::Refused(error),
+                    };
                     (
                         SessionOutcome::Applied {
                             position: snapshot.position,

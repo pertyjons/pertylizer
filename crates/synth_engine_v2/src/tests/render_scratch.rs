@@ -99,7 +99,7 @@ fn check_one(simultaneous: u32, voice: bool) {
                 .fold(HeldNoteCount::NONE, |total, range| {
                     HeldNoteCount::measured(total.get().saturating_add(range.get()))
                 }),
-            ir.max_writes_per_note()
+            crate::render::release_group_writes(ir.max_writes_per_note())
                 .fanned_out(ir.sample_positioned_fan_out()),
             ir.modulated_sample_positioned_rows(),
             ir.voice_instances(),

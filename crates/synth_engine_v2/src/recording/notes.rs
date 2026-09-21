@@ -744,6 +744,8 @@ fn check_bytes(bytes: u64, limits: RecordingLimits) -> Result<(), NoteCaptureErr
 
 #[derive(Debug, PartialEq, Error)]
 pub enum NoteCaptureError {
+    #[error("audition outcomes must be resolved before sealing raw capture")]
+    PendingAudition,
     #[error("ordered capture boundaries are enabled; use the session lane")]
     OrderedSession,
     #[error("a queued capture boundary must be dispatched first")]

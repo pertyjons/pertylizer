@@ -92,7 +92,7 @@ impl ProjectionTable {
         }
         self.lookup(position)
     }
-    fn lookup(&self, position: PlanPosition) -> Result<TickProjection, ProjectionError> {
+    pub(super) fn lookup(&self, position: PlanPosition) -> Result<TickProjection, ProjectionError> {
         let Some((&first, &last)) = self.positions.first().zip(self.positions.last()) else {
             return Err(ProjectionError::OutsideTable { position });
         };

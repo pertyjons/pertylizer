@@ -215,6 +215,7 @@ fn normalize_candidate(
     let mut held = 0_usize;
     for event in candidate.events.iter().take(count) {
         let payload = match event.payload() {
+            EventPayload::ReleaseGroup(_) => return Err(LoopPrepareError::LiveReleaseGroup),
             EventPayload::Note {
                 identity,
                 edge:

@@ -168,6 +168,19 @@ impl IdentityTable {
         producer: super::ProducerId,
         identity: NoteIdentity,
     ) -> Resolution {
+        let resolution = self.resolve_for(producer, identity);
+        if resolution != Resolution::Live {
+            return resolution;
+        }
+        self.release(identity)
+    }
+
+    /// Read-only preflight for an atomic group belonging to one producer.
+    pub(crate) fn resolve_for(
+        &self,
+        producer: super::ProducerId,
+        identity: NoteIdentity,
+    ) -> Resolution {
         if identity.table != self.id {
             return Resolution::ForeignTable {
                 minted_by: identity.table,
@@ -183,7 +196,7 @@ impl IdentityTable {
             // it holds open. The caller counts it against the producer that offered it.
             return Resolution::Orphan(OrphanCause::FreeIndex);
         }
-        self.release(identity)
+        self.resolve(identity)
     }
 
     /// Release every live note, as a panic, transport stop or sustain lift does.
@@ -374,5 +387,74 @@ impl LiveNotes {
             count = count.saturating_add(1);
         }
         HeldNoteCount::measured(count)
+    }
+}
+
+impl IdentityTable {
+    /// The note a producer's full range would give up under a stealing policy (ADR-0058):
+    /// its oldest live note, or under `SameNote` the newest live note on `note` at `key` if
+    /// there is one. `None` where the range holds no live note or the policy refuses.
+    ///
+    /// A bounded predicate over prepared slots; construction stays off-thread.
+    pub fn victim(
+        &self,
+        producer: ProducerId,
+        policy: crate::ir::StealingPolicy,
+        note: crate::plan::NoteSlot,
+        key: crate::quantities::KeyIdentity,
+        eligible: &impl Fn(u16) -> bool,
+    ) -> Option<NoteIdentity> {
+        if !policy.steals() {
+            return None;
+        }
+        let range = self.ranges.get(usize::from(producer.as_u16()))?;
+        let mut oldest: Option<(u64, NoteIdentity)> = None;
+        let mut same: Option<(u64, NoteIdentity)> = None;
+        for offset in 0..range.len {
+            let index = range.start.saturating_add(offset);
+            let Some(Slot::Live {
+                generation,
+                note: held,
+                key: held_key,
+                sequence,
+            }) = self.slots.get(index as usize)
+            else {
+                continue;
+            };
+            let index = u16::try_from(index).unwrap_or(u16::MAX);
+            if !eligible(index) {
+                continue;
+            }
+            let identity = NoteIdentity {
+                table: self.id,
+                index,
+                generation: *generation,
+            };
+            if oldest.is_none_or(|(age, _)| *sequence < age) {
+                oldest = Some((*sequence, identity));
+            }
+            if *held == note && *held_key == key && same.is_none_or(|(age, _)| *sequence > age) {
+                same = Some((*sequence, identity));
+            }
+        }
+        match policy {
+            crate::ir::StealingPolicy::SameNote { .. } => same.or(oldest),
+            crate::ir::StealingPolicy::Oldest { .. } | crate::ir::StealingPolicy::None => oldest,
+        }
+        .map(|(_, identity)| identity)
+    }
+
+    /// Whether every index in the producer's range is live: the condition under which a
+    /// note-on steals rather than mints (ADR-0058), asked before a hold is spent on it.
+    pub fn is_full(&self, producer: ProducerId) -> bool {
+        let Some(range) = self.ranges.get(usize::from(producer.as_u16())) else {
+            return false;
+        };
+        (0..range.len).all(|offset| {
+            matches!(
+                self.slots.get(range.start.saturating_add(offset) as usize),
+                Some(Slot::Live { .. })
+            )
+        })
     }
 }

@@ -9,7 +9,7 @@
 | Last reviewed | 2026-09-20 |
 | Related | ADR-0062, ADR-0065, ADR-0066, TAKE-INV-003, IO-INV-003 |
 | Supersedes | — |
-| Superseded by | — |
+| Superseded by | [ADR-0071](ADR-0071-reusable-simulated-live-host.md) amends the initial-time-only recording Play restriction for its finite exclusive consumer only |
 
 ## Durable boundary
 

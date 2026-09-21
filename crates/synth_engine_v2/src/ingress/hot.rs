@@ -95,11 +95,14 @@ impl PerformanceIngress {
             if !publication.reaches(entry.event) {
                 break;
             }
-            let class = if entry.redeems_hold {
-                ProducerClass::Release
-            } else {
-                ProducerClass::Live
-            };
+            let class =
+                if let crate::render::EventPayload::ReleaseGroup(group) = entry.event.payload() {
+                    group.cause().class()
+                } else if entry.redeems_hold {
+                    ProducerClass::Release
+                } else {
+                    ProducerClass::Live
+                };
             // **Charged before the entry is consumed.** A fault leaves the entry in place,
             // so the terminal response ends the stream without also silently losing the
             // event that caused it.

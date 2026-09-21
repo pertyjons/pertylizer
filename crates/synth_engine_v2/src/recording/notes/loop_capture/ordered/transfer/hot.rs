@@ -13,6 +13,15 @@ enum ReadyReceipt {
 }
 
 impl LoopRecordingAudio {
+    /// Reconcile mutable raw metadata before returning a live outcome credit.
+    pub fn resolve_audition(
+        &mut self,
+        id: crate::host::live::AuditionId,
+        outcome: crate::host::live::AuditionOutcome,
+    ) -> Result<crate::quantities::EventCount, LoopSessionError> {
+        self.session.resolve_audition(id, outcome)
+    }
+
     pub(crate) const fn is_closed(&self) -> bool {
         self.session.commands.closed
     }
@@ -25,6 +34,15 @@ impl LoopRecordingAudio {
             self.session.interrupt(reason)?;
         }
         Ok(())
+    }
+
+    pub fn applied_end(
+        &self,
+    ) -> Option<(
+        crate::time::SampleTime,
+        crate::host::session::SessionCommand,
+    )> {
+        self.session.applied_end()
     }
 
     pub const fn acknowledged(&self) -> LoopSnapshot {

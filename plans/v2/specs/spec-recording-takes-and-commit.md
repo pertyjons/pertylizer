@@ -636,8 +636,43 @@ and controller/quality refusal. An empty cancelled count-in keeps its unused
 initial controllers without inventing notes. Compile-fail examples hold the
 exclusive projection borrow through last use and actual destruction.
 These tests discharge the finite exact-input lookup and
-note-only projection subset of TAKE-INV-004; pass-aware loop projection, physical
-compensation and canonical project output remain at their named consumer gates.
+note-only projection subset of TAKE-INV-004. Physical compensation and canonical
+project output remain at their named consumer gates.
+
+The loop consumer adds `project_loop_notes` over the same retained context and
+exclusive recorder loan. It intersects each selected occurrence with the retained
+pass windows, maps both endpoints through that pass's original position, and
+returns segments carrying the stable pass and occurrence identities. Only the
+first segment attacks; a segment reaching a later pass reports
+`LoopContinuation`, never a fabricated key release. The final segment retains
+the actual release or synthetic closure provenance. This view does not select
+isolated passes or trim carry-out notes.
+
+Grid snapping applies to the original attack and preserves that segment's
+derived duration. A snap which moves a continuing segment away from its loop
+edge refuses the entire projection. Continued segments retain their mapped start.
+Replace and overdub remain immutable take intent; this consumer neither resolves
+conflicts with existing notes nor edits a project. Controller and effective-quality
+refusals are the same as for the linear note-only consumer. Checked admission
+includes all derived segments before allocation; any failure preserves raw capture.
+The loop projection tests exercise crossing occurrence identity, pass boundaries,
+continuation provenance, both modes and quantization refusal. An intersection
+shorter than one representable musical tick refuses the whole view with an invalid
+lifetime; it is never silently stretched or discarded. A key release exactly at a
+loop boundary may retain raw carry metadata, but projection emits only the
+positive-duration preceding segment, without a zero-length following segment.
+
+The integrated host records a pending audition identity and resolves it after
+input settlement and audible completion, or after callback join, before sealing. Pending annotations refuse
+sealing; sealed traces cannot change. Nominal input timing and capture selection
+do not use the audition renderer's actual-time result. Ordered panic retains a
+Complete take with Panic closure provenance. Count-in does not create recorded
+onsets for held pre-roll keys. [ADR-0072](../decisions/ADR-0072-finite-live-audition-and-count-in.md)
+owns count-in; [ADR-0073](../decisions/ADR-0073-continuous-simulated-live-input.md)
+owns reusable audition custody and the simulated immutable in-memory PCM result.
+Its PCM worker retains original rate/layout, clock and chunk stamps, a valid sample
+prefix and first missing source frame. Monitor drops never modify this result.
+Persistent asset storage and project commits remain Phase 10 work.
 
 P09-S005 connects this recorder to one simulated output generation. The
 [host I/O conformance record](spec-host-io-lifecycle.md#conformance-tests) owns the
@@ -772,3 +807,18 @@ cannot bypass the coupled owner.
 | Canonical revisions, transaction service and undo storage | Before shipping the project-commit consumer | Phase 10A/10B, ADR-0035 |
 | Durable assets and crash recovery | Before claiming persisted take/asset recovery | Phase 10A/10D |
 | Additional input token schemes or controller replacement lanes | Before enabling those optional modes; current refusal remains | TAKE-INV-002, TAKE-INV-005 |
+
+### Concurrent capture across reset and duplex input
+
+[ADR-0074](../decisions/ADR-0074-concurrent-live-host-and-duplex-capture.md) couples
+reset/crossfade with raw note capture. Recording preserves every admitted original
+observation; audition annotations identify the actual live execution epoch. Held
+key tombstones, sustain and repeated-key pairing survive reset without migrating
+DSP identities. Old outcomes reconcile before their owner can retire.
+
+The experimental duplex host captures original PCM into an independently bounded
+worker result. Monitor drops and resampling do not alter recorded frames. A full
+record ring, worker extent or lost source retains the exact original prefix and
+first missing input frame. Stop/join finalization needs no final output callback.
+Results retain input format and backend timestamps, apply no hidden compensation,
+and remain in memory; project/sample-asset commit remains an Application Core task.

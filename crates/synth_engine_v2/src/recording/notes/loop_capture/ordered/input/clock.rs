@@ -79,6 +79,28 @@ impl SimulatedInputClock {
         self.uncertainty
     }
 
+    /// Earliest tick whose entire uncertainty interval maps to this exact frame.
+    /// Preparation refuses unreachable start boundaries instead of arming a take
+    /// whose required source fence can never arrive.
+    pub fn exact_tick(self, time: SampleTime) -> Result<InputTick, InputError> {
+        let frames = time
+            .as_u64()
+            .checked_sub(self.origin.as_u64())
+            .ok_or(InputError::ClockRange)?;
+        let elapsed = (u128::from(frames) * u128::from(self.rate.ticks.0))
+            .div_ceil(u128::from(self.rate.frames.as_u64()));
+        let tick = elapsed
+            .checked_add(u128::from(self.tick_origin.0))
+            .and_then(|tick| tick.checked_add(u128::from(self.uncertainty.0)))
+            .and_then(|tick| u64::try_from(tick).ok())
+            .map(InputTick)
+            .ok_or(InputError::ClockRange)?;
+        if self.map(tick)? != time {
+            return Err(InputError::ClockRange);
+        }
+        Ok(tick)
+    }
+
     fn bucket_wide(self, tick: u64) -> Result<u128, InputError> {
         let elapsed = tick
             .checked_sub(self.tick_origin.0)

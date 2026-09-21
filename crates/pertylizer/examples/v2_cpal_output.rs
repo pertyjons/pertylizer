@@ -1,5 +1,5 @@
-//! Non-shipping Linux ALSA output, transport, stopped-plan and loop harness.
-//! Runs a silent V2 graph. This does not qualify physical timing, input or MIDI.
+//! Non-shipping Linux ALSA transport, live reset, note capture and duplex PCM harness.
+//! Physical MIDI timing and production qualification remain outside this target.
 
 #[cfg(test)]
 #[path = "support/v2_loop_journal.rs"]
@@ -8,6 +8,21 @@ mod loop_journal;
 #[cfg(target_os = "linux")]
 #[path = "support/v2_plan_transfer.rs"]
 mod plan_transfer;
+
+#[cfg(target_os = "linux")]
+#[path = "support/v2_input_host.rs"]
+mod input_host;
+
+#[cfg(target_os = "linux")]
+#[path = "support/v2_input_driver.rs"]
+mod input_driver;
+
+#[cfg(target_os = "linux")]
+#[path = "support/v2_duplex.rs"]
+mod duplex;
+#[cfg(target_os = "linux")]
+#[path = "support/v2_pcm.rs"]
+mod pcm;
 
 #[cfg(target_os = "linux")]
 mod linux {
@@ -59,7 +74,7 @@ mod linux {
     #[derive(Debug, Error)]
     enum HarnessError {
         #[error(
-            "usage: v2_cpal_output list | run|transport|plans|loops <exact ALSA device ID> <positive callback count>"
+            "usage: v2_cpal_output list | run|transport|plans|loops|capture <ALSA device ID> <callback count> | duplex <ALSA input ID> <ALSA output ID> <seconds per attempt>"
         )]
         Usage,
         #[error("endpoint not found: {0}")]
@@ -140,7 +155,7 @@ mod linux {
         callback_error: AtomicBool,
     }
 
-    const BACKEND_KINDS: [cpal::ErrorKind; 14] = [
+    pub(super) const BACKEND_KINDS: [cpal::ErrorKind; 14] = [
         cpal::ErrorKind::DeviceBusy,
         cpal::ErrorKind::DeviceChanged,
         cpal::ErrorKind::DeviceNotAvailable,
@@ -408,6 +423,11 @@ mod linux {
             let packet = match command {
                 SessionCommand::Play => self.control.prepare_play(at),
                 SessionCommand::Stop => self.control.prepare_stop(at),
+                SessionCommand::Panic => {
+                    return Err(HarnessError::Configuration(
+                        "ordered panic requires the capture harness",
+                    ));
+                }
             }
             .map_err(|error| HarnessError::Preparation(error.to_string()))?;
             if let Err(packet) = self.commands.try_push(packet) {
@@ -1063,11 +1083,24 @@ mod linux {
         match args.as_slice() {
             [command] if command == "list" => {
                 for device in host.output_devices()? {
-                    println!("{} {:?}", device.id()?, device.default_output_config()?);
+                    println!(
+                        "output {} {:?}",
+                        device.id()?,
+                        device.default_output_config()
+                    );
+                }
+                for device in host.input_devices()? {
+                    println!("input {} {:?}", device.id()?, device.default_input_config());
                 }
             }
+            [command, input, output, seconds] if command == "duplex" => {
+                return crate::duplex::run(&host, input, output, seconds);
+            }
             [command, id, count]
-                if matches!(command.as_str(), "run" | "transport" | "plans" | "loops") =>
+                if matches!(
+                    command.as_str(),
+                    "run" | "transport" | "plans" | "loops" | "capture"
+                ) =>
             {
                 let target = CallbackTarget::parse(count)?;
                 let mut selected = None;
@@ -1078,6 +1111,9 @@ mod linux {
                     }
                 }
                 let device = selected.ok_or_else(|| HarnessError::Endpoint(id.clone()))?;
+                if command == "capture" {
+                    return crate::input_driver::run(&device, target.0);
+                }
                 let mode = match command.as_str() {
                     "transport" => RunMode::Transport,
                     "plans" => RunMode::Plans,

@@ -135,6 +135,7 @@ pub struct LoopRecordingControl {
     last_command: Option<SampleTime>,
     last_source: Option<(SampleTime, bool)>,
     play_offered: bool,
+    start: SampleTime,
     closed: bool,
     share: EventCount,
     snapshot: LoopSnapshot,
@@ -285,6 +286,7 @@ impl LoopRecordingControl {
                 last_command: None,
                 last_source: None,
                 play_offered: false,
+                start: session.capture.start,
                 closed: false,
                 share: session.commands.share,
                 snapshot: session.acknowledged(),
@@ -340,7 +342,7 @@ impl LoopRecordingControl {
         {
             return Err(SessionError::Boundary.into());
         }
-        if command == SessionCommand::Play && (self.play_offered || at != SampleTime::ZERO) {
+        if command == SessionCommand::Play && (self.play_offered || at != self.start) {
             return Err(LoopSessionError::FinitePlay);
         }
         let mut held = 0;

@@ -452,7 +452,10 @@ Standalone loop constructors and the ordinary linear session retain their contra
 Every preparation refusal returns the original capture owner, including any existing
 take; attempting to convert an active or already rendered fixture cannot discard it.
 
-One recording Play is admitted at the prepared initial engine clock. Stops are ordered,
+One recording Play is admitted at the immutable reserved capture start. The
+initial-time constructor retains its original behavior; the proposed
+[reusable host](../decisions/ADR-0071-reusable-simulated-live-host.md) adds explicit
+future-start preparation and checks source-clock reachability. Stops are ordered,
 quantum-aligned commands using the existing session identities and outcomes. A new Play,
 rearm or plan replacement cannot reuse this finite owner's stopped state. Play reserves
 one command slot for Stop; collection is required before occupied receipt slots are reused.
@@ -823,3 +826,58 @@ controlled service delays. The driver can wait between logical periods, and the
 claims exclude OS response-time guarantees, hardware timestamps, production
 buffer sizing and arbitrary load. Physical timing, live audition and the complete
 producer qualification remain under their existing first-consumer gates.
+
+### Finite audible simulated capture
+
+The non-shipping `capture` mode of `v2_cpal_output` connects reusable live hosting,
+retained fresh attempts and pass-aware projection to ALSA callback custody. Its
+counted recipe reserves recording after a fixed musical count-in. Independent
+Core V2 renderers own compiled playback, real live ingress and the metronome;
+ordered Stop or panic ends live notes and sounding clicks at the same engine time.
+[ADR-0071](../decisions/ADR-0071-reusable-simulated-live-host.md) owns delayed start
+and restart custody; [ADR-0072](../decisions/ADR-0072-finite-live-audition-and-count-in.md)
+owns the original finite audition and count-in.
+[ADR-0073](../decisions/ADR-0073-continuous-simulated-live-input.md) replaces its
+whole-attempt quotas with reusable cells and adds bend and ongoing reconciliation.
+
+The concrete example tests compare timely audio under whole, regular and irregular
+callbacks and measure zero callback allocations. They compare retained raw input
+with audition on/off beyond 64 observations and recover without a final callback.
+The Linux mode reports identified refusals when delivery misses its reserved
+boundary. The unpaced null backend is a custody/recovery test, not physical timing
+evidence. Physical MIDI, platform timing and production calibration stay gated.
+
+### Continuous simulated audition, swaps and audio input
+
+ADR-0073 defines reusable result/held-key custody and a separate coalescing,
+versioned parameter lane. Observation credit exhaustion is an explicit terminal
+fault; Stop/panic retains separate custody. Completed raw annotations reconcile
+before their audition cells recycle. Worker finalization seals after joined
+recovery, including when no final callback arrives.
+
+[ADR-0074](../decisions/ADR-0074-concurrent-live-host-and-duplex-capture.md) extends
+ADR-0009's reset/crossfade owner with concurrent latest-wins preparation. Audio
+acquires only at a quantum boundary, transfers unstaged future observations,
+and retains completed old-epoch annotations until raw reconciliation. Rejected
+candidates keep the old plan sounding. Stop/closed/faulted owners cannot be revived.
+A bounded retirement queue and separately admitted mailbox retain all owners
+until off-thread destruction. Whole-callback success precedes outcome acknowledgement.
+
+The `capture` harness combines this transport with real Core V2 voices and
+simulated MIDI recording. The `duplex <input-id> <output-id> <seconds>` mode
+owns independent physical input/output and recording-worker endpoints. Original
+PCM and CPAL timing metadata form an immutable in-memory take after input join;
+monitor buffering, resampling and drops cannot alter it. Recording overflow and
+worker capacity retain an exact prefix and first missing source frame.
+
+Requested and negotiated buffers are reported separately. Reconfiguration stops,
+joins and finalizes before fresh preparation. Earlier takes survive later failure.
+Monitoring declares a 4,096-input-frame target and gain 0.1; recording applies no
+compensation. Backend input/output latency estimates are separate, cross-stream
+origins are not assumed equal, and physical round-trip latency remains unmeasured
+until an explicit loopback path is characterized under ADR-0022.
+
+`v2_live_session` retains the deterministic serialized simulator. The concrete
+`v2_cpal_output` example tests concurrent custody, original PCM, allocation and
+no-final-callback recovery. Physical timing qualification, anti-aliasing quality,
+representative identity endurance and full production producer budgets remain open.

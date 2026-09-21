@@ -10,8 +10,9 @@ use crate::{
     host::{
         ConnectionGeneration,
         session::{
-            SessionBoundary, SessionCaptureOutcome, SessionError, SessionLimits, SessionOutcome,
-            SessionReceipt, SessionSourceLimits, SessionSourceReceipt, source::SourceQueue,
+            SessionBoundary, SessionCaptureOutcome, SessionCommand, SessionError, SessionLimits,
+            SessionOutcome, SessionReceipt, SessionSourceLimits, SessionSourceReceipt,
+            source::SourceQueue,
         },
     },
     looping::LoopSnapshot,
@@ -25,7 +26,7 @@ use thiserror::Error;
 pub enum LoopSessionError {
     #[error("ordered loop recording requires an armed, unstarted, fresh loop owner")]
     FreshCapture,
-    #[error("this finite loop session admits only one Play at its initial clock")]
+    #[error("this finite loop session admits only one Play at its reserved capture start")]
     FinitePlay,
     #[error("source draining requires a stopped session")]
     NotStopped,
@@ -73,6 +74,7 @@ struct CommandEntry {
 }
 
 struct CommandLane {
+    end: Option<(SampleTime, SessionCommand)>,
     generation: ConnectionGeneration,
     slots: Box<[Option<CommandEntry>]>,
     head: usize,
@@ -150,6 +152,7 @@ impl LoopRecordingSession {
             .map_err(|_| SessionError::Allocation)?;
         slots.resize_with(count, || None);
         let lane = CommandLane {
+            end: None,
             generation,
             slots: slots.into_boxed_slice(),
             head: 0,
@@ -205,6 +208,33 @@ impl LoopRecordingSession {
 
     pub fn result(&self) -> Result<NoteCaptureResult<'_>, LoopSessionError> {
         Ok(self.capture.result()?)
+    }
+
+    /// The first applied transport end, independent of receipt collection pressure.
+    pub fn applied_end(&self) -> Option<(SampleTime, SessionCommand)> {
+        self.commands.end.or_else(|| {
+            self.capture
+                .journal
+                .end()
+                .map(|end| (end.at, SessionCommand::Stop))
+        })
+    }
+
+    pub fn resolve_audition(
+        &mut self,
+        id: crate::host::live::AuditionId,
+        outcome: crate::host::live::AuditionOutcome,
+    ) -> Result<crate::quantities::EventCount, LoopSessionError> {
+        Ok(self.capture.resolve_audition(id, outcome)?)
+    }
+
+    pub fn project_notes(
+        &mut self,
+    ) -> Result<
+        crate::recording::notes::projection::ProjectedLoopTake<'_>,
+        crate::recording::notes::projection::ProjectionError,
+    > {
+        self.capture.project_notes()
     }
 
     pub fn discard(&mut self, quality: CaptureQuality) -> Result<(), LoopSessionError> {

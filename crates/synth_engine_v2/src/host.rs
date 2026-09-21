@@ -16,7 +16,13 @@ pub use crate::recording::notes::loop_capture::ordered::input;
 #[cfg(feature = "simulated-ingress")]
 pub use capture::NoteCaptureControl;
 
+#[cfg(feature = "simulated-ingress")]
+pub mod audio_input;
 mod hot;
+#[cfg(feature = "simulated-ingress")]
+pub mod live;
+#[cfg(feature = "simulated-ingress")]
+pub mod pulse;
 #[cfg(feature = "simulated-ingress")]
 pub mod session;
 mod types;

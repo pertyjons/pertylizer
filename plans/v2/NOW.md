@@ -1,6 +1,6 @@
 # Core V2: Current Work
 
-Last updated: 2026-09-20
+Last updated: 2026-09-21
 
 This file contains only active Core V2 state, blockers and next actions. Durable
 contracts live in ADRs and specifications; completed Phase 3 coordination
@@ -172,10 +172,37 @@ and remaining audible-transport scope are recorded in the
 ADR-0069 adds the bounded simulated input lifecycle and independent-clock merger below.
 Physical adapters, qualified concurrent worker bounds, and monitoring
 retain their IO-INV-004/005 gates.
-Concurrent backend fences, held-note swaps, production hardware timing and project
+Concurrent backend fences, physical held-note swaps, production hardware timing and project
 transactions retain their named first-consumer gates.
 
+### Selected work — concurrent live host and duplex capture
+
+The five selected steps extend the simulated sessions with concurrent plan publication,
+note recording across resets, independent PCM owners, a Linux duplex candidate and timing/load probes.
+[ADR-0074](decisions/ADR-0074-concurrent-live-host-and-duplex-capture.md) defines their ownership boundary.
+Steps 1–4 are implemented in the experimental host and passed the complete repository gate and independent review.
+Step 5 adds backend latency probes, software loopback and identity/concurrency endurance tests;
+physical round-trip calibration and the complete production producer partition remain qualification gates.
+[EVD-0024](evidence/phase-09/EVD-0024-live-capacity-qualification.md) adds a controlled
+real-producer capacity matrix. Its component probes pass, but the coverage audit does not qualify
+production capacity: common host admission, same-stream live transport activation and a
+representative workload remain missing. All six shares, release holds and ingress depths retain
+their provisional status. No physical loopback is connected.
+
 ### Selected work — ordered transport through live I/O
+
+The user selected six implementation steps on 2026-09-21, in this order:
+reusable simulated live hosting with commands delivered during rendering;
+explicit restart with retained earlier takes; audible simulated note input;
+pass-aware musical projection; integrated count-in/metronome/arm/panic; and
+the complete simulated-input chain in the Linux output harness.
+Each step retains its named first-consumer contracts and independent review.
+All six are implemented with bounded tests, independent review and the complete
+repository gate. The Linux null-backend smoke run completed both retained attempts.
+Ownership decisions are
+[ADR-0071](decisions/ADR-0071-reusable-simulated-live-host.md) and
+[ADR-0072](decisions/ADR-0072-finite-live-audition-and-count-in.md).
+Physical MIDI and hardware timing qualification remain open.
 
 P09-S007 builds ordered compiled Play/Stop, resume and coupled exact-input note
 capture. The [session contract](specs/spec-host-io-lifecycle.md#ordered-note-capture)
@@ -189,7 +216,8 @@ preserves device time and refuses outstanding note obligations in the split core
 The Linux harness supplies latest-wins plan publication, off-thread collection and
 joined recovery of all mailbox cells. The
 [exclusive loop owner](specs/spec-sound-core-render-contract.md#exclusive-compiled-loops)
-adds sample-exact compiled playback. Physical timing qualification remains open; held-note swaps remain gated.
+adds sample-exact compiled playback. Physical timing qualification remains open; concurrent held-note swaps
+remain gated.
 Its [finite journal](decisions/ADR-0065-exclusive-sample-exact-loop-owner.md#retained-finite-observations)
 retains successful render boundaries through worker stalls. The
 [serial loop recorder](decisions/ADR-0066-serial-loop-capture-segmentation.md) adds
@@ -206,7 +234,7 @@ and retained loss/reconnect outcomes under ADR-0069.
 connects the merger and audio owners with bounded custody and independent halt under ADR-0070.
 The [continuous delivery experiment](specs/spec-host-io-lifecycle.md#continuous-simulated-delivery-experiment)
 checks recurring input against explicit logical delivery and queue budgets.
-OS timing qualification, restart and live audition remain separate consumers.
+OS timing qualification remains a separate consumer.
 The Linux harness also runs this owner through its `loops` output mode under
 [ADR-0063](decisions/ADR-0063-linux-cpal-callback-custody.md#exclusive-loop-output-consumer).
 

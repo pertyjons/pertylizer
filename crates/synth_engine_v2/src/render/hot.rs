@@ -314,6 +314,9 @@ impl PreparedRenderer {
             // in one quantum fail the call against a capacity of four — turning the
             // documented post-swap case into a render failure.
             let foreign = match event.payload() {
+                EventPayload::ReleaseGroup(group) => group
+                    .identities()
+                    .any(|identity| identity.table() != self.live_notes.id()),
                 EventPayload::RestoreController(restore) => {
                     restore.slot.parameter().plan() != self.plan.id()
                 }
@@ -412,8 +415,10 @@ impl PreparedRenderer {
             *slot = DueEvent {
                 position,
                 // Resolved below, once the whole span is in render order.
-                target: None,
-                note_of: None,
+                resolved: crate::render::ResolvedEvent::Ordinary {
+                    target: None,
+                    note: None,
+                },
                 // Four billion events in one span is unreachable, and a saturated arrival
                 // index only affects tie order among events at one position.
                 arrival: u32::try_from(index).unwrap_or(u32::MAX),
@@ -430,7 +435,7 @@ impl PreparedRenderer {
             live.sort_unstable_by_key(|event| (event.position, event.arrival));
         }
 
-        self.resolve_nodes(&mut pending);
+        self.resolve_nodes(&mut pending)?;
 
         Ok(pending)
     }
@@ -472,7 +477,7 @@ impl PreparedRenderer {
             EventPayload::Expression {
                 identity,
                 expression,
-            } => (identity, event.note_of, None, Some(expression)),
+            } => (identity, event.note_of(), None, Some(expression)),
             _ => return,
         };
         let Some(slot) = slot else {
@@ -508,7 +513,8 @@ impl PreparedRenderer {
         match payload {
             // Note-source effects were applied by apply_note_sources. Gate, pitch, bend,
             // fade and reset effects belong to the sample-positioned collection.
-            EventPayload::Expression { .. }
+            EventPayload::ReleaseGroup(_)
+            | EventPayload::Expression { .. }
             | EventPayload::Note { .. }
             | EventPayload::Fade { .. }
             | EventPayload::Reset { .. }
@@ -628,12 +634,34 @@ impl PreparedRenderer {
                 break;
             }
             last += 1;
-            if let Some(target) = event.target {
+            if let Some(target) = event.target() {
                 // Counted at `node + 1`, so the prefix sum below turns the counts into
                 // starts in place: entry `n` becomes where node `n`'s run begins. A write
                 // that fans out over a group counts one per row (`P06-S001`).
                 for row in target.slot..target.slot.saturating_add(target.rows) {
                     if let Some(node) = self.slot_node(row)
+                        && let Some(count) = self.control_starts.get_mut(node + 1)
+                    {
+                        *count = count.saturating_add(1);
+                    }
+                }
+            }
+            for released_index in 0..crate::ingress::RELEASE_GROUP_CAPACITY {
+                let Some((identity, slot)) = event.release_target(released_index, self.plan.id())
+                else {
+                    continue;
+                };
+                if let Some(target) = self.note_target(slot, identity)
+                    && let Some(node) = self.slot_node(target.slot)
+                    && let Some(count) = self.control_starts.get_mut(node + 1)
+                {
+                    *count = count.saturating_add(1);
+                }
+                for magnitude in self.plan.note_magnitudes_of(slot) {
+                    if magnitude.magnitude == crate::node::NoteMagnitude::Trigger
+                        && let Some(row) =
+                            self.voice_row(magnitude.parameter.index(), identity.index())
+                        && let Some(node) = self.slot_node(row)
                         && let Some(count) = self.control_starts.get_mut(node + 1)
                     {
                         *count = count.saturating_add(1);
@@ -695,7 +723,7 @@ impl PreparedRenderer {
                     identity,
                     edge: NoteEdge::Off,
                 } => {
-                    let Some(slot) = event.note_of else {
+                    let Some(slot) = event.note_of() else {
                         continue;
                     };
                     for magnitude in self.plan.note_magnitudes_of(slot) {
@@ -712,7 +740,7 @@ impl PreparedRenderer {
                     }
                 }
                 EventPayload::Bend { identity, .. } => {
-                    let Some(slot) = event.note_of else {
+                    let Some(slot) = event.note_of() else {
                         continue;
                     };
                     for magnitude in self.plan.note_magnitudes_of(slot) {
@@ -775,6 +803,37 @@ impl PreparedRenderer {
                 break;
             };
             index += 1;
+            for released_index in 0..crate::ingress::RELEASE_GROUP_CAPACITY {
+                let Some((identity, slot)) = event.release_target(released_index, self.plan.id())
+                else {
+                    continue;
+                };
+                let offset = event.position.quantum_offset();
+                if let Some(target) = self.note_target(slot, identity) {
+                    self.push_timed_control(
+                        target.slot,
+                        offset,
+                        crate::quantities::ParameterValue::ZERO,
+                    );
+                }
+                for index in 0..self.plan.note_magnitudes_of(slot).len() {
+                    let Some(magnitude) = self.plan.note_magnitudes_of(slot).get(index).copied()
+                    else {
+                        break;
+                    };
+                    if magnitude.magnitude == crate::node::NoteMagnitude::Trigger
+                        && let Some(row) =
+                            self.voice_row(magnitude.parameter.index(), identity.index())
+                    {
+                        self.push_timed_write(
+                            row,
+                            offset,
+                            crate::quantities::ParameterValue::ZERO,
+                            false,
+                        );
+                    }
+                }
+            }
             // The magnitudes go in **at the note's own offset**, which is what
             // `SOUND-INV-021`'s "a gate raised at the same sample must see them already
             // applied" requires: a kernel applies every control due at a frame before it
@@ -835,7 +894,7 @@ impl PreparedRenderer {
                 identity,
                 edge: NoteEdge::Off,
             } = event.payload
-                && let Some(slot) = event.note_of
+                && let Some(slot) = event.note_of()
             {
                 for position in 0..self.plan.note_magnitudes_of(slot).len() {
                     let Some(magnitude) = self.plan.note_magnitudes_of(slot).get(position).copied()
@@ -858,7 +917,7 @@ impl PreparedRenderer {
                 }
             }
             if let EventPayload::Bend { identity, cents } = event.payload
-                && let Some(slot) = event.note_of
+                && let Some(slot) = event.note_of()
             {
                 let sum = crate::node::ModulationSum::from_bend(cents);
                 for position in 0..self.plan.note_magnitudes_of(slot).len() {
@@ -917,7 +976,7 @@ impl PreparedRenderer {
                 }
                 _ => {}
             }
-            let (Some(target), Some(value)) = (event.target, self.timed_value(event.payload))
+            let (Some(target), Some(value)) = (event.target(), self.timed_value(event.payload))
             else {
                 continue;
             };
@@ -1094,13 +1153,35 @@ impl PreparedRenderer {
     /// An orphan release is counted here rather than silently skipped: `SOUND-INV-017`
     /// requires an identity naming no live note to be *refused and counted*, and this is
     /// where the refusal happens.
-    fn resolve_nodes(&mut self, pending: &mut PendingCounts) {
+    fn resolve_nodes(&mut self, pending: &mut PendingCounts) -> Result<(), RenderError> {
         for index in 0..self.scratch_len {
             let Some(event) = self.event_scratch.get(index).copied() else {
                 break;
             };
             let mut note_of = None;
+            let mut released = [None; crate::ingress::RELEASE_GROUP_CAPACITY];
             let target = match event.payload {
+                EventPayload::ReleaseGroup(group) => {
+                    for (index, identity) in group.identities().enumerate() {
+                        if let Some(note) = self.live_notes.release(identity) {
+                            if let Some(entry) = released.get_mut(index) {
+                                *entry = Some(
+                                    u32::try_from(note.index())
+                                        .ok()
+                                        .and_then(|index| index.checked_add(1))
+                                        .and_then(std::num::NonZeroU32::new)
+                                        .ok_or(RenderError::NoteTargetUnrepresentable {
+                                            index: note.index(),
+                                        })?,
+                                );
+                            }
+                        } else {
+                            pending.orphan_note = pending.orphan_note.saturating_add(1);
+                            pending.last_orphan_note = Some(identity);
+                        }
+                    }
+                    None
+                }
                 EventPayload::Note {
                     identity,
                     edge: NoteEdge::On { slot, key, .. },
@@ -1166,10 +1247,17 @@ impl PreparedRenderer {
                 }
             };
             if let Some(slot) = self.event_scratch.get_mut(index) {
-                slot.target = target;
-                slot.note_of = note_of;
+                slot.resolved = if matches!(event.payload, EventPayload::ReleaseGroup(_)) {
+                    crate::render::ResolvedEvent::Group(released)
+                } else {
+                    crate::render::ResolvedEvent::Ordinary {
+                        target,
+                        note: note_of,
+                    }
+                };
             }
         }
+        Ok(())
     }
 
     /// Where a note slot's edge lands: the gate control's row for the note's own voice
@@ -1192,7 +1280,8 @@ impl PreparedRenderer {
         match payload {
             EventPayload::Note { edge, .. } => Some(edge.value()),
             EventPayload::SetParameter { value, .. } => Some(value),
-            EventPayload::RestoreController(_)
+            EventPayload::ReleaseGroup(_)
+            | EventPayload::RestoreController(_)
             | EventPayload::Controller(_)
             | EventPayload::Expression { .. }
             | EventPayload::Fade { .. }
@@ -1700,5 +1789,37 @@ impl PreparedRenderer {
         self.clock = anchor.time();
         self.anchor = anchor;
         self.carry_frames = 0;
+    }
+}
+
+impl crate::render::DueEvent {
+    fn target(&self) -> Option<ResolvedTarget> {
+        match self.resolved {
+            crate::render::ResolvedEvent::Ordinary { target, .. } => target,
+            crate::render::ResolvedEvent::Group(_) => None,
+        }
+    }
+    fn note_of(&self) -> Option<crate::plan::NoteSlot> {
+        match self.resolved {
+            crate::render::ResolvedEvent::Ordinary { note, .. } => note,
+            crate::render::ResolvedEvent::Group(_) => None,
+        }
+    }
+    fn release_target(
+        &self,
+        index: usize,
+        plan: crate::plan::PlanId,
+    ) -> Option<(crate::identity::NoteIdentity, crate::plan::NoteSlot)> {
+        let EventPayload::ReleaseGroup(group) = &self.payload else {
+            return None;
+        };
+        let crate::render::ResolvedEvent::Group(released) = &self.resolved else {
+            return None;
+        };
+        let slot = usize::try_from(released.get(index)?.as_ref()?.get() - 1).ok()?;
+        Some((
+            group.identity(index)?,
+            crate::plan::NoteSlot::new(plan, slot),
+        ))
     }
 }

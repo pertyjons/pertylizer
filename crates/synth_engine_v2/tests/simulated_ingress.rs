@@ -2105,7 +2105,7 @@ fn simulated_has_one_literal_construction_site_in_this_crate_s_source() {
          {sites:?}"
     );
     assert!(
-        sites[0].contains("ingress.rs"),
+        sites[0].contains("ingress/offers.rs"),
         "the one site must be the ingress store, not {}",
         sites[0]
     );
@@ -2468,3 +2468,286 @@ fn the_horizon_pair_a_simulated_stamp_beyond_it_is_refused_and_one_inside_admitt
         "the horizon's own sample is inside it"
     );
 }
+
+#[test]
+fn release_group_is_atomic_sample_exact_and_preserves_reused_identity_order() {
+    use synth_engine_v2::ingress::ReleaseCause;
+    let mut reference = None;
+    for partitions in [&WHOLE[..], &BLOCKS_64, &IRREGULAR] {
+        let plan = plan();
+        let note = plan.resolve_note(ENVELOPE).unwrap();
+        let host = common::profile(TOTAL_FRAMES as u64, ChannelLayout::Mono);
+        let (mut control, mut renderer) = StreamControl::open(plan.clone(), ORIGIN).unwrap();
+        let empty = AdmittedCompiledStream::admit(&plan, &[]).unwrap();
+        let mut scheduler = CompiledEventScheduler::prepare(&mut control, &empty).unwrap();
+        let mut publication = arbiter();
+        let mut store =
+            PerformanceIngress::prepare(&host, &plan, ONLY_PRODUCER, &renderer).unwrap();
+        let mut ids = Vec::new();
+        for _ in 0..4 {
+            ids.push(
+                control
+                    .offer_note_on(
+                        &mut store,
+                        SampleTime::new(17),
+                        note,
+                        common::any_key(),
+                        synth_engine_v2::quantities::NoteVelocity::FULL,
+                    )
+                    .unwrap(),
+            );
+        }
+        let prior = (
+            store.len(),
+            store.holds_outstanding(),
+            control.live_notes_open(),
+        );
+        assert!(
+            control
+                .offer_release_group(
+                    &mut store,
+                    SampleTime::new(51),
+                    &[ids[0], ids[0]],
+                    ReleaseCause::Panic
+                )
+                .is_err()
+        );
+        assert_eq!(
+            (
+                store.len(),
+                store.holds_outstanding(),
+                control.live_notes_open()
+            ),
+            prior
+        );
+        {
+            control
+                .offer_release_group(&mut store, SampleTime::new(51), &ids, ReleaseCause::Panic)
+                .unwrap();
+        }
+        assert_eq!(store.holds_outstanding(), EventCount::NONE);
+        let fresh = control
+            .offer_note_on(
+                &mut store,
+                SampleTime::new(52),
+                note,
+                common::any_key(),
+                synth_engine_v2::quantities::NoteVelocity::FULL,
+            )
+            .unwrap();
+        assert!(!ids.contains(&fresh));
+        control
+            .offer_note_off(&mut store, SampleTime::new(83), fresh)
+            .unwrap();
+        let mut pcm = Vec::new();
+        for frames in partitions {
+            let mut output = vec![0.0; *frames];
+            {
+                scheduler
+                    .render_with_ingress(
+                        &mut renderer,
+                        &mut publication,
+                        Some(&mut store),
+                        AudioBlockMut::new(&mut output, *frames, ChannelLayout::Mono).unwrap(),
+                    )
+                    .unwrap();
+            }
+            pcm.extend(output);
+        }
+        assert_eq!(pcm[64 + 50], 4.0);
+        assert_eq!(pcm[64 + 51], 0.0);
+        assert_eq!(pcm[64 + 52], 1.0);
+        assert!(pcm[64 + 83..].iter().all(|value| *value == 0.0));
+        if let Some(reference) = &reference {
+            assert_eq!(&pcm, reference);
+        } else {
+            reference = Some(pcm);
+        }
+    }
+}
+
+#[test]
+fn finite_live_owner_sustains_by_source_and_stops_without_partition_effects() {
+    use synth_engine_v2::{
+        host::{
+            EndpointId,
+            input::{InputCapacity, InputLimits, SimulatedNoteInput},
+            live::{AuditionId, AuditionOutcome, LiveInputStream},
+        },
+        ingress::ReleaseCause,
+        quantities::PreparedBytes,
+        recording::notes::Midi1Input,
+    };
+    let mut inputs: Vec<_> = ["live-one", "live-two"]
+        .into_iter()
+        .map(|name| {
+            SimulatedNoteInput::new(
+                EndpointId::new(name.to_string()).unwrap(),
+                InputLimits {
+                    cells: InputCapacity::new(4).unwrap(),
+                    bytes: PreparedBytes::measured(65536),
+                },
+            )
+            .unwrap()
+        })
+        .collect();
+    let sources = [inputs[0].begin().unwrap(), inputs[1].begin().unwrap()];
+    let mut reference = None;
+    for partition in [64, 37, 4096] {
+        let plan = plan();
+        let note = plan.resolve_note(ENVELOPE).unwrap();
+        let mut live = LiveInputStream::prepare(
+            plan,
+            common::profile(TOTAL_FRAMES as u64, ChannelLayout::Mono),
+            note,
+            &sources,
+            EventCount::measured(16),
+            PreparedBytes::measured(1_000_000),
+        )
+        .unwrap();
+        // Pre-roll works with no initial note and no separately held control owner.
+        let mut prefix = [0.0; 64];
+        live.render(AudioBlockMut::new(&mut prefix, 64, ChannelLayout::Mono).unwrap())
+            .unwrap();
+        for (serial, (source, at, bytes)) in [
+            (0, 17, [0x90, 60, 100]),
+            (0, 25, [0xb0, 64, 127]),
+            (1, 30, [0x90, 64, 100]),
+            (0, 31, [0x80, 60, 0]),
+            (1, 60, [0x80, 64, 0]),
+            (0, 91, [0xb0, 64, 0]),
+            (0, 100, [0x90, 67, 100]),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            live.queue(
+                AuditionId::new(sources[source], serial as u64 + 1).unwrap(),
+                SampleTime::new(at),
+                Midi1Input::from_bytes(bytes).unwrap(),
+            )
+            .unwrap();
+        }
+        live.end_at(SampleTime::new(128), ReleaseCause::Stop)
+            .unwrap();
+        let mut pcm = vec![0.0; 320];
+        for block in pcm.chunks_mut(partition) {
+            let frames = block.len();
+            {
+                live.render(AudioBlockMut::new(block, frames, ChannelLayout::Mono).unwrap())
+                    .unwrap();
+            }
+        }
+        assert!(pcm[17] > 0.0);
+        assert!(pcm[30] > pcm[17]);
+        assert_eq!(pcm[31], pcm[30], "pedal holds only its own source");
+        assert_eq!(pcm[60], pcm[17], "other source releases normally");
+        assert_eq!(pcm[91], 0.0);
+        assert!(pcm[100] > 0.0);
+        assert!(pcm[128..].iter().all(|sample| *sample == 0.0));
+        assert_eq!(live.holds(), EventCount::NONE);
+        assert_eq!(live.outcomes().count(), 7);
+        let late = AuditionId::new(sources[0], 99).unwrap();
+        live.queue(
+            late,
+            SampleTime::new(1),
+            Midi1Input::from_bytes([0x90, 60, 100]).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            live.outcomes().find(|(id, _)| *id == late).unwrap().1,
+            AuditionOutcome::Cancelled
+        );
+        if let Some(reference) = &reference {
+            assert_eq!(&pcm, reference);
+        } else {
+            reference = Some(pcm);
+        }
+    }
+}
+
+#[test]
+fn late_live_input_keeps_actual_time_and_refused_on_tombstones_do_not_release_another_note() {
+    use synth_engine_v2::{
+        host::{
+            EndpointId,
+            input::{InputCapacity, InputLimits, SimulatedNoteInput},
+            live::{AuditionId, AuditionOutcome, LiveInputStream},
+        },
+        quantities::PreparedBytes,
+        recording::notes::Midi1Input,
+    };
+    let mut source = SimulatedNoteInput::new(
+        EndpointId::new("late-live".into()).unwrap(),
+        InputLimits {
+            cells: InputCapacity::new(4).unwrap(),
+            bytes: PreparedBytes::measured(65536),
+        },
+    )
+    .unwrap();
+    let source = source.begin().unwrap();
+    let plan = plan_with(PlanDeclarations {
+        note_producers: vec![NoteProducerDeclaration {
+            compiled: false,
+            simultaneous_notes: HeldNoteCount::measured(1),
+            simultaneous_holds: EventCount::measured(1),
+        }],
+        ..PlanDeclarations::default()
+    });
+    let note = plan.resolve_note(ENVELOPE).unwrap();
+    let mut live = LiveInputStream::prepare(
+        plan,
+        common::profile(TOTAL_FRAMES as u64, ChannelLayout::Mono),
+        note,
+        &[source],
+        EventCount::measured(8),
+        PreparedBytes::measured(1_000_000),
+    )
+    .unwrap();
+    let mut pre = [0.0; 192];
+    live.render(AudioBlockMut::new(&mut pre, 192, ChannelLayout::Mono).unwrap())
+        .unwrap();
+    for (serial, at, bytes) in [
+        (1, 10, [0x90, 60, 100]),
+        (2, 11, [0x90, 60, 100]),
+        (3, 12, [0x80, 60, 0]),
+        (4, 13, [0x90, 60, 100]),
+        (5, 14, [0x80, 60, 0]),
+    ] {
+        live.queue(
+            AuditionId::new(source, serial).unwrap(),
+            SampleTime::new(at),
+            Midi1Input::from_bytes(bytes).unwrap(),
+        )
+        .unwrap();
+    }
+    let mut pcm = [0.0; 128];
+    live.render(AudioBlockMut::new(&mut pcm, 128, ChannelLayout::Mono).unwrap())
+        .unwrap();
+    let outcomes: Vec<_> = live.outcomes().map(|(_, o)| o).collect();
+    assert_eq!(
+        outcomes[0],
+        AuditionOutcome::Executed {
+            epoch: live.epoch(),
+            at: SampleTime::new(128)
+        }
+    );
+    assert!(matches!(outcomes[1], AuditionOutcome::Refused(_)));
+    assert_eq!(
+        outcomes[4],
+        AuditionOutcome::NotSounded,
+        "the second release consumes the refused second onset"
+    );
+    assert_eq!(
+        live.holds(),
+        EventCount::measured(1),
+        "the third occurrence remains sounding"
+    );
+    assert!(pcm.iter().any(|value| *value > 0.0));
+}
+
+#[path = "simulated_ingress/continuous.rs"]
+mod continuous;
+
+#[path = "simulated_ingress/capacity.rs"]
+mod capacity;

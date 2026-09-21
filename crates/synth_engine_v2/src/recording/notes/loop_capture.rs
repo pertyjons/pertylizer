@@ -130,6 +130,7 @@ pub struct LoopCaptureSession {
     ticket: Option<TakeReservation>,
     first_pass: Option<CapturePassId>,
     started: bool,
+    start: SampleTime,
     carry_capacity: Option<SampleTime>,
 }
 
@@ -167,6 +168,7 @@ impl LoopCaptureSession {
             ticket: None,
             first_pass: None,
             started: false,
+            start: SampleTime::ZERO,
             carry_capacity: None,
         })
     }
@@ -187,13 +189,32 @@ impl LoopCaptureSession {
         input: LoopNoteArmInput,
         sources: &[ConnectionGeneration],
     ) -> Result<TakeReservation, LoopCaptureError> {
+        self.arm_at(input, sources, self.journal.initial().clock)
+    }
+
+    /// Reserve a future quantum-aligned start for an ordered session. The immutable
+    /// capture window is fixed here; publishing Play later cannot move timestamps.
+    pub fn arm_at(
+        &mut self,
+        input: LoopNoteArmInput,
+        sources: &[ConnectionGeneration],
+        start: SampleTime,
+    ) -> Result<TakeReservation, LoopCaptureError> {
         if self.ticket.is_some()
             || self.journal.end().is_some()
             || self.journal.acknowledged() != self.journal.initial()
         {
             return Err(LoopCaptureError::State);
         }
-        let initial = self.journal.initial();
+        let mut initial = self.journal.initial();
+        if start < initial.clock
+            || !start
+                .as_u64()
+                .is_multiple_of(u64::from(crate::time::QUANTUM_FRAMES))
+        {
+            return Err(LoopCaptureError::Mapping);
+        }
+        initial.clock = start;
         let interval = self.journal.interval();
         if input.tempo.sample_rate() != self.rate
             || input.tempo.position_of(input.interval.start())? != interval.start()
@@ -248,6 +269,7 @@ impl LoopCaptureSession {
             active.seal_ready = false;
         }
         self.ticket = Some(ticket);
+        self.start = start;
         Ok(ticket)
     }
 
@@ -255,6 +277,25 @@ impl LoopCaptureSession {
         Ok(self
             .recorder
             .result(self.ticket.ok_or(LoopCaptureError::State)?)?)
+    }
+
+    pub fn resolve_audition(
+        &mut self,
+        id: crate::host::live::AuditionId,
+        outcome: crate::host::live::AuditionOutcome,
+    ) -> Result<crate::quantities::EventCount, LoopCaptureError> {
+        Ok(self.recorder.resolve_audition(
+            self.ticket.ok_or(LoopCaptureError::State)?,
+            id,
+            outcome,
+        )?)
+    }
+
+    pub fn project_notes(
+        &mut self,
+    ) -> Result<projection::ProjectedLoopTake<'_>, projection::ProjectionError> {
+        self.recorder
+            .project_loop_notes(self.ticket.ok_or(NoteCaptureError::StartRequired)?)
     }
 
     /// Combined owner and recording allocations, excluding the separately admitted

@@ -171,6 +171,12 @@ impl InputCaptureSession {
             {
                 return Err(InputError::Attachment.into());
             }
+            if session.capture.start != session.capture.initial().clock {
+                let _start_tick = input
+                    .clock
+                    .ok_or(InputError::Attachment)?
+                    .exact_tick(session.capture.start)?;
+            }
         }
         // Each input charges its inline owner, including the boxed-array payload.
         // The serial session charges itself; only composition metadata is additional.
@@ -198,6 +204,23 @@ impl InputCaptureSession {
     pub fn result(&self) -> Result<NoteCaptureResult<'_>, InputCaptureError> {
         Ok(self.session.result()?)
     }
+
+    pub fn resolve_audition(
+        &mut self,
+        id: crate::host::live::AuditionId,
+        outcome: crate::host::live::AuditionOutcome,
+    ) -> Result<crate::quantities::EventCount, InputCaptureError> {
+        Ok(self.session.resolve_audition(id, outcome)?)
+    }
+
+    pub fn project_notes(
+        &mut self,
+    ) -> Result<
+        crate::recording::notes::projection::ProjectedLoopTake<'_>,
+        crate::recording::notes::projection::ProjectionError,
+    > {
+        self.session.project_notes()
+    }
     pub fn finalize(&mut self) -> Result<(), InputCaptureError> {
         self.reconcile()?;
         Ok(self.session.finalize()?)
@@ -212,14 +235,7 @@ impl InputCaptureSession {
         self,
     ) -> Result<(LoopRecordingSession, Box<[SimulatedNoteInput]>), Box<InputCaptureOwnerError>>
     {
-        if !self.closed
-            || self.session.commands.held != 0
-            || self.session.sources.has_held()
-            || self
-                .inputs
-                .iter()
-                .any(|input| !input.quiescent || input.slots.iter().any(Option::is_some))
-        {
+        if !self.retirement_ready() {
             return Err(Box::new(InputCaptureOwnerError {
                 session: self.session,
                 inputs: self.inputs,
@@ -227,6 +243,17 @@ impl InputCaptureSession {
             }));
         }
         Ok((self.session, self.inputs))
+    }
+
+    /// All transfer outcomes have been collected and every source explicitly joined.
+    pub fn retirement_ready(&self) -> bool {
+        self.closed
+            && self.session.commands.held == 0
+            && !self.session.sources.has_held()
+            && self
+                .inputs
+                .iter()
+                .all(|input| input.quiescent && input.slots.iter().all(Option::is_none))
     }
 
     /// Advance only an explicitly complete prefix. SourceQueue saturation leaves
