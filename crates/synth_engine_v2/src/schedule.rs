@@ -31,7 +31,95 @@ use crate::plan::{CompiledPlan, PlanId};
 use crate::quantities::EventCount;
 use crate::render::{EventEnvelope, EventPayload, NoteEdge, TimedEvent};
 use crate::stream::StreamControl;
-use crate::time::{Located, PlanPosition, SampleTime, StreamEpoch, TimeSource};
+use crate::time::{Located, PlanPosition, SampleTime, StreamAnchor, StreamEpoch, TimeSource};
+
+/// Internal minter operations shared by ordinary and compiled-range stamping.
+/// Mixed custody supplies only its compiled range.
+pub(crate) trait StampMinter {
+    fn table_id(&self) -> crate::identity::TableId;
+    fn validate_compiled_range(
+        &self,
+        producer: crate::identity::ProducerId,
+        planned: crate::quantities::HeldNoteCount,
+    ) -> Result<(), SchedulePrepareError>;
+    fn mint_keyed(
+        &mut self,
+        producer: crate::identity::ProducerId,
+        note: crate::plan::NoteSlot,
+        key: crate::quantities::KeyIdentity,
+    ) -> Result<crate::identity::NoteIdentity, crate::identity::IdentityError>;
+    fn release(&mut self, identity: crate::identity::NoteIdentity) -> crate::identity::Resolution;
+}
+
+impl StampMinter for crate::identity::IdentityTable {
+    fn table_id(&self) -> crate::identity::TableId {
+        self.id()
+    }
+
+    fn validate_compiled_range(
+        &self,
+        _producer: crate::identity::ProducerId,
+        _planned: crate::quantities::HeldNoteCount,
+    ) -> Result<(), SchedulePrepareError> {
+        // Preserve the ordinary whole-table path's existing validation boundary.
+        Ok(())
+    }
+
+    fn mint_keyed(
+        &mut self,
+        producer: crate::identity::ProducerId,
+        note: crate::plan::NoteSlot,
+        key: crate::quantities::KeyIdentity,
+    ) -> Result<crate::identity::NoteIdentity, crate::identity::IdentityError> {
+        Self::mint_keyed(self, producer, note, key)
+    }
+
+    fn release(&mut self, identity: crate::identity::NoteIdentity) -> crate::identity::Resolution {
+        Self::release(self, identity)
+    }
+}
+
+impl StampMinter for crate::identity::CompiledRangeMinter {
+    fn table_id(&self) -> crate::identity::TableId {
+        self.id()
+    }
+
+    fn validate_compiled_range(
+        &self,
+        producer: crate::identity::ProducerId,
+        planned: crate::quantities::HeldNoteCount,
+    ) -> Result<(), SchedulePrepareError> {
+        let actual = crate::quantities::HeldNoteCount::measured(self.span().len);
+        if producer != self.producer() || planned != actual {
+            return Err(SchedulePrepareError::CompiledRangeMismatch {
+                producer,
+                owned: self.producer(),
+                planned,
+                actual,
+            });
+        }
+        Ok(())
+    }
+
+    fn mint_keyed(
+        &mut self,
+        producer: crate::identity::ProducerId,
+        note: crate::plan::NoteSlot,
+        key: crate::quantities::KeyIdentity,
+    ) -> Result<crate::identity::NoteIdentity, crate::identity::IdentityError> {
+        if producer != self.producer() {
+            return Err(crate::identity::IdentityError::WrongMinterProducer {
+                requested: producer,
+                owned: self.producer(),
+            });
+        }
+        Self::mint_keyed(self, note, key)
+    }
+
+    fn release(&mut self, identity: crate::identity::NoteIdentity) -> crate::identity::Resolution {
+        Self::release(self, identity)
+    }
+}
 
 /// One exact event produced by compiled plan time.
 ///
@@ -280,6 +368,20 @@ impl CompiledEvent {
 /// Why a compiled schedule could not be prepared.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
 pub enum SchedulePrepareError {
+    /// The plan's compiled producer and capacity do not match this split minter.
+    #[error(
+        "compiled {producer} plans {planned} indices, but this minter owns {actual} for {owned}"
+    )]
+    CompiledRangeMismatch {
+        /// The producer named by the compiled plan.
+        producer: crate::identity::ProducerId,
+        /// The producer whose range this minter owns.
+        owned: crate::identity::ProducerId,
+        /// The held-note capacity declared by the plan.
+        planned: crate::quantities::HeldNoteCount,
+        /// The extent of this minter's range.
+        actual: crate::quantities::HeldNoteCount,
+    },
     /// A release names a node with no unreleased note-on before it.
     ///
     /// A compiled list is authored, so this is a malformed plan rather than a runtime
@@ -638,28 +740,7 @@ impl CompiledEventScheduler {
         // anchor on the control side, so this is read rather than supplied — a caller cannot
         // state a pairing it does not hold, which removes the whole class of error the
         // explicit argument existed to catch.
-        let anchor = control.anchor();
-
-        let mut placed = Vec::with_capacity(stream.events().len());
-        for (event_index, event) in stream.events().iter().copied().enumerate() {
-            let time = match anchor.locate(event.position()) {
-                Located::At(time) => time,
-                Located::BeforeAnchor => {
-                    return Err(SchedulePrepareError::BeforeAnchor {
-                        event_index,
-                        position: event.position(),
-                        anchor: anchor.position(),
-                    });
-                }
-                Located::Unrepresentable => {
-                    return Err(SchedulePrepareError::TimeUnrepresentable {
-                        event_index,
-                        position: event.position(),
-                    });
-                }
-            };
-            placed.push(CompiledEvent::new(time, event.payload()));
-        }
+        let placed = place_admitted(stream, control.anchor())?;
 
         let epoch = control.epoch();
         // The **compiled share**, not the per-quantum cap: ADR-0046 clause 1 partitions the
@@ -731,6 +812,34 @@ impl CompiledEventScheduler {
             crate::transport::Exchange::Empty => None,
         }
     }
+}
+
+/// Place only an already admitted stream at its owner's anchor, off the audio thread.
+pub(crate) fn place_admitted(
+    stream: &AdmittedCompiledStream,
+    anchor: StreamAnchor,
+) -> Result<Vec<CompiledEvent>, SchedulePrepareError> {
+    let mut placed = Vec::with_capacity(stream.events().len());
+    for (event_index, event) in stream.events().iter().copied().enumerate() {
+        let time = match anchor.locate(event.position()) {
+            Located::At(time) => time,
+            Located::BeforeAnchor => {
+                return Err(SchedulePrepareError::BeforeAnchor {
+                    event_index,
+                    position: event.position(),
+                    anchor: anchor.position(),
+                });
+            }
+            Located::Unrepresentable => {
+                return Err(SchedulePrepareError::TimeUnrepresentable {
+                    event_index,
+                    position: event.position(),
+                });
+            }
+        };
+        placed.push(CompiledEvent::new(time, event.payload()));
+    }
+    Ok(placed)
 }
 
 const fn payload_plan(payload: CompiledPayload) -> PlanId {
@@ -1121,8 +1230,8 @@ pub fn stamp_into(
 }
 
 /// [`stamp_into`] with the steal count kept.
-pub(crate) fn stamp_all(
-    minter: &mut crate::identity::IdentityTable,
+pub(crate) fn stamp_all<M: StampMinter>(
+    minter: &mut M,
     plan: &CompiledPlan,
     epoch: StreamEpoch,
     events: &[CompiledEvent],
@@ -1135,6 +1244,12 @@ pub(crate) fn stamp_all(
                 .get(usize::from(producer.as_u16()))
         })
         .map_or(0, |range| range.get());
+    if let Some(producer) = compiled_producer {
+        minter.validate_compiled_range(
+            producer,
+            crate::quantities::HeldNoteCount::measured(capacity),
+        )?;
+    }
     let policy = plan.stealing();
 
     // Pass one: everything that can refuse, before a mint. A foreign **parameter** slot is
@@ -1241,7 +1356,7 @@ pub(crate) fn stamp_all(
                 let Some(producer) = compiled_producer else {
                     return Err(SchedulePrepareError::NoCompiledNoteProducer { event_index });
                 };
-                let mint = |minter: &mut crate::identity::IdentityTable| {
+                let mint = |minter: &mut M| {
                     minter.mint_keyed(producer, slot, key).map_err(|source| {
                         SchedulePrepareError::Identity {
                             event_index,
@@ -1252,7 +1367,7 @@ pub(crate) fn stamp_all(
                 // The book decides; the minter is told. Placed **before** the mint so the
                 // taken index is the free one the mint takes: with every index held it is
                 // the only one, which is what puts the new note on the taken voice.
-                let placeholder = crate::identity::NoteIdentity::placeholder(minter.id());
+                let placeholder = crate::identity::NoteIdentity::placeholder(minter.table_id());
                 match open.open(now, slot, key, placeholder) {
                     Opened::Refused | Opened::Admitted => {
                         // `Refused` is the minter's over-emission, reported with its cause.

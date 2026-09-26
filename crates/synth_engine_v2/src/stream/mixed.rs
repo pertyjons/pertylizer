@@ -176,6 +176,15 @@ impl MixedStreamControl {
     pub fn compiled_slots(&self) -> &[NoteSlot] {
         &self.compiled_slots
     }
+
+    /// Check the bound stream against this control's compiled range off-thread.
+    /// The copied identities and events are discarded; no schedule or reservation is published.
+    pub fn check_bound_stamp(&self) -> Result<(), crate::schedule::SchedulePrepareError> {
+        let placed = crate::schedule::place_admitted(&self.stream, self.anchor)?;
+        let mut minter = self.minter.working_copy();
+        crate::schedule::stamp_all(&mut minter, &self.plan, self.epoch, &placed)?;
+        Ok(())
+    }
 }
 
 impl MixedStreamAudio {

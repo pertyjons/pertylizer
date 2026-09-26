@@ -210,7 +210,11 @@ now consumes that binding and prepares separate compiled and live identity
 range owners with one table identity and stream epoch. Tests cover both
 producer orders and cross-range release refusal. These owners do not yet
 offer mixed ingress, rendering or activation; the existing refusals remain
-in force.
+in force. An off-thread check now places and stamps the bound stream against
+a disposable copy of only the compiled range. It publishes no events or
+reservations. Tests cover wrong-producer and wrong-capacity refusals, disjoint
+compiled and live indices through copy/commit, and a post-mint refusal.
+Schedule output custody remains open.
 
 ### Selected work — ordered transport through live I/O
 

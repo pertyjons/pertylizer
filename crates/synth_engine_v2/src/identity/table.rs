@@ -250,6 +250,21 @@ impl CompiledRangeMinter {
         Self(partition)
     }
 
+    /// Copy only the compiled range for off-thread commit-or-discard stamping.
+    /// The live owner's slots are never part of this value or its copy.
+    pub(crate) fn working_copy(&self) -> Self {
+        Self(RangeMinter {
+            id: self.0.id,
+            producer: self.0.producer,
+            span: self.0.span,
+            slots: self.0.slots.clone(),
+            generation_ceiling: self.0.generation_ceiling,
+            retired: self.0.retired,
+            live: self.0.live,
+            minted: self.0.minted,
+        })
+    }
+
     /// This mixed stream's table identity.
     pub const fn id(&self) -> TableId {
         self.0.id

@@ -404,6 +404,7 @@ fn rebase(error: SchedulePrepareError, sources: &[usize]) -> SchedulePrepareErro
         // No index to rewrite: the stream as a whole belongs to another plan, or the refusal
         // is about the control's own state rather than about any event.
         SchedulePrepareError::ForeignStream { .. }
+        | SchedulePrepareError::CompiledRangeMismatch { .. }
         | SchedulePrepareError::CandidateOutstanding { .. }
         | SchedulePrepareError::SchedulerExists => error,
     }

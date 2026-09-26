@@ -251,6 +251,15 @@ pub enum IdentityError {
         producer: ProducerId,
     },
 
+    /// A split minter was asked to mint for any producer other than its owner.
+    #[error("{requested} cannot mint from the range owned by {owned}")]
+    WrongMinterProducer {
+        /// The producer the caller requested.
+        requested: ProducerId,
+        /// The producer whose range this minter owns.
+        owned: ProducerId,
+    },
+
     /// Every index in a producer's range is live.
     ///
     /// **A producer defect.** Nothing was lost to retirement; the producer is simply holding

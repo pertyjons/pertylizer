@@ -2562,7 +2562,28 @@ fn mixed_stream_opens_split_owners_from_the_bound_plan_and_stream() {
             ProducerId::new(u16::from(compiled_first))
         );
         assert_eq!(audio.live_slot(), slot);
+        control
+            .check_bound_stamp()
+            .expect("the bound stream stamps inside the compiled range");
     }
+}
+
+#[test]
+fn mixed_bound_stamp_check_discards_a_copy_after_mint_failure() {
+    let plan = compiled_and_live_producers();
+    let slot = plan.resolve_note(ENVELOPE).expect("playable envelope");
+    let events: Vec<_> = (0..5).map(|position| note(&plan, position, true)).collect();
+    let stream = admitted(&plan, &events);
+    let binding = MixedTargetAdmission::admit(plan, stream, slot).expect("targets are disjoint");
+    let (control, _audio) = MixedStreamControl::open(binding, ORIGIN).expect("stream prepares");
+
+    assert!(matches!(
+        control.check_bound_stamp(),
+        Err(synth_engine_v2::schedule::SchedulePrepareError::Identity {
+            event_index: 4,
+            source: synth_engine_v2::identity::IdentityError::ProducerOverEmitted { .. }
+        })
+    ));
 }
 
 #[test]
