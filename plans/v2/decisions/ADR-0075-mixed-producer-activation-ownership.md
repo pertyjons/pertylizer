@@ -125,6 +125,30 @@ and unexamined source packets without requiring another callback. Pedal,
 mass release, bend, transport, reset, activation and loop still need their own
 credit and redemption laws; this paragraph grants no mixed-render permission.
 
+The concrete source ring is also the only path into raw capture. An audition
+packet refused before that ring cannot still be captured through the current
+path. Raw capture has 32 cells per source, reserves one for frontiers and
+invalidates the host when its ordinary cells fill. Its receipt collector is
+separate from audition result collection. A release reserved only in audition
+can therefore fail before reaching audio under raw-capture starvation; a new
+law must include capture credit or state the resulting terminal disposition.
+It must distinguish an audition source receipt from raw capture's
+`InputReceipt` and identify where each is settled.
+
+A source-side key ledger needs one FIFO for both receipted and refused
+onsets. If the first same-key onset is receipted, the second refused and two
+releases follow, a refused-only tombstone queue consumes the first release
+and forwards the second as if it belonged to the first onset. The release is
+delayed and misattributed; without the second release the note remains held.
+Nominal mapping currently happens after the source ring. Checking mapped time
+before receipt would require moving the mapping earlier; a failure after
+receipt needs explicit custody redemption. A release
+staged before a later callback failure may already have spent its ingress
+hold and freed its held cell even though its outcome becomes `Cancelled`.
+Joined teardown must classify the actual note and release state, not infer it
+from that outcome alone. Add these counterexamples to any protected-release
+rehearsal before claiming it passes.
+
 ## Unresolved acceptance work
 
 The candidate rule is insufficient until a concrete combined host answers
