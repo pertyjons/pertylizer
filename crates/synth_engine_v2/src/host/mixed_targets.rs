@@ -1,7 +1,8 @@
 //! Off-thread target binding for ADR-0075's first mixed-producer prerequisite.
 //!
-//! This value proves only target separation for one fixed compiled stream and one live
-//! note slot. It does not prepare ingress, activate transport, or permit mixed rendering.
+//! This value proves only target separation for one owned plan, fixed compiled stream
+//! and live note slot. It does not prepare ingress, activate transport, or permit
+//! mixed rendering.
 
 use std::collections::BTreeSet;
 
@@ -47,13 +48,37 @@ pub enum MixedTargetError {
     },
 }
 
-/// A fixed compiled stream and live note slot with disjoint playable node instances.
+/// A refused binding returns its plan, stream and live slot for a corrected retry.
+#[derive(Debug, Error)]
+#[error("{reason}")]
+pub struct MixedTargetFailure {
+    reason: MixedTargetError,
+    plan: CompiledPlan,
+    stream: AdmittedCompiledStream,
+    live_slot: NoteSlot,
+}
+
+impl MixedTargetFailure {
+    /// The validation rule that refused the binding.
+    pub const fn reason(&self) -> MixedTargetError {
+        self.reason
+    }
+
+    /// Recover every input the failed admission took.
+    pub fn into_inputs(self: Box<Self>) -> (CompiledPlan, AdmittedCompiledStream, NoteSlot) {
+        let failure = *self;
+        (failure.plan, failure.stream, failure.live_slot)
+    }
+}
+
+/// A fixed plan, compiled stream and live note slot with disjoint playable node instances.
 ///
 /// Construct off the audio thread. The underlying mixed-ingress and activation refusals
 /// remain in force; this artifact grants no runtime access by itself.
 #[derive(Debug)]
 #[must_use]
 pub struct MixedTargetAdmission {
+    plan: CompiledPlan,
     stream: AdmittedCompiledStream,
     live_slot: NoteSlot,
     live_producer: ProducerId,
@@ -61,81 +86,101 @@ pub struct MixedTargetAdmission {
 }
 
 impl MixedTargetAdmission {
-    /// Bind every note writer in the owned compiled stream and the one live note slot.
+    /// Bind every note writer in the owned plan and compiled stream to the live note slot.
     pub fn admit(
-        plan: &CompiledPlan,
+        plan: CompiledPlan,
         stream: AdmittedCompiledStream,
         live_slot: NoteSlot,
-    ) -> Result<Self, MixedTargetError> {
-        if stream.plan() != plan.id() || live_slot.plan() != plan.id() {
-            return Err(MixedTargetError::ForeignPlan);
-        }
-        if plan.stealing() != StealingPolicy::None {
-            return Err(MixedTargetError::Stealing);
-        }
-        if !plan.authored_sources().is_empty() {
-            return Err(MixedTargetError::AuthoredSource);
-        }
-        let ranges = plan.note_producer_ranges();
-        let compiled = plan.compiled_note_producer();
-        if ranges.len() != 2
-            || ranges.iter().any(|range| range.get() == 0)
-            || !matches!(compiled, Some(id) if id.as_u16() < 2)
-        {
-            return Err(MixedTargetError::ProducerShape);
-        }
-        let compiled = compiled.ok_or(MixedTargetError::ProducerShape)?;
-        let live_index = 1 - compiled.as_u16();
-        let live_producer = ProducerId::new(live_index);
-        let compiled_start = if compiled.as_u16() == 0 {
-            0
-        } else {
-            ranges[0].get()
-        };
-        let live_start = if live_index == 0 { 0 } else { ranges[0].get() };
-        let compiled_end = compiled_start
-            .checked_add(ranges[usize::from(compiled.as_u16())].get())
-            .ok_or(MixedTargetError::ProducerShape)?;
-        let live_end = live_start
-            .checked_add(ranges[usize::from(live_index)].get())
-            .ok_or(MixedTargetError::ProducerShape)?;
-        if compiled_end > INDEX_SPACE || live_end > INDEX_SPACE {
-            return Err(MixedTargetError::ProducerShape);
-        }
-        let compiled_range = compiled_start..compiled_end;
-        let live_range = live_start..live_end;
+    ) -> Result<Self, Box<MixedTargetFailure>> {
+        let checked: Result<_, MixedTargetError> = (|| {
+            if stream.plan() != plan.id() || live_slot.plan() != plan.id() {
+                return Err(MixedTargetError::ForeignPlan);
+            }
+            if plan.stealing() != StealingPolicy::None {
+                return Err(MixedTargetError::Stealing);
+            }
+            if !plan.authored_sources().is_empty() {
+                return Err(MixedTargetError::AuthoredSource);
+            }
+            let ranges = plan.note_producer_ranges();
+            let compiled = plan.compiled_note_producer();
+            if ranges.len() != 2
+                || ranges.iter().any(|range| range.get() == 0)
+                || !matches!(compiled, Some(id) if id.as_u16() < 2)
+            {
+                return Err(MixedTargetError::ProducerShape);
+            }
+            let compiled = compiled.ok_or(MixedTargetError::ProducerShape)?;
+            let live_index = 1 - compiled.as_u16();
+            let live_producer = ProducerId::new(live_index);
+            let compiled_start = if compiled.as_u16() == 0 {
+                0
+            } else {
+                ranges[0].get()
+            };
+            let live_start = if live_index == 0 { 0 } else { ranges[0].get() };
+            let compiled_end = compiled_start
+                .checked_add(ranges[usize::from(compiled.as_u16())].get())
+                .ok_or(MixedTargetError::ProducerShape)?;
+            let live_end = live_start
+                .checked_add(ranges[usize::from(live_index)].get())
+                .ok_or(MixedTargetError::ProducerShape)?;
+            if compiled_end > INDEX_SPACE || live_end > INDEX_SPACE {
+                return Err(MixedTargetError::ProducerShape);
+            }
+            let compiled_range = compiled_start..compiled_end;
+            let live_range = live_start..live_end;
 
-        let mut compiled_slots = BTreeSet::new();
-        for (event_index, event) in stream.events().iter().enumerate() {
-            match event.payload() {
-                CompiledPayload::NoteOn { slot, .. }
-                | CompiledPayload::NoteOff { slot, .. }
-                | CompiledPayload::Expression { slot, .. }
-                | CompiledPayload::Bend { slot, .. } => {
-                    compiled_slots.insert(slot);
-                }
-                CompiledPayload::Controller(_) | CompiledPayload::SetParameter { .. } => {
-                    return Err(MixedTargetError::UnsupportedCompiledWriter { event_index });
+            let mut compiled_slots = BTreeSet::new();
+            for (event_index, event) in stream.events().iter().enumerate() {
+                match event.payload() {
+                    CompiledPayload::NoteOn { slot, .. }
+                    | CompiledPayload::NoteOff { slot, .. }
+                    | CompiledPayload::Expression { slot, .. }
+                    | CompiledPayload::Bend { slot, .. } => {
+                        compiled_slots.insert(slot);
+                    }
+                    CompiledPayload::Controller(_) | CompiledPayload::SetParameter { .. } => {
+                        return Err(MixedTargetError::UnsupportedCompiledWriter { event_index });
+                    }
                 }
             }
-        }
 
-        let mut compiled_nodes = BTreeSet::new();
-        for slot in compiled_slots.iter().copied() {
-            expand_slot(plan, slot, compiled_range.clone(), &mut compiled_nodes)?;
-        }
-        let mut live_nodes = BTreeSet::new();
-        expand_slot(plan, live_slot, live_range, &mut live_nodes)?;
-        if let Some(node) = compiled_nodes.intersection(&live_nodes).next().copied() {
-            return Err(MixedTargetError::SharedNode { node });
-        }
+            let mut compiled_nodes = BTreeSet::new();
+            for slot in compiled_slots.iter().copied() {
+                expand_slot(&plan, slot, compiled_range.clone(), &mut compiled_nodes)?;
+            }
+            let mut live_nodes = BTreeSet::new();
+            expand_slot(&plan, live_slot, live_range, &mut live_nodes)?;
+            if let Some(node) = compiled_nodes.intersection(&live_nodes).next().copied() {
+                return Err(MixedTargetError::SharedNode { node });
+            }
 
+            Ok((live_producer, compiled_slots.into_iter().collect()))
+        })();
+        let (live_producer, compiled_slots) = match checked {
+            Ok(bound) => bound,
+            Err(reason) => {
+                return Err(Box::new(MixedTargetFailure {
+                    reason,
+                    plan,
+                    stream,
+                    live_slot,
+                }));
+            }
+        };
         Ok(Self {
+            plan,
             stream,
             live_slot,
             live_producer,
-            compiled_slots: compiled_slots.into_iter().collect(),
+            compiled_slots,
         })
+    }
+
+    /// The exact immutable plan whose target expansions were checked.
+    pub const fn plan(&self) -> &CompiledPlan {
+        &self.plan
     }
 
     /// The exact compiled stream that was checked.

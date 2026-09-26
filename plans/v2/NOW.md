@@ -203,10 +203,11 @@ The existing exclusive `LiveInputStream` now preflights held-cell credit against
 pending key releases, sustain and Stop ordering. Source queue and result credit
 still follow ADR-0073's terminal overload policy; the proposed protected-release
 contract and combined host remain unbuilt.
-The first off-thread target-binding prerequisite now owns one admitted compiled
-stream and one live note slot, accepts disjoint voice-instance targets, and refuses
-shared nodes or compiled writers outside note targets. It grants no mixed ingress
-or activation; those refusals remain in force.
+The first off-thread target-binding prerequisite now owns its validated plan,
+one admitted compiled stream and one live note slot. It accepts disjoint
+voice-instance targets and refuses shared nodes or compiled writers outside
+note targets. It grants no mixed ingress or activation; those refusals remain
+in force.
 
 ### Selected work — ordered transport through live I/O
 

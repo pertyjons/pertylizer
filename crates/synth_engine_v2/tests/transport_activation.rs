@@ -2518,10 +2518,12 @@ fn mixed_producers(scope: ExecutionScope, compiled_first: bool) -> CompiledPlan 
 fn mixed_target_binding_accepts_disjoint_voice_instances_in_both_producer_orders() {
     for compiled_first in [true, false] {
         let plan = mixed_producers(ExecutionScope::Voice, compiled_first);
+        let expected_plan = plan.clone();
         let slot = plan.resolve_note(ENVELOPE).expect("playable envelope");
         let stream = admitted(&plan, &[note(&plan, 0, true)]);
-        let binding = MixedTargetAdmission::admit(&plan, stream.clone(), slot)
+        let binding = MixedTargetAdmission::admit(plan, stream.clone(), slot)
             .expect("the producers reach separate voice instances");
+        assert_eq!(binding.plan(), &expected_plan);
         assert_eq!(binding.stream(), &stream);
         assert_eq!(binding.compiled_slots(), &[slot]);
         assert_eq!(binding.live_slot(), slot);
@@ -2538,13 +2540,15 @@ fn mixed_target_binding_refuses_a_shared_global_node() {
     let slot = plan.resolve_note(ENVELOPE).expect("playable envelope");
     let stream = admitted(&plan, &[note(&plan, 0, true)]);
     assert!(matches!(
-        MixedTargetAdmission::admit(&plan, stream, slot),
-        Err(MixedTargetError::SharedNode { .. })
+        MixedTargetAdmission::admit(plan, stream, slot)
+            .expect_err("a global node is shared")
+            .reason(),
+        MixedTargetError::SharedNode { .. }
     ));
 }
 
 #[test]
-fn mixed_target_binding_refuses_unaccounted_writers_and_foreign_live_slots() {
+fn mixed_target_binding_refuses_unaccounted_writers_and_foreign_inputs() {
     let plan = compiled_and_live_producers();
     let slot = plan.resolve_note(ENVELOPE).expect("playable envelope");
     let parameter = plan.parameter_addresses()[0].slot;
@@ -2559,18 +2563,34 @@ fn mixed_target_binding_refuses_unaccounted_writers_and_foreign_live_slots() {
             },
         )],
     );
-    assert!(matches!(
-        MixedTargetAdmission::admit(&plan, stream, slot),
-        Err(MixedTargetError::UnsupportedCompiledWriter { event_index: 0 })
-    ));
+    assert_eq!(
+        MixedTargetAdmission::admit(plan.clone(), stream, slot)
+            .expect_err("an unaccounted writer is refused")
+            .reason(),
+        MixedTargetError::UnsupportedCompiledWriter { event_index: 0 }
+    );
 
     let foreign = compiled_and_live_producers();
     let foreign_slot = foreign.resolve_note(ENVELOPE).expect("playable envelope");
+    let foreign_stream = admitted(&foreign, &[note(&foreign, 0, true)]);
+    let expected_foreign_stream = foreign_stream.clone();
+    let refusal = MixedTargetAdmission::admit(plan.clone(), foreign_stream, slot)
+        .expect_err("a foreign stream is refused");
+    assert_eq!(refusal.reason(), MixedTargetError::ForeignPlan);
+    let (recovered_plan, recovered_stream, recovered_slot) = refusal.into_inputs();
+    assert_eq!(recovered_plan, plan);
+    assert_eq!(recovered_stream, expected_foreign_stream);
+    assert_eq!(recovered_slot, slot);
+    let recovered = MixedTargetAdmission::admit(foreign, recovered_stream, foreign_slot)
+        .expect("the original stream can be rebound to its plan");
+    assert_eq!(recovered.live_slot(), foreign_slot);
     let quiet = admitted(&plan, &[]);
-    assert!(matches!(
-        MixedTargetAdmission::admit(&plan, quiet, foreign_slot),
-        Err(MixedTargetError::ForeignPlan)
-    ));
+    assert_eq!(
+        MixedTargetAdmission::admit(plan, quiet, foreign_slot)
+            .expect_err("a foreign live slot is refused")
+            .reason(),
+        MixedTargetError::ForeignPlan
+    );
 }
 
 #[test]

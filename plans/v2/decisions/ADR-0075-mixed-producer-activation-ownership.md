@@ -60,13 +60,15 @@ evidence for a scoped implementation.
 
 An initial target-binding prerequisite may validate exactly one compiled and
 one live note producer in one immutable plan, one bound live note slot and
-`StealingPolicy::None`. Its off-thread artifact must own the entire admitted
-compiled stream, not a caller-supplied list that can later be replaced, and
-enumerate every gate and magnitude destination against each producer's
+`StealingPolicy::None`. Its off-thread artifact must own the validated plan and
+entire admitted compiled stream rather than accept a replaceable caller list.
+It must enumerate every gate and magnitude destination against each producer's
 identity range. Foreign or unrepresentable targets refuse. This artifact
-accepts only note-target writers: compiled `SetParameter` and `Controller`
-writes refuse, and it provides no live parameter lane. `Fade`, `Reset` and
-`RestoreController` require explicit accounting before a mixed host can emit
+returns its plan, stream and live slot on refusal so a corrected binding can
+retry without recompilation. It accepts only note-target writers: compiled
+`SetParameter` and `Controller` writes refuse, and it provides no live
+parameter lane. `Fade`, `Reset` and `RestoreController` require explicit
+accounting before a mixed host can emit
 them; disabling stealing prevents the first two today but is not a proof for
 a future emitter. The artifact does not prepare mixed ingress or authorize
 rendering. Current mixed-plan, activation and loop refusals remain in force.
@@ -192,9 +194,11 @@ retain its producer-span provenance.
 The constructor alone cannot bind later work: `CompiledEventScheduler::prepare`,
 `SessionRuntime::prepare_detached`, `plan_activation` and public
 `stamp_compiled` currently accept a caller-supplied stream or event list.
-The mixed constructor must check that the artifact's admitted stream and live
-slot belong to the plan it opens. It then moves one artifact into a
-non-clonable split owner and binds it to that owner's epoch and `TableId`.
+The target-binding artifact owns the plan used for its target checks and
+validates its admitted stream and live slot against that plan. The mixed
+constructor must consume this owned triple, move it into a non-clonable split
+owner and bind it to that owner's epoch and `TableId`; it must take no separate
+plan argument.
 Plan identity is necessary for that match but does not establish exclusive
 custody: callers can admit equal streams again. Every mixed stamping path,
 including a seek, must read the `AdmittedCompiledStream` stored
@@ -203,9 +207,9 @@ list. `CompiledPlan` and `AdmittedCompiledStream` remain clonable, while the
 target-binding artifact is non-clonable. The owner consumes the artifact; the
 absence of a later stream parameter, not the artifact's `Clone` status alone,
 prevents a separately admitted equal list from replacing it. A compile-fail
-API test must show that no second stream can be supplied to the first owner's
-stamping path. Dropping an owner must leave no usable stamp authority for its
-table.
+API test must show that no separate plan or second stream can be supplied to
+the first owner's stamping path. Dropping an owner must leave no usable stamp
+authority for its table.
 A replacement plan needs a fresh target binding against that plan, moved into
 a fresh split owner before the replacement control or renderer is exposed in
 the existing epoch. The old binding cannot authorize a new plan's events.
@@ -408,10 +412,11 @@ slice, even if that node's control rows differ; a later shared-node law needs
 separate acceptance. Within the first slice's declared shape — exactly one
 compiled and one live producer, one bound live slot, `StealingPolicy::None`,
 valid slots and note-target writers only — refusing disjoint multi-instance
-node rows also fails its supported case. Substituting a compiled stream or live
-slot after binding falsifies that artifact. A later mixed ingress that accepts
-a cross-producer release group fails its producer binding. No mixed owner may
-accept Start, Stop, Panic, activation or loop commands until that command's
+node rows also fails its supported case. Substituting a plan, compiled stream or
+live slot after binding falsifies that artifact. A refused binding that loses
+the caller's plan or stream also fails its custody rule. A later mixed ingress
+that accepts a cross-producer release group fails its producer binding. No mixed
+owner may accept Start, Stop, Panic, activation or loop commands until that command's
 scope, hold redemption and outcome law is explicitly amended and tested.
 Compiled-only catch-up must not write or reseed any live-owned instance-local
 control slot, current ramp, next live write's ramp behavior or local
