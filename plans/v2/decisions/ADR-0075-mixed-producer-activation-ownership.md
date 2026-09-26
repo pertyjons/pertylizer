@@ -39,7 +39,14 @@ compiled range under a custody token. A mode transfer must revoke the old
 writer before the new one mints. The live range must not be overwritten by a
 compiled candidate or rebuilt at a loop boundary.
 
-Plan admission would bind each note producer to its playable target rows.
+Plan admission would bind each note producer to its playable target node
+instances and control rows. A one-instance node is shared even when producers
+write different controls on it; that overlap refuses admission until a
+shared-node law exists. A multi-instance node belongs to the producer whose
+identity range contains that instance. The binding must be enforced when a
+compiled stream is admitted and when live operations enter ingress, including
+note edges, expression, bend and producer-scoped release groups. The renderer's
+table identity check alone does not enforce a producer's range or playable target.
 Compiled mass release, catch-up, slot seeding and loop restoration would be
 scoped to compiled-owned per-note rows. Any per-note row reached by both
 producers would refuse plan admission until a shared-row law exists. A
@@ -50,6 +57,25 @@ catch-up batch, live parameter lane, Stop group and any reset or other
 same-quantum Session contributor. The representation, share charge and
 renderer scratch must be remeasured; the old one-row-per-address count is not
 evidence for a scoped implementation.
+
+An initial target-binding prerequisite may validate exactly one compiled and
+one live note producer in one immutable plan, one bound live note slot and
+`StealingPolicy::None`. Its off-thread artifact must own the entire admitted
+compiled stream, not a caller-supplied list that can later be replaced, and
+enumerate every gate and magnitude destination against each producer's
+identity range. Foreign or unrepresentable targets refuse. This artifact
+accepts only note-target writers: compiled `SetParameter` and `Controller`
+writes refuse, and it provides no live parameter lane. `Fade`, `Reset` and
+`RestoreController` require explicit accounting before a mixed host can emit
+them; disabling stealing prevents the first two today but is not a proof for
+a future emitter. The artifact does not prepare mixed ingress or authorize
+rendering. Current mixed-plan, activation and loop refusals remain in force.
+The later combined host must admit same-quantum capacity. A compiled-only
+activation must neither write nor reseed live-owned instance-local control
+slots, their current ramps, next live writes' ramp behavior or local
+modulation histories. A shared upstream source or non-note target whose
+change can affect a live instance requires its own declared ownership or
+ordering law.
 
 ## Unresolved acceptance work
 
@@ -100,7 +126,10 @@ amended.
 
    Pedal-up, Stop/Panic and reset/crossfade need bounded, protected
    mass-release work, including a fading old owner. Every shortage and
-   cancelled edge needs a named outcome and diagnostic category.
+   cancelled edge needs a named outcome and diagnostic category. Before a
+   mixed host runs, joined teardown must also classify a still-held onset,
+   an accepted pending release and an unexamined source packet; no one of
+   those may disappear with the owner.
 2. **Command order and generations.** Define one quantum-boundary order for
    Stop, Panic, Start, reset/crossfade, activation, loop entry/exit/wrap and
    source operations. Specify token publication, stale candidate rejection,
@@ -154,17 +183,33 @@ acceptance.
 A test suite that never combines held live
 notes, transport commands, loop transitions and saturated credits cannot
 discharge these falsifiers.
-A plan admitted with any per-note row reached by both producers also
-falsifies the candidate rule. Scoped catch-up must leave every live-owned
-per-note row and live parameter-lane target unchanged unless a declared
-ordering law accounts for it; the combined Session charge must fit admission.
+A target-binding artifact that accepts two note producers whose playable
+targets reach the same per-note row or one-instance node falsifies its first
+slice, even if that node's control rows differ; a later shared-node law needs
+separate acceptance. Within the first slice's declared shape — exactly one
+compiled and one live producer, one bound live slot, `StealingPolicy::None`,
+valid slots and note-target writers only — refusing disjoint multi-instance
+node rows also fails its supported case. Substituting a compiled stream or live
+slot after binding falsifies that artifact. A later mixed ingress that accepts
+a cross-producer release group fails its producer binding. No mixed owner may
+accept Start, Stop, Panic, activation or loop commands until that command's
+scope, hold redemption and outcome law is explicitly amended and tested.
+Compiled-only catch-up must not write or reseed any live-owned instance-local
+control slot, current ramp, next live write's ramp behavior or local
+modulation history. A shared upstream source or live parameter-lane target
+that can affect that instance follows its declared ordering law or refuses
+admission. The combined Session charge and
+same-quantum producer total must fit admission.
 
 One candidate order is to build an isolated audio-owned live ingress with
 source/result/held-cell credits and protected releases, then add
 producer-to-target admission and scoped restoration, then integrate compiled
-partition custody and test the full command matrix above. Keep all current mixed-plan, adopted-store,
-activation and loop-owner live-ingress refusals, including ADR-0072's
-exclusive-owner limits, throughout these slices. EVD-0024's component matrix remains
+partition custody and test the full command matrix above. The target-binding
+prerequisite leaves every mixed-plan, adopted-store, activation and loop-owner
+live-ingress refusal in force. A later implementation may lift only the
+refusal whose replacement contract and falsifiers it has proved and explicitly
+amended; ADR-0072's exclusive owner remains unchanged until that boundary.
+EVD-0024's component matrix remains
 insufficient for production capacity; ADR-0022's hardware timing and physical
 round-trip gates remain separate.
 
