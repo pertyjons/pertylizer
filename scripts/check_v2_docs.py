@@ -53,8 +53,8 @@ EVIDENCE_SELF_TESTS = (
     Path("plans/v2/evidence/phase-03/evd_0016_analyse.py"),
 )
 EVD_0016_ANALYZER_SUCCESS = re.compile(
-    r"^EVD-0016 analyzer controls passed \(valid single-direction \+ duplex "
-    r"positive \+ 19 classified mutations \+ "
+    r"^EVD-0016 analyzer controls passed \(legacy and current "
+    r"single-direction/duplex positives \+ 30 classified mutations \+ "
     r"2 F4 negative outcomes \+ RealtimeDenied warning \+ release coverage \+ "
     r"15 endpoint cases\)\.$",
     re.MULTILINE,

@@ -8,6 +8,7 @@ import csv
 import io
 import math
 import pathlib
+import re
 import sys
 from dataclasses import dataclass, replace
 
@@ -560,14 +561,20 @@ def analyze_direction(
     )
 
 
-def analyze_artifact(artifact: pathlib.Path) -> list[DirectionResult]:
+def analyze_artifact(
+    artifact: pathlib.Path, require_current_method: bool = False
+) -> list[DirectionResult]:
     return analyze_text(
-        artifact, artifact.read_text(encoding="utf-8"), MINIMUM_CALLBACKS
+        artifact, artifact.read_text(encoding="utf-8"), MINIMUM_CALLBACKS,
+        require_current_method=require_current_method,
     )
 
 
 def analyze_text(
-    artifact: pathlib.Path, text: str, minimum_callbacks: int
+    artifact: pathlib.Path,
+    text: str,
+    minimum_callbacks: int,
+    require_current_method: bool = False,
 ) -> list[DirectionResult]:
     metadata, rows = parse_text(text)
     if metadata.get("evd") != ["EVD-0016"]:
@@ -630,6 +637,71 @@ def analyze_text(
     )
     if not directions:
         raise InvalidArtifact(f"{artifact}: no callback direction")
+    method = metadata.get("probe_method", [])
+    if method not in ([], ["continuous-duplex-v2"]):
+        raise InvalidArtifact(f"{artifact}: unknown or ambiguous probe_method")
+    if require_current_method and method != ["continuous-duplex-v2"]:
+        raise InvalidArtifact(f"{artifact}: current probe method is required")
+    mode = metadata.get("probe_mode", [])
+    if method:
+        expected_mode = "duplex" if directions == ["input", "output"] else directions[0]
+        if mode != [expected_mode]:
+            raise InvalidArtifact(f"{artifact}: probe_mode disagrees with recorded directions")
+    elif mode:
+        raise InvalidArtifact(f"{artifact}: probe_mode requires probe_method")
+    bridge_intervals = metadata.get("observer_bridge_target_interval_ms", [])
+    if method:
+        if bridge_intervals != ["20"]:
+            raise InvalidArtifact(
+                f"{artifact}: current method requires a 20 ms bridge target"
+            )
+    elif bridge_intervals:
+        raise InvalidArtifact(f"{artifact}: bridge target requires probe_method")
+    for direction in directions:
+        requested_key = f"{direction}_requested_buffer_frames"
+        requested = metadata.get(requested_key, [])
+        if not method:
+            if requested:
+                raise InvalidArtifact(
+                    f"{artifact}: {requested_key} requires probe_method"
+                )
+            continue  # Historical artifacts predate the current method marker.
+        if len(requested) != 1:
+            raise InvalidArtifact(f"{artifact}: missing or ambiguous {requested_key}")
+        if requested == ["default"]:
+            continue
+        if not requested[0].isascii() or not requested[0].isdecimal():
+            raise InvalidArtifact(f"{artifact}: invalid {requested_key}")
+        frames = int(requested[0])
+        if frames <= 0 or str(frames) != requested[0]:
+            raise InvalidArtifact(f"{artifact}: invalid {requested_key}")
+        supported = metadata.get(f"{direction}_supported_buffer_size", [])
+        range_match = (
+            re.fullmatch(r"Range \{ min: ([0-9]+), max: ([0-9]+) \}", supported[0])
+            if len(supported) == 1 else None
+        )
+        if range_match is None or not int(range_match[1]) <= frames <= int(range_match[2]):
+            raise InvalidArtifact(f"{artifact}: {requested_key} is outside supported buffer range")
+    if method and directions == ["input", "output"]:
+        bridges_by_direction = {
+            direction: {
+                parse_nonnegative(row, "sequence"): parse_nonnegative(
+                    row, "observer_before_ns"
+                )
+                for row in rows
+                if row["record_type"] == "bridge" and row["direction"] == direction
+            }
+            for direction in directions
+        }
+        input_bridges = bridges_by_direction["input"]
+        output_bridges = bridges_by_direction["output"]
+        if input_bridges.keys() != output_bridges.keys():
+            raise InvalidArtifact(f"{artifact}: duplex bridge sequences differ")
+        if any(
+            abs(input_bridges[sequence] - output_bridges[sequence]) >= 20_000_000
+            for sequence in input_bridges
+        ):
+            raise InvalidArtifact(f"{artifact}: duplex bridge brackets are not concurrent")
     freshness_bounds: dict[str, int] = {}
     for direction in directions:
         for key in (
@@ -958,6 +1030,14 @@ def require_release_platforms(results: list[DirectionResult]) -> None:
 
 
 def self_test() -> None:
+    probe = (
+        REPO_ROOT / "crates/pertylizer/examples/evd_0016_cpal_timestamps.rs"
+    ).read_text(encoding="utf-8")
+    bridge_floor = re.search(r"const MINIMUM_BRIDGES: usize = ([0-9_]+);", probe)
+    if bridge_floor is None or int(bridge_floor.group(1).replace("_", "")) != MINIMUM_BRIDGES:
+        raise AssertionError("probe and analyzer bridge minima disagree")
+    if "const BRIDGE_INTERVAL: Duration = Duration::from_millis(20);" not in probe:
+        raise AssertionError("probe bridge target differs from analyzed method")
     valid = synthetic_artifact()
     metadata, rows = parse_text(valid)
     if metadata.get("evd") != ["EVD-0016"]:
@@ -1042,6 +1122,111 @@ def self_test() -> None:
     )
     if warning_results[0].f4_outcome == "Not supported":
         raise AssertionError("RealtimeDenied warning was treated as a fatal stream error")
+
+    current_request = valid.replace(
+        "# observer_thread_priority=normal-not-promoted",
+        "# observer_thread_priority=normal-not-promoted\n"
+        "# probe_method=continuous-duplex-v2\n"
+        "# probe_mode=output\n"
+        "# observer_bridge_target_interval_ms=20\n"
+        "# output_requested_buffer_frames=64",
+    )
+    current_single_results = analyze_text(
+        pathlib.Path("synthetic-current-request.csv"), current_request, 20,
+        require_current_method=True,
+    )
+    if len(current_single_results) != 1 or current_single_results[0].f4_outcome != "Inconclusive":
+        raise AssertionError("current single-direction control changed its F4 outcome")
+    current_duplex = duplex.replace(
+        "# observer_thread_priority=normal-not-promoted",
+        "# observer_thread_priority=normal-not-promoted\n"
+        "# probe_method=continuous-duplex-v2\n"
+        "# probe_mode=duplex\n"
+        "# observer_bridge_target_interval_ms=20\n"
+        "# input_requested_buffer_frames=default\n"
+        "# output_requested_buffer_frames=default",
+    )
+    current_duplex_results = analyze_text(
+        pathlib.Path("synthetic-current-duplex.csv"), current_duplex, 20,
+        require_current_method=True,
+    )
+    if len(current_duplex_results) != 2 or any(
+        result.f4_outcome != "Within F4" for result in current_duplex_results
+    ):
+        raise AssertionError("current duplex control changed its F4 outcome")
+    separated_lines = []
+    for line in current_duplex.splitlines():
+        if line.startswith("bridge,input,"):
+            fields = line.split(",")
+            for index in (9, 11):
+                fields[index] = str(int(fields[index]) + 30_000_000)
+            line = ",".join(fields)
+        separated_lines.append(line)
+    separated_duplex = "\n".join(separated_lines) + "\n"
+    orphan_base = current_request.replace("# probe_method=continuous-duplex-v2\n", "")
+    current_mutations = {
+        "zero fixed buffer request": (
+            current_request.replace(
+                "# output_requested_buffer_frames=64", "# output_requested_buffer_frames=0"
+            ), True, "invalid output_requested_buffer_frames",
+        ),
+        "noncanonical fixed buffer request": (
+            current_request.replace(
+                "# output_requested_buffer_frames=64", "# output_requested_buffer_frames=064"
+            ), True, "invalid output_requested_buffer_frames",
+        ),
+        "out-of-range fixed buffer request": (
+            current_request.replace(
+                "# output_requested_buffer_frames=64", "# output_requested_buffer_frames=30"
+            ), True, "output_requested_buffer_frames is outside supported buffer range",
+        ),
+        "missing bridge target": (
+            current_request.replace("# observer_bridge_target_interval_ms=20\n", ""),
+            True, "current method requires a 20 ms bridge target",
+        ),
+        "downgraded historical artifact": (
+            valid, True, "current probe method is required",
+        ),
+        "wrong probe mode": (
+            current_duplex.replace("# probe_mode=duplex", "# probe_mode=output"),
+            True, "probe_mode disagrees with recorded directions",
+        ),
+        "nonconcurrent duplex bridges": (
+            separated_duplex, True, "duplex bridge brackets are not concurrent",
+        ),
+        "missing input request": (
+            current_duplex.replace("# input_requested_buffer_frames=default\n", ""),
+            True, "missing or ambiguous input_requested_buffer_frames",
+        ),
+        "orphan probe mode": (
+            orphan_base.replace("# observer_bridge_target_interval_ms=20\n", "")
+            .replace("# output_requested_buffer_frames=64\n", ""),
+            False, "probe_mode requires probe_method",
+        ),
+        "orphan bridge target": (
+            orphan_base.replace("# probe_mode=output\n", "")
+            .replace("# output_requested_buffer_frames=64\n", ""),
+            False, "bridge target requires probe_method",
+        ),
+        "orphan buffer request": (
+            orphan_base.replace("# observer_bridge_target_interval_ms=20\n", "")
+            .replace("# probe_mode=output\n", ""),
+            False, "output_requested_buffer_frames requires probe_method",
+        ),
+    }
+    for label, (mutation, strict, diagnostic) in current_mutations.items():
+        try:
+            analyze_text(
+                pathlib.Path("synthetic-current-request.csv"), mutation, 20,
+                require_current_method=strict,
+            )
+        except InvalidArtifact as error:
+            if diagnostic not in str(error):
+                raise AssertionError(
+                    f"the {label} control fired the wrong check: {error}"
+                ) from error
+            continue
+        raise AssertionError(f"analyzer accepted the {label} control")
 
     mutations = {
         "reversed timestamp": valid.replace(
@@ -1217,10 +1402,10 @@ def self_test() -> None:
     for label, result in f4_negative_results:
         if result.f4_outcome != "Not supported" or "F4:" not in result.falsifiers:
             raise AssertionError(f"analyzer did not report the {label} F4 outcome")
-    mutation_count = len(mutations) + len(artifact_mutations)
+    mutation_count = len(mutations) + len(artifact_mutations) + len(current_mutations)
     print(
         "EVD-0016 analyzer controls passed "
-        f"(valid single-direction + duplex positive + {mutation_count} classified "
+        f"(legacy and current single-direction/duplex positives + {mutation_count} classified "
         f"mutations + {len(f4_negative_results)} F4 negative outcomes + "
         f"RealtimeDenied warning + release coverage + {len(policy_rows)} endpoint cases)."
     )
@@ -1262,13 +1447,22 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("artifacts", nargs="*", type=pathlib.Path)
     parser.add_argument("--require-release-platforms", action="store_true")
+    parser.add_argument("--require-current-method", action="store_true")
     parser.add_argument("--self-test", action="store_true")
     arguments = parser.parse_args()
     if arguments.self_test:
         self_test()
     results: list[DirectionResult] = []
     for artifact in arguments.artifacts:
-        results.extend(analyze_artifact(artifact))
+        results.extend(
+            analyze_artifact(
+                artifact,
+                require_current_method=(
+                    arguments.require_current_method
+                    or arguments.require_release_platforms
+                ),
+            )
+        )
     if arguments.require_release_platforms:
         require_release_platforms(results)
     if results:

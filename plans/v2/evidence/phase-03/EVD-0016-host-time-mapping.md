@@ -6,7 +6,7 @@
 | Status | Active |
 | Phase | 09 exit evidence; historical `phase-03` path retained for stable links |
 | Created | 2026-08-25 |
-| Last reviewed | 2026-09-12 |
+| Last reviewed | 2026-09-26 |
 | Supersedes | — |
 | Superseded by | — |
 | Source revision | Historical harness: `f3df8b2e`; retained Linux observation: `1ac24ff620bc092793d78cf9e488050399a19bbe` |
@@ -159,6 +159,21 @@ off-audio-thread collector does all formatting and observer-clock bracketing.
 Each bridge retains exactly one `observer-before / Stream::now() /
 observer-after` bracket; it does not select the narrowest of repeated samples.
 That bracket bounds the duration of the read, not the age of the backend value.
+The probe's optional `--buffer-frames N` checks each selected device's advertised
+range and requests `BufferSize::Fixed(N)` for each recorded direction. The
+artifact records the request and the actual `Stream::buffer_size()` result
+separately; F4 uses only the latter. All buffer modes use a 20 ms observer
+bridge target. Both streams stay active together until each direction has met
+its callback target and at least 1,010 bridge samples. The off-thread collector
+drains callback records while both streams run and retains them for final CSV
+output. The target interval is scheduling intent; the raw brackets show actual
+spacing. The current probe emits `probe_method=continuous-duplex-v2` and its
+recording mode. For duplex, the analyzer requires matched bridge sequences
+whose observer brackets begin within 20 ms of each other. New candidate
+artifacts are analyzed with `--require-current-method`, and final
+release coverage implies that check. Historical diagnostic artifacts remain
+readable without the flag. A requested small buffer does not excuse lost
+callbacks, xruns, nonmonotone timestamps, or any other F7 failure.
 The analyzer therefore requires a separate reviewed freshness bound. CPAL 0.18.2
 selects the ALSA mode at `src/host/alsa/mod.rs:406-415`; `CreationInstant` reads
 a current process instant, `SystemClock` uses the latest DMA timestamp, and a
@@ -182,21 +197,25 @@ Controls, in execution order:
 1. Run F1's deliberately wrong static mapper before any candidate result.
    The Core V2 evidence gate and CI execute the complete simulator, so these
    controls cannot silently rot while their figures remain cited here.
-2. Feed the analyzer a synthetic valid single-direction artifact, a valid
-   duplex artifact, and nineteen classified mutations:
+2. Feed the analyzer valid historical and current-method single-direction and
+   duplex artifacts, and thirty
+   classified mutations:
    a reversed callback timestamp, invalid endpoint direction, reversed endpoint
    timestamp, reversed bridge timestamp, missing sequence, duplicate sequence,
    inconsistent derived frame position, malformed frame count, and internally
    inconsistent error summary, a missing freshness bound, a mismatched
    freshness source, an unmarked synthetic fixture, missing reviewed freshness
    methods on macOS and Windows, a virtual endpoint, a callback target below
-   the floor, insufficient callback and bridge populations, and a truncated
-   summary row.
+   the floor, insufficient callback and bridge populations, a truncated
+   summary row, zero, noncanonical or out-of-range fixed-buffer requests, missing bridge
+   target, a historical artifact offered as current, wrong
+   recording mode, nonconcurrent duplex bridges, a missing input request, and
+   request/target/mode metadata without a method marker.
    Timestamp, endpoint, bridge, and frame-shape
    failures must be reported as five falsifier hits; both sequence failures,
    derived-position inconsistency, the counter contradiction, the five
    freshness/control-contract failures, and the five remaining artifact
-   failures must be fourteen invalid
+   failures plus the eleven current-method failures must be twenty-five invalid
    artifacts. Separate wide-bracket and wide-fit observations must each
    remain structurally valid and produce F4 `Not supported`. The self-test also
    evaluates every row in the shared Linux/macOS/Windows endpoint-policy matrix
@@ -206,8 +225,8 @@ Controls, in execution order:
    classifications and does not publish a deliberately invalid result as a
    retained measurement row. Its synthetic valid artifact is the estimator's
    absent-effect control; it does not replace a controlled release-platform
-   fixture run. The single-direction control must remain `Inconclusive`, while
-   the duplex control must be `Within F4`. A separate `RealtimeDenied` warning control proves that a denied
+   fixture run. Both single-direction controls must remain `Inconclusive`, while
+   both duplex controls must be `Within F4`. A separate `RealtimeDenied` warning control proves that a denied
    priority request remains reported without being misclassified as a fatal
    stream error.
 3. Run F2's exact-clock partition family before drift or noise cases.
@@ -242,8 +261,10 @@ policy selected by this build; its F4 outcome is not discarded.
 
 ## Method
 
-The simulator, analyzer controls, and Linux observation were executed on
-2026-08-25. The remaining procedure is unchanged:
+The historical Linux direct-device observation was collected on 2026-08-25.
+The simulator and analyzer controls were rerun on 2026-09-26 under the current
+method. The current collection and validation controls above supersede the
+historical procedure where they differ. To produce a new candidate:
 
 1. Run the simulator's negative and quiet controls, then its full matrix. It
    emits one compact CSV row per case and exits non-zero on any contract breach.
@@ -300,9 +321,9 @@ brackets and retain the narrowest; that post-hoc estimator produced 63 input and
 before adding a freshness term. Independent review correctly rejected the
 method anyway: increasing the
 burst can only reduce a minimum, so the method had no bound against tuning a
-future platform through F4. The final method therefore returned to one
-unselected bracket. The final Linux result below is a new observation under
-that non-selecting method, and the eight-sample result contributes no support.
+future platform through F4. The then-final bridge estimator returned to one
+unselected bracket. The historical Linux diagnostic below uses that estimator;
+the eight-sample result contributes no support.
 
 Callback-period residual is reported as a scheduling-jitter diagnostic but is
 not added independently to the mapping uncertainty. It is derived from adjacent
@@ -311,8 +332,9 @@ represented by the callback affine-fit residual; adding both would count the
 same timestamp movement twice. The observer bridge fit and retained bracket
 half-width are independent terms and are added separately.
 
-Both streams are dropped before their preallocated SPSC rings are drained. The
-diagnostic direct-device CSV contains 30,331 lines and approximately 2.16 MB of
+In the historical diagnostic run, both streams were dropped before their
+preallocated SPSC rings were drained. Its direct-device CSV contains 30,331
+lines and approximately 2.16 MB of
 callback trace, so the evidence artifact policy excludes it from `plans/v2/`.
 Its SHA-256 binds the table below to the temporary bytes used for this review,
 but a digest without an exact source revision and stable storage is not retained
@@ -343,8 +365,8 @@ target/release/examples/evd_0016_cpal_timestamps \
   > /tmp/EVD-0016-linux-direct-cpal.csv
 
 python3 -B plans/v2/evidence/phase-03/evd_0016_analyse.py \
-  /tmp/EVD-0016-linux-direct-cpal.csv
-# This diagnostic run exits 1 because its observation fires F4.
+  --require-current-method /tmp/EVD-0016-linux-direct-cpal.csv
+# Inspect the analyzer diagnostic; a new run may fire F4, F7, or another control.
 
 sha256sum /tmp/evd_0016_simulator.csv \
   /tmp/EVD-0016-linux-direct-cpal.csv
@@ -365,9 +387,11 @@ exit status.
 
 ## Results
 
-The provisional simulator CSV from the current uncommitted Active worktree has
+The provisional simulator CSV from the 2026-08-25 worktree had
 SHA-256
 `4dfa9f27d15c78cbd4751ed15423f1b36fc116ae16e843305d7497aa238e9b98`.
+The 2026-09-26 rerun produced the same digest and the figures below; the
+analyzer controls below also ran on 2026-09-26.
 It is not an acceptance artifact: after the harness has an exact source
 revision, it must be rerun and either retained or tied to that revision before
 this record can complete.
@@ -394,9 +418,9 @@ maximum arrival error was 240 frames under the independently declared 257-frame
 combined bound. That generic control is not a substitute for F10's per-adapter
 measurements.
 
-The analyzer classified all nineteen mutations as declared—five falsifier hits
-and fourteen invalid-artifact outcomes—and its valid duplex control, whose input
-and output carry distinct raw stream-clock origins, was `Within F4`.
+The analyzer classified all thirty mutations as declared—five falsifier hits
+and twenty-five invalid-artifact outcomes—and both valid duplex controls, whose input
+and output carry distinct raw stream-clock origins, were `Within F4`.
 Its separate wide-bracket and wide-fit controls both produced an F4 `Not
 supported` result. Its `RealtimeDenied`
 warning control remained nonfatal, and both implementations matched every
@@ -404,7 +428,7 @@ shared endpoint-policy case. The overall self-test then exited zero, which means
 it observed every expected positive and negative control outcome, including the
 analyzer's virtual-endpoint rejection and release-platform coverage rule.
 
-The final-method diagnostic direct-device Linux callback CSV has SHA-256
+The historical-method diagnostic direct-device Linux callback CSV has SHA-256
 `5894a87422ffb178f40da8242419d20cd8605b7635573d422dba531a65afb458`.
 It produced:
 
@@ -474,7 +498,7 @@ the table cannot satisfy acceptance even though the analyzer produced it.
 
 ## Retained Linux observation, 2026-09-12
 
-The existing final-method probe was rebuilt and run from clean source revision
+The then-current probe was rebuilt and run from clean source revision
 `1ac24ff620bc092793d78cf9e488050399a19bbe`, after the repository gate completed.
 This is a new observation; it does not retroactively retain the earlier diagnostic
 trace above. The complete [compressed callback CSV](evd_0016_linux_2026_09_12.csv.gz),

@@ -38,6 +38,7 @@ const DEFAULT_CALLBACK_TARGET: u64 = 10_000;
 const RING_HEADROOM: usize = 2_048;
 const BRIDGE_INTERVAL: Duration = Duration::from_millis(20);
 const BRIDGE_SAMPLE_BURST: usize = 1;
+const MINIMUM_BRIDGES: usize = 1_010;
 const POLL_INTERVAL: Duration = Duration::from_millis(2);
 const CALLBACK_STALL_TIMEOUT: Duration = Duration::from_secs(60);
 const CPAL_VERSION: &str = "0.18.2";
@@ -87,6 +88,14 @@ enum ProbeMode {
 }
 
 impl ProbeMode {
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::Input => "input",
+            Self::Output => "output",
+            Self::Duplex => "duplex",
+        }
+    }
+
     fn parse(value: &str) -> Result<Self, ProbeError> {
         match value {
             "input" => Ok(Self::Input),
@@ -131,6 +140,29 @@ impl CallbackTarget {
             .ok()
             .and_then(|value| value.checked_add(RING_HEADROOM))
             .ok_or(ProbeError::RingCapacityOverflow)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[must_use]
+struct RequestedBufferFrames(u32);
+
+impl RequestedBufferFrames {
+    fn parse(value: &str) -> Result<Self, ProbeError> {
+        if value.is_empty() || !value.bytes().all(|byte| byte.is_ascii_digit()) {
+            return Err(ProbeError::InvalidBufferFrames(value.to_owned()));
+        }
+        let frames = value
+            .parse::<u32>()
+            .map_err(|_| ProbeError::InvalidBufferFrames(value.to_owned()))?;
+        if frames == 0 {
+            return Err(ProbeError::InvalidBufferFrames(value.to_owned()));
+        }
+        Ok(Self(frames))
+    }
+
+    const fn as_u32(self) -> u32 {
+        self.0
     }
 }
 
@@ -214,6 +246,7 @@ struct RecordArguments {
     physical_attestation: PhysicalEndpointAttestation,
     input_device_id: Option<SelectedDeviceId>,
     output_device_id: Option<SelectedDeviceId>,
+    buffer_frames: Option<RequestedBufferFrames>,
 }
 
 impl RecordArguments {
@@ -226,6 +259,7 @@ impl RecordArguments {
         let mut physical_attestation = None;
         let mut input_device_id = None;
         let mut output_device_id = None;
+        let mut buffer_frames = None;
         let mut index = 2_usize;
         while let Some(argument) = arguments.get(index) {
             match argument.as_str() {
@@ -241,6 +275,11 @@ impl RecordArguments {
                 "--output-device" if output_device_id.is_none() => {
                     let value = arguments.get(index + 1).ok_or(ProbeError::Usage)?;
                     output_device_id = Some(SelectedDeviceId::new(value)?);
+                    index += 2;
+                }
+                "--buffer-frames" if buffer_frames.is_none() => {
+                    let value = arguments.get(index + 1).ok_or(ProbeError::Usage)?;
+                    buffer_frames = Some(RequestedBufferFrames::parse(value)?);
                     index += 2;
                 }
                 value if !value.starts_with("--") && callback_argument.is_none() => {
@@ -274,6 +313,7 @@ impl RecordArguments {
             physical_attestation,
             input_device_id,
             output_device_id,
+            buffer_frames,
         })
     }
 }
@@ -305,9 +345,11 @@ struct MeasurementStream {
     device_id: SelectedDeviceId,
     device_type: CpalDeviceType,
     config: SupportedStreamConfig,
+    requested_buffer_frames: Option<RequestedBufferFrames>,
     negotiated_buffer_frames: Result<BufferSize, String>,
     stream: Option<Stream>,
     consumer: HeapCons<CallbackRecord>,
+    records: Vec<CallbackRecord>,
     callback_count: Arc<AtomicU64>,
     error_count: Arc<AtomicU64>,
     loss_count: Arc<AtomicU64>,
@@ -320,6 +362,12 @@ struct MeasurementStream {
 }
 
 impl MeasurementStream {
+    fn drain_records(&mut self) {
+        while let Some(record) = self.consumer.try_pop() {
+            self.records.push(record);
+        }
+    }
+
     fn reached(&self, target: CallbackTarget) -> bool {
         self.callback_count.load(Ordering::Acquire) >= target.as_u64()
     }
@@ -384,6 +432,10 @@ impl MeasurementStream {
             "# {direction}_supported_buffer_size={:?}",
             self.config.buffer_size()
         );
+        match self.requested_buffer_frames {
+            Some(frames) => println!("# {direction}_requested_buffer_frames={}", frames.as_u32()),
+            None => println!("# {direction}_requested_buffer_frames=default"),
+        }
         match &self.negotiated_buffer_frames {
             Ok(frames) => println!("# {direction}_negotiated_buffer_frames={}", frames.as_u32()),
             Err(error) => {
@@ -412,7 +464,8 @@ impl MeasurementStream {
     }
 
     fn print_records(&mut self) {
-        while let Some(record) = self.consumer.try_pop() {
+        self.drain_records();
+        for record in &self.records {
             println!(
                 "callback,{},{},{},{},{},{},{},{},,,,,,,,,",
                 self.direction.as_str(),
@@ -451,13 +504,21 @@ impl MeasurementStream {
 #[derive(Debug, Error)]
 enum ProbeError {
     #[error(
-        "usage: evd_0016_cpal_timestamps list | record <input|output|duplex> [callbacks] --physical [--input-device <id>] [--output-device <id>]"
+        "usage: evd_0016_cpal_timestamps list | record <input|output|duplex> [callbacks] --physical [--input-device <id>] [--output-device <id>] [--buffer-frames <positive frames>]"
     )]
     Usage,
     #[error("invalid probe mode '{0}'; expected input, output, or duplex")]
     InvalidMode(String),
     #[error("invalid callback target '{0}'; expected a positive integer")]
     InvalidCallbackTarget(String),
+    #[error("invalid requested buffer frames '{0}'; expected a positive integer")]
+    InvalidBufferFrames(String),
+    #[error("the {direction} device does not advertise {requested} buffer frames: {supported}")]
+    UnsupportedBufferFrames {
+        direction: &'static str,
+        requested: u32,
+        supported: String,
+    },
     #[error("the requested callback count is too large for the probe ring")]
     RingCapacityOverflow,
     #[error("the observer bridge sequence does not fit the artifact schema")]
@@ -685,7 +746,36 @@ fn count_stream_error(
     }
 }
 
-fn build_output(device: Device, target: CallbackTarget) -> Result<MeasurementStream, ProbeError> {
+fn configured_stream(
+    config: SupportedStreamConfig,
+    direction: Direction,
+    requested: Option<RequestedBufferFrames>,
+) -> Result<StreamConfig, ProbeError> {
+    if let Some(frames) = requested {
+        match config.buffer_size() {
+            cpal::SupportedBufferSize::Range { min, max }
+                if (*min..=*max).contains(&frames.as_u32()) => {}
+            supported => {
+                return Err(ProbeError::UnsupportedBufferFrames {
+                    direction: direction.as_str(),
+                    requested: frames.as_u32(),
+                    supported: format!("{supported:?}"),
+                });
+            }
+        }
+    }
+    let mut stream_config: StreamConfig = config.into();
+    if let Some(frames) = requested {
+        stream_config.buffer_size = cpal::BufferSize::Fixed(frames.as_u32());
+    }
+    Ok(stream_config)
+}
+
+fn build_output(
+    device: Device,
+    target: CallbackTarget,
+    requested_buffer_frames: Option<RequestedBufferFrames>,
+) -> Result<MeasurementStream, ProbeError> {
     let config = device
         .default_output_config()
         .map_err(|error| ProbeError::BuildStream {
@@ -720,7 +810,7 @@ fn build_output(device: Device, target: CallbackTarget) -> Result<MeasurementStr
     let stream_invalidated_count_callback = Arc::clone(&stream_invalidated_count);
     let route_changed_count_callback = Arc::clone(&route_changed_count);
     let realtime_denied_count_callback = Arc::clone(&realtime_denied_count);
-    let stream_config: StreamConfig = config.into();
+    let stream_config = configured_stream(config, Direction::Output, requested_buffer_frames)?;
     let stream = device
         .build_output_stream_raw(
             stream_config,
@@ -779,9 +869,11 @@ fn build_output(device: Device, target: CallbackTarget) -> Result<MeasurementStr
         device_id,
         device_type,
         config,
+        requested_buffer_frames,
         negotiated_buffer_frames,
         stream: Some(stream),
         consumer,
+        records: Vec::with_capacity(target.ring_capacity()?),
         callback_count,
         error_count,
         loss_count,
@@ -794,7 +886,11 @@ fn build_output(device: Device, target: CallbackTarget) -> Result<MeasurementStr
     })
 }
 
-fn build_input(device: Device, target: CallbackTarget) -> Result<MeasurementStream, ProbeError> {
+fn build_input(
+    device: Device,
+    target: CallbackTarget,
+    requested_buffer_frames: Option<RequestedBufferFrames>,
+) -> Result<MeasurementStream, ProbeError> {
     let config = device
         .default_input_config()
         .map_err(|error| ProbeError::BuildStream {
@@ -829,7 +925,7 @@ fn build_input(device: Device, target: CallbackTarget) -> Result<MeasurementStre
     let stream_invalidated_count_callback = Arc::clone(&stream_invalidated_count);
     let route_changed_count_callback = Arc::clone(&route_changed_count);
     let realtime_denied_count_callback = Arc::clone(&realtime_denied_count);
-    let stream_config: StreamConfig = config.into();
+    let stream_config = configured_stream(config, Direction::Input, requested_buffer_frames)?;
     let stream = device
         .build_input_stream_raw(
             stream_config,
@@ -888,9 +984,11 @@ fn build_input(device: Device, target: CallbackTarget) -> Result<MeasurementStre
         device_id,
         device_type,
         config,
+        requested_buffer_frames,
         negotiated_buffer_frames,
         stream: Some(stream),
         consumer,
+        records: Vec::with_capacity(target.ring_capacity()?),
         callback_count,
         error_count,
         loss_count,
@@ -903,7 +1001,11 @@ fn build_input(device: Device, target: CallbackTarget) -> Result<MeasurementStre
     })
 }
 
-fn collect(streams: &mut [MeasurementStream], target: CallbackTarget) -> Result<(), ProbeError> {
+fn collect(
+    streams: &mut [MeasurementStream],
+    target: CallbackTarget,
+    bridge_interval: Duration,
+) -> Result<(), ProbeError> {
     for measured in &*streams {
         measured
             .stream
@@ -925,15 +1027,18 @@ fn collect(streams: &mut [MeasurementStream], target: CallbackTarget) -> Result<
             for measured in &mut *streams {
                 measured.sample_bridge(observer_start)?;
             }
-            next_bridge = now + BRIDGE_INTERVAL;
+            next_bridge = now + bridge_interval;
         }
-        if streams.iter().all(|measured| measured.reached(target)) {
+        for measured in &mut *streams {
+            measured.drain_records();
+        }
+        if streams
+            .iter()
+            .all(|measured| measured.reached(target) && measured.bridges.len() >= MINIMUM_BRIDGES)
+        {
             break;
         }
         for (measured, (previous_count, last_progress)) in streams.iter().zip(&mut progress) {
-            if measured.reached(target) {
-                continue;
-            }
             let count = measured.callback_count.load(Ordering::Acquire);
             if count != *previous_count {
                 *previous_count = count;
@@ -944,15 +1049,18 @@ fn collect(streams: &mut [MeasurementStream], target: CallbackTarget) -> Result<
         }
         thread::sleep(POLL_INTERVAL);
     }
-
     for measured in &mut *streams {
-        // Some hosts cannot pause. Dropping the streams immediately after this
+        // Some hosts cannot pause. Dropping each stream immediately after this
         // loop still stops callbacks, so a pause failure is harmless here.
         if let Some(stream) = measured.stream.take() {
             let _pause_result = stream.pause();
             drop(stream);
         }
     }
+    for measured in &mut *streams {
+        measured.drain_records();
+    }
+
     Ok(())
 }
 
@@ -965,7 +1073,11 @@ fn record(arguments: RecordArguments) -> Result<(), Box<dyn Error>> {
             .as_ref()
             .ok_or(ProbeError::ExplicitDeviceRequired("output"))?;
         let device = select_physical_device(&host, Direction::Output, selected_id)?;
-        streams.push(build_output(device, arguments.target)?);
+        streams.push(build_output(
+            device,
+            arguments.target,
+            arguments.buffer_frames,
+        )?);
     }
     if arguments.mode.includes(Direction::Input) {
         let selected_id = arguments
@@ -973,10 +1085,14 @@ fn record(arguments: RecordArguments) -> Result<(), Box<dyn Error>> {
             .as_ref()
             .ok_or(ProbeError::ExplicitDeviceRequired("input"))?;
         let device = select_physical_device(&host, Direction::Input, selected_id)?;
-        streams.push(build_input(device, arguments.target)?);
+        streams.push(build_input(
+            device,
+            arguments.target,
+            arguments.buffer_frames,
+        )?);
     }
 
-    collect(&mut streams, arguments.target)?;
+    collect(&mut streams, arguments.target, BRIDGE_INTERVAL)?;
 
     println!("# evd=EVD-0016");
     println!("# cpal_version={CPAL_VERSION}");
@@ -994,6 +1110,12 @@ fn record(arguments: RecordArguments) -> Result<(), Box<dyn Error>> {
     println!("# control_fixture=none");
     println!("# observer_clock=std-instant-process-monotonic");
     println!("# observer_thread_priority=normal-not-promoted");
+    println!("# probe_method=continuous-duplex-v2");
+    println!("# probe_mode={}", arguments.mode.as_str());
+    println!(
+        "# observer_bridge_target_interval_ms={}",
+        BRIDGE_INTERVAL.as_millis()
+    );
     println!("# quantum_frames={QUANTUM_FRAMES}");
     println!("# callback_target={}", arguments.target.as_u64());
     for measured in &streams {
@@ -1032,7 +1154,41 @@ fn main() -> Result<(), Box<dyn Error>> {
 mod tests {
     use cpal::DeviceType as CpalDeviceType;
 
-    use super::{ENDPOINT_POLICY_CASES, endpoint_is_disallowed};
+    use super::{ENDPOINT_POLICY_CASES, ProbeError, RecordArguments, endpoint_is_disallowed};
+
+    #[test]
+    fn fixed_buffer_request_is_explicit() {
+        let arguments = [
+            "record",
+            "duplex",
+            "10000",
+            "--physical",
+            "--input-device",
+            "alsa:hw:CARD=1,DEV=0",
+            "--output-device",
+            "alsa:hw:CARD=1,DEV=0",
+            "--buffer-frames",
+            "30",
+        ]
+        .map(str::to_owned);
+        let selected = RecordArguments::parse(&arguments).expect("valid fixed request");
+        assert_eq!(
+            selected
+                .buffer_frames
+                .map(super::RequestedBufferFrames::as_u32),
+            Some(30)
+        );
+
+        let default = RecordArguments::parse(&arguments[..8]).expect("valid default request");
+        assert_eq!(default.buffer_frames, None);
+
+        let mut zero = arguments;
+        zero[9] = "0".to_owned();
+        assert!(matches!(
+            RecordArguments::parse(&zero),
+            Err(ProbeError::InvalidBufferFrames(_))
+        ));
+    }
 
     #[test]
     fn shared_endpoint_policy_matrix_matches_probe() {

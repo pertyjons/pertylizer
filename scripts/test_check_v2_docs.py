@@ -269,8 +269,8 @@ class DocumentationCheckerTests(unittest.TestCase):
 
     def test_evidence_harness_self_test_success_is_accepted(self) -> None:
         summary = (
-            "EVD-0016 analyzer controls passed (valid single-direction + duplex "
-            "positive + 19 classified mutations + "
+            "EVD-0016 analyzer controls passed (legacy and current "
+            "single-direction/duplex positives + 30 classified mutations + "
             "2 F4 negative outcomes + RealtimeDenied warning + release coverage + "
             "15 endpoint cases)."
         )
