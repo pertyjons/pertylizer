@@ -1,6 +1,6 @@
 # Core V2: Current Work
 
-Last updated: 2026-09-21
+Last updated: 2026-09-26
 
 This file contains only active Core V2 state, blockers and next actions. Durable
 contracts live in ADRs and specifications; completed Phase 3 coordination
@@ -188,6 +188,17 @@ real-producer capacity matrix. Its component probes pass, but the coverage audit
 production capacity: common host admission, same-stream live transport activation and a
 representative workload remain missing. All six shares, release holds and ingress depths retain
 their provisional status. No physical loopback is connected.
+
+### Open design work — mixed producer activation
+
+[ADR-0075](decisions/ADR-0075-mixed-producer-activation-ownership.md) frames the
+possible mixed-producer activation boundary. It is `Proposed`: target ownership,
+scoped catch-up, split identity custody, release-hold redemption, command
+order, owner lifetime and capacity all need the ADR's acceptance evidence,
+a tested combined host and explicit contract amendments before the current
+refusals can be lifted. A candidate first slice is an
+isolated audio-owned live ingress with source/result/held-cell credits and
+protected releases.
 
 ### Selected work — ordered transport through live I/O
 

@@ -3,7 +3,7 @@
 This is the compact status index for durable Core V2 decisions. Individual ADRs own rationale and evidence; current
 specifications own implementation semantics. Do not copy review history or measurement results into this file.
 
-Next free identifier: `ADR-0075`.
+Next free identifier: `ADR-0076`.
 
 ## Status vocabulary
 
@@ -125,6 +125,7 @@ the durable-decision test in `PROCESS.md` and normally do not need an ADR.
 | ADR-0072 | Finite live audition and count-in | Accepted | 9 | [ADR](decisions/ADR-0072-finite-live-audition-and-count-in.md) | Exclusive real ingress, sustain, ordered panic and prepared metronome |
 | ADR-0073 | Continuous simulated live input and audio capture | Accepted | 9 | [ADR](decisions/ADR-0073-continuous-simulated-live-input.md) | Reusable live custody, bend, parameter lane, original PCM and independent monitoring |
 | ADR-0074 | Concurrent live host and duplex capture | Accepted | 9 | [ADR](decisions/ADR-0074-concurrent-live-host-and-duplex-capture.md) | Latest-wins reset, capture across swaps and independent PCM owners |
+| ADR-0075 | Mixed producer activation ownership | Proposed | 9 | [ADR](decisions/ADR-0075-mixed-producer-activation-ownership.md) | Audio-owned live obligations, split compiled identity custody and scoped gate restoration |
 
 ### Reversible decisions
 
