@@ -180,17 +180,43 @@ and span provenance checked together. Existing `IdentityTable` methods index
 absolute slots and allow whole-table release, copy and rebuild; merely handing
 each thread a shorter vector of that type is unsound. A live owner must expose
 neither compiled-range minting nor an audio-thread copy or final drop. Its
-source receipt still needs a stable way to name a later release, bend or group
-before an audio-owned minter returns an identity. The hold entitlement and
-identity mint must be acquired or refused atomically under HOST-INV-009; moving
-only the mint to audio leaves a hold stranded on a late refusal. The
-control-side replacement guard currently reads its minter, candidate count
-and live-note diagnostic. The session audio guard checks the renderer registry
-and a prepared control-minter obligation snapshot when the table changes; the
-live swap guard checks renderer obligations and ingress holds. A split owner
-must keep all those guards authoritative. `IdentityTable::rebuild` itself
-reads only that table's live count and cannot stand in for a mixed-owner
-obligation check.
+split must also be coordinated with stream control and scheduler custody.
+`StreamControl::plan_activation` retains a whole-table working copy in each
+candidate; `stamp_compiled_counted` takes a temporary copy and writes the whole
+table back on success. Every mixed control, both initial `open` and a
+replacement through `replace_compiled`, must be born split in
+`open_in_epoch` or an equivalent constructor before its control value is
+exposed to any caller or `SessionRuntime::prepare_detached` stamps it.
+`Origin.table` must match the split owners' `TableId`; each owner must also
+retain its producer-span provenance.
+There must be no later split of an ordinary control: public `stamp_compiled`
+can mint without a scheduler and can leave no outstanding note while still
+advancing generations, so a live-count or scheduler check cannot prove that
+an ordinary control has never stamped. This constructor boundary excludes
+every pre-split candidate and stamp. Today
+`IngressPrepareError::MixedProducerPlan` refuses mixed ingress, `latch_store`
+refuses outstanding candidates, `plan_activation` refuses an adopted ingress
+store, and stamping refuses outstanding candidates. Lifting
+those refusals requires new range-scoped stamping and candidate copies, while
+the old whole-table paths remain unreachable for that stream. A standalone
+range split without this stream-control handoff fails even if its ranges are
+sound. Acceptance must falsify two interleavings: a live mint or release after
+a compiled candidate snapshot but before its promotion by
+`StreamControl::adopted`, and a live mint or release during a compiled stamp's
+copy/commit window. A later live mint or resolve must not see a rewound
+generation, duplicate identity or lost obligation in either case.
+
+The live owner's source receipt still needs a stable way to name a later
+release, bend or group before an audio-owned minter returns an identity. The
+hold entitlement and identity mint must be acquired or refused atomically
+under HOST-INV-009; moving only the mint to audio leaves a hold stranded on a
+late refusal. The control-side replacement guard currently reads its minter,
+candidate count and live-note diagnostic. The session audio guard checks the
+renderer registry and a prepared control-minter obligation snapshot when the
+table changes; the live swap guard checks renderer obligations and ingress
+holds. A split owner must keep all those guards authoritative.
+`IdentityTable::rebuild` itself reads only that table's live count and cannot
+stand in for a mixed-owner obligation check.
 
 The interval from candidate preparation through control collection has
 distinct custodies. Before offer, a candidate may be held by its caller or
