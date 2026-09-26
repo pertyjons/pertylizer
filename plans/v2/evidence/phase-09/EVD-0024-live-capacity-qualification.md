@@ -6,19 +6,20 @@
 | Status | Active |
 | Phase | 09 |
 | Created | 2026-09-21 |
-| Last reviewed | 2026-09-21 |
+| Last reviewed | 2026-09-26 |
 | Supersedes | — |
 | Superseded by | — |
-| Source revision | Pending |
+| Source revision | `ab1cd27d9a98b1f05880f359d5334b88ecb0d5f3` for the retained component rerun |
 | Retention | Until phase exit |
 | Related | ADR-0054, ADR-0050, ADR-0074, EVD-0020, EVD-0021, P03-R004 |
-| Artifacts | Reproduction commands below; no retained acceptance evidence |
+| Artifacts | [Full component run](EVD-0024-component-run.txt), [extracted result rows](EVD-0024-component-results.txt), and [checksums](EVD-0024-SHA256SUMS.txt); no production acceptance evidence |
 
 ## Question and falsifier
 
 Can the current host qualify the complete simultaneously legal producer partition
-for production live use? No result from this uncommitted worktree is retained
-acceptance evidence. A passing component stress test does not open that gate.
+for production live use? The component matrix is retained against a committed
+source revision, but it does not provide production acceptance evidence. A passing
+component stress test does not open that gate.
 
 The selection rule precedes collection: retain the provisional numbers unless
 every enabled producer has an observed destination high water and an admitted
@@ -84,18 +85,39 @@ cargo test -p synth_engine_v2 --test simulated_ingress
 cargo test -p pertylizer --example v2_cpal_output --example v2_live_session
 ```
 
+From the repository root, regenerate and verify the retained component rows:
+
+```bash
+rg '^capacity,|^scope=' plans/v2/evidence/phase-09/EVD-0024-component-run.txt > plans/v2/evidence/phase-09/EVD-0024-component-results.txt
+sha256sum -c plans/v2/evidence/phase-09/EVD-0024-SHA256SUMS.txt
+```
+
 ## Results
 
-Development rerun on 2026-09-21 after the control repairs: the empty controls and all 36 loaded cases passed
-(18 rate/layout/block profiles, two arms each). Each arm executed 64 loaded
-callbacks. These are preliminary observations from an uncommitted source, not
-retained acceptance evidence. The matrix reports:
+On 2026-09-26, the `evd_0024_capacity_matrix` release test was rerun from committed revision
+`ab1cd27d9a98b1f05880f359d5334b88ecb0d5f3` in a fresh Cargo target
+directory. The [full run](EVD-0024-component-run.txt) records the exact command,
+UTC time, worktree status, confirmation that Rust paths matched that revision,
+Rust/Cargo and Linux versions, compilation, one passing test and exit status zero.
+The [extracted rows](EVD-0024-component-results.txt), regenerated from that run,
+retain the 36 loaded cases plus the scope marker. The
+[checksum file](EVD-0024-SHA256SUMS.txt) covers both artifacts. The test asserts
+zero occupancy in one empty control per profile, before its two loaded arms:
+18 controls for 36 loaded cases. It does not print those controls. All loaded
+cases passed, and each arm executed 64 loaded callbacks. These are retained
+component checks, not production acceptance evidence. The matrix reports:
 
-| Arm | Compiled peak | Live peak | Release peak | Same-quantum external total |
+| Arm | Asserted compiled peak | Asserted live peak | Asserted release peak | Checked same-quantum external total |
 |---|---|---|---|---|
 | Empty control | 0 | 0 | 0 | 0 |
 | Ordinary queue | 96 | 32 | 0 | 128 |
 | Reserved releases | 96 | 24 | 8 | 128 |
+
+The empty-control row comes from passing assertions. For loaded rows, the test
+asserts the per-class peaks, refusals and final holds before printing their
+expected values; only `external_total` is printed from the arbiter's measured
+high water. The retained rows are therefore an audit of passing checks, not
+independent measurements of every displayed value.
 
 Across the 36 loaded cases, 2,304 deliberate extra ordinary offers were refused;
 9,216 reserved releases were delivered, every final hold count was zero, and no
@@ -124,15 +146,17 @@ are distinct units and owners, not additional event shares. Existing lifecycle,
 allocation and concurrency tests exercise them separately. This probe does not
 select their production depths or claim a combined retained-byte ceiling.
 
-Before the control repairs, the development run passed the complete repository gate, including
-the ordinary authored-source tests, the live/activation refusal regression and
-the million-mint identity test. The unchanged concrete example suites were also run explicitly before the repairs:
+Before the 2026-09-21 control repairs, that day's uncommitted development run
+passed the complete repository gate, including the ordinary authored-source
+tests, the live/activation refusal regression and the million-mint identity
+test. The unchanged concrete example suites were also run before the repairs:
 `v2_cpal_output` passed 60 tests (including mailbox, capture and concurrent PCM
 coverage), and `v2_live_session` passed three. The ignored historical EVD-0020
-measurement was not re-run. After the repairs, the release matrix, evidence and
+measurement was not re-run. After those repairs, the release matrix, evidence and
 documentation gates, formatting, package-wide Clippy and all `synth_engine_v2`
-tests were re-run and passed. These pass states are development checks on this
-worktree, not new acceptance evidence or a combined host load measurement.
+tests were re-run and passed in the 2026-09-21 development worktree. Those
+historical checks are separate from the retained 2026-09-26 component rerun;
+neither is a combined host load measurement.
 
 ## Limitations
 
@@ -154,7 +178,7 @@ compiler/worker contention under combined host load are unmeasured here.
 **Not supported for production qualification; component capacity controls pass.**
 The coverage audit fails the predeclared composition and population conditions.
 No default is reselected and ADR-0054's production-live gate remains closed.
-This is an active investigation, not a completed acceptance record.
+This is an active investigation, not a completed production acceptance record.
 
 The next implementation dependency is a common host admission and ownership
 boundary for playback, live input, session operations, recording, monitoring and

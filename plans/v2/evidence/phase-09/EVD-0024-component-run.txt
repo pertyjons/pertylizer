@@ -1,0 +1,101 @@
+EVD-0024 component capacity rerun
+UTC: 2026-09-26T16:21:22Z
+source revision: ab1cd27d9a98b1f05880f359d5334b88ecb0d5f3
+worktree status before build:
+ M plans/v2/evidence/phase-09/EVD-0024-live-capacity-qualification.md
+?? plans/v2/evidence/phase-09/EVD-0024-component-results.txt
+?? plans/v2/evidence/phase-09/EVD-0024-component-run.txt
+Rust paths match HEAD: yes
+rustc 1.98.1 (48a229cea 2026-09-01)
+binary: rustc
+commit-hash: 48a229ceaefd4985c50990b14116b6d856af0985
+commit-date: 2026-09-01
+host: x86_64-unknown-linux-gnu
+release: 1.98.1
+LLVM version: 22.1.8
+cargo 1.98.1 (797e8a9bc 2026-08-05)
+Linux 7.2.7-200.fc44.x86_64 x86_64
+command: CARGO_TARGET_DIR=/tmp/pertylizer-evd0024-target-20260926 cargo test -p synth_engine_v2 --release --test simulated_ingress evd_0024_capacity_matrix -- --ignored --nocapture
+   Compiling proc-macro2 v1.0.107
+   Compiling unicode-ident v1.0.24
+   Compiling quote v1.0.47
+   Compiling serde_core v1.0.229
+   Compiling zmij v1.0.23
+   Compiling ref-cast v1.0.26
+   Compiling serde_json v1.0.151
+   Compiling serde v1.0.229
+   Compiling crossbeam-utils v0.8.22
+   Compiling typenum v1.20.1
+   Compiling memchr v2.8.3
+   Compiling thiserror v2.0.19
+   Compiling heck v0.5.0
+   Compiling itoa v1.0.18
+   Compiling dyn-clone v1.0.20
+   Compiling const-oid v0.10.2
+   Compiling cpufeatures v0.3.0
+   Compiling cfg-if v1.0.4
+   Compiling ringbuf v0.5.1
+   Compiling hybrid-array v0.4.14
+   Compiling syn v3.0.3
+   Compiling syn v2.0.119
+   Compiling block-buffer v0.12.1
+   Compiling crypto-common v0.2.2
+   Compiling digest v0.11.3
+   Compiling sha2 v0.11.0
+   Compiling serde_derive_internals v0.30.0
+   Compiling strum_macros v0.28.0
+   Compiling serde_derive v1.0.229
+   Compiling ref-cast-impl v1.0.26
+   Compiling thiserror-impl v2.0.19
+   Compiling schemars_derive v1.2.2
+   Compiling strum v0.28.0
+   Compiling schemars v1.2.2
+   Compiling synth_core v0.1.0 (/home/per/github/pertylizer/crates/synth_core)
+   Compiling synth_script v0.1.0 (/home/per/github/pertylizer/crates/synth_script)
+   Compiling synth_engine_v2 v0.1.0 (/home/per/github/pertylizer/crates/synth_engine_v2)
+    Finished `release` profile [optimized] target(s) in 31.45s
+     Running tests/simulated_ingress.rs (/tmp/pertylizer-evd0024-target-20260926/release/deps/simulated_ingress-9b5f1df8c6f03f2a)
+
+running 1 test
+capacity,rate=44100,layout=Mono,block=64,arm=ordinary,callbacks=64,compiled=96,live=32,release=0,external_total=128,queue_refusals=64,final_holds=0
+capacity,rate=44100,layout=Mono,block=64,arm=reserved_release,callbacks=64,compiled=96,live=24,release=8,external_total=128,queue_refusals=64,final_holds=0
+capacity,rate=44100,layout=Mono,block=256,arm=ordinary,callbacks=64,compiled=96,live=32,release=0,external_total=128,queue_refusals=64,final_holds=0
+capacity,rate=44100,layout=Mono,block=256,arm=reserved_release,callbacks=64,compiled=96,live=24,release=8,external_total=128,queue_refusals=64,final_holds=0
+capacity,rate=44100,layout=Mono,block=8192,arm=ordinary,callbacks=64,compiled=96,live=32,release=0,external_total=128,queue_refusals=64,final_holds=0
+capacity,rate=44100,layout=Mono,block=8192,arm=reserved_release,callbacks=64,compiled=96,live=24,release=8,external_total=128,queue_refusals=64,final_holds=0
+capacity,rate=44100,layout=Stereo,block=64,arm=ordinary,callbacks=64,compiled=96,live=32,release=0,external_total=128,queue_refusals=64,final_holds=0
+capacity,rate=44100,layout=Stereo,block=64,arm=reserved_release,callbacks=64,compiled=96,live=24,release=8,external_total=128,queue_refusals=64,final_holds=0
+capacity,rate=44100,layout=Stereo,block=256,arm=ordinary,callbacks=64,compiled=96,live=32,release=0,external_total=128,queue_refusals=64,final_holds=0
+capacity,rate=44100,layout=Stereo,block=256,arm=reserved_release,callbacks=64,compiled=96,live=24,release=8,external_total=128,queue_refusals=64,final_holds=0
+capacity,rate=44100,layout=Stereo,block=8192,arm=ordinary,callbacks=64,compiled=96,live=32,release=0,external_total=128,queue_refusals=64,final_holds=0
+capacity,rate=44100,layout=Stereo,block=8192,arm=reserved_release,callbacks=64,compiled=96,live=24,release=8,external_total=128,queue_refusals=64,final_holds=0
+capacity,rate=48000,layout=Mono,block=64,arm=ordinary,callbacks=64,compiled=96,live=32,release=0,external_total=128,queue_refusals=64,final_holds=0
+capacity,rate=48000,layout=Mono,block=64,arm=reserved_release,callbacks=64,compiled=96,live=24,release=8,external_total=128,queue_refusals=64,final_holds=0
+capacity,rate=48000,layout=Mono,block=256,arm=ordinary,callbacks=64,compiled=96,live=32,release=0,external_total=128,queue_refusals=64,final_holds=0
+capacity,rate=48000,layout=Mono,block=256,arm=reserved_release,callbacks=64,compiled=96,live=24,release=8,external_total=128,queue_refusals=64,final_holds=0
+capacity,rate=48000,layout=Mono,block=8192,arm=ordinary,callbacks=64,compiled=96,live=32,release=0,external_total=128,queue_refusals=64,final_holds=0
+capacity,rate=48000,layout=Mono,block=8192,arm=reserved_release,callbacks=64,compiled=96,live=24,release=8,external_total=128,queue_refusals=64,final_holds=0
+capacity,rate=48000,layout=Stereo,block=64,arm=ordinary,callbacks=64,compiled=96,live=32,release=0,external_total=128,queue_refusals=64,final_holds=0
+capacity,rate=48000,layout=Stereo,block=64,arm=reserved_release,callbacks=64,compiled=96,live=24,release=8,external_total=128,queue_refusals=64,final_holds=0
+capacity,rate=48000,layout=Stereo,block=256,arm=ordinary,callbacks=64,compiled=96,live=32,release=0,external_total=128,queue_refusals=64,final_holds=0
+capacity,rate=48000,layout=Stereo,block=256,arm=reserved_release,callbacks=64,compiled=96,live=24,release=8,external_total=128,queue_refusals=64,final_holds=0
+capacity,rate=48000,layout=Stereo,block=8192,arm=ordinary,callbacks=64,compiled=96,live=32,release=0,external_total=128,queue_refusals=64,final_holds=0
+capacity,rate=48000,layout=Stereo,block=8192,arm=reserved_release,callbacks=64,compiled=96,live=24,release=8,external_total=128,queue_refusals=64,final_holds=0
+capacity,rate=96000,layout=Mono,block=64,arm=ordinary,callbacks=64,compiled=96,live=32,release=0,external_total=128,queue_refusals=64,final_holds=0
+capacity,rate=96000,layout=Mono,block=64,arm=reserved_release,callbacks=64,compiled=96,live=24,release=8,external_total=128,queue_refusals=64,final_holds=0
+capacity,rate=96000,layout=Mono,block=256,arm=ordinary,callbacks=64,compiled=96,live=32,release=0,external_total=128,queue_refusals=64,final_holds=0
+capacity,rate=96000,layout=Mono,block=256,arm=reserved_release,callbacks=64,compiled=96,live=24,release=8,external_total=128,queue_refusals=64,final_holds=0
+capacity,rate=96000,layout=Mono,block=8192,arm=ordinary,callbacks=64,compiled=96,live=32,release=0,external_total=128,queue_refusals=64,final_holds=0
+capacity,rate=96000,layout=Mono,block=8192,arm=reserved_release,callbacks=64,compiled=96,live=24,release=8,external_total=128,queue_refusals=64,final_holds=0
+capacity,rate=96000,layout=Stereo,block=64,arm=ordinary,callbacks=64,compiled=96,live=32,release=0,external_total=128,queue_refusals=64,final_holds=0
+capacity,rate=96000,layout=Stereo,block=64,arm=reserved_release,callbacks=64,compiled=96,live=24,release=8,external_total=128,queue_refusals=64,final_holds=0
+capacity,rate=96000,layout=Stereo,block=256,arm=ordinary,callbacks=64,compiled=96,live=32,release=0,external_total=128,queue_refusals=64,final_holds=0
+capacity,rate=96000,layout=Stereo,block=256,arm=reserved_release,callbacks=64,compiled=96,live=24,release=8,external_total=128,queue_refusals=64,final_holds=0
+capacity,rate=96000,layout=Stereo,block=8192,arm=ordinary,callbacks=64,compiled=96,live=32,release=0,external_total=128,queue_refusals=64,final_holds=0
+capacity,rate=96000,layout=Stereo,block=8192,arm=reserved_release,callbacks=64,compiled=96,live=24,release=8,external_total=128,queue_refusals=64,final_holds=0
+scope=component_occupancy; production_qualification=not_evaluated
+test capacity::evd_0024_capacity_matrix ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 53 filtered out; finished in 2.48s
+
+exit_status=0
