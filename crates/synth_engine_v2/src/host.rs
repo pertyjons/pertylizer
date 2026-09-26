@@ -21,6 +21,7 @@ pub mod audio_input;
 mod hot;
 #[cfg(feature = "simulated-ingress")]
 pub mod live;
+pub mod mixed_targets;
 #[cfg(feature = "simulated-ingress")]
 pub mod pulse;
 #[cfg(feature = "simulated-ingress")]

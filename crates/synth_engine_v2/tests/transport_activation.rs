@@ -7,6 +7,7 @@
 mod common;
 
 use synth_engine_v2::admit::AdmissionError;
+use synth_engine_v2::host::mixed_targets::{MixedTargetAdmission, MixedTargetError};
 use synth_engine_v2::identity::ProducerId;
 use synth_engine_v2::ir::{ExecutionScope, GraphIr, IrNodeKind, NodeId, PortId, SignalDomain};
 use synth_engine_v2::plan::CompiledPlan;
@@ -2449,13 +2450,27 @@ fn the_release_scope_is_the_compiled_producer_alone() {
 
 /// A plan declaring one compiled note producer and one that is not, both admitting indices.
 fn compiled_and_live_producers() -> CompiledPlan {
+    mixed_producers(ExecutionScope::Voice, true)
+}
+
+fn mixed_producers(scope: ExecutionScope, compiled_first: bool) -> CompiledPlan {
+    let compiled = synth_engine_v2::ir::NoteProducerDeclaration {
+        compiled: true,
+        simultaneous_notes: synth_engine_v2::quantities::HeldNoteCount::measured(4),
+        simultaneous_holds: EventCount::NONE,
+    };
+    let live = synth_engine_v2::ir::NoteProducerDeclaration {
+        compiled: false,
+        simultaneous_notes: synth_engine_v2::quantities::HeldNoteCount::measured(4),
+        simultaneous_holds: EventCount::measured(4),
+    };
     let ir = GraphIr::builder()
         .node(
             SOURCE,
             IrNodeKind::Constant {
                 level: Amplitude::new(1.0).expect("finite"),
             },
-            ExecutionScope::Voice,
+            scope,
         )
         .node(
             ENVELOPE,
@@ -2466,9 +2481,9 @@ fn compiled_and_live_producers() -> CompiledPlan {
                 release: Seconds::new(0.0).expect("not negative"),
                 velocity_sensitivity: synth_engine_v2::quantities::NormalizedLevel::FULL,
             },
-            ExecutionScope::Voice,
+            scope,
         )
-        .node(AMPLIFIER, IrNodeKind::Amplifier, ExecutionScope::Voice)
+        .node(AMPLIFIER, IrNodeKind::Amplifier, scope)
         .node(OUTPUT, IrNodeKind::Output, ExecutionScope::Global)
         .connect(
             (SOURCE, PortId::FIRST),
@@ -2486,24 +2501,76 @@ fn compiled_and_live_producers() -> CompiledPlan {
             SignalDomain::Audio,
         )
         .declaring(synth_engine_v2::ir::PlanDeclarations {
-            note_producers: vec![
-                synth_engine_v2::ir::NoteProducerDeclaration {
-                    compiled: true,
-                    simultaneous_notes: synth_engine_v2::quantities::HeldNoteCount::measured(4),
-                    simultaneous_holds: EventCount::NONE,
-                },
-                synth_engine_v2::ir::NoteProducerDeclaration {
-                    compiled: false,
-                    simultaneous_notes: synth_engine_v2::quantities::HeldNoteCount::measured(4),
-                    simultaneous_holds: EventCount::measured(4),
-                },
-            ],
+            note_producers: if compiled_first {
+                vec![compiled, live]
+            } else {
+                vec![live, compiled]
+            },
             held_notes: synth_engine_v2::quantities::HeldNoteCount::measured(8),
             ..synth_engine_v2::ir::PlanDeclarations::default()
         })
         .build()
         .expect("a readable plan");
     common::admit(&ir, common::profile(TOTAL as u64, ChannelLayout::Mono))
+}
+
+#[test]
+fn mixed_target_binding_accepts_disjoint_voice_instances_in_both_producer_orders() {
+    for compiled_first in [true, false] {
+        let plan = mixed_producers(ExecutionScope::Voice, compiled_first);
+        let slot = plan.resolve_note(ENVELOPE).expect("playable envelope");
+        let stream = admitted(&plan, &[note(&plan, 0, true)]);
+        let binding = MixedTargetAdmission::admit(&plan, stream.clone(), slot)
+            .expect("the producers reach separate voice instances");
+        assert_eq!(binding.stream(), &stream);
+        assert_eq!(binding.compiled_slots(), &[slot]);
+        assert_eq!(binding.live_slot(), slot);
+        assert_eq!(
+            binding.live_producer(),
+            ProducerId::new(u16::from(compiled_first))
+        );
+    }
+}
+
+#[test]
+fn mixed_target_binding_refuses_a_shared_global_node() {
+    let plan = mixed_producers(ExecutionScope::Global, true);
+    let slot = plan.resolve_note(ENVELOPE).expect("playable envelope");
+    let stream = admitted(&plan, &[note(&plan, 0, true)]);
+    assert!(matches!(
+        MixedTargetAdmission::admit(&plan, stream, slot),
+        Err(MixedTargetError::SharedNode { .. })
+    ));
+}
+
+#[test]
+fn mixed_target_binding_refuses_unaccounted_writers_and_foreign_live_slots() {
+    let plan = compiled_and_live_producers();
+    let slot = plan.resolve_note(ENVELOPE).expect("playable envelope");
+    let parameter = plan.parameter_addresses()[0].slot;
+    let value = plan.parameter_targets()[parameter.index()].base;
+    let stream = admitted(
+        &plan,
+        &[PlanEvent::new(
+            PlanPosition::ZERO,
+            CompiledPayload::SetParameter {
+                slot: parameter,
+                value,
+            },
+        )],
+    );
+    assert!(matches!(
+        MixedTargetAdmission::admit(&plan, stream, slot),
+        Err(MixedTargetError::UnsupportedCompiledWriter { event_index: 0 })
+    ));
+
+    let foreign = compiled_and_live_producers();
+    let foreign_slot = foreign.resolve_note(ENVELOPE).expect("playable envelope");
+    let quiet = admitted(&plan, &[]);
+    assert!(matches!(
+        MixedTargetAdmission::admit(&plan, quiet, foreign_slot),
+        Err(MixedTargetError::ForeignPlan)
+    ));
 }
 
 #[test]
