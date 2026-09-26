@@ -1,7 +1,7 @@
 //! Fixed-custody audition admission and rendering; no owner is freed on this path.
 use super::{
     AuditionId, AuditionOutcome, ConnectionGeneration, Entry, Held, LiveInputError,
-    LiveInputStream, Midi1Input, MidiChannel, ReleaseCause,
+    LiveInputStream, Midi1Input, MidiChannel, PreviewHeld, ReleaseCause,
 };
 use crate::{
     publish::ProducerClass,
@@ -16,6 +16,12 @@ impl LiveInputStream {
         self.ingress.holds_outstanding()
     }
 
+    /// A note-on needs both a result entry and a held-occurrence cell. An
+    /// earlier queued key release or sustain lift can free the latter only when
+    /// its ordering and pedal state prove the cell available before this onset.
+    /// Later queued events must preserve every pending onset's held-cell credit.
+    /// The check uses prepared storage without allocation. Its worst-case scan
+    /// is O(q² × (s + 1)) for quota q and source count s.
     pub fn queue(
         &mut self,
         id: AuditionId,
@@ -27,8 +33,7 @@ impl LiveInputStream {
             .iter()
             .position(|source| source.generation == id.source)
             .ok_or(LiveInputError::Identity)?;
-        let source = &mut self.sources[port];
-        if source.serial >= id.serial {
+        if self.sources[port].serial >= id.serial {
             return Err(LiveInputError::Identity);
         }
         let index = self
@@ -36,8 +41,34 @@ impl LiveInputStream {
             .iter()
             .position(Option::is_none)
             .ok_or(LiveInputError::Capacity)?;
+        if !self.closed
+            && self
+                .end
+                .is_none_or(|(end, _)| nominal.max(self.clock()) < end)
+        {
+            // A collected result may free an entry while its key still owns a held cell.
+            let occupied = self.held.iter().flatten().count();
+            let pending = self
+                .entries
+                .iter()
+                .flatten()
+                .filter(|entry| {
+                    entry.outcome.is_none()
+                        && entry.staged.is_none()
+                        && self
+                            .end
+                            .is_none_or(|(end, _)| entry.nominal.max(self.clock()) < end)
+                        && matches!(entry.input.event(), Midi1Event::NoteOn { .. })
+                })
+                .count();
+            if occupied >= self.held.len().saturating_sub(pending)
+                && !self.can_stage_pending(id, nominal, input)?
+            {
+                return Err(LiveInputError::Capacity);
+            }
+        }
         let cell = &mut self.entries[index];
-        source.serial = id.serial;
+        self.sources[port].serial = id.serial;
         *cell = Some(Entry {
             id,
             nominal,
@@ -46,6 +77,156 @@ impl LiveInputStream {
             outcome: self.closed.then_some(AuditionOutcome::Cancelled),
         });
         Ok(())
+    }
+
+    fn can_stage_pending(
+        &mut self,
+        id: AuditionId,
+        nominal: SampleTime,
+        input: Midi1Input,
+    ) -> Result<bool, LiveInputError> {
+        self.preview.fill(None);
+        for (preview, held) in self.preview.iter_mut().zip(&self.held) {
+            *preview = held.map(|held| PreviewHeld {
+                id: held.id,
+                channel: held.channel,
+                key: held.key,
+                down: held.down,
+                identity_possible: held.identity.is_some(),
+            });
+        }
+
+        let source_rank = self
+            .sources
+            .iter()
+            .position(|source| source.generation == id.source)
+            .ok_or(LiveInputError::Identity)?;
+        let candidate = Entry {
+            id,
+            nominal,
+            input,
+            staged: None,
+            outcome: None,
+        };
+        let candidate_order = (nominal, source_rank, id.serial);
+        let mut last = None;
+        loop {
+            let mut next = last
+                .is_none_or(|prior| candidate_order > prior)
+                .then_some((candidate_order, candidate));
+            for entry in self.entries.iter().flatten() {
+                if entry.outcome.is_some()
+                    || entry.staged.is_some()
+                    || self
+                        .end
+                        .is_some_and(|(end, _)| entry.nominal.max(self.clock()) >= end)
+                {
+                    continue;
+                }
+                let rank = self
+                    .sources
+                    .iter()
+                    .position(|source| source.generation == entry.id.source)
+                    .ok_or(LiveInputError::Identity)?;
+                let order = (entry.nominal, rank, entry.id.serial);
+                if last.is_some_and(|prior| order <= prior) {
+                    continue;
+                }
+                if next.as_ref().is_none_or(|(prior, _)| order < *prior) {
+                    next = Some((order, *entry));
+                }
+            }
+            let Some((order, entry)) = next else {
+                break;
+            };
+            match entry.input.event() {
+                Midi1Event::NoteOn { key, .. } => {
+                    let mut vacant = None;
+                    for (index, cell) in self.preview.iter().enumerate() {
+                        if cell.is_none() {
+                            vacant = Some(index);
+                            break;
+                        }
+                    }
+                    let Some(index) = vacant else {
+                        return Ok(false);
+                    };
+                    self.preview[index] = Some(PreviewHeld {
+                        id: entry.id,
+                        channel: entry.input.channel(),
+                        key,
+                        down: true,
+                        identity_possible: true,
+                    });
+                }
+                Midi1Event::KeyRelease { key, .. } => {
+                    let mut selected: Option<(usize, u64)> = None;
+                    for (index, cell) in self.preview.iter().enumerate() {
+                        if let Some(held) = cell
+                            && held.down
+                            && held.id.source == entry.id.source
+                            && held.channel == entry.input.channel()
+                            && held.key == key
+                            && selected.is_none_or(|(_, serial)| held.id.serial < serial)
+                        {
+                            selected = Some((index, held.id.serial));
+                        }
+                    }
+                    if let Some((index, _)) = selected {
+                        let port = order.1;
+                        let channel = entry.input.channel();
+                        let mut pedal_down =
+                            self.sources[port].pedal[usize::from(channel.as_index())];
+                        let mut last_pedal = None;
+                        for pending in self.entries.iter().flatten() {
+                            if pending.outcome.is_some()
+                                || pending.staged.is_some()
+                                || pending.id.source != entry.id.source
+                                || pending.input.channel() != channel
+                            {
+                                continue;
+                            }
+                            let pending_order = (pending.nominal, port, pending.id.serial);
+                            if pending_order < order
+                                && last_pedal.is_none_or(|prior| pending_order > prior)
+                                && let Midi1Event::Sustain { down } = pending.input.event()
+                            {
+                                pedal_down = down;
+                                last_pedal = Some(pending_order);
+                            }
+                        }
+                        if candidate.id.source == entry.id.source
+                            && candidate.input.channel() == channel
+                            && candidate_order < order
+                            && last_pedal.is_none_or(|prior| candidate_order > prior)
+                            && let Midi1Event::Sustain { down } = candidate.input.event()
+                        {
+                            pedal_down = down;
+                        }
+                        if let Some(held) = self.preview[index].as_mut() {
+                            held.down = false;
+                            if !pedal_down || !held.identity_possible {
+                                self.preview[index] = None;
+                            }
+                        }
+                    }
+                }
+                Midi1Event::Sustain { down: false } => {
+                    for cell in &mut self.preview {
+                        if cell.is_some_and(|held| {
+                            held.id.source == entry.id.source
+                                && held.channel == entry.input.channel()
+                                && !held.down
+                        }) {
+                            *cell = None;
+                        }
+                    }
+                }
+                Midi1Event::Sustain { down: true } | Midi1Event::PitchBend { .. } => {}
+            }
+            last = Some(order);
+        }
+        Ok(true)
     }
 
     /// The consumer must reconcile any raw capture annotation before returning this cell.

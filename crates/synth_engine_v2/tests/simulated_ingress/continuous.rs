@@ -92,6 +92,242 @@ fn ten_thousand_cycles_reuse_storage_without_reusing_audition_ids_or_fifo_positi
     );
 }
 #[test]
+fn held_credit_is_reserved_before_a_new_onset_receipt() {
+    let source = source();
+    let mut live = live(plan(), source, 2);
+    render(&mut live, 64);
+
+    let at = live.clock().as_u64();
+    let first = offer(&mut live, source, 1, at, [0x90, 60, 100]);
+    render(&mut live, 64);
+    assert!(matches!(
+        live.take_outcome(first),
+        Some(AuditionOutcome::Executed { .. })
+    ));
+    assert_eq!(live.holds(), EventCount::measured(1));
+
+    let second = AuditionId::new(source, 2).unwrap();
+    live.queue(
+        second,
+        live.clock(),
+        Midi1Input::from_bytes([0x90, 62, 100]).unwrap(),
+    )
+    .unwrap();
+    let third = AuditionId::new(source, 3).unwrap();
+    assert!(matches!(
+        live.queue(
+            third,
+            live.clock(),
+            Midi1Input::from_bytes([0x90, 64, 100]).unwrap(),
+        ),
+        Err(synth_engine_v2::host::live::LiveInputError::Capacity)
+    ));
+    assert_eq!(live.holds(), EventCount::measured(1));
+    render(&mut live, 64);
+    assert!(matches!(
+        live.take_outcome(second),
+        Some(AuditionOutcome::Executed { .. })
+    ));
+    assert_eq!(live.holds(), EventCount::measured(2));
+    assert!(matches!(
+        live.queue(
+            third,
+            live.clock(),
+            Midi1Input::from_bytes([0x90, 64, 100]).unwrap(),
+        ),
+        Err(synth_engine_v2::host::live::LiveInputError::Capacity)
+    ));
+
+    let at = live.clock().as_u64();
+    let release = offer(&mut live, source, 4, at, [0x80, 60, 0]);
+    let second_release = offer(&mut live, source, 5, at, [0x80, 62, 0]);
+    render(&mut live, 64);
+    assert!(matches!(
+        live.take_outcome(release),
+        Some(AuditionOutcome::Executed { .. })
+    ));
+    assert!(matches!(
+        live.take_outcome(second_release),
+        Some(AuditionOutcome::Executed { .. })
+    ));
+    assert_eq!(live.holds(), EventCount::NONE);
+
+    let at = live.clock().as_u64();
+    let next = offer(&mut live, source, 6, at, [0x90, 62, 100]);
+    render(&mut live, 64);
+    assert!(matches!(
+        live.take_outcome(next),
+        Some(AuditionOutcome::Executed { .. })
+    ));
+}
+#[test]
+fn earlier_release_reuses_held_credit_only_when_sustain_allows_it() {
+    let source = source();
+    let mut live = live(plan(), source, 2);
+    render(&mut live, 64);
+    let at = live.clock().as_u64();
+    let first = offer(&mut live, source, 1, at, [0x90, 60, 100]);
+    let second = offer(&mut live, source, 2, at, [0x90, 62, 100]);
+    render(&mut live, 64);
+    assert!(live.take_outcome(first).is_some());
+    assert!(live.take_outcome(second).is_some());
+    assert_eq!(live.holds(), EventCount::measured(2));
+
+    let at = live.clock().as_u64();
+    let first_release = offer(&mut live, source, 3, at, [0x80, 60, 0]);
+    let third = offer(&mut live, source, 4, at, [0x90, 64, 100]);
+    render(&mut live, 64);
+    assert!(matches!(
+        live.take_outcome(first_release),
+        Some(AuditionOutcome::Executed { .. })
+    ));
+    assert!(matches!(
+        live.take_outcome(third),
+        Some(AuditionOutcome::Executed { .. })
+    ));
+    assert_eq!(live.holds(), EventCount::measured(2));
+
+    let at = live.clock().as_u64();
+    let pedal_down = offer(&mut live, source, 5, at, [0xb0, 64, 127]);
+    render(&mut live, 64);
+    assert!(live.take_outcome(pedal_down).is_some());
+
+    let at = live.clock();
+    let second_release = offer(&mut live, source, 6, at.as_u64(), [0x80, 62, 0]);
+    assert!(matches!(
+        live.queue(
+            AuditionId::new(source, 7).unwrap(),
+            at,
+            Midi1Input::from_bytes([0x90, 65, 100]).unwrap(),
+        ),
+        Err(synth_engine_v2::host::live::LiveInputError::Capacity)
+    ));
+    render(&mut live, 64);
+    assert!(matches!(
+        live.take_outcome(second_release),
+        Some(AuditionOutcome::Executed { .. })
+    ));
+    assert_eq!(live.holds(), EventCount::measured(2));
+
+    let at = live.clock().as_u64();
+    let pedal_up = offer(&mut live, source, 8, at, [0xb0, 64, 0]);
+    let fourth = offer(&mut live, source, 9, at, [0x90, 65, 100]);
+    render(&mut live, 64);
+    assert!(live.take_outcome(pedal_up).is_some());
+    assert!(matches!(
+        live.take_outcome(fourth),
+        Some(AuditionOutcome::Executed { .. })
+    ));
+    assert_eq!(live.holds(), EventCount::measured(2));
+}
+#[test]
+fn later_release_cannot_credit_an_earlier_onset() {
+    let source = source();
+    let mut live = live(plan(), source, 2);
+    render(&mut live, 64);
+
+    let at = live.clock().as_u64();
+    let first = offer(&mut live, source, 1, at, [0x90, 60, 100]);
+    let second = offer(&mut live, source, 2, at, [0x90, 62, 100]);
+    render(&mut live, 64);
+    assert!(live.take_outcome(first).is_some());
+    assert!(live.take_outcome(second).is_some());
+
+    let at = live.clock().as_u64();
+    let release = offer(&mut live, source, 3, at + 64, [0x80, 60, 0]);
+    let onset = AuditionId::new(source, 4).unwrap();
+    assert!(matches!(
+        live.queue(
+            onset,
+            SampleTime::new(at),
+            Midi1Input::from_bytes([0x90, 64, 100]).unwrap(),
+        ),
+        Err(synth_engine_v2::host::live::LiveInputError::Capacity)
+    ));
+    render(&mut live, 128);
+    assert!(matches!(
+        live.take_outcome(release),
+        Some(AuditionOutcome::Executed { .. })
+    ));
+    assert_eq!(live.holds(), EventCount::measured(1));
+}
+#[test]
+fn later_queued_pedal_cannot_revoke_an_admitted_onset_credit() {
+    let source = source();
+    let mut live = live(plan(), source, 3);
+    render(&mut live, 64);
+
+    let at = live.clock().as_u64();
+    for (serial, key) in [(1, 60), (2, 62), (3, 64)] {
+        let id = offer(&mut live, source, serial, at, [0x90, key, 100]);
+        render(&mut live, 64);
+        assert!(matches!(
+            live.take_outcome(id),
+            Some(AuditionOutcome::Executed { .. })
+        ));
+    }
+    assert_eq!(live.holds(), EventCount::measured(3));
+
+    let at = live.clock().as_u64();
+    let release = offer(&mut live, source, 4, at + 64, [0x80, 60, 0]);
+    let onset = offer(&mut live, source, 5, at + 128, [0x90, 65, 100]);
+    let pedal = AuditionId::new(source, 6).unwrap();
+    assert!(matches!(
+        live.queue(
+            pedal,
+            SampleTime::new(at),
+            Midi1Input::from_bytes([0xb0, 64, 127]).unwrap(),
+        ),
+        Err(synth_engine_v2::host::live::LiveInputError::Capacity)
+    ));
+    render(&mut live, 192);
+    assert!(matches!(
+        live.take_outcome(release),
+        Some(AuditionOutcome::Executed { .. })
+    ));
+    assert!(matches!(
+        live.take_outcome(onset),
+        Some(AuditionOutcome::Executed { .. })
+    ));
+    assert_eq!(live.holds(), EventCount::measured(3));
+}
+#[test]
+fn a_post_stop_onset_is_cancelled_without_held_credit() {
+    let source = source();
+    let mut live = live(plan(), source, 1);
+    render(&mut live, 64);
+    let at = live.clock().as_u64();
+    let first = offer(&mut live, source, 1, at, [0x90, 60, 100]);
+    render(&mut live, 64);
+    assert!(live.take_outcome(first).is_some());
+
+    let end = live.clock().as_u64() + 64;
+    live.end_at(SampleTime::new(end), ReleaseCause::Stop)
+        .unwrap();
+    let cancelled = offer(&mut live, source, 2, end, [0x90, 62, 100]);
+    render(&mut live, 128);
+    assert_eq!(
+        live.take_outcome(cancelled),
+        Some(AuditionOutcome::Cancelled)
+    );
+
+    let mut immediate = self::live(plan(), source, 1);
+    render(&mut immediate, 64);
+    let past = immediate.clock().as_u64();
+    let first = offer(&mut immediate, source, 1, past, [0x90, 60, 100]);
+    render(&mut immediate, 64);
+    assert!(immediate.take_outcome(first).is_some());
+    immediate
+        .end_at(immediate.clock(), ReleaseCause::Stop)
+        .unwrap();
+    let cancelled = offer(&mut immediate, source, 2, past, [0x90, 62, 100]);
+    render(&mut immediate, 64);
+    assert_eq!(
+        immediate.take_outcome(cancelled),
+        Some(AuditionOutcome::Cancelled)
+    );
+}
+#[test]
 fn full_uncollected_outcomes_do_not_block_protected_stop() {
     let source = source();
     let mut live = live(plan(), source, 2);

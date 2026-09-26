@@ -94,6 +94,14 @@ struct Held {
     down: bool,
     identity: Option<NoteIdentity>,
 }
+#[derive(Clone, Copy)]
+struct PreviewHeld {
+    id: AuditionId,
+    channel: MidiChannel,
+    key: KeyIdentity,
+    down: bool,
+    identity_possible: bool,
+}
 struct Source {
     generation: ConnectionGeneration,
     pedal: [bool; 16],
@@ -113,6 +121,7 @@ pub struct LiveInputStream {
     note: NoteSlot,
     entries: Box<[Option<Entry>]>,
     held: Box<[Option<Held>]>,
+    preview: Box<[Option<PreviewHeld>]>,
     sources: Box<[Source]>,
     end: Option<(SampleTime, ReleaseCause)>,
     closed: bool,
@@ -172,7 +181,11 @@ impl LiveInputStream {
         let quota = usize::try_from(quota.get()).map_err(|_| LiveInputError::Bytes)?;
         let table_bytes = plan.host_table_bytes().ok_or(LiveInputError::Bytes)?;
         let metadata = quota
-            .checked_mul(size_of::<Option<Entry>>() + size_of::<Option<Held>>())
+            .checked_mul(
+                size_of::<Option<Entry>>()
+                    + size_of::<Option<Held>>()
+                    + size_of::<Option<PreviewHeld>>(),
+            )
             .and_then(|bytes| {
                 sources
                     .len()
@@ -220,6 +233,7 @@ impl LiveInputStream {
             note,
             entries: slots(quota)?,
             held: slots(quota)?,
+            preview: slots(quota)?,
             sources: sources
                 .iter()
                 .map(|generation| Source {
