@@ -1,6 +1,6 @@
 # Core V2: Current Work
 
-Last updated: 2026-09-26
+Last updated: 2026-09-27
 
 This file contains only active Core V2 state, blockers and next actions. Durable
 contracts live in ADRs and specifications; completed Phase 3 coordination
@@ -274,12 +274,13 @@ Each item is implemented in bounded slices with the repository's risk-selected
 checks and independent reviews. ADR-0065 resolves the standalone loop boundary;
 ADR-0067 integrates finite serial controls and capture within its exclusive ownership contract. The initial
 physical target is Linux with CPAL and the existing V1 device-selection behavior,
-as selected by the user, using this computer's built-in audio device. The user
-confirmed that no physical MIDI device is available on this computer; local MIDI
-verification continues with simulated sources. Physical MIDI qualification remains
-open. The
-[Linux timing evidence](evidence/phase-03/EVD-0016-host-time-mapping.md)
-rejects the current direct candidate under F4; ADR-0022 qualification remains open.
+as selected by the user, using a built-in audio endpoint. The retained Linux
+runs used different host/device configurations; the 2026-09-26 local host has
+an ALC256 endpoint. The user confirmed that no physical MIDI device was available
+for local verification; MIDI checks continue with simulated sources. Physical
+MIDI qualification remains open. The [Linux timing evidence](evidence/phase-03/EVD-0016-host-time-mapping.md)
+rejects the 2026-09-12 direct run under F4 and the 2026-09-26 30-frame direct
+run under F7; ADR-0022 qualification remains open.
 Simulator and transport work proceed before physical qualification. Phase 0B and
 Phase 10 work remain with their existing owners.
 

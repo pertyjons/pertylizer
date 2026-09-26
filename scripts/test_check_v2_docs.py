@@ -75,11 +75,74 @@ class DocumentationCheckerTests(unittest.TestCase):
             simulator = stack.enter_context(
                 mock.patch.object(CHECKER, "check_evidence_simulators")
             )
+            retained_audit = stack.enter_context(
+                mock.patch.object(CHECKER, "check_retained_f7_audit")
+            )
             stack.enter_context(mock.patch("builtins.print"))
             self.assertEqual(CHECKER.main([]), 0)
             simulator.assert_not_called()
+            retained_audit.assert_not_called()
             self.assertEqual(CHECKER.main(["--evidence"]), 0)
             simulator.assert_called_once()
+            retained_audit.assert_called_once()
+
+    def test_retained_f7_audit_requires_both_inputs(self) -> None:
+        errors: list[str] = []
+        CHECKER.check_retained_f7_audit(errors)
+        self.assertEqual(
+            errors,
+            [
+                f"{CHECKER.EVD_0016_F7_AUDIT}: required retained F7 audit input is missing",
+                f"{CHECKER.EVD_0016_F7_ARTIFACT}: required retained F7 audit input is missing",
+            ],
+        )
+
+    def test_retained_f7_audit_accepts_only_recorded_populations(self) -> None:
+        for relative in (CHECKER.EVD_0016_F7_AUDIT, CHECKER.EVD_0016_F7_ARTIFACT):
+            path = self.root / relative
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text("fixture", encoding="utf-8")
+        record = self.write(
+            "evidence/phase-03/EVD-0016-host-time-mapping.md",
+            "## Retained Linux fixed-buffer diagnostic, 2026-09-26\n"
+            "| Direction | Callbacks | Bridges | Backward | Xruns | Losses |\n"
+            "|---|---:|---:|---:|---:|---:|\n"
+            "| Input | 12,515 | 1,010 | 315 | 8,898 | 0 |\n"
+            "| Output | 16,838 | 1,010 | 127 | 6,472 | 0 |\n",
+        )
+        complete = subprocess.CompletedProcess(
+            [], 0, CHECKER.EVD_0016_F7_AUDIT_SUCCESS, ""
+        )
+        with mock.patch.object(CHECKER.subprocess, "run", return_value=complete):
+            errors: list[str] = []
+            CHECKER.check_retained_f7_audit(errors)
+        self.assertEqual(errors, [])
+
+        changed = subprocess.CompletedProcess([], 0, "different populations\n", "")
+        with mock.patch.object(CHECKER.subprocess, "run", return_value=changed):
+            CHECKER.check_retained_f7_audit(errors)
+        self.assertEqual(
+            errors,
+            [f"{CHECKER.EVD_0016_F7_AUDIT}: retained audit populations changed"],
+        )
+
+        record.write_text(record.read_text().replace("16,838", "16,839"))
+        with mock.patch.object(CHECKER.subprocess, "run", return_value=complete):
+            errors = []
+            CHECKER.check_retained_f7_audit(errors)
+        self.assertEqual(
+            errors,
+            [f"{CHECKER.EVD_0016_RECORD}: F7 table differs from retained audit"],
+        )
+
+        failed = subprocess.CompletedProcess([], 1, "", "bad row")
+        with mock.patch.object(CHECKER.subprocess, "run", return_value=failed):
+            errors = []
+            CHECKER.check_retained_f7_audit(errors)
+        self.assertEqual(
+            errors,
+            [f"{CHECKER.EVD_0016_F7_AUDIT}: retained audit failed: bad row"],
+        )
 
     def test_identity_coverage_failure_reaches_documentation_gate(self) -> None:
         def completed(command, **kwargs):

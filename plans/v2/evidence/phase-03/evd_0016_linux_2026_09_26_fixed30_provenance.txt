@@ -1,0 +1,131 @@
+=== capture-meta.txt ===
+source_revision=4e9f367dd5a977edffc39b8916df342ad34e6560
+binary_sha256=d79ae1478f9a9f5d7954f3b4df42fed461d59885f7fc34125bf48ce4849ab57f
+callbacks_sha256=55f1bf5cac7d3891e2b4198fb8f90007fa1cd7af8a44d41b17bc107aaa85f07f
+command=/home/per/github/pertylizer/target/release/examples/evd_0016_cpal_timestamps record duplex 10000 --physical --output-device alsa:hw:CARD=1,DEV=0 --input-device alsa:hw:CARD=1,DEV=0 --buffer-frames 30
+probe_exit=0
+utc_start=2026-09-26T21:42:08.561589+00:00
+utc_end=2026-09-26T21:42:29.985174+00:00
+kernel=7.2.7-200.fc44.x86_64
+architecture=x86_64
+load_before=1.99 1.94 2.39 2/2370 1393064
+load_after=2.00 1.94 2.39 2/2371 1393091
+
+=== analyzer-meta.txt ===
+analyzer_command=python3 -B plans/v2/evidence/phase-03/evd_0016_analyse.py --require-current-method /tmp/evd_0016_2026_09_26/callbacks.csv
+analyzer_exit=1
+
+=== analyzer-stderr.txt ===
+EVD-0016 not supported: F7: input callback clock moved backwards
+
+=== gzip-sha256.txt ===
+ff251433adb81b9f63c41aae8b8748e825c704f30a1ff7ecf04199da326b3e92
+
+=== gzip-mtime.txt ===
+0
+
+=== kernel.txt ===
+Linux 7.2.7-200.fc44.x86_64 x86_64 GNU/Linux
+
+=== os-release.txt ===
+NAME="Fedora Linux"
+VERSION="44 (Workstation Edition)"
+RELEASE_TYPE=stable
+ID=fedora
+VERSION_ID=44
+VERSION_CODENAME=""
+PRETTY_NAME="Fedora Linux 44 (Workstation Edition)"
+ANSI_COLOR="0;38;2;60;110;180"
+LOGO=fedora-logo-icon
+CPE_NAME="cpe:/o:fedoraproject:fedora:44"
+DEFAULT_HOSTNAME="fedora"
+HOME_URL="https://fedoraproject.org/"
+DOCUMENTATION_URL="https://docs.fedoraproject.org/en-US/fedora/f44/"
+SUPPORT_URL="https://ask.fedoraproject.org/"
+BUG_REPORT_URL="https://bugzilla.redhat.com/"
+REDHAT_BUGZILLA_PRODUCT="Fedora"
+REDHAT_BUGZILLA_PRODUCT_VERSION=44
+REDHAT_SUPPORT_PRODUCT="Fedora"
+REDHAT_SUPPORT_PRODUCT_VERSION=44
+SUPPORT_END=2027-05-19
+VARIANT="Workstation Edition"
+VARIANT_ID=workstation
+
+=== rustc-version.txt ===
+rustc 1.98.1 (48a229cea 2026-09-01)
+binary: rustc
+commit-hash: 48a229ceaefd4985c50990b14116b6d856af0985
+commit-date: 2026-09-01
+host: x86_64-unknown-linux-gnu
+release: 1.98.1
+LLVM version: 22.1.8
+
+=== devices.txt ===
+host=alsa
+os=linux
+arch=x86_64
+output_devices:
+  name=Discard all samples (playback) or generate zero samples (capture) id=alsa:null type=Unknown format=F32 rate=48000 channels=2 buffers=Range { min: 1, max: 268435455 }
+  name=Default Audio Device id=alsa:sysdefault type=Unknown config_error=The requested audio device is not available. It may have been disconnected.
+  name=PipeWire Sound Server id=alsa:pipewire type=Unknown format=F32 rate=48000 channels=2 buffers=Range { min: 16, max: 262144 }
+  name=Default ALSA Output (currently PipeWire Media Server) id=alsa:default type=Unknown format=F32 rate=48000 channels=2 buffers=Range { min: 16, max: 262144 }
+  name=HDA Intel PCH, ALC256 Analog id=alsa:sysdefault:CARD=PCH type=Unknown format=F32 rate=48000 channels=2 buffers=Range { min: 85, max: 91628833 }
+  name=HDA Intel PCH, ALC256 Analog id=alsa:front:CARD=PCH,DEV=0 type=Unknown format=I32 rate=48000 channels=2 buffers=Range { min: 16, max: 262144 }
+  name=HDA Intel PCH, ALC256 Analog id=alsa:surround21:CARD=PCH,DEV=0 type=Unknown config_error=Device does not support output
+  name=HDA Intel PCH, ALC256 Analog id=alsa:surround40:CARD=PCH,DEV=0 type=Unknown format=I32 rate=48000 channels=2 buffers=Range { min: 16, max: 262144 }
+  name=HDA Intel PCH, ALC256 Analog id=alsa:surround41:CARD=PCH,DEV=0 type=Unknown config_error=Device does not support output
+  name=HDA Intel PCH, ALC256 Analog id=alsa:surround50:CARD=PCH,DEV=0 type=Unknown config_error=Device does not support output
+  name=HDA Intel PCH, ALC256 Analog id=alsa:surround51:CARD=PCH,DEV=0 type=Unknown format=I32 rate=48000 channels=2 buffers=Range { min: 16, max: 262144 }
+  name=HDA Intel PCH, ALC256 Analog id=alsa:surround71:CARD=PCH,DEV=0 type=Unknown format=I32 rate=48000 channels=2 buffers=Range { min: 16, max: 262144 }
+  name=HDA Intel PCH, HDMI 0 id=alsa:hdmi:CARD=PCH,DEV=0 type=Unknown format=I32 rate=48000 channels=2 buffers=Range { min: 16, max: 262144 }
+  name=HDA Intel PCH, HDMI 1 id=alsa:hdmi:CARD=PCH,DEV=1 type=Unknown format=I32 rate=48000 channels=2 buffers=Range { min: 16, max: 262144 }
+  name=HDA Intel PCH, HDMI 2 id=alsa:hdmi:CARD=PCH,DEV=2 type=Unknown format=I32 rate=48000 channels=2 buffers=Range { min: 16, max: 262144 }
+  name=HDA Intel PCH, HDMI 3 id=alsa:hdmi:CARD=PCH,DEV=3 type=Unknown format=I32 rate=48000 channels=2 buffers=Range { min: 16, max: 262144 }
+  name=HDA Intel PCH, ALC256 Analog id=alsa:hw:CARD=1,DEV=0 type=Unknown format=I32 rate=48000 channels=2 buffers=Range { min: 16, max: 262144 }
+  name=HDA Intel PCH, ALC256 Analog id=alsa:plughw:CARD=1,DEV=0 type=Unknown format=F32 rate=48000 channels=2 buffers=Range { min: 1, max: 268435455 }
+  name=HDA Intel PCH, HDMI 0 id=alsa:hw:CARD=1,DEV=3 type=Unknown format=I32 rate=48000 channels=2 buffers=Range { min: 16, max: 262144 }
+  name=HDA Intel PCH, HDMI 0 id=alsa:plughw:CARD=1,DEV=3 type=Unknown format=F32 rate=48000 channels=2 buffers=Range { min: 1, max: 268435455 }
+  name=HDA Intel PCH, HDMI 1 id=alsa:hw:CARD=1,DEV=7 type=Unknown format=I32 rate=48000 channels=2 buffers=Range { min: 16, max: 262144 }
+  name=HDA Intel PCH, HDMI 1 id=alsa:plughw:CARD=1,DEV=7 type=Unknown format=F32 rate=48000 channels=2 buffers=Range { min: 1, max: 268435455 }
+  name=HDA Intel PCH, HDMI 2 id=alsa:hw:CARD=1,DEV=8 type=Unknown format=I32 rate=48000 channels=2 buffers=Range { min: 16, max: 262144 }
+  name=HDA Intel PCH, HDMI 2 id=alsa:plughw:CARD=1,DEV=8 type=Unknown format=F32 rate=48000 channels=2 buffers=Range { min: 1, max: 268435455 }
+  name=HDA Intel PCH, HDMI 3 id=alsa:hw:CARD=1,DEV=9 type=Unknown format=I32 rate=48000 channels=2 buffers=Range { min: 16, max: 262144 }
+  name=HDA Intel PCH, HDMI 3 id=alsa:plughw:CARD=1,DEV=9 type=Unknown format=F32 rate=48000 channels=2 buffers=Range { min: 1, max: 268435455 }
+input_devices:
+  name=Discard all samples (playback) or generate zero samples (capture) id=alsa:null type=Unknown format=F32 rate=48000 channels=2 buffers=Range { min: 1, max: 268435455 }
+  name=Default Audio Device id=alsa:sysdefault type=Unknown format=F32 rate=48000 channels=2 buffers=Range { min: 128, max: 137438954 }
+  name=PipeWire Sound Server id=alsa:pipewire type=Unknown format=F32 rate=48000 channels=2 buffers=Range { min: 16, max: 262144 }
+  name=Default ALSA Output (currently PipeWire Media Server) id=alsa:default type=Unknown format=F32 rate=48000 channels=2 buffers=Range { min: 16, max: 262144 }
+  name=Logitech Webcam C925e, USB Audio id=alsa:sysdefault:CARD=C925e type=Unknown format=F32 rate=48000 channels=2 buffers=Range { min: 128, max: 137438954 }
+  name=Logitech Webcam C925e, USB Audio id=alsa:front:CARD=C925e,DEV=0 type=Unknown format=I16 rate=32000 channels=2 buffers=Range { min: 16, max: 32000 }
+  name=HDA Intel PCH, ALC256 Analog id=alsa:sysdefault:CARD=PCH type=Unknown format=F32 rate=48000 channels=2 buffers=Range { min: 85, max: 91628833 }
+  name=HDA Intel PCH, ALC256 Analog id=alsa:front:CARD=PCH,DEV=0 type=Unknown format=I32 rate=48000 channels=2 buffers=Range { min: 16, max: 262144 }
+  name=Logitech Webcam C925e, USB Audio id=alsa:hw:CARD=0,DEV=0 type=Unknown format=I16 rate=32000 channels=2 buffers=Range { min: 16, max: 32000 }
+  name=Logitech Webcam C925e, USB Audio id=alsa:plughw:CARD=0,DEV=0 type=Unknown format=F32 rate=48000 channels=2 buffers=Range { min: 4, max: 268435455 }
+  name=HDA Intel PCH, ALC256 Analog id=alsa:hw:CARD=1,DEV=0 type=Unknown format=I32 rate=48000 channels=2 buffers=Range { min: 16, max: 262144 }
+  name=HDA Intel PCH, ALC256 Analog id=alsa:plughw:CARD=1,DEV=0 type=Unknown format=F32 rate=48000 channels=2 buffers=Range { min: 1, max: 268435455 }
+
+=== probe-stderr.txt ===
+
+
+=== host-cpu-after-capture.txt ===
+12th Gen Intel(R) Core(TM) i9-12900
+
+=== post-falsifier-structural-audit.txt ===
+post-falsifier structural audit against retained decompressed CSV
+input: callbacks=12515 bridges=1010; contiguous callback/bridge sequences, 48k stereo format, positive frame shapes, contiguous derived start frames, noninverted and monotone observer brackets, one consistent summary; realtime_denied=0; errors=xruns=8898; loss/unavailable/invalidated/route_changed=0
+output: callbacks=16838 bridges=1010; contiguous callback/bridge sequences, 48k stereo format, positive frame shapes, contiguous derived start frames, noninverted and monotone observer brackets, one consistent summary; realtime_denied=0; errors=xruns=6472; loss/unavailable/invalidated/route_changed=0
+
+=== analyzer helper audit ===
+Both directions passed callbacks_for, bridges_for and summary_for numeric parsing, validate_sequences for callbacks and bridges, derived start-frame continuity, observer bracket ordering, 10,000 callback/1,010 bridge floors, zero realtime_denied and loss counts, and classified-error consistency when run separately on the retained decompressed CSV.
+
+=== reproducible-audit-command.txt ===
+python3 -B plans/v2/evidence/phase-03/evd_0016_audit_f7.py plans/v2/evidence/phase-03/evd_0016_linux_2026_09_26_fixed30.csv.gz
+
+=== reproducible-audit-exit.txt ===
+0
+
+=== reproducible-audit-output.csv ===
+direction,callbacks,bridges,backward_callback_steps,error_count,xrun_count,loss_count,realtime_denied_count
+input,12515,1010,315,8898,8898,0,0
+output,16838,1010,127,6472,6472,0,0

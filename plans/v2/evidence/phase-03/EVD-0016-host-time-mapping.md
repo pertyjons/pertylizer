@@ -6,13 +6,13 @@
 | Status | Active |
 | Phase | 09 exit evidence; historical `phase-03` path retained for stable links |
 | Created | 2026-08-25 |
-| Last reviewed | 2026-09-26 |
+| Last reviewed | 2026-09-27 |
 | Supersedes | — |
 | Superseded by | — |
-| Source revision | Historical harness: `f3df8b2e`; retained Linux observation: `1ac24ff620bc092793d78cf9e488050399a19bbe` |
+| Source revision | Historical harness: `f3df8b2e`; Linux 2026-09-12: `1ac24ff620bc092793d78cf9e488050399a19bbe`; Linux 2026-09-26: `4e9f367dd5a977edffc39b8916df342ad34e6560` |
 | Retention | Permanent |
 | Related | ADR-0022; ADR-0001 clauses 7, 11, and 16; ADR-0032 clauses 12-14 and 17-22; Phase 9 physical-ingress qualification and exit gate |
-| Artifacts | [`evd_0016_host_time.rs`](../../../../crates/synth_engine_v2/examples/evd_0016_host_time.rs), [`evd_0016_cpal_timestamps.rs`](../../../../crates/pertylizer/examples/evd_0016_cpal_timestamps.rs), [`evd_0016_analyse.py`](evd_0016_analyse.py), [`evd_0016_endpoint_policy.tsv`](../../../../crates/pertylizer/examples/evd_0016_endpoint_policy.tsv); retained callback artifacts are still required for the final three-platform result |
+| Artifacts | [`evd_0016_host_time.rs`](../../../../crates/synth_engine_v2/examples/evd_0016_host_time.rs), [`evd_0016_cpal_timestamps.rs`](../../../../crates/pertylizer/examples/evd_0016_cpal_timestamps.rs), [`evd_0016_analyse.py`](evd_0016_analyse.py), [`evd_0016_audit_f7.py`](evd_0016_audit_f7.py), [`evd_0016_endpoint_policy.tsv`](../../../../crates/pertylizer/examples/evd_0016_endpoint_policy.tsv); retained callback artifacts are still required for the final three-platform result |
 
 ## Question and falsifier
 
@@ -243,7 +243,7 @@ p99.9 bridge residual. If physical input is absent, that platform's input and
 arrival-fallback obligations remain explicitly missing rather than being
 silently reduced to output-only evidence.
 
-### Linux environment
+### Historical Linux environment, 2026-08-25
 
 The diagnostic Linux observation ran on Fedora Linux 44 Workstation, kernel
 7.1.9-200.fc44.x86_64, x86_64, on a 20-logical-CPU Intel Core i7-13700H. CPAL's
@@ -543,7 +543,7 @@ python3 -B plans/v2/evidence/phase-03/evd_0016_analyse.py \
 # Expected exit: 1, with F4 Not supported in both directions and duplex.
 ```
 
-This supplies retained, revision-bound Linux data for the current direct candidate.
+This supplies retained, revision-bound Linux data for the direct CPAL candidate.
 It does not provide a supported replacement mapping, analog round-trip latency,
 MIDI arrival/reference calibration, an adapter connection-clock bridge, or macOS
 and Windows observations. The evidence remains Active and ADR-0022 Deferred.
@@ -553,6 +553,74 @@ metadata, retained analysis and provenance, and found no false claim, contradict
 or unsupported conclusion. Hash/decompression checks and exact analyzer-output
 reproduction were run by the author; the reader independently inspected the
 identical decompressed artifact and plaintext metadata.
+
+## Retained Linux fixed-buffer diagnostic, 2026-09-26
+
+The retained run records source revision
+`4e9f367dd5a977edffc39b8916df342ad34e6560` and the release probe binary's
+SHA-256. The complete
+[compressed callback CSV](evd_0016_linux_2026_09_26_fixed30.csv.gz) and
+[provenance, device listing and analyzer diagnostic](evd_0016_linux_2026_09_26_fixed30_provenance.txt)
+are retained. Only callback/bridge timestamps and metadata were collected;
+input audio samples were not retained.
+
+On a separate 12th Gen Intel Core i9-12900 host running Fedora 44, kernel
+`7.2.7-200.fc44.x86_64`, direct
+`alsa:hw:CARD=1,DEV=0` selected the operator-attested direct ALSA ALC256
+endpoint in both directions.
+The advertised range was 16–262,144 frames; `--buffer-frames 30` requested and
+negotiated 30 frames for both stereo 48 kHz I32 streams. Both used the same
+20 ms observer bridge target and ran until each had 1,010 bridge records. The
+probe exited 0. There was no controlled load or physical loopback fixture; the
+1/5/15-minute load averages were 1.99/1.94/2.39 before and 2.00/1.94/2.39
+after capture. These snapshots do not define a qualified workload envelope.
+
+| Direction | Callbacks | Bridges | Backward callback-clock steps | Xruns (all stream errors) | Lost probe records |
+|---|---:|---:|---:|---:|---:|
+| Input | 12,515 | 1,010 | 315 | 8,898 | 0 |
+| Output | 16,838 | 1,010 | 127 | 6,472 | 0 |
+
+Each direction's `error_count` equals its `xrun_count`; unavailable, invalidated
+and route-change counts are zero. The analyzer checked the row schema and the
+device, buffer and freshness metadata for both directions before F7, but had
+not yet checked output `realtime_denied_count`. The retained
+[`evd_0016_audit_f7.py`](evd_0016_audit_f7.py) independently checks both
+directions' remaining numeric fields, callback and bridge sequences, constant
+48 kHz stereo format, positive frame shapes, contiguous derived frame positions,
+noninverted and monotone observer brackets, exactly one consistent summary per
+direction, and zero real-time-denial, loss, unavailable, invalidated and
+route-change counts. Its command and output are recorded in the provenance
+file. The Core V2 evidence gate reruns it against the retained compressed CSV
+and requires its populations and counters to match this table.
+
+The analyzer exited 1 with `EVD-0016 not supported: F7: input callback clock
+moved backwards`. It stops at the first falsifier, so this run does not provide
+an F4 uncertainty result. The output clock also moved backwards, as counted
+from the retained callback rows. This fixed-buffer configuration fails F7
+monotonicity and reports thousands of xruns; it is a retained failed diagnostic
+that does not qualify this direct configuration. No claim is
+made for another device, buffer size, or load.
+
+The deterministic gzip has `mtime=0`. Its uncompressed CSV SHA-256 is
+`55f1bf5cac7d3891e2b4198fb8f90007fa1cd7af8a44d41b17bc107aaa85f07f`;
+the release probe binary SHA-256 is
+`d79ae1478f9a9f5d7954f3b4df42fed461d59885f7fc34125bf48ce4849ab57f`.
+Re-derive the result from the retained bytes with:
+
+```bash
+gzip -dc plans/v2/evidence/phase-03/evd_0016_linux_2026_09_26_fixed30.csv.gz \
+  > /tmp/evd_0016_linux_2026_09_26_fixed30.csv
+python3 -B plans/v2/evidence/phase-03/evd_0016_analyse.py \
+  --require-current-method /tmp/evd_0016_linux_2026_09_26_fixed30.csv
+# Expected exit: 1, with F7 input callback clock moved backwards.
+python3 -B plans/v2/evidence/phase-03/evd_0016_audit_f7.py \
+  plans/v2/evidence/phase-03/evd_0016_linux_2026_09_26_fixed30.csv.gz
+# Expected exit: 0, with the table's populations, backward steps and counters.
+```
+
+This run adds current-method Linux rejection evidence. ADR-0022 remains
+`Deferred`; a characterized replacement, physical adapter and loopback timing,
+and macOS/Windows observations remain missing from Phase 9 acceptance.
 
 ## Limitations
 
@@ -567,9 +635,10 @@ identical decompressed artifact and plaintext metadata.
   latency remain distinct.
 - The rejected PipeWire exploration describes a server-backed graph, not a
   direct hardware PCM, and therefore contributes no physical-device result.
-- The diagnostic Linux run fires F4 on the one measured device under the
-  callback-priority configuration. Its uncontrolled system load prevents
-  generalizing the result to every Linux endpoint or deployment envelope.
+- The retained 2026-09-12 Linux run fires F4 on sof-hda-dsp; the 2026-09-26
+  fixed-buffer run fires F7 on the ALC256 endpoint. Neither had controlled
+  system load, so neither result characterizes every Linux endpoint or a
+  deployment envelope.
 - This record was still `Active` when the endpoint policy, rejected eight-sample
   estimator, and F11 clock-bridge criterion were added. Every final retained
   platform and adapter artifact must be collected after those criteria and use
@@ -577,10 +646,13 @@ identical decompressed artifact and plaintext metadata.
 
 ## Conclusion
 
-The direct candidate remains `Not supported` on the measured Linux configuration.
-The retained 2026-09-12 observation fires F4 at 584 input and 601 output frames,
-with a 1,185-frame duplex sum. It preserves the complete raw artifact and its
-source revision; it does not qualify a deployment envelope or generalize to every
-Linux endpoint. macOS/Windows observations, per-adapter arrival/reference and
-connection-clock measurements, and a supported replacement mapping remain absent.
+The direct CPAL candidate is `Not supported` in both observed Linux
+configurations. The retained 2026-09-12 sof-hda-dsp observation fires F4 at 584
+input and 601 output frames, with a 1,185-frame duplex sum. The retained
+2026-09-26 ALC256 observation fires F7 for the input callback clock moving
+backwards; the separate audit also found output backward steps and xruns.
+It does not yield an F4 estimate. Neither qualifies a deployment envelope or
+generalizes to every Linux endpoint. macOS/Windows observations, per-adapter
+arrival/reference and connection-clock measurements, and a supported replacement
+mapping remain absent.
 ADR-0022 stays `Deferred`; physical live timing and Phase 9 exit remain blocked.

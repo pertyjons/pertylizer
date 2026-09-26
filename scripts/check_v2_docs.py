@@ -63,6 +63,16 @@ EVD_0016_SIMULATOR = Path(
     "crates/synth_engine_v2/examples/evd_0016_host_time.rs"
 )
 EVD_0016_RECORD = Path("plans/v2/evidence/phase-03/EVD-0016-host-time-mapping.md")
+EVD_0016_F7_AUDIT = Path("plans/v2/evidence/phase-03/evd_0016_audit_f7.py")
+EVD_0016_F7_ARTIFACT = Path(
+    "plans/v2/evidence/phase-03/evd_0016_linux_2026_09_26_fixed30.csv.gz"
+)
+EVD_0016_F7_AUDIT_SUCCESS = (
+    "direction,callbacks,bridges,backward_callback_steps,error_count,xrun_count,"
+    "loss_count,realtime_denied_count\n"
+    "input,12515,1010,315,8898,8898,0,0\n"
+    "output,16838,1010,127,6472,6472,0,0\n"
+)
 EVD_0016_SIMULATOR_DIGEST = re.compile(
     r"provisional simulator CSV.*?SHA-256\s+`([0-9a-f]{64})`", re.DOTALL
 )
@@ -398,6 +408,71 @@ def check_evidence_harnesses(errors: list[str]) -> None:
             errors.append(f"{relative_path}: self-test omitted its control summary")
 
 
+def check_retained_f7_audit(errors: list[str]) -> None:
+    missing = False
+    for path in (EVD_0016_F7_AUDIT, EVD_0016_F7_ARTIFACT):
+        if not (REPO_ROOT / path).is_file():
+            errors.append(f"{path}: required retained F7 audit input is missing")
+            missing = True
+    if missing:
+        return
+    try:
+        completed = subprocess.run(
+            [
+                sys.executable, "-B", str(REPO_ROOT / EVD_0016_F7_AUDIT),
+                str(REPO_ROOT / EVD_0016_F7_ARTIFACT),
+            ],
+            cwd=REPO_ROOT,
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+    except OSError as error:
+        errors.append(f"{EVD_0016_F7_AUDIT}: cannot run retained audit: {error}")
+        return
+    if completed.returncode != 0:
+        detail = completed.stderr.strip() or completed.stdout.strip() or "no diagnostic"
+        errors.append(f"{EVD_0016_F7_AUDIT}: retained audit failed: {detail}")
+        return
+    if completed.stdout != EVD_0016_F7_AUDIT_SUCCESS:
+        errors.append(f"{EVD_0016_F7_AUDIT}: retained audit populations changed")
+        return
+    try:
+        record = (REPO_ROOT / EVD_0016_RECORD).read_text(encoding="utf-8")
+    except OSError as error:
+        errors.append(f"{EVD_0016_RECORD}: cannot read retained F7 table: {error}")
+        return
+    section = record.partition("## Retained Linux fixed-buffer diagnostic, 2026-09-26")[2]
+    section = section.partition("\n## ")[0]
+    table_rows = re.findall(
+        r"^\|\s*(Input|Output)\s*\|\s*([\d,]+)\s*\|\s*([\d,]+)\s*\|"
+        r"\s*([\d,]+)\s*\|\s*([\d,]+)\s*\|\s*([\d,]+)\s*\|$",
+        section,
+        re.MULTILINE,
+    )
+    if len(table_rows) != 2 or {row[0] for row in table_rows} != {"Input", "Output"}:
+        errors.append(f"{EVD_0016_RECORD}: expected one F7 table row per direction")
+        return
+    table_by_direction = {}
+    for direction, callbacks, bridges, backward, xruns, losses in table_rows:
+        values = [int(value.replace(",", "")) for value in (
+            callbacks, bridges, backward, xruns, losses,
+        )]
+        table_by_direction[direction.lower()] = values
+    expected_lines = EVD_0016_F7_AUDIT_SUCCESS.splitlines()
+    for line in expected_lines[1:]:
+        direction, callbacks, bridges, backward, errors_count, xruns, losses, realtime = line.split(",")
+        if (
+            table_by_direction[direction] != [
+                int(callbacks), int(bridges), int(backward), int(xruns), int(losses),
+            ]
+            or errors_count != xruns
+            or realtime != "0"
+        ):
+            errors.append(f"{EVD_0016_RECORD}: F7 table differs from retained audit")
+            return
+
+
 def check_evidence_simulators(errors: list[str]) -> None:
     simulator = REPO_ROOT / EVD_0016_SIMULATOR
     if not simulator.is_file():
@@ -627,7 +702,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--evidence",
         action="store_true",
-        help="also compile and run the deterministic EVD-0016 simulator",
+        help="also run the EVD-0016 simulator and retained F7 audit",
     )
     return parser.parse_args(argv)
 
@@ -642,6 +717,7 @@ def main(argv: list[str] | None = None) -> int:
     check_evidence_harnesses(errors)
     if args.evidence:
         check_evidence_simulators(errors)
+        check_retained_f7_audit(errors)
     check_evidence_dependency_pins(errors)
     check_spec_prefixes(errors)
     check_inventory_coverage(errors)
