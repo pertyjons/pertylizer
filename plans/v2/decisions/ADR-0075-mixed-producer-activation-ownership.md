@@ -77,6 +77,54 @@ modulation histories. A shared upstream source or non-note target whose
 change can affect a live instance requires its own declared ownership or
 ordering law.
 
+### Protected note credit rehearsal still needs a law
+
+A note-on/key-release-only rehearsal is a possible next slice, but no credit
+equation is accepted yet. An independent design read falsified an attempted
+`Q + H <= C` rule: the concrete bridge has one 128-operation outstanding
+credit across queued input, renderer cells and retained results, not three
+interchangeable credits. Splitting that custody or returning an ordinary
+packet after its receipt would change ADR-0073's terminal overload policy and
+needs an explicit amendment. A protected source lane also needs an order law:
+the current source producer retries a full-ring packet before later packets,
+while the live renderer stages by nominal time, source rank and serial. The
+renderer admits a later serial with an earlier nominal time, so source arrival
+order alone cannot pair its releases. A new consumer must either reject that
+regression before receipt or prove a shared execution order across boundaries.
+
+The future proof must carry a potential onset, its source/channel/key FIFO
+tombstone, tracker cell, identity, ingress hold, protected release path and
+result custody through every handoff. An onset refused after an upstream
+receipt cannot simply disappear: with repeated keys, its later release would
+otherwise end a newer sounding note. An accepted queued packet that later
+refuses needs a result cell or a defined terminal disposition; returning its
+original after receipt is not an available outcome in the current bridge.
+Ingress minting and tracker writes happen immediately, while
+`LiveInputStream` reports their outcomes only after the callback succeeds.
+On later failure it closes the owner and marks unresolved entries, including
+staged and still-queued ones, `Cancelled`; it does not undo minted identities
+or held cells. Joined teardown must classify those remaining obligations.
+Any nonterminal callback rollback would be a new contract under item 1's
+terminal-fault scope and an explicit ADR-0073 amendment. The eventual
+acceptance rule must account for callback-size dependence of committed versus
+cancelled outcomes. Tracker occupancy survives result collection, so a result
+cell cannot replace a held tracker cell. A repeated-key onset without a
+matching release retains an obligation until an explicit termination or
+joined cancellation rule resolves it.
+
+Before any note-only rehearsal claims protected release, saturate each
+boundary with earlier ordinary packets and uncollected outcomes, then show
+that the exact reserved source/channel/key release reaches audio after bounded
+service without skipping an accepted prefix. Test a refused first onset
+followed by an accepted second onset on the same key, a later serial with an
+earlier nominal time, a failure in a later quantum of one callback, and a
+collected result whose key still occupies a tracker cell. Joined teardown
+must retain or classify staged outcomes, completed but uncollected results,
+key tombstones, queued control-to-audio packets, accepted pending releases
+and unexamined source packets without requiring another callback. Pedal,
+mass release, bend, transport, reset, activation and loop still need their own
+credit and redemption laws; this paragraph grants no mixed-render permission.
+
 ## Unresolved acceptance work
 
 The candidate rule is insufficient until a concrete combined host answers
