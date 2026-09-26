@@ -6,7 +6,7 @@
 | Status | Proposed |
 | Phase | 9 |
 | Created | 2026-09-26 |
-| Last reviewed | 2026-09-26 |
+| Last reviewed | 2026-09-27 |
 | Related | ADR-0009, ADR-0022, ADR-0023, ADR-0046, ADR-0047, ADR-0048, ADR-0050, ADR-0051, ADR-0055, ADR-0058, ADR-0065, ADR-0072, ADR-0073, ADR-0074, EVD-0024 |
 | Amends | None while proposed. Acceptance requires explicit amendments to affected ownership, release and host-profile contracts. |
 | Supersedes | — |
@@ -75,7 +75,7 @@ activation must neither write nor reseed live-owned instance-local control
 slots, their current ramps, next live writes' ramp behavior or local
 modulation histories. A shared upstream source or non-note target whose
 change can affect a live instance requires its own declared ownership or
-ordering law.
+ordering law, or admission must refuse that target.
 
 ### Protected note credit rehearsal still needs a law
 
@@ -189,6 +189,45 @@ replacement through `replace_compiled`, must be born split in
 exposed to any caller or `SessionRuntime::prepare_detached` stamps it.
 `Origin.table` must match the split owners' `TableId`; each owner must also
 retain its producer-span provenance.
+The constructor alone cannot bind later work: `CompiledEventScheduler::prepare`,
+`SessionRuntime::prepare_detached`, `plan_activation` and public
+`stamp_compiled` currently accept a caller-supplied stream or event list.
+The mixed constructor must check that the artifact's admitted stream and live
+slot belong to the plan it opens. It then moves one artifact into a
+non-clonable split owner and binds it to that owner's epoch and `TableId`.
+Plan identity is necessary for that match but does not establish exclusive
+custody: callers can admit equal streams again. Every mixed stamping path,
+including a seek, must read the `AdmittedCompiledStream` stored
+inside that owner; its API must take no later caller-supplied stream or event
+list. `CompiledPlan` and `AdmittedCompiledStream` remain clonable, while the
+target-binding artifact is non-clonable. The owner consumes the artifact; the
+absence of a later stream parameter, not the artifact's `Clone` status alone,
+prevents a separately admitted equal list from replacing it. A compile-fail
+API test must show that no second stream can be supplied to the first owner's
+stamping path. Dropping an owner must leave no usable stamp authority for its
+table.
+A replacement plan needs a fresh target binding against that plan, moved into
+a fresh split owner before the replacement control or renderer is exposed in
+the existing epoch. The old binding cannot authorize a new plan's events.
+
+Ordinary `StreamControl::open` and `open_authored` still reach
+`open_in_epoch` with a whole-table minter, and `replace_compiled` does too.
+They may keep their compiled-only uses of a plan with mixed declarations, but
+mixed ingress must require the distinct split-born owner. That owner must not
+expose ordinary `StreamControl` live offers or `minter_mut`, which would
+operate on the control-side minter. The existing mixed-ingress refusal remains
+until this separation is implemented and tested.
+
+Candidate offer, control-side collection through `StreamControl::adopted`, and
+withdrawal currently compare `TableId` without producer-span provenance.
+Audio-side `PreparedRenderer::adopt` makes no table comparison. Mixed custody
+must check the compiled producer and span at offer, collection and withdrawal,
+and prove that audio adoption cannot receive a candidate with the wrong scope.
+The renderer's live-note registry can admit an event into any index of its
+table, so it must also reject a compiled edge naming a live-range index before
+it changes a live registry row. The target binding's span arithmetic and the
+split minters' spans must come from
+one authority or be compared at construction.
 There must be no later split of an ordinary control: public `stamp_compiled`
 can mint without a scheduler and can leave no outstanding note while still
 advancing generations, so a live-count or scheduler check cannot prove that
@@ -205,6 +244,15 @@ a compiled candidate snapshot but before its promotion by
 `StreamControl::adopted`, and a live mint or release during a compiled stamp's
 copy/commit window. A later live mint or resolve must not see a rewound
 generation, duplicate identity or lost obligation in either case.
+
+Compiled-only activation also reaches audio-side state: renderer adoption
+reseeds every parameter slot, and catch-up currently fans writes across every
+voice instance. The split must scope both operations to compiled-owned rows
+and preserve live-owned current ramps, the next live write's ramp behavior and
+local modulation history. A held live note that survives identity resolution
+but changes gate, magnitude, ramp or modulation at adoption still falsifies
+the split. Shared upstream sources and other non-note targets need an explicit
+ordering law or admission refusal before the mixed host can render.
 
 The live owner's source receipt still needs a stable way to name a later
 release, bend or group before an audio-owned minter returns an identity. The

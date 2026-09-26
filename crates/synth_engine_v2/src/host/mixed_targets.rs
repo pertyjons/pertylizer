@@ -51,7 +51,7 @@ pub enum MixedTargetError {
 ///
 /// Construct off the audio thread. The underlying mixed-ingress and activation refusals
 /// remain in force; this artifact grants no runtime access by itself.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 #[must_use]
 pub struct MixedTargetAdmission {
     stream: AdmittedCompiledStream,
