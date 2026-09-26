@@ -199,6 +199,10 @@ a tested combined host and explicit contract amendments before the current
 refusals can be lifted. A candidate first slice is an
 isolated audio-owned live ingress with source/result/held-cell credits and
 protected releases.
+The existing exclusive `LiveInputStream` now preflights held-cell credit against
+pending key releases, sustain and Stop ordering. Source queue and result credit
+still follow ADR-0073's terminal overload policy; the proposed protected-release
+contract and combined host remain unbuilt.
 
 ### Selected work — ordered transport through live I/O
 
