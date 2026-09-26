@@ -34,10 +34,10 @@ producer ranges. The audio callback would be the sole writer of the live
 range's identity, hold and sounding state. A source thread would submit
 bounded operations, not mint identities. In transport mode, control would
 stamp candidates against a copy of only the compiled range and promote that
-range at collection, before audio adoption. In loop mode, audio would own the
-compiled range under a custody token. A mode transfer must revoke the old
-writer before the new one mints. The live range must not be overwritten by a
-compiled candidate or rebuilt at a loop boundary.
+range when it collects the audio-adopted retirement. In loop mode, audio
+would own the compiled range under a custody token. A mode transfer must
+revoke the old writer before the new one mints. The live range must not be
+overwritten by a compiled candidate or rebuilt at a loop boundary.
 
 Plan admission would bind each note producer to its playable target node
 instances and control rows. A one-instance node is shared even when producers
@@ -148,6 +148,79 @@ hold and freed its held cell even though its outcome becomes `Cancelled`.
 Joined teardown must classify the actual note and release state, not infer it
 from that outcome alone. Add these counterexamples to any protected-release
 rehearsal before claiming it passes.
+
+### Split identity custody is not a table copy
+
+An independent design consultation rejected a late merge of a compiled
+candidate's whole identity-table copy with a concurrently moving live range.
+Once audio has adopted an activation, refusing its rightful retirement during
+control collection leaves the renderer playing identities the authoritative
+minter does not own and leaves `in_force` behind the scheduler. Builder checks
+and audio-side offer guards must ensure that a normally adopted retirement
+passes rightful collection. The offer must require the candidate's
+`supersedes` to equal audio's `in_force`; the single exchange slot must refuse
+another offer while pending or retired; and control's `sequence <= in_force`
+check must refuse replay after promotion.
+`StreamControl::adopted` still returns the box on `ForeignStream`,
+`ForeignTable`, `NotAdopted` or `AlreadyPromoted`; the latter two cover a
+wrongly submitted unadopted candidate or an invalid replay, not a normally
+adopted retirement.
+The compiled range needs exclusive writer custody until collection, which
+must promote its minter, outstanding set, anchor and activation sequence as
+one operation.
+
+Matching compiled slots to a baseline is not a freshness test when two
+candidates contain the same slots; activation sequence still decides that.
+Unadopted candidates may mint identical index/generation pairs in private
+copies. The falsifier is an identity from such a copy reaching rendering, not
+the existence of equal private values.
+
+A per-producer minter would need a one-time split, with `TableId`, `ProducerId`
+and span provenance checked together. Existing `IdentityTable` methods index
+absolute slots and allow whole-table release, copy and rebuild; merely handing
+each thread a shorter vector of that type is unsound. A live owner must expose
+neither compiled-range minting nor an audio-thread copy or final drop. Its
+source receipt still needs a stable way to name a later release, bend or group
+before an audio-owned minter returns an identity. The hold entitlement and
+identity mint must be acquired or refused atomically under HOST-INV-009; moving
+only the mint to audio leaves a hold stranded on a late refusal. The
+control-side replacement guard currently reads its minter, candidate count
+and live-note diagnostic. The session audio guard checks the renderer registry
+and a prepared control-minter obligation snapshot when the table changes; the
+live swap guard checks renderer obligations and ingress holds. A split owner
+must keep all those guards authoritative. `IdentityTable::rebuild` itself
+reads only that table's live count and cannot stand in for a mixed-owner
+obligation check.
+
+The interval from candidate preparation through control collection has
+distinct custodies. Before offer, a candidate may be held by its caller or
+by a `PreparedSessionCommand` in transit or a `SessionRuntime` command slot
+on the audio side. A refused send returns the prepared packet and its box for
+`SessionControl::cancel`. After offer, the candidate is in the scheduler's
+`Exchange::Pending`. After adoption, its box owns the new compiled minter and
+outstanding set in `Exchange::Retired`. An offer refusal returns the box to
+the immediate caller; the session runtime restores it to the command slot.
+A refused capture start restores the unoffered candidate to that slot too.
+`take_retired` can move a retirement back into its adopting command slot or
+to a `CompiledEventScheduler::collect()` caller. On close,
+`close_exchange` can instead return either Pending or Retired to a session
+command slot. The serial host can resolve a candidate in its command slot
+through `SessionRuntime::collect`; a refusal restores the box there. The
+transfer host can use `SessionAudio::take_completed` to move a command entry
+holding either an adopted retirement or an unadopted candidate into a
+`CompletedSessionCommand` in transit to `SessionControl::collect`. Both
+collection paths route by the effective-time marker to `adopted` or
+`withdraw`. A failed send, `cancel` or `collect` must retain any returned
+packet and its box. The audio owner retains the live range throughout.
+Joined teardown must inspect all these locations, including a candidate
+awaiting withdrawal and a delayed or refused collection. Any live mapping
+that depends on the transport anchor must use the audio-adopted anchor in that
+interval, not control's old one. Identity continuity alone is not an audible
+acceptance test: compiled catch-up currently fans parameter addresses across
+voice instances, so it can alter a held live note's gate, magnitude, ramp or
+modulation while its identity still resolves. Tests must cover those states
+and live mint, release, reuse and retirement after a candidate snapshot, plus
+release in the adoption quantum.
 
 ## Unresolved acceptance work
 
