@@ -19,7 +19,9 @@ use synth_engine_v2::render::{AudioBlockMut, PreparedRenderer};
 use synth_engine_v2::schedule::{
     AdmittedCompiledStream, CompiledEventScheduler, CompiledPayload, PlanEvent,
 };
-use synth_engine_v2::stream::{ActivationBuildError, ActivationRequest, StreamControl};
+use synth_engine_v2::stream::{
+    ActivationBuildError, ActivationRequest, MixedStreamControl, StreamControl,
+};
 use synth_engine_v2::time::{FrameCount, PlanPosition, QUANTUM_FRAMES, SampleTime, StreamAnchor};
 use synth_engine_v2::transport::{ActivationRefused, ActivationSequence, LoopInterval};
 
@@ -2531,6 +2533,35 @@ fn mixed_target_binding_accepts_disjoint_voice_instances_in_both_producer_orders
             binding.live_producer(),
             ProducerId::new(u16::from(compiled_first))
         );
+    }
+}
+
+#[test]
+fn mixed_stream_opens_split_owners_from_the_bound_plan_and_stream() {
+    for compiled_first in [true, false] {
+        let plan = mixed_producers(ExecutionScope::Voice, compiled_first);
+        let slot = plan.resolve_note(ENVELOPE).expect("playable envelope");
+        let stream = admitted(&plan, &[note(&plan, 0, true)]);
+        let binding = MixedTargetAdmission::admit(plan, stream.clone(), slot)
+            .expect("the targets are disjoint");
+        let (control, audio) =
+            MixedStreamControl::open(binding, ORIGIN).expect("the bound split stream prepares");
+
+        assert_eq!(control.plan().id(), stream.plan());
+        assert_eq!(control.stream(), &stream);
+        assert_eq!(control.compiled_slots(), &[slot]);
+        assert_eq!(control.anchor(), ORIGIN);
+        assert_eq!(control.epoch(), audio.epoch());
+        assert_eq!(control.table_id(), audio.table_id());
+        assert_eq!(
+            control.compiled_producer(),
+            ProducerId::new(u16::from(!compiled_first))
+        );
+        assert_eq!(
+            audio.live_producer(),
+            ProducerId::new(u16::from(compiled_first))
+        );
+        assert_eq!(audio.live_slot(), slot);
     }
 }
 

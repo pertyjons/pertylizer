@@ -19,15 +19,15 @@
 //! audio thread" and its registry as "the audio thread's half" while holding both. This
 //! module gives that division an owner; ADR-0072 defines the later audition exception.
 //!
-//! # One constructor, and where a crossed pair is caught
+//! # Ordinary pair construction and its crossed-pair check
 //!
-//! [`StreamControl::open`] is the only way to obtain either half. It issues the epoch, builds
-//! the minter, and prepares the renderer against **that** minter's table identity, so the two
-//! halves it returns always answer to each other. The renderer's foreign filter compares an
-//! occurrence's table against its registry's; two identities there would make every one of
-//! the stream's own events look foreign.
+//! [`StreamControl::open`] issues the epoch, builds the ordinary minter, and prepares the
+//! renderer against **that** minter's table identity, so the two halves it returns answer to
+//! each other. The renderer's foreign filter compares an occurrence's table against its
+//! registry's; two identities there would make every one of the stream's own events look
+//! foreign.
 //!
-//! **What it does not prevent is a caller crossing two streams' halves**, and an independent
+//! **It does not prevent a caller crossing two ordinary streams' halves**, and an independent
 //! review was right that an earlier revision of this comment claimed otherwise. Two halves are
 //! two values, so nothing in the type system stops someone pairing one stream's control with
 //! another's renderer. That pairing is refused where it becomes wrong: a schedule carries the
@@ -35,12 +35,15 @@
 //! renderer whose epoch or prepared table differs. The refusal is the whole schedule, rather
 //! than each of its
 //! events discarded as stale, which is the difference between a diagnosable error and a
-//! silent nothing.
+//! silent nothing. [`MixedStreamControl::open`] separately prepares two disjoint range owners
+//! from one target binding. It exposes no mixed scheduling or rendering operation yet.
 
 #[cfg(test)]
 mod table_tests;
 
 mod live;
+mod mixed;
+pub use mixed::{MixedStreamAudio, MixedStreamControl, MixedStreamOpenError};
 
 use std::sync::Arc;
 

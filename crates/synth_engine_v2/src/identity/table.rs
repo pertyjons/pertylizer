@@ -6,8 +6,8 @@
 //! The exclusive authored source also uses bounded `mint_keyed` there.
 
 use super::{
-    INDEX_SPACE, IdentityError, IdentityTable, LiveNotes, NoteIdentity, PRODUCER_SPACE, ProducerId,
-    Range, Slot, TableId, issue_table_id,
+    CompiledRangeMinter, INDEX_SPACE, IdentityError, IdentityTable, LiveNotes, LiveRangeMinter,
+    NoteIdentity, PRODUCER_SPACE, ProducerId, Range, RangeMinter, Slot, TableId, issue_table_id,
 };
 use crate::quantities::HeldNoteCount;
 
@@ -30,6 +30,55 @@ fn producer_spans(producer_ranges: &[HeldNoteCount]) -> Vec<Range> {
 }
 
 impl IdentityTable {
+    /// Split only a fresh two-producer table into disjoint absolute-index minters.
+    /// A refusal returns the intact table, including any outstanding obligations.
+    /// The caller must choose which producer is compiled before exposing either owner.
+    pub(crate) fn split_fresh_two(self) -> Result<(RangeMinter, RangeMinter), Self> {
+        let [first, second] = self.ranges.as_slice() else {
+            return Err(self);
+        };
+        let Some(first_end) = first.start.checked_add(first.len) else {
+            return Err(self);
+        };
+        let Some(second_end) = second.start.checked_add(second.len) else {
+            return Err(self);
+        };
+        let Ok(end) = usize::try_from(second_end) else {
+            return Err(self);
+        };
+        if self.live != 0
+            || self.retired != 0
+            || self.minted != 0
+            || first.start != 0
+            || first.len == 0
+            || second.len == 0
+            || second.start != first_end
+            || second_end > INDEX_SPACE
+            || end != self.slots.len()
+        {
+            return Err(self);
+        }
+        let Ok(split) = usize::try_from(second.start) else {
+            return Err(self);
+        };
+        let mut first_slots = self.slots;
+        let second_slots = first_slots.split_off(split);
+        let make = |producer, span, slots| RangeMinter {
+            id: self.id,
+            producer,
+            span,
+            slots,
+            generation_ceiling: self.generation_ceiling,
+            retired: 0,
+            live: 0,
+            minted: 0,
+        };
+        Ok((
+            make(ProducerId::new(0), *first, first_slots),
+            make(ProducerId::new(1), *second, second_slots),
+        ))
+    }
+
     /// Build a table whose producers get disjoint ranges, in the order given.
     ///
     /// `max_held_notes` is the profile's, and the relation against the index space is
@@ -193,6 +242,46 @@ impl IdentityTable {
             });
         }
         Self::with_generation_ceiling(max_held_notes, producer_ranges, self.generation_ceiling)
+    }
+}
+
+impl CompiledRangeMinter {
+    pub(crate) const fn from_partition(partition: RangeMinter) -> Self {
+        Self(partition)
+    }
+
+    /// This mixed stream's table identity.
+    pub const fn id(&self) -> TableId {
+        self.0.id
+    }
+
+    /// The producer whose range this minter alone owns.
+    pub const fn producer(&self) -> ProducerId {
+        self.0.producer
+    }
+
+    pub(crate) const fn span(&self) -> Range {
+        self.0.span
+    }
+}
+
+impl LiveRangeMinter {
+    pub(crate) const fn from_partition(partition: RangeMinter) -> Self {
+        Self(partition)
+    }
+
+    /// This mixed stream's table identity.
+    pub const fn id(&self) -> TableId {
+        self.0.id
+    }
+
+    /// The producer whose range this minter alone owns.
+    pub const fn producer(&self) -> ProducerId {
+        self.0.producer
+    }
+
+    pub(crate) const fn span(&self) -> Range {
+        self.0.span
     }
 }
 

@@ -23,6 +23,69 @@ fn table() -> IdentityTable {
 }
 
 #[test]
+fn split_minters_share_a_table_but_cannot_release_each_others_notes() {
+    let table = table();
+    let table_id = table.id();
+    let (first, second) = table.split_fresh_two().expect("a fresh partition");
+    let mut compiled = CompiledRangeMinter::from_partition(first);
+    let mut live = LiveRangeMinter::from_partition(second);
+    let compiled_note = compiled
+        .mint_keyed(node(), crate::quantities::KeyIdentity::LOWEST)
+        .expect("compiled range has room");
+    let live_note = live
+        .mint_keyed(node(), crate::quantities::KeyIdentity::LOWEST)
+        .expect("live range has room");
+
+    assert_eq!(compiled.id(), table_id);
+    assert_eq!(live.id(), table_id);
+    assert_ne!(compiled_note, live_note);
+    assert_eq!(
+        compiled.resolve(live_note),
+        Resolution::Orphan(OrphanCause::FreeIndex)
+    );
+    assert_eq!(
+        live.resolve(compiled_note),
+        Resolution::Orphan(OrphanCause::FreeIndex)
+    );
+    assert_eq!(
+        compiled.release(live_note),
+        Resolution::Orphan(OrphanCause::FreeIndex)
+    );
+    assert_eq!(
+        live.release(compiled_note),
+        Resolution::Orphan(OrphanCause::FreeIndex)
+    );
+    assert_eq!(compiled.resolve(compiled_note), Resolution::Live);
+    assert_eq!(live.resolve(live_note), Resolution::Live);
+
+    assert_eq!(compiled.release(compiled_note), Resolution::Live);
+    assert_eq!(live.release(live_note), Resolution::Live);
+    let next_live = live
+        .mint_keyed(node(), crate::quantities::KeyIdentity::LOWEST)
+        .expect("released live index is reusable");
+    assert_eq!(
+        live.resolve(live_note),
+        Resolution::Orphan(OrphanCause::SupersededGeneration)
+    );
+    assert_eq!(live.resolve(next_live), Resolution::Live);
+    assert_eq!(
+        compiled.resolve(compiled_note),
+        Resolution::Orphan(OrphanCause::FreeIndex)
+    );
+}
+
+#[test]
+fn splitting_a_live_table_returns_its_outstanding_obligations() {
+    let mut table = table();
+    let note = table.mint(A, node()).expect("the range has room");
+    let mut retained = table
+        .split_fresh_two()
+        .expect_err("a live table cannot be split");
+    assert_eq!(retained.resolve(note), Resolution::Live);
+    assert_eq!(retained.release(note), Resolution::Live);
+}
+
+#[test]
 fn a_minted_identity_names_a_live_note_and_a_released_one_does_not() {
     // The whole point in one case. ADR-0046 clause 3 promises an orphan edge "is counted
     // rather than allowed to release another note", and with `{ node, edge }` that sentence

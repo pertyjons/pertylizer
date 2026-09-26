@@ -4,11 +4,11 @@
 //! and live note slot. It does not prepare ingress, activate transport, or permit
 //! mixed rendering.
 
-use std::collections::BTreeSet;
+use std::{collections::BTreeSet, sync::Arc};
 
 use thiserror::Error;
 
-use crate::identity::{INDEX_SPACE, ProducerId};
+use crate::identity::{INDEX_SPACE, ProducerId, Range};
 use crate::ir::StealingPolicy;
 use crate::plan::{CompiledPlan, NodeSlot, NoteSlot, ParameterSlot};
 use crate::schedule::{AdmittedCompiledStream, CompiledPayload};
@@ -78,10 +78,12 @@ impl MixedTargetFailure {
 #[derive(Debug)]
 #[must_use]
 pub struct MixedTargetAdmission {
-    plan: CompiledPlan,
+    plan: Arc<CompiledPlan>,
     stream: AdmittedCompiledStream,
     live_slot: NoteSlot,
     live_producer: ProducerId,
+    compiled_span: Range,
+    live_span: Range,
     compiled_slots: Vec<NoteSlot>,
 }
 
@@ -128,6 +130,10 @@ impl MixedTargetAdmission {
             if compiled_end > INDEX_SPACE || live_end > INDEX_SPACE {
                 return Err(MixedTargetError::ProducerShape);
             }
+            let compiled_span = Range::checked(compiled_start, compiled_end - compiled_start)
+                .ok_or(MixedTargetError::ProducerShape)?;
+            let live_span = Range::checked(live_start, live_end - live_start)
+                .ok_or(MixedTargetError::ProducerShape)?;
             let compiled_range = compiled_start..compiled_end;
             let live_range = live_start..live_end;
 
@@ -156,9 +162,14 @@ impl MixedTargetAdmission {
                 return Err(MixedTargetError::SharedNode { node });
             }
 
-            Ok((live_producer, compiled_slots.into_iter().collect()))
+            Ok((
+                live_producer,
+                compiled_span,
+                live_span,
+                compiled_slots.into_iter().collect(),
+            ))
         })();
-        let (live_producer, compiled_slots) = match checked {
+        let (live_producer, compiled_span, live_span, compiled_slots) = match checked {
             Ok(bound) => bound,
             Err(reason) => {
                 return Err(Box::new(MixedTargetFailure {
@@ -170,17 +181,27 @@ impl MixedTargetAdmission {
             }
         };
         Ok(Self {
-            plan,
+            plan: Arc::new(plan),
             stream,
             live_slot,
             live_producer,
+            compiled_span,
+            live_span,
             compiled_slots,
         })
     }
 
     /// The exact immutable plan whose target expansions were checked.
-    pub const fn plan(&self) -> &CompiledPlan {
+    pub fn plan(&self) -> &CompiledPlan {
         &self.plan
+    }
+
+    pub(crate) const fn plan_arc(&self) -> &Arc<CompiledPlan> {
+        &self.plan
+    }
+
+    pub(crate) const fn spans(&self) -> (Range, Range) {
+        (self.compiled_span, self.live_span)
     }
 
     /// The exact compiled stream that was checked.
@@ -201,6 +222,25 @@ impl MixedTargetAdmission {
     /// Every note slot reached by the fixed compiled stream.
     pub fn compiled_slots(&self) -> &[NoteSlot] {
         &self.compiled_slots
+    }
+
+    /// Move the checked values into the split stream constructor exactly once.
+    pub(crate) fn into_parts(
+        self,
+    ) -> (
+        Arc<CompiledPlan>,
+        AdmittedCompiledStream,
+        NoteSlot,
+        ProducerId,
+        Vec<NoteSlot>,
+    ) {
+        (
+            self.plan,
+            self.stream,
+            self.live_slot,
+            self.live_producer,
+            self.compiled_slots,
+        )
     }
 }
 

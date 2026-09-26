@@ -6,11 +6,165 @@
 //! The exclusive authored source also mints here after taking ownership of both halves.
 
 use super::{
-    IdentityError, IdentityTable, LiveNote, LiveNotes, NoteIdentity, OrphanCause, ProducerId,
-    ReleaseScope, Resolution, Slot,
+    CompiledRangeMinter, IdentityError, IdentityTable, LiveNote, LiveNotes, LiveRangeMinter,
+    NoteIdentity, OrphanCause, ProducerId, RangeMinter, ReleaseScope, Resolution, Slot,
 };
 use crate::plan::NoteSlot;
 use crate::quantities::HeldNoteCount;
+
+impl RangeMinter {
+    fn mint_keyed(
+        &mut self,
+        note: NoteSlot,
+        key: crate::quantities::KeyIdentity,
+    ) -> Result<NoteIdentity, IdentityError> {
+        for offset in 0..self.span.len {
+            let Some(slot) = usize::try_from(offset)
+                .ok()
+                .and_then(|offset| self.slots.get_mut(offset))
+            else {
+                break;
+            };
+            let Some(index) = self.span.start.checked_add(offset) else {
+                break;
+            };
+            let Ok(index) = u16::try_from(index) else {
+                break;
+            };
+            if let Slot::Free { next_generation } = *slot {
+                let sequence = self.minted;
+                self.minted = self.minted.saturating_add(1);
+                *slot = Slot::Live {
+                    generation: next_generation,
+                    note,
+                    key,
+                    sequence,
+                };
+                self.live = self.live.saturating_add(1);
+                return Ok(NoteIdentity {
+                    table: self.id,
+                    index,
+                    generation: next_generation,
+                });
+            }
+        }
+        let mut retired = 0_u32;
+        for offset in 0..self.span.len {
+            if matches!(
+                usize::try_from(offset)
+                    .ok()
+                    .and_then(|offset| self.slots.get(offset)),
+                Some(Slot::Retired)
+            ) {
+                retired = retired.saturating_add(1);
+            }
+        }
+        let admitted = HeldNoteCount::measured(self.span.len);
+        if retired == 0 {
+            Err(IdentityError::ProducerOverEmitted {
+                producer: self.producer,
+                admitted,
+            })
+        } else {
+            Err(IdentityError::ProducerRangeEroded {
+                producer: self.producer,
+                admitted,
+                retired,
+            })
+        }
+    }
+
+    fn resolve(&self, identity: NoteIdentity) -> Resolution {
+        if identity.table != self.id {
+            return Resolution::ForeignTable {
+                minted_by: identity.table,
+            };
+        }
+        let absolute = u32::from(identity.index);
+        let Some(offset) = absolute.checked_sub(self.span.start) else {
+            return Resolution::Orphan(OrphanCause::FreeIndex);
+        };
+        if offset >= self.span.len {
+            return Resolution::Orphan(OrphanCause::FreeIndex);
+        }
+        match usize::try_from(offset)
+            .ok()
+            .and_then(|offset| self.slots.get(offset))
+        {
+            Some(Slot::Live { generation, .. }) if *generation == identity.generation => {
+                Resolution::Live
+            }
+            Some(Slot::Live { .. }) => Resolution::Orphan(OrphanCause::SupersededGeneration),
+            Some(Slot::Retired) => Resolution::Orphan(OrphanCause::RetiredIndex),
+            Some(Slot::Free { .. }) | None => Resolution::Orphan(OrphanCause::FreeIndex),
+        }
+    }
+
+    fn release(&mut self, identity: NoteIdentity) -> Resolution {
+        let resolution = self.resolve(identity);
+        if resolution != Resolution::Live {
+            return resolution;
+        }
+        let offset = u32::from(identity.index).saturating_sub(self.span.start);
+        if let Some(slot) = usize::try_from(offset)
+            .ok()
+            .and_then(|offset| self.slots.get_mut(offset))
+        {
+            *slot = if identity.generation >= self.generation_ceiling {
+                self.retired = self.retired.saturating_add(1);
+                Slot::Retired
+            } else {
+                Slot::Free {
+                    next_generation: identity.generation.saturating_add(1),
+                }
+            };
+            self.live = self.live.saturating_sub(1);
+        }
+        resolution
+    }
+}
+
+impl CompiledRangeMinter {
+    /// Mint only inside this control's compiled producer range.
+    pub fn mint_keyed(
+        &mut self,
+        note: NoteSlot,
+        key: crate::quantities::KeyIdentity,
+    ) -> Result<NoteIdentity, IdentityError> {
+        self.0.mint_keyed(note, key)
+    }
+
+    /// Resolve only the compiled producer's own occurrence.
+    pub fn resolve(&self, identity: NoteIdentity) -> Resolution {
+        self.0.resolve(identity)
+    }
+
+    /// Release only the compiled producer's own occurrence.
+    pub fn release(&mut self, identity: NoteIdentity) -> Resolution {
+        self.0.release(identity)
+    }
+}
+
+impl LiveRangeMinter {
+    /// Mint only inside this audio owner's live producer range.
+    pub fn mint_keyed(
+        &mut self,
+        note: NoteSlot,
+        key: crate::quantities::KeyIdentity,
+    ) -> Result<NoteIdentity, IdentityError> {
+        self.0.mint_keyed(note, key)
+    }
+
+    /// Resolve only the live producer's own occurrence.
+    pub fn resolve(&self, identity: NoteIdentity) -> Resolution {
+        self.0.resolve(identity)
+    }
+
+    /// Release only the live producer's own occurrence.
+    pub fn release(&mut self, identity: NoteIdentity) -> Resolution {
+        self.0.release(identity)
+    }
+}
 
 impl IdentityTable {
     /// [`Self::mint`], recording the key the note-on named.

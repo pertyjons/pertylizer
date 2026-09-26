@@ -329,10 +329,16 @@ pub(crate) const INDEX_SPACE: u32 = 1 << 16;
 pub(super) const PRODUCER_SPACE: usize = 1 << 16;
 
 /// One producer's half-open span of the index space.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct Range {
     pub(super) start: u32,
     pub(super) len: u32,
+}
+
+impl Range {
+    pub(crate) fn checked(start: u32, len: u32) -> Option<Self> {
+        (len > 0 && start.checked_add(len)? <= INDEX_SPACE).then_some(Self { start, len })
+    }
 }
 
 /// One note a mass release ended: the node it played and the partition index it held,
@@ -364,6 +370,30 @@ pub struct IdentityTable {
     /// How many notes this table has minted: the next note's age rank (ADR-0058).
     minted: u64,
 }
+
+/// One producer's absolute range and generation state after a fresh table is split.
+/// It is not an `IdentityTable`: no operation on it can address another producer.
+#[derive(Debug)]
+pub(crate) struct RangeMinter {
+    pub(super) id: TableId,
+    pub(super) producer: ProducerId,
+    pub(super) span: Range,
+    pub(super) slots: Vec<Slot>,
+    pub(super) generation_ceiling: u32,
+    pub(super) retired: u64,
+    pub(super) live: u32,
+    pub(super) minted: u64,
+}
+
+/// Off-thread custody for the compiled range of a mixed stream.
+#[derive(Debug)]
+#[must_use]
+pub struct CompiledRangeMinter(pub(super) RangeMinter);
+
+/// Audio-owner custody for the live range of a mixed stream.
+#[derive(Debug)]
+#[must_use]
+pub struct LiveRangeMinter(pub(super) RangeMinter);
 
 /// What the renderer knows about a live note.
 #[derive(Debug, Clone, Copy)]
