@@ -4,17 +4,19 @@
 //! table identity but never share slots. It deliberately exposes no mixed render or
 //! offer method while ADR-0075's release and restoration laws remain open.
 
-use std::sync::Arc;
+use std::{marker::PhantomData, rc::Rc, sync::Arc};
 
 use thiserror::Error;
 
 use crate::{
     diagnostics::CompileError,
     host::mixed_targets::MixedTargetAdmission,
-    identity::{CompiledRangeMinter, IdentityTable, LiveRangeMinter, ProducerId, TableId},
+    identity::{
+        CompiledRangeMinter, IdentityTable, LiveRangeMinter, NoteIdentity, ProducerId, TableId,
+    },
     plan::{CompiledPlan, NoteSlot},
-    render::PreparedRenderer,
-    schedule::AdmittedCompiledStream,
+    render::{EventPayload, PreparedRenderer, TimedEvent},
+    schedule::{AdmittedCompiledStream, SchedulePrepareError},
     time::{StreamAnchor, StreamEpoch, issue_epoch},
 };
 
@@ -29,8 +31,86 @@ pub enum MixedStreamOpenError {
     Partition,
 }
 
+/// Why the bound first schedule could not be sealed before any mixed rendering exists.
+#[derive(Debug, Error)]
+pub enum MixedInitialPrepareError {
+    /// Placement or compiled note stamping refused.
+    #[error(transparent)]
+    Schedule(#[from] SchedulePrepareError),
+    /// A stealing policy or steal artifact appeared despite mixed no-stealing admission.
+    #[error("mixed preparation encountered a stealing policy or steal artifact")]
+    UnexpectedSteal,
+    /// Stamping left a different number of held indices and recorded obligations.
+    #[error("compiled range holds {live} notes but the schedule records {outstanding}")]
+    OutstandingMismatch { live: u32, outstanding: usize },
+    /// A stamped note edge escaped the compiled producer's checked range.
+    #[error("stamped event {event_index} names {identity} outside the compiled range")]
+    IdentityOutsideRange {
+        event_index: usize,
+        identity: NoteIdentity,
+    },
+}
+
+/// An off-thread joined mixed stream, before its one bound initial stamp.
+/// It cannot be transferred to the audio thread or split through its public API.
+///
+/// ```compile_fail
+/// use synth_engine_v2::stream::MixedJoinedStream;
+/// fn require_clone<T: Clone>() {}
+/// require_clone::<MixedJoinedStream>();
+/// ```
+///
+/// ```compile_fail
+/// use synth_engine_v2::stream::MixedJoinedStream;
+/// fn split(owner: MixedJoinedStream) { let _ = owner.into_parts(); }
+/// ```
+///
+/// ```compile_fail
+/// use synth_engine_v2::stream::MixedJoinedStream;
+/// fn mutate(owner: &mut MixedJoinedStream) { let _ = owner.control_mut(); }
+/// ```
+///
+/// ```compile_fail
+/// use synth_engine_v2::stream::MixedJoinedStream;
+/// fn mutate(owner: &mut MixedJoinedStream) { let _ = owner.audio_mut(); }
+/// ```
+#[derive(Debug)]
+#[must_use]
+pub struct MixedJoinedStream {
+    control: MixedStreamControl,
+    audio: MixedStreamAudio,
+    off_thread: PhantomData<Rc<()>>,
+}
+
+/// The sealed first schedule and both owners, still off-thread and not renderable.
+/// No stamped event or mutable half escapes this value.
+///
+/// ```compile_fail
+/// use synth_engine_v2::stream::MixedJoinedPrepared;
+/// fn require_clone<T: Clone>() {}
+/// require_clone::<MixedJoinedPrepared>();
+/// ```
+///
+/// ```compile_fail
+/// use synth_engine_v2::stream::MixedJoinedPrepared;
+/// fn events(prepared: &MixedJoinedPrepared) { let _ = prepared.events(); }
+/// ```
+///
+/// ```compile_fail
+/// use synth_engine_v2::stream::MixedJoinedPrepared;
+/// fn require_send<T: Send>() {}
+/// require_send::<MixedJoinedPrepared>();
+/// ```
+#[derive(Debug)]
+#[must_use]
+pub struct MixedJoinedPrepared {
+    owner: MixedJoinedStream,
+    events: Vec<TimedEvent>,
+    outstanding: Vec<NoteIdentity>,
+}
+
 /// Off-thread compiled-range custody for one bound mixed plan and stream.
-/// No schedule or activation can yet be built from it.
+/// It exposes no independent schedule or activation builder.
 #[derive(Debug)]
 #[must_use]
 pub struct MixedStreamControl {
@@ -55,7 +135,7 @@ pub struct MixedStreamAudio {
 impl MixedStreamControl {
     /// Prepare both split owners from one target binding before exposing either one.
     /// A refusal returns the binding so the caller can retry or retain the plan.
-    pub fn open(
+    pub(crate) fn open(
         binding: MixedTargetAdmission,
         anchor: StreamAnchor,
     ) -> Result<(Self, MixedStreamAudio), Box<(MixedStreamOpenError, MixedTargetAdmission)>> {
@@ -179,11 +259,157 @@ impl MixedStreamControl {
 
     /// Check the bound stream against this control's compiled range off-thread.
     /// The copied identities and events are discarded; no schedule or reservation is published.
-    pub fn check_bound_stamp(&self) -> Result<(), crate::schedule::SchedulePrepareError> {
+    pub(crate) fn check_bound_stamp(&self) -> Result<(), SchedulePrepareError> {
         let placed = crate::schedule::place_admitted(&self.stream, self.anchor)?;
         let mut minter = self.minter.working_copy();
         crate::schedule::stamp_all(&mut minter, &self.plan, self.epoch, &placed)?;
         Ok(())
+    }
+}
+
+impl MixedJoinedStream {
+    /// Construct the joined owner directly from one checked target binding.
+    pub fn open(
+        binding: MixedTargetAdmission,
+        anchor: StreamAnchor,
+    ) -> Result<Self, Box<(MixedStreamOpenError, MixedTargetAdmission)>> {
+        let (control, audio) = MixedStreamControl::open(binding, anchor)?;
+        Ok(Self {
+            control,
+            audio,
+            off_thread: PhantomData,
+        })
+    }
+
+    /// Read-only compiled custody for this joined owner.
+    pub const fn control(&self) -> &MixedStreamControl {
+        &self.control
+    }
+
+    /// Read-only live custody for this joined owner.
+    pub const fn audio(&self) -> &MixedStreamAudio {
+        &self.audio
+    }
+
+    /// Check the fixed compiled stream without creating any schedule or reservation.
+    pub fn check_bound_stamp(&self) -> Result<(), SchedulePrepareError> {
+        self.control.check_bound_stamp()
+    }
+
+    /// Seal the bound initial schedule exactly once, off-thread.
+    /// A refusal returns this owner with its compiled minter unchanged.
+    ///
+    /// No separate plan, stream or anchor can be supplied:
+    ///
+    /// ```compile_fail
+    /// use synth_engine_v2::stream::MixedJoinedStream;
+    /// use synth_engine_v2::schedule::AdmittedCompiledStream;
+    /// fn substitute(owner: MixedJoinedStream, stream: AdmittedCompiledStream) {
+    ///     let _ = owner.prepare_initial(stream);
+    /// }
+    /// ```
+    ///
+    /// ```compile_fail
+    /// use synth_engine_v2::stream::MixedJoinedStream;
+    /// use synth_engine_v2::plan::CompiledPlan;
+    /// fn substitute(owner: MixedJoinedStream, plan: CompiledPlan) {
+    ///     let _ = owner.prepare_initial(plan);
+    /// }
+    /// ```
+    pub fn prepare_initial(
+        mut self,
+    ) -> Result<MixedJoinedPrepared, Box<(MixedInitialPrepareError, Self)>> {
+        if self.control.plan.stealing() != crate::ir::StealingPolicy::None {
+            return Err(Box::new((MixedInitialPrepareError::UnexpectedSteal, self)));
+        }
+        let placed =
+            match crate::schedule::place_admitted(&self.control.stream, self.control.anchor) {
+                Ok(placed) => placed,
+                Err(error) => return Err(Box::new((error.into(), self))),
+            };
+        let mut minter = self.control.minter.working_copy();
+        let stamped = match crate::schedule::stamp_all(
+            &mut minter,
+            &self.control.plan,
+            self.control.epoch,
+            &placed,
+        ) {
+            Ok(stamped) => stamped,
+            Err(error) => return Err(Box::new((error.into(), self))),
+        };
+        if stamped.released_after_steal != 0
+            || stamped.expressions_after_steal != 0
+            || stamped.events.iter().any(|event| {
+                matches!(
+                    event.payload(),
+                    EventPayload::Fade { .. } | EventPayload::Reset { .. }
+                )
+            })
+        {
+            return Err(Box::new((MixedInitialPrepareError::UnexpectedSteal, self)));
+        }
+        if usize::try_from(minter.live()).ok() != Some(stamped.outstanding.len()) {
+            return Err(Box::new((
+                MixedInitialPrepareError::OutstandingMismatch {
+                    live: minter.live(),
+                    outstanding: stamped.outstanding.len(),
+                },
+                self,
+            )));
+        }
+        let span = minter.span();
+        for (event_index, event) in stamped.events.iter().enumerate() {
+            let identity = match event.payload() {
+                EventPayload::Note { identity, .. }
+                | EventPayload::Expression { identity, .. }
+                | EventPayload::Bend { identity, .. }
+                | EventPayload::Fade { identity, .. }
+                | EventPayload::Reset { identity } => Some(identity),
+                EventPayload::ReleaseGroup(_)
+                | EventPayload::Controller(_)
+                | EventPayload::RestoreController(_)
+                | EventPayload::SetParameter { .. } => None,
+            };
+            if let Some(identity) = identity
+                && (identity.table() != minter.id() || !span.contains(identity.index()))
+            {
+                return Err(Box::new((
+                    MixedInitialPrepareError::IdentityOutsideRange {
+                        event_index,
+                        identity,
+                    },
+                    self,
+                )));
+            }
+        }
+        self.control.minter = minter;
+        Ok(MixedJoinedPrepared {
+            owner: self,
+            events: stamped.events,
+            outstanding: stamped.outstanding,
+        })
+    }
+}
+
+impl MixedJoinedPrepared {
+    /// The bound stream epoch carried by both retained owners.
+    pub const fn epoch(&self) -> StreamEpoch {
+        self.owner.control.epoch
+    }
+
+    /// The table shared by the compiled and live ranges.
+    pub const fn table_id(&self) -> TableId {
+        self.owner.control.minter.id()
+    }
+
+    /// How many stamped events remain privately owned by this prepared stream.
+    pub fn event_count(&self) -> usize {
+        self.events.len()
+    }
+
+    /// How many compiled note-ons remain unpaired after the bound initial list.
+    pub fn outstanding_count(&self) -> usize {
+        self.outstanding.len()
     }
 }
 

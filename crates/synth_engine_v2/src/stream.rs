@@ -35,15 +35,19 @@
 //! renderer whose epoch or prepared table differs. The refusal is the whole schedule, rather
 //! than each of its
 //! events discarded as stale, which is the difference between a diagnosable error and a
-//! silent nothing. [`MixedStreamControl::open`] separately prepares two disjoint range owners
-//! from one target binding. It exposes no mixed scheduling or rendering operation yet.
+//! silent nothing. [`MixedJoinedStream::open`] separately prepares two disjoint range owners
+//! from one target binding. It can seal one private initial schedule off-thread but exposes
+//! no mixed offer or rendering operation yet.
 
 #[cfg(test)]
 mod table_tests;
 
 mod live;
 mod mixed;
-pub use mixed::{MixedStreamAudio, MixedStreamControl, MixedStreamOpenError};
+pub use mixed::{
+    MixedInitialPrepareError, MixedJoinedPrepared, MixedJoinedStream, MixedStreamAudio,
+    MixedStreamControl, MixedStreamOpenError,
+};
 
 use std::sync::Arc;
 

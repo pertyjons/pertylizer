@@ -20,7 +20,8 @@ use synth_engine_v2::schedule::{
     AdmittedCompiledStream, CompiledEventScheduler, CompiledPayload, PlanEvent,
 };
 use synth_engine_v2::stream::{
-    ActivationBuildError, ActivationRequest, MixedStreamControl, StreamControl,
+    ActivationBuildError, ActivationRequest, MixedInitialPrepareError, MixedJoinedStream,
+    StreamControl,
 };
 use synth_engine_v2::time::{FrameCount, PlanPosition, QUANTUM_FRAMES, SampleTime, StreamAnchor};
 use synth_engine_v2::transport::{ActivationRefused, ActivationSequence, LoopInterval};
@@ -2544,8 +2545,10 @@ fn mixed_stream_opens_split_owners_from_the_bound_plan_and_stream() {
         let stream = admitted(&plan, &[note(&plan, 0, true)]);
         let binding = MixedTargetAdmission::admit(plan, stream.clone(), slot)
             .expect("the targets are disjoint");
-        let (control, audio) =
-            MixedStreamControl::open(binding, ORIGIN).expect("the bound split stream prepares");
+        let owner =
+            MixedJoinedStream::open(binding, ORIGIN).expect("the bound split stream prepares");
+        let control = owner.control();
+        let audio = owner.audio();
 
         assert_eq!(control.plan().id(), stream.plan());
         assert_eq!(control.stream(), &stream);
@@ -2562,9 +2565,30 @@ fn mixed_stream_opens_split_owners_from_the_bound_plan_and_stream() {
             ProducerId::new(u16::from(compiled_first))
         );
         assert_eq!(audio.live_slot(), slot);
-        control
+        let expected_epoch = control.epoch();
+        let expected_table = control.table_id();
+        owner
             .check_bound_stamp()
             .expect("the bound stream stamps inside the compiled range");
+        let prepared = owner
+            .prepare_initial()
+            .expect("the bound first schedule seals");
+        assert_eq!(prepared.event_count(), 1);
+        assert_eq!(prepared.outstanding_count(), 1);
+        assert_eq!(prepared.epoch(), expected_epoch);
+        assert_eq!(prepared.table_id(), expected_table);
+
+        let plan = mixed_producers(ExecutionScope::Voice, compiled_first);
+        let slot = plan.resolve_note(ENVELOPE).expect("playable envelope");
+        let stream = admitted(&plan, &[note(&plan, 0, true), note(&plan, 1, false)]);
+        let binding = MixedTargetAdmission::admit(plan, stream, slot)
+            .expect("the paired stream keeps its disjoint targets");
+        let prepared = MixedJoinedStream::open(binding, ORIGIN)
+            .expect("the paired stream opens")
+            .prepare_initial()
+            .expect("the paired schedule seals");
+        assert_eq!(prepared.event_count(), 2);
+        assert_eq!(prepared.outstanding_count(), 0);
     }
 }
 
@@ -2575,10 +2599,32 @@ fn mixed_bound_stamp_check_discards_a_copy_after_mint_failure() {
     let events: Vec<_> = (0..5).map(|position| note(&plan, position, true)).collect();
     let stream = admitted(&plan, &events);
     let binding = MixedTargetAdmission::admit(plan, stream, slot).expect("targets are disjoint");
-    let (control, _audio) = MixedStreamControl::open(binding, ORIGIN).expect("stream prepares");
+    let owner = MixedJoinedStream::open(binding, ORIGIN).expect("stream prepares");
 
     assert!(matches!(
-        control.check_bound_stamp(),
+        owner.check_bound_stamp(),
+        Err(synth_engine_v2::schedule::SchedulePrepareError::Identity {
+            event_index: 4,
+            source: synth_engine_v2::identity::IdentityError::ProducerOverEmitted { .. }
+        })
+    ));
+    let table = owner.control().table_id();
+    let Err(failure) = owner.prepare_initial() else {
+        panic!("the fifth note must fail after four private mints");
+    };
+    let (error, retained) = *failure;
+    assert!(matches!(
+        error,
+        MixedInitialPrepareError::Schedule(
+            synth_engine_v2::schedule::SchedulePrepareError::Identity {
+                event_index: 4,
+                source: synth_engine_v2::identity::IdentityError::ProducerOverEmitted { .. }
+            }
+        )
+    ));
+    assert_eq!(retained.control().table_id(), table);
+    assert!(matches!(
+        retained.check_bound_stamp(),
         Err(synth_engine_v2::schedule::SchedulePrepareError::Identity {
             event_index: 4,
             source: synth_engine_v2::identity::IdentityError::ProducerOverEmitted { .. }

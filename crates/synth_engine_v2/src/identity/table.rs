@@ -278,6 +278,10 @@ impl CompiledRangeMinter {
     pub(crate) const fn span(&self) -> Range {
         self.0.span
     }
+
+    pub(crate) const fn live(&self) -> u32 {
+        self.0.live
+    }
 }
 
 impl LiveRangeMinter {

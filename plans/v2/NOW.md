@@ -214,7 +214,12 @@ in force. An off-thread check now places and stamps the bound stream against
 a disposable copy of only the compiled range. It publishes no events or
 reservations. Tests cover wrong-producer and wrong-capacity refusals, disjoint
 compiled and live indices through copy/commit, and a post-mint refusal.
-Schedule output custody remains open.
+Runtime schedule output custody remains open.
+The bound halves now enter a joined off-thread owner. It can seal the one
+initial schedule with private events and a committed compiled-range minter,
+or return the unchanged owner on refusal. The sealed value has no render,
+offer, split or event-extraction API; cross-thread handoff and retirement are
+still unbuilt.
 
 ### Selected work — ordered transport through live I/O
 

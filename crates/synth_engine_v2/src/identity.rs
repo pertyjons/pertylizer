@@ -348,6 +348,11 @@ impl Range {
     pub(crate) fn checked(start: u32, len: u32) -> Option<Self> {
         (len > 0 && start.checked_add(len)? <= INDEX_SPACE).then_some(Self { start, len })
     }
+
+    pub(crate) fn contains(self, index: u16) -> bool {
+        let index = u32::from(index);
+        index >= self.start && index < self.start.saturating_add(self.len)
+    }
 }
 
 /// One note a mass release ended: the node it played and the partition index it held,
