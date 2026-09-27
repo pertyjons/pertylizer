@@ -584,6 +584,119 @@ fn mixed_boundary_release_refuses_missing_compiled_gate_or_trigger_row() {
     }
 }
 
+#[test]
+fn mixed_boundary_release_and_restoration_spend_frequency_seed() {
+    for compiled_first in [true, false] {
+        let (binding, note) = binding(compiled_first);
+        let mut table = IdentityTable::from_admitted_ranges(binding.plan().note_producer_ranges())
+            .expect("identity ranges");
+        let compiled = table
+            .mint(binding.instance_partition().compiled_producer(), note)
+            .expect("compiled identity");
+        let live = table
+            .mint(binding.live_producer(), note)
+            .expect("live identity");
+        let epoch = issue_epoch().expect("epoch");
+        let mut mixed =
+            PreparedRenderer::prepare(Arc::clone(binding.plan_arc()), ANCHOR, epoch, table.id())
+                .expect("mixed renderer");
+        let mut live_only =
+            PreparedRenderer::prepare(Arc::clone(binding.plan_arc()), ANCHOR, epoch, table.id())
+                .expect("live reference");
+        assert!(mixed.bind_mixed_partition(Arc::clone(binding.partition_arc())));
+        assert!(live_only.bind_mixed_partition(Arc::clone(binding.partition_arc())));
+        let frequency = binding
+            .plan()
+            .resolve_parameter(SOURCE, parameters::SINE_FREQUENCY)
+            .expect("frequency");
+        let compiled_frequency = binding
+            .plan()
+            .parameter_row_for_identity(frequency, compiled.index())
+            .expect("compiled frequency row");
+        mixed.parameter_slots[compiled_frequency.index()].smooth_over(2 * QUANTUM_FRAMES);
+        let _ = render_quantum(&mut mixed, &[]);
+        let _ = render_quantum(&mut live_only, &[]);
+        assert_eq!(mixed.clock, live_only.clock);
+        let onset_time = mixed.clock;
+        let onset = |identity, source| {
+            TimedEvent::new(
+                EventEnvelope::new(epoch, onset_time, source),
+                EventPayload::Note {
+                    identity,
+                    edge: NoteEdge::On {
+                        slot: note,
+                        key: KeyIdentity::LOWEST,
+                        velocity: NoteVelocity::FULL,
+                    },
+                },
+            )
+        };
+        let _ = render_quantum(
+            &mut mixed,
+            &[
+                onset(compiled, TimeSource::Compiled),
+                onset(live, TimeSource::Simulated),
+            ],
+        );
+        let _ = render_quantum(&mut live_only, &[onset(live, TimeSource::Simulated)]);
+        assert_eq!(mixed.clock, live_only.clock);
+        let boundary = mixed.clock;
+        assert_eq!(boundary.quantum_offset(), crate::time::QuantumOffset::ZERO);
+        let mut restoration = Vec::new();
+        for group in binding.instance_partition().restoration_groups() {
+            let target = binding.plan().parameter_targets()[group.parameter().index()];
+            let scoped = if target.controller {
+                ScopedParameterRestore::controller_for(*group, target.base, None)
+            } else {
+                ScopedParameterRestore::override_for(*group, target.base)
+            };
+            restoration.push(TimedEvent::new(
+                EventEnvelope::new(epoch, boundary, TimeSource::Compiled),
+                EventPayload::ScopedRestore(scoped),
+            ));
+        }
+        let live_before = states(&mixed, binding.instance_partition().live_rows());
+        let mut ended = [None; 2];
+        assert_eq!(
+            mixed
+                .release_mixed_compiled_boundary(
+                    binding.instance_partition().compiled_producer(),
+                    &mut ended,
+                )
+                .expect("bound release")
+                .get(),
+            1
+        );
+        assert_eq!(
+            states(&mixed, binding.instance_partition().live_rows()),
+            live_before
+        );
+        let actual = render_quantum(&mut mixed, &restoration);
+        let expected = render_quantum(&mut live_only, &[]);
+        assert!(actual.iter().any(|sample| *sample != 0.0));
+        assert_eq!(actual, expected, "boundary changed live output");
+        assert_eq!(
+            states(&mixed, binding.instance_partition().live_rows()),
+            states(&live_only, binding.instance_partition().live_rows())
+        );
+        assert_eq!(
+            mixed.parameter_slots[compiled_frequency.index()].current(),
+            binding.plan().parameter_targets()[frequency.index()].base,
+            "restoration must step at the boundary"
+        );
+        let restored = mixed.parameter_slots[compiled_frequency.index()].current();
+        let _ = mixed.parameter_slots[compiled_frequency.index()].write_override(value(440.0));
+        assert_eq!(
+            mixed.parameter_slots[compiled_frequency.index()].current(),
+            restored,
+            "frequency restoration must spend its seed before the next ordinary ramp"
+        );
+        let mut next = [0.0_f32; 1];
+        mixed.parameter_slots[compiled_frequency.index()].advance(&mut next);
+        assert!(next[0] > restored.as_f32() && next[0] < 440.0);
+    }
+}
+
 fn states(renderer: &PreparedRenderer, rows: &[crate::plan::ParameterRow]) -> Vec<SlotState> {
     rows.iter()
         .map(|row| renderer.parameter_slots[row.index()])

@@ -262,8 +262,12 @@ simulated live note-ons against an admitted compiled target, in both producer
 orders. They check a sampler trigger, audible live preservation, and synthetic
 missing gate/trigger partition rows. These falsify a release that ends nothing,
 touches live state or fails to apply boundary controls. The helper is not yet
-called by a mixed activation owner; complete seed consumption, effective-time
-selection, combined capacity, source custody and offer remain unproved.
+called by a mixed activation owner. A direct renderer test now combines release
+with a complete same-quantum scoped restoration in both producer orders: the
+next smoothed compiled frequency write ramps while audible live output matches
+its live-only reference. Complete seed consumption by an actual mixed owner,
+effective-time selection, combined capacity, source custody and offer remain
+unproved.
 
 Rehearsal falsifiers are a last note-on magnitude before a seek with compiled
 producer second, repeated-key prefix pairing, zero gates and triggers for

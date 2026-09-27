@@ -274,6 +274,10 @@ seeds only compiled rows so the boundary release does not ramp. Renderer tests
 use directly stamped compiled-provenance and simulated live onsets in both
 producer orders, including a sampler trigger and synthetic missing rows; the
 compiled occurrence ends while live output and rows match a live-only reference.
+An additional renderer test sends a complete scoped restoration in the release
+quantum in both producer orders; the next smoothed compiled frequency write
+ramps, showing that its seed mark was consumed, while live audio remains equal
+to the live-only reference.
 The helper is not connected to mixed activation. That owner must publish the
 complete scoped restoration in the same boundary quantum to consume all
 compiled seed marks; the offer refusal remains.
