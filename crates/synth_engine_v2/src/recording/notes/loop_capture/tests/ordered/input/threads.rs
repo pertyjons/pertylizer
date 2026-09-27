@@ -743,45 +743,91 @@ fn source_stall_does_not_hold_ordered_stop_and_delayed_note_retains_its_refusal(
 }
 
 #[test]
-fn late_quality_from_second_input_survives_peer_closure_before_reunion() {
-    let (mut control, audio, _halt, generations) = split(8, 32);
-    for (port, generation) in generations.into_iter().enumerate() {
-        let _id = control
-            .offer_observation(
-                generation,
-                InputObservation::Frontier {
-                    tick: tick(port, 128),
-                },
-            )
-            .unwrap();
+fn late_quality_from_second_input_survives_prior_faults_before_reunion() {
+    for path in 0..3 {
+        let (mut control, audio, _halt, generations) = split(8, 32);
+        for (port, generation) in generations.into_iter().enumerate() {
+            let _id = control
+                .offer_observation(
+                    generation,
+                    InputObservation::Frontier {
+                        tick: tick(port, 128),
+                    },
+                )
+                .unwrap();
+        }
+        let (mut writer, mut reader, mut callback) = queues(audio, 36);
+        fill(&mut control, &mut writer, 128);
+        let mut samples = [0.0; 512];
+        callback.render(&mut samples).unwrap();
+        let original = observation(1, 20, 200, [0x90, 60, 100]);
+        if path == 1 {
+            let peer_future = observation(0, 200, 199, [0x90, 61, 100]);
+            control
+                .record_pre_ring_failure(generations[0], peer_future, InputError::Future)
+                .unwrap();
+            assert!(control.next_packet().unwrap().is_none());
+            assert_eq!(
+                control
+                    .input(generations[1])
+                    .unwrap()
+                    .discontinuity()
+                    .unwrap()
+                    .reason,
+                InputError::PeerInterrupted
+            );
+            control
+                .record_pre_ring_failure(generations[1], original, InputError::Order)
+                .unwrap();
+        } else if path == 2 {
+            let earlier_fault = InputObservation::Frontier { tick: tick(1, 0) };
+            assert_eq!(
+                control.offer_observation(generations[1], earlier_fault),
+                Err((earlier_fault, InputError::Order))
+            );
+            control
+                .record_pre_ring_failure(generations[1], original, InputError::Order)
+                .unwrap();
+        } else {
+            assert_eq!(
+                control.offer_observation(generations[1], original),
+                Err((original, InputError::Order))
+            );
+        }
+        callback.audio.synchronize_halt().unwrap();
+        let _commands = settle(&mut control, &mut callback, &mut reader);
+        let mut owner = callback.audio.reunite(control).unwrap();
+        if path != 0 {
+            let second = owner.input(generations[1]).unwrap();
+            assert_eq!(
+                second.discontinuity().unwrap().reason,
+                if path == 1 {
+                    InputError::PeerInterrupted
+                } else {
+                    InputError::Order
+                }
+            );
+            assert_eq!(
+                second.pre_ring_failure().unwrap().observation,
+                Some(original)
+            );
+        }
+        for generation in generations {
+            owner.acknowledge_input_quiescence(generation).unwrap();
+        }
+        owner.finalize().unwrap();
+        let result = owner.result().unwrap();
+        assert_eq!(result.sealed_outcome(), CaptureOutcome::Interrupted);
+        assert_eq!(
+            result.quality().first_late().unwrap().time,
+            SampleTime::new(20)
+        );
+        assert_eq!(result.quality().late_count().as_u64(), 1);
+        assert_eq!(
+            result.quality().effective_outcome(result.sealed_outcome()),
+            CaptureOutcome::Interrupted
+        );
     }
-    let (mut writer, mut reader, mut callback) = queues(audio, 36);
-    fill(&mut control, &mut writer, 128);
-    let mut samples = [0.0; 512];
-    callback.render(&mut samples).unwrap();
-    let original = observation(1, 20, 200, [0x90, 60, 100]);
-    assert_eq!(
-        control.offer_observation(generations[1], original),
-        Err((original, InputError::Order))
-    );
-    callback.audio.synchronize_halt().unwrap();
-    let _commands = settle(&mut control, &mut callback, &mut reader);
-    let mut owner = callback.audio.reunite(control).unwrap();
-    for generation in generations {
-        owner.acknowledge_input_quiescence(generation).unwrap();
-    }
-    owner.finalize().unwrap();
-    let result = owner.result().unwrap();
-    assert_eq!(result.sealed_outcome(), CaptureOutcome::Interrupted);
-    assert_eq!(
-        result.quality().first_late().unwrap().time,
-        SampleTime::new(20)
-    );
-    assert_eq!(result.quality().late_count().as_u64(), 1);
-    assert_eq!(
-        result.quality().effective_outcome(result.sealed_outcome()),
-        CaptureOutcome::Interrupted
-    );
 }
 
 fn uncertain_split() -> (
@@ -823,6 +869,68 @@ fn uncertain_split() -> (
 }
 
 #[test]
+fn pre_ring_failure_validates_mapping_and_records_one_original() {
+    let (mut control, _audio, _halt, generation) = uncertain_split();
+    let uncertain = InputObservation::Message {
+        tick: InputTick::new(200),
+        arrival: SampleTime::new(200),
+        input: Midi1Input::from_bytes([0x90, 60, 100]).unwrap(),
+    };
+    assert_eq!(
+        control.record_pre_ring_failure(generation, uncertain, InputError::Order),
+        Err(InputError::State)
+    );
+    let future = InputObservation::Message {
+        tick: InputTick::new(105),
+        arrival: SampleTime::new(9),
+        input: Midi1Input::from_bytes([0x90, 60, 100]).unwrap(),
+    };
+    assert_eq!(
+        control.record_pre_ring_failure(generation, future, InputError::Uncertain),
+        Err(InputError::State)
+    );
+    assert_eq!(
+        control.record_pre_ring_failure(
+            generation,
+            InputObservation::Frontier {
+                tick: InputTick::new(105),
+            },
+            InputError::Future,
+        ),
+        Err(InputError::State)
+    );
+    assert!(
+        control
+            .input(generation)
+            .unwrap()
+            .pre_ring_failure()
+            .is_none()
+    );
+    control
+        .record_pre_ring_failure(generation, future, InputError::Future)
+        .unwrap();
+    control
+        .record_pre_ring_failure(generation, future, InputError::Future)
+        .unwrap();
+    let different = InputObservation::Message {
+        tick: InputTick::new(115),
+        arrival: SampleTime::new(10),
+        input: Midi1Input::from_bytes([0x90, 61, 100]).unwrap(),
+    };
+    assert_eq!(
+        control.record_pre_ring_failure(generation, different, InputError::Future),
+        Err(InputError::State)
+    );
+    let retained = control
+        .input(generation)
+        .unwrap()
+        .pre_ring_failure()
+        .unwrap();
+    assert_eq!(retained.reason, InputError::Future);
+    assert_eq!(retained.observation, Some(future));
+}
+
+#[test]
 fn uncertainty_uses_frozen_selection_and_cannot_report_complete_after_fault() {
     for (stopped, input_tick, inside) in [
         (true, 0, true),
@@ -831,56 +939,71 @@ fn uncertainty_uses_frozen_selection_and_cannot_report_complete_after_fault() {
         (false, 200, true),
         (false, 800, false),
     ] {
-        let (mut control, audio, _halt, generation) = uncertain_split();
-        let _id = control
-            .offer_observation(
-                generation,
-                InputObservation::Frontier {
-                    tick: InputTick::new(if stopped { 1285 } else { 405 }),
-                },
-            )
+        for before_ring in [false, true] {
+            let (mut control, audio, _halt, generation) = uncertain_split();
+            let _id = control
+                .offer_observation(
+                    generation,
+                    InputObservation::Frontier {
+                        tick: InputTick::new(if stopped { 1285 } else { 405 }),
+                    },
+                )
+                .unwrap();
+            let (mut writer, mut reader, mut callback) = queues(audio, 36);
+            fill(&mut control, &mut writer, if stopped { 128 } else { 512 });
+            let mut callback = std::thread::spawn(move || {
+                let mut samples = vec![0.0; if stopped { 512 } else { 192 }];
+                assert_eq!(
+                    crate::render_allocation::count_allocs(|| callback
+                        .render(&mut samples)
+                        .unwrap()),
+                    0
+                );
+                callback
+            })
+            .join()
             .unwrap();
-        let (mut writer, mut reader, mut callback) = queues(audio, 36);
-        fill(&mut control, &mut writer, if stopped { 128 } else { 512 });
-        let mut callback = std::thread::spawn(move || {
-            let mut samples = vec![0.0; if stopped { 512 } else { 192 }];
+            let refused = InputObservation::Message {
+                tick: InputTick::new(input_tick),
+                arrival: SampleTime::new(200),
+                input: Midi1Input::from_bytes([0x90, 60, 100]).unwrap(),
+            };
+            if before_ring {
+                let reason = if input_tick == 0 {
+                    InputError::ClockRange
+                } else {
+                    InputError::Uncertain
+                };
+                control
+                    .record_pre_ring_failure(generation, refused, reason)
+                    .unwrap();
+            } else {
+                assert!(
+                    matches!(control.offer_observation(generation,refused),Err((same,InputError::Uncertain | InputError::ClockRange)) if same == refused)
+                );
+            }
+            callback.audio.synchronize_halt().unwrap();
+            let _commands = settle(&mut control, &mut callback, &mut reader);
+            let mut owner = callback.audio.reunite(control).unwrap();
+            owner.acknowledge_input_quiescence(generation).unwrap();
+            owner.finalize().unwrap();
+            let result = owner.result().unwrap();
+            assert_eq!(result.quality().first_uncertain_source().is_some(), inside);
+            assert_eq!(result.sealed_outcome(), CaptureOutcome::Interrupted);
             assert_eq!(
-                crate::render_allocation::count_allocs(|| callback.render(&mut samples).unwrap()),
-                0
+                result.quality().effective_outcome(result.sealed_outcome()),
+                CaptureOutcome::Interrupted
             );
-            callback
-        })
-        .join()
-        .unwrap();
-        let refused = InputObservation::Message {
-            tick: InputTick::new(input_tick),
-            arrival: SampleTime::new(200),
-            input: Midi1Input::from_bytes([0x90, 60, 100]).unwrap(),
-        };
-        assert!(
-            matches!(control.offer_observation(generation,refused),Err((same,InputError::Uncertain | InputError::ClockRange)) if same == refused)
-        );
-        callback.audio.synchronize_halt().unwrap();
-        let _commands = settle(&mut control, &mut callback, &mut reader);
-        let mut owner = callback.audio.reunite(control).unwrap();
-        owner.acknowledge_input_quiescence(generation).unwrap();
-        owner.finalize().unwrap();
-        let result = owner.result().unwrap();
-        assert_eq!(result.quality().first_uncertain_source().is_some(), inside);
-        assert_eq!(result.sealed_outcome(), CaptureOutcome::Interrupted);
-        assert_eq!(
-            result.quality().effective_outcome(result.sealed_outcome()),
-            CaptureOutcome::Interrupted
-        );
-        assert_eq!(
-            owner
-                .input(generation)
-                .unwrap()
-                .discontinuity()
-                .unwrap()
-                .observation,
-            Some(refused)
-        );
+            assert_eq!(
+                owner
+                    .input(generation)
+                    .unwrap()
+                    .discontinuity()
+                    .unwrap()
+                    .observation,
+                Some(refused)
+            );
+        }
     }
 }
 

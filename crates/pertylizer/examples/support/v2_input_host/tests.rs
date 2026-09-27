@@ -713,7 +713,9 @@ fn producer_queue_full_and_joined_shutdown_return_every_original_observation() {
     use super::source::{SourceInbox, SourceSendError};
     let (mut control, mut audio, generations) = fixture();
     assert!(SourceInbox::storage_bytes().get() < 65536);
-    let (mut producer, mut inbox) = SourceInbox::prepare(generations[0], control.halt_handle());
+    let clock = prepare::simulated_clock(audio.core.acknowledged().epoch, 0).unwrap();
+    let (mut producer, mut inbox) =
+        SourceInbox::prepare(generations[0], control.halt_handle(), clock);
     let producer = std::thread::spawn(move || {
         let mut refused = None;
         for at in 1..=17 {
@@ -756,6 +758,257 @@ fn producer_queue_full_and_joined_shutdown_return_every_original_observation() {
         );
     }
     control.recover(&mut audio, |_, _| {}).unwrap();
+}
+
+#[test]
+fn producer_retry_keeps_time_state_until_the_ring_accepts_the_original() {
+    use super::source::{SourceInbox, SourceSendError};
+    let (mut control, audio, generations) = fixture();
+    let clock = prepare::simulated_clock(audio.core.acknowledged().epoch, 0).unwrap();
+    let (mut producer, mut inbox) =
+        SourceInbox::prepare(generations[0], control.halt_handle(), clock);
+    for at in 1..=16 {
+        producer
+            .send(InputObservation::Frontier {
+                tick: InputTick::new(at),
+            })
+            .unwrap();
+    }
+    let next = InputObservation::Frontier {
+        tick: InputTick::new(17),
+    };
+    assert_eq!(producer.send(next), Err(SourceSendError::Retry(next)));
+    assert!(!control.halt_handle().is_requested());
+    let mut accepted = 0;
+    inbox.service(&mut control, |result| {
+        accepted += 1;
+        assert_eq!(result.unwrap().serial(), accepted + 1);
+    });
+    assert_eq!(accepted, 16);
+    assert_eq!(producer.send(next), Ok(()));
+    inbox.service(&mut control, |result| {
+        accepted += 1;
+        assert_eq!(result.unwrap().serial(), accepted + 1);
+    });
+    assert_eq!(accepted, 17);
+}
+
+#[test]
+fn producer_rejects_frontier_before_prior_arrival_before_ring_custody() {
+    use super::source::{SourceInbox, SourceSendError};
+    let (mut control, audio, generations) = fixture();
+    let clock = prepare::simulated_clock(audio.core.acknowledged().epoch, 0).unwrap();
+    let (mut producer, mut inbox) =
+        SourceInbox::prepare(generations[0], control.halt_handle(), clock);
+    let onset = InputObservation::Message {
+        tick: InputTick::new(10),
+        arrival: SampleTime::new(12),
+        input: Midi1Input::from_bytes([0x90, 60, 100]).unwrap(),
+    };
+    producer.send(onset).unwrap();
+    let regressed_frontier = InputObservation::Frontier {
+        tick: InputTick::new(11),
+    };
+    assert_eq!(
+        producer.send(regressed_frontier),
+        Err(SourceSendError::Invalid(
+            regressed_frontier,
+            InputError::Order
+        ))
+    );
+    assert!(control.halt_handle().is_requested());
+    let mut delivered = Vec::new();
+    inbox.service(&mut control, |result| delivered.push(result));
+    assert_eq!(delivered.len(), 1);
+    assert!(matches!(
+        delivered.pop(),
+        Some(Err(InputOfferError::Refused(original, _))) if original == onset
+    ));
+    let fault = control
+        .core
+        .input(generations[0])
+        .unwrap()
+        .discontinuity()
+        .unwrap();
+    assert_eq!(fault.reason, InputError::Order);
+    assert_eq!(fault.observation, Some(regressed_frontier));
+}
+
+#[test]
+fn producer_rejects_later_serial_with_earlier_nominal_time() {
+    use super::source::{SourceInbox, SourceSendError};
+    let (mut control, audio, generations) = fixture();
+    let clock = prepare::simulated_clock(audio.core.acknowledged().epoch, 0).unwrap();
+    let (mut producer, mut inbox) =
+        SourceInbox::prepare(generations[0], control.halt_handle(), clock);
+    let onset = InputObservation::Message {
+        tick: InputTick::new(10),
+        arrival: SampleTime::new(10),
+        input: Midi1Input::from_bytes([0x90, 60, 100]).unwrap(),
+    };
+    producer.send(onset).unwrap();
+    let release = InputObservation::Message {
+        tick: InputTick::new(9),
+        arrival: SampleTime::new(11),
+        input: Midi1Input::from_bytes([0x80, 60, 0]).unwrap(),
+    };
+    assert_eq!(
+        producer.send(release),
+        Err(SourceSendError::Invalid(release, InputError::Order))
+    );
+    assert!(control.halt_handle().is_requested());
+    assert!(!inbox.is_empty());
+    let mut queued_outcomes = 0;
+    inbox.service(&mut control, |result| {
+        assert!(matches!(result, Err(InputOfferError::Refused(original, _)) if original == onset));
+        queued_outcomes += 1;
+    });
+    assert_eq!(queued_outcomes, 1);
+    let fault = control
+        .core
+        .input(generations[0])
+        .unwrap()
+        .discontinuity()
+        .unwrap();
+    assert_eq!(fault.reason, InputError::Order);
+    assert_eq!(fault.observation, Some(release));
+}
+
+#[test]
+fn producer_rejects_future_arrival_without_queue_custody() {
+    use super::source::{SourceInbox, SourceSendError};
+    let (mut control, audio, generations) = fixture();
+    let clock = prepare::simulated_clock(audio.core.acknowledged().epoch, 0).unwrap();
+    let (mut producer, mut inbox) =
+        SourceInbox::prepare(generations[0], control.halt_handle(), clock);
+    let future = InputObservation::Message {
+        tick: InputTick::new(10),
+        arrival: SampleTime::new(9),
+        input: Midi1Input::from_bytes([0x90, 60, 100]).unwrap(),
+    };
+    assert_eq!(
+        producer.send(future),
+        Err(SourceSendError::Invalid(future, InputError::Future))
+    );
+    assert!(control.halt_handle().is_requested());
+    assert!(inbox.is_empty());
+    let producer = inbox.close(producer).err().unwrap();
+    inbox.service(&mut control, |_| {
+        panic!("the refused observation was never queued")
+    });
+    let fault = control
+        .core
+        .input(generations[0])
+        .unwrap()
+        .discontinuity()
+        .unwrap();
+    assert_eq!(fault.reason, InputError::Future);
+    assert_eq!(fault.observation, Some(future));
+    assert!(inbox.close(producer).is_ok());
+}
+
+#[test]
+fn producer_rejects_repeated_frontier_before_ring_custody() {
+    use super::source::{SourceInbox, SourceSendError};
+    let (control, audio, generations) = fixture();
+    let clock = prepare::simulated_clock(audio.core.acknowledged().epoch, 0).unwrap();
+    let (mut producer, inbox) = SourceInbox::prepare(generations[0], control.halt_handle(), clock);
+    let frontier = InputObservation::Frontier {
+        tick: InputTick::new(1),
+    };
+    producer.send(frontier).unwrap();
+    assert_eq!(
+        producer.send(frontier),
+        Err(SourceSendError::Invalid(frontier, InputError::Order))
+    );
+    assert!(control.halt_handle().is_requested());
+    assert!(!inbox.is_empty());
+}
+
+#[test]
+fn producer_rejects_unmappable_clock_before_ring_custody() {
+    use super::source::{SourceInbox, SourceSendError};
+    let (mut control, audio, generations) = fixture();
+    // This deliberately differs from raw input's clock to test failed recording.
+    let clock = SimulatedInputClock::new(
+        audio.core.acknowledged().epoch,
+        SampleTime::ZERO,
+        InputTick::new(0),
+        InputRate::new(FrameCount::new(1), InputTickSpan::new(2)).unwrap(),
+        InputTickSpan::new(1),
+    );
+    let (mut producer, mut inbox) =
+        SourceInbox::prepare(generations[0], control.halt_handle(), clock);
+    let ambiguous = InputObservation::Frontier {
+        tick: InputTick::new(1),
+    };
+    assert_eq!(
+        producer.send(ambiguous),
+        Err(SourceSendError::Invalid(ambiguous, InputError::Uncertain))
+    );
+    assert!(control.halt_handle().is_requested());
+    assert!(inbox.is_empty());
+    let mut results = Vec::new();
+    inbox.service(&mut control, |result| results.push(result));
+    inbox.service(&mut control, |result| results.push(result));
+    assert!(matches!(
+        results.as_slice(),
+        [Err(InputOfferError::Refused(original, InputError::State))] if *original == ambiguous
+    ));
+    assert!(inbox.close(producer).is_ok());
+}
+
+#[test]
+fn managed_service_records_second_source_failure_before_first_queue_halt() {
+    use super::{archive::RetainedRuns, managed::ManagedRun, prepare::PreparedAttempt};
+    let profile = HostProfile::harness(
+        SampleRate::new(48000.0).unwrap(),
+        FrameCount::new(8192),
+        ChannelLayout::Mono,
+    )
+    .unwrap();
+    let prepared =
+        PreparedAttempt::new(profile, SampleTime::new(256), IrNodeKind::Silence).unwrap();
+    let bytes = prepared.bytes();
+    let mut archive = RetainedRuns::prepare(
+        CaptureResultCount::limit(1).unwrap(),
+        bytes,
+        PreparedBytes::measured(bytes.get() * 2 + 65536),
+    )
+    .unwrap();
+    let (mut managed, _audio, [mut first, mut second]) =
+        ManagedRun::start(&mut archive, prepared).unwrap();
+    let queued = InputObservation::Frontier {
+        tick: InputTick::new(1),
+    };
+    first.send(queued).unwrap();
+    let invalid = InputObservation::Frontier {
+        tick: InputTick::new(0),
+    };
+    assert_eq!(
+        second.send(invalid),
+        Err(super::source::SourceSendError::Invalid(
+            invalid,
+            InputError::Order
+        ))
+    );
+    let mut results = Vec::new();
+    managed
+        .service(|result| results.push(result), |_, _| {}, |_| {})
+        .unwrap();
+    assert!(matches!(
+        results.as_slice(),
+        [Err(InputOfferError::Refused(original, _))] if *original == queued
+    ));
+    assert_eq!(
+        managed.source_discontinuity(0).unwrap().reason,
+        InputError::PeerInterrupted
+    );
+    let second_fault = managed.source_discontinuity(1).unwrap();
+    assert_eq!(second_fault.reason, InputError::Order);
+    assert_eq!(second_fault.observation, Some(invalid));
+    assert!(managed.close_source(first).is_ok());
+    assert!(managed.close_source(second).is_ok());
 }
 
 #[test]

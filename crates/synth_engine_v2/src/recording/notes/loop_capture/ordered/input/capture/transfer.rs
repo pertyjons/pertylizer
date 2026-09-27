@@ -106,6 +106,45 @@ impl InputCaptureControl {
         result.map_err(|error| (observation, error))
     }
 
+    /// Validate and retain a producer's terminal time refusal whose original never
+    /// entered the source ring. Reunion attributes accepted late or uncertain claims;
+    /// source order is an attestation when the queued prefix has not reached raw input.
+    pub fn record_pre_ring_failure(
+        &mut self,
+        generation: ConnectionGeneration,
+        observation: InputObservation,
+        reason: InputError,
+    ) -> Result<(), InputError> {
+        let port = self.port(generation)?;
+        let input = &mut self.inputs[port];
+        if !matches!(
+            input.state(),
+            ConnectionState::Running | ConnectionState::Quiescing
+        ) {
+            return Err(InputError::State);
+        }
+        let clock = input.clock().ok_or(InputError::State)?;
+        let (tick, arrival) = match observation {
+            InputObservation::Message { tick, arrival, .. } => (tick, Some(arrival)),
+            InputObservation::Frontier { tick } => (tick, None),
+        };
+        let mapping = clock.map(tick);
+        let valid_reason = match reason {
+            InputError::ClockRange | InputError::Uncertain => mapping == Err(reason),
+            InputError::Future => {
+                matches!((mapping, arrival), (Ok(nominal), Some(at)) if at < nominal)
+            }
+            InputError::Order => mapping.is_ok(),
+            _ => false,
+        };
+        if !valid_reason {
+            return Err(InputError::State);
+        }
+        input.record_pre_ring_failure(reason, observation)?;
+        self.halt.request_invalid();
+        Ok(())
+    }
+
     /// Attach a retained live-audition token before this observation is forwarded.
     pub fn set_audition(
         &mut self,

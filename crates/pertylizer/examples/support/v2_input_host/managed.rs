@@ -197,8 +197,10 @@ impl ManagedRun {
                 owners: StartOwners::Host(Box::new((control, audio))),
             }));
         }
-        let (first, first_inbox) = SourceInbox::prepare(generations[0], control.halt_handle());
-        let (second, second_inbox) = SourceInbox::prepare(generations[1], control.halt_handle());
+        let (first, first_inbox) =
+            SourceInbox::prepare(generations[0], control.halt_handle(), prepared.clocks[0]);
+        let (second, second_inbox) =
+            SourceInbox::prepare(generations[1], control.halt_handle(), prepared.clocks[1]);
         Ok((
             Self {
                 control,
@@ -221,6 +223,15 @@ impl ManagedRun {
         self.control.halt_handle()
     }
 
+    #[cfg(test)]
+    pub(super) fn source_discontinuity(
+        &self,
+        port: usize,
+    ) -> Option<synth_engine_v2::host::input::InputDiscontinuity> {
+        let generation = *self.generations.get(port)?;
+        self.control.core.input(generation)?.discontinuity()
+    }
+
     /// Admission and execution have distinct identified outcomes. Both are reported.
     pub fn service(
         &mut self,
@@ -228,6 +239,9 @@ impl ManagedRun {
         mut command: impl FnMut(LoopTransferId, HostOutcome),
         mut receipt: impl FnMut(InputReceipt),
     ) -> Result<(), HostError> {
+        for inbox in &mut self.inboxes {
+            inbox.record_failure(&mut self.control, &mut input);
+        }
         for inbox in &mut self.inboxes {
             inbox.service(&mut self.control, &mut input);
         }
@@ -258,7 +272,7 @@ impl ManagedRun {
     }
 
     /// The producer's unique endpoint can return only after its producer has stopped.
-    /// Refuse closure while its ring still holds observations awaiting service.
+    /// Refuse closure while its ring or terminal failure awaits service.
     pub fn close_source(&mut self, producer: SourceProducer) -> Result<(), SourceProducer> {
         let mut producer = producer;
         for inbox in &mut self.inboxes {

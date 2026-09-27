@@ -543,19 +543,49 @@ needs an explicit amendment. A protected source lane also needs an order law:
 the current source producer retries a full-ring packet before later packets,
 while the live renderer stages by nominal time, source rank and serial. The
 renderer admits a later serial with an earlier nominal time, so source arrival
-order alone cannot pair its releases. A new consumer must either reject that
-regression before receipt or prove a shared execution order across boundaries.
+order alone cannot pair its releases. The concrete source producer now rejects
+that regression before queue custody. Another consumer must establish the
+same pre-receipt order law or prove a shared execution order across boundaries.
 
 The non-shipping concrete bridge's `PreparedAttempt` passes the same clocks to
-raw input and audition, and commits an audition packet only after raw admission.
-Raw input rejects a decreasing source tick or invalid arrival before that
-commit; a regression or future-arrival refusal leaves audition serial, queue
-and credit unchanged.
+the source producer, raw input and audition. The producer checks mapped time,
+decreasing ticks, arrival and frontier order before pushing into its ring; it
+records the original and reason in a one-shot source failure cell, requests
+host halt and returns `Invalid(original, reason)` on failure. The source inbox
+passes that failure to the raw owner before servicing its next queued prefix.
+The managed two-source service records failures already published at the start
+of that call before it drains either queue. The Linux driver joins both
+producer workers before this service, so a failed source keeps its specific
+primary reason even if the other source has queued work. If a failure arrives
+during service after the prepass, its primary reason may be `PeerInterrupted`;
+the separate pre-ring cell still retains its actual cause and quality evidence.
+The raw owner checks clock and arrival claims; source order remains a producer
+attestation because a queued prefix may not have reached raw admission. It
+retains the original in a separate one-shot pre-ring cell. Joined reunion
+attributes its exact-late or uncertain quality even when another source's
+halt has already marked this source `PeerInterrupted`. That primary
+discontinuity remains first-wins. If raw failure recording rejects the claim,
+the inbox emits one refusal callback with that recording error, while the
+producer's `Invalid` result retains its original reason. It still drains the
+queued prefix. A full ring leaves its time state unchanged for an ordered
+retry.
+Raw input repeats its own admission checks. The bridge commits an audition
+packet only after raw admission. A pre-ring regression or future-arrival
+refusal leaves raw and audition admission, serials and credit unchanged for
+that refused observation.
+It requests terminal halt: an earlier queued prefix may already have reached
+raw admission or may return as identified source refusals when the merger next
+services the ring. The driver reports the rejected original and unexamined
+suffix, then services the queued prefix after join and reports each outcome;
+the raw owner retains the rejected observation's quality diagnostic. No
+nonterminal rollback is claimed.
 
 Within this bridge, accepted messages from one source have nondecreasing
 mapped times, and equal times retain serial order in the live renderer. This
-check occurs after the source ring has received the observation, so it does not
-establish the earlier pre-receipt requirement for a protected release lane.
+check now precedes source-ring custody. It establishes the order prerequisite
+for the producer's own accepted prefix, with the terminal halt disposition
+above. It does not establish capacity, same-key FIFO tombstones or a protected
+release lane.
 The bridge distinguishes a refused original returned without a raw ID from an
 audition fault carrying an already accepted raw input ID. A regression or
 future-arrival refusal and an accepted-ID audition fault request a host halt.
@@ -707,9 +737,8 @@ onsets. If the first same-key onset is receipted, the second refused and two
 releases follow, a refused-only tombstone queue consumes the first release
 and forwards the second as if it belonged to the first onset. The release is
 delayed and misattributed; without the second release the note remains held.
-Nominal mapping currently happens after the source ring. Checking mapped time
-before receipt would require moving the mapping earlier; a failure after
-receipt needs explicit custody redemption. A release
+The source producer now checks nominal mapping before queue custody. A failure
+after that queue receipt still needs explicit custody redemption. A release
 staged before a later callback failure may already have spent its ingress
 hold and freed its held cell even though its outcome becomes `Cancelled`.
 Joined teardown must classify the actual note and release state, not infer it
@@ -731,8 +760,9 @@ audition preflight refusals, including a stale message, and raw admission
 failures request host halt. Other pre-admission `Stale` or `State` refusals
 can return without a new halt. Their source and occurrence disposition remains
 to be specified. `SourceProducer::send` returns `Retry(original)` for a full
-ring and `Halted(original)` when its halt check observes shutdown. The Linux
-driver stops its worker at either result and reports the unsent suffix in
+ring, `Halted(original)` when its halt check observes shutdown, and
+`Invalid(original, reason)` for a pre-ring time refusal that requests halt.
+The Linux driver stops its worker at any error and reports the unsent suffix in
 source order. A halt that races after the check may leave a queued observation
 or a `Retry` result; retry must check halt again. A future nonterminal capacity
 refusal with a FIFO tombstone would be a new contract and must distinguish

@@ -1,5 +1,7 @@
 //! Concrete nonblocking producer custody; the merger resolves every popped observation.
 use super::*;
+use std::sync::OnceLock;
+use synth_engine_v2::host::input::{InputTick, SimulatedInputClock};
 
 const SOURCE_CELLS: usize = 16;
 pub const SOURCE_OUTSTANDING: synth_engine_v2::quantities::EventCount =
@@ -12,6 +14,8 @@ pub enum SourceSendError {
     Retry(InputObservation),
     #[error("source halted; retain this observation for shutdown reporting")]
     Halted(InputObservation),
+    #[error("source observation invalid before publication: {1}")]
+    Invalid(InputObservation, InputError),
 }
 
 #[must_use]
@@ -19,30 +23,56 @@ pub struct SourceProducer {
     halt: InputCaptureHalt,
     queue: HeapProd<InputObservation>,
     generation: ConnectionGeneration,
+    time: Box<SourceTime>,
+    failure: Arc<OnceLock<SourceFailure>>,
+}
+#[derive(Clone, Copy)]
+struct SourceFailure {
+    observation: InputObservation,
+    reason: InputError,
+}
+struct SourceTime {
+    clock: SimulatedInputClock,
+    last_tick: Option<InputTick>,
+    last_arrival: Option<SampleTime>,
+    frontier: SampleTime,
 }
 #[must_use]
 pub struct SourceInbox {
     generation: ConnectionGeneration,
     queue: HeapCons<InputObservation>,
     closed: bool,
+    failure: Arc<OnceLock<SourceFailure>>,
+    failure_resolved: bool,
 }
 
 impl SourceInbox {
     pub fn prepare(
         generation: ConnectionGeneration,
         halt: InputCaptureHalt,
+        clock: SimulatedInputClock,
     ) -> (SourceProducer, Self) {
         let (writer, reader) = HeapRb::new(SOURCE_CELLS).split();
+        let failure = Arc::new(OnceLock::new());
         (
             SourceProducer {
                 halt,
                 queue: writer,
                 generation,
+                time: Box::new(SourceTime {
+                    clock,
+                    last_tick: None,
+                    last_arrival: None,
+                    frontier: SampleTime::ZERO,
+                }),
+                failure: Arc::clone(&failure),
             },
             Self {
                 generation,
                 queue: reader,
                 closed: false,
+                failure,
+                failure_resolved: false,
             },
         )
     }
@@ -52,10 +82,35 @@ impl SourceInbox {
         PreparedBytes::measured(
             (size_of::<Self>()
                 + size_of::<SourceProducer>()
+                + size_of::<SourceTime>()
+                + size_of::<OnceLock<SourceFailure>>()
                 + size_of::<HeapRb<InputObservation>>()
                 + SOURCE_CELLS * size_of::<InputObservation>()
                 + 256) as u64,
         )
+    }
+
+    /// Register a terminal producer fault before any source queue is serviced.
+    pub fn record_failure(
+        &mut self,
+        control: &mut LiveControl,
+        mut receive: impl FnMut(InputOfferResult),
+    ) {
+        if !self.failure_resolved
+            && let Some(failure) = self.failure.get().copied()
+        {
+            match control.source_failed_before_ring(
+                self.generation,
+                failure.observation,
+                failure.reason,
+            ) {
+                Ok(()) => self.failure_resolved = true,
+                Err(error) => {
+                    receive(Err(InputOfferError::Refused(failure.observation, error)));
+                    self.failure_resolved = true;
+                }
+            }
+        }
     }
 
     /// A fixed prefix, including refusals after closure. A refusal returns the
@@ -65,6 +120,7 @@ impl SourceInbox {
         control: &mut LiveControl,
         mut receive: impl FnMut(InputOfferResult),
     ) {
+        self.record_failure(control, &mut receive);
         let prefix = self.queue.occupied_len();
         for _ in 0..prefix {
             let Some(observation) = self.queue.try_pop() else {
@@ -79,9 +135,12 @@ impl SourceInbox {
     }
 
     /// Consume the unique producer endpoint after its thread returns it. A nonempty
-    /// inbox must first deliver every queued observation or explicit refusal.
+    /// inbox or an unresolved terminal refusal still owns source custody.
     pub fn close(&mut self, producer: SourceProducer) -> Result<(), SourceProducer> {
-        if producer.generation != self.generation || !self.is_empty() {
+        if producer.generation != self.generation
+            || !self.is_empty()
+            || (self.failure.get().is_some() && !self.failure_resolved)
+        {
             return Err(producer);
         }
         self.closed = true;
@@ -92,15 +151,56 @@ impl SourceInbox {
     }
 }
 impl SourceProducer {
+    fn check_order(
+        &self,
+        observation: InputObservation,
+    ) -> Result<(InputTick, Option<SampleTime>, SampleTime), InputError> {
+        let (tick, arrival) = match observation {
+            InputObservation::Message { tick, arrival, .. } => (tick, Some(arrival)),
+            InputObservation::Frontier { tick } => (tick, None),
+        };
+        let nominal = self.time.clock.map(tick)?;
+        if self.time.last_tick.is_some_and(|last| tick < last) || nominal < self.time.frontier {
+            return Err(InputError::Order);
+        }
+        if let Some(arrival) = arrival {
+            if arrival < nominal {
+                return Err(InputError::Future);
+            }
+            if self.time.last_arrival.is_some_and(|last| arrival < last) {
+                return Err(InputError::Order);
+            }
+        } else if nominal <= self.time.frontier
+            || self.time.last_arrival.is_some_and(|last| nominal <= last)
+        {
+            return Err(InputError::Order);
+        }
+        Ok((tick, arrival, nominal))
+    }
+
     /// A full ring requires ordered retry; halt ends publication and retains the
     /// original observation for an explicit terminal report.
     pub fn send(&mut self, observation: InputObservation) -> Result<(), SourceSendError> {
         if self.halt.is_requested() {
             return Err(SourceSendError::Halted(observation));
         }
+        let (tick, arrival, nominal) = self.check_order(observation).map_err(|error| {
+            self.failure.get_or_init(|| SourceFailure {
+                observation,
+                reason: error,
+            });
+            self.halt.request_invalid();
+            SourceSendError::Invalid(observation, error)
+        })?;
         self.queue
             .try_push(observation)
             .map_err(SourceSendError::Retry)?;
+        self.time.last_tick = Some(tick);
+        if let Some(arrival) = arrival {
+            self.time.last_arrival = Some(arrival);
+        } else {
+            self.time.frontier = nominal;
+        }
         Ok(())
     }
 }

@@ -199,6 +199,16 @@ impl LiveControl {
         self.halt.clone()
     }
 
+    fn source_failed_before_ring(
+        &mut self,
+        generation: ConnectionGeneration,
+        observation: InputObservation,
+        reason: InputError,
+    ) -> Result<(), InputError> {
+        self.core
+            .record_pre_ring_failure(generation, observation, reason)
+    }
+
     pub fn offer(
         &mut self,
         generation: ConnectionGeneration,

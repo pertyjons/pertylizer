@@ -1,6 +1,9 @@
 //! Exclusive callback delegation and fixed-storage loss handling.
-use super::super::{InputError, InputEventId, InputObservation, InputReceipt, InputTick};
-use super::{InputCaptureError, InputCaptureSession};
+use super::super::{
+    InputDiscontinuity, InputError, InputEventId, InputObservation, InputReceipt, InputTick,
+    SimulatedInputClock,
+};
+use super::{InputCaptureError, InputCaptureSession, LoopRecordingSession};
 use crate::{
     host::{
         ConnectionGeneration, ConnectionState,
@@ -13,6 +16,50 @@ use crate::{
     render::AudioBlockMut,
     time::SampleTime,
 };
+
+fn attribute_input_fault(
+    session: &mut LoopRecordingSession,
+    clock: Option<SimulatedInputClock>,
+    source: Option<ConnectionGeneration>,
+    fault: InputDiscontinuity,
+) -> Result<(), InputCaptureError> {
+    // Exact late observations use their actual stamp. Uncertain observations
+    // contribute conservative bounds and never acquire a fabricated exact time.
+    if fault.reason == InputError::Order
+        && let Some(InputObservation::Message { tick, arrival, .. }) = fault.observation
+        && let Some(clock) = clock
+        && let Ok(nominal) = clock.map(tick)
+        && let Ok(stamp) = CaptureStamp::exact_fixture(clock.epoch, nominal, arrival)
+        && let Some(source) = source
+    {
+        session
+            .capture
+            .recorder
+            .attribute_refused_input(source, stamp)
+            .map_err(|error| {
+                InputCaptureError::Recording(LoopSessionError::Capture(LoopCaptureError::Capture(
+                    error,
+                )))
+            })?;
+    }
+    if matches!(fault.reason, InputError::Uncertain | InputError::ClockRange)
+        && let Some(InputObservation::Message { tick, .. }) = fault.observation
+        && let Some(clock) = clock
+        && let Some(source) = source
+        && let Some((earliest, latest)) = clock.quality_bounds(tick)
+    {
+        session
+            .capture
+            .recorder
+            .attribute_uncertain_input(source, earliest, latest)
+            .map_err(|error| {
+                InputCaptureError::Recording(LoopSessionError::Capture(LoopCaptureError::Capture(
+                    error,
+                )))
+            })?;
+    }
+    Ok(())
+}
 
 impl InputCaptureSession {
     fn port(&self, generation: ConnectionGeneration) -> Result<usize, InputError> {
@@ -65,52 +112,38 @@ impl InputCaptureSession {
             return Ok(());
         }
         let mut reason = None;
-        for input in &self.inputs {
-            if let Some(fault) = input.discontinuity
+        for input in &mut self.inputs {
+            let primary = input.discontinuity;
+            if let Some(fault) = primary
                 && fault.reason != InputError::PeerInterrupted
             {
-                // Known exact late refusals still owe the recorder's quality
-                // attribution, even after normal sealing. Mapping failures use only
-                // conservative diagnostic bounds, never a fabricated exact stamp.
-                if fault.reason == InputError::Order
-                    && let Some(InputObservation::Message { tick, arrival, .. }) = fault.observation
-                    && let Some(clock) = input.clock
-                    && let Ok(nominal) = clock.map(tick)
-                    && let Ok(stamp) = CaptureStamp::exact_fixture(clock.epoch, nominal, arrival)
-                    && let Some(source) = input.binding
-                {
-                    self.session
-                        .capture
-                        .recorder
-                        .attribute_refused_input(source, stamp)
-                        .map_err(|error| {
-                            InputCaptureError::Recording(LoopSessionError::Capture(
-                                LoopCaptureError::Capture(error),
-                            ))
-                        })?;
+                if !input.discontinuity_attributed {
+                    attribute_input_fault(&mut self.session, input.clock, input.binding, fault)?;
+                    input.discontinuity_attributed = true;
                 }
-                if matches!(fault.reason, InputError::Uncertain | InputError::ClockRange)
-                    && let Some(InputObservation::Message { tick, .. }) = fault.observation
-                    && let Some(clock) = input.clock
-                    && let Some(source) = input.binding
-                    && let Some((earliest, latest)) = clock.quality_bounds(tick)
-                {
-                    self.session
-                        .capture
-                        .recorder
-                        .attribute_uncertain_input(source, earliest, latest)
-                        .map_err(|error| {
-                            InputCaptureError::Recording(LoopSessionError::Capture(
-                                LoopCaptureError::Capture(error),
-                            ))
-                        })?;
+                if reason.is_none() {
+                    reason = Some(if fault.reason == InputError::DeviceLost {
+                        CaptureStopReason::DeviceLost
+                    } else {
+                        CaptureStopReason::SourceInvalid
+                    });
                 }
-                reason = Some(if fault.reason == InputError::DeviceLost {
-                    CaptureStopReason::DeviceLost
-                } else {
-                    CaptureStopReason::SourceInvalid
-                });
-                break;
+            }
+            if let Some(fault) = input.pre_ring_failure {
+                if !input.pre_ring_attributed {
+                    if primary != Some(fault) {
+                        attribute_input_fault(
+                            &mut self.session,
+                            input.clock,
+                            input.binding,
+                            fault,
+                        )?;
+                    }
+                    input.pre_ring_attributed = true;
+                }
+                if reason.is_none() {
+                    reason = Some(CaptureStopReason::SourceInvalid);
+                }
             }
         }
         if let Some(reason) = reason {

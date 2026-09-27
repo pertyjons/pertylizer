@@ -31,9 +31,31 @@ impl SimulatedNoteInput {
                 reason,
                 observation,
             });
+            self.discontinuity_attributed = false;
         }
         self.state = ConnectionState::Quiescing;
         self.cancel_unsent();
+    }
+    pub(super) fn record_pre_ring_failure(
+        &mut self,
+        reason: InputError,
+        observation: InputObservation,
+    ) -> Result<(), InputError> {
+        let fault = InputDiscontinuity {
+            reason,
+            observation: Some(observation),
+        };
+        if let Some(existing) = self.pre_ring_failure {
+            return if existing == fault {
+                Ok(())
+            } else {
+                Err(InputError::State)
+            };
+        }
+        self.pre_ring_failure = Some(fault);
+        self.pre_ring_attributed = false;
+        self.fail(reason, Some(observation));
+        Ok(())
     }
     pub fn device_lost(&mut self, generation: ConnectionGeneration) -> Result<(), InputError> {
         self.check(generation)?;
