@@ -37,6 +37,10 @@ impl MixedOneShotAudio {
         velocity: NoteVelocity,
     ) -> Result<NoteIdentity, MixedOneShotTestLiveError> {
         use MixedOneShotTestLiveError as Refused;
+        #[cfg(feature = "simulated-ingress")]
+        if self.test_ingress.adopted_by().is_some() {
+            return Err(Refused::Timing);
+        }
         if self.render_started
             || self.test_live.is_some()
             || at < self.audio.renderer.clock()
@@ -183,6 +187,52 @@ fn profile_with_session_share(session: EventCount) -> HostProfile {
         shares.internal_event_share(),
         shares.release_event_share(),
         shares.release_hold_capacity(),
+    )
+    .expect("valid shares");
+    let events = EventLimits::new(
+        events.max_events_per_quantum(),
+        events.max_note_expansion_per_tick(),
+        events.max_scheduled_events_in_flight(),
+        events.forward_event_horizon(),
+        events.queues(),
+        shares,
+    )
+    .expect("valid event limits");
+    let limits = RenderLimits::new(
+        limits.stream(),
+        limits.graph(),
+        limits.voices(),
+        events,
+        limits.observation(),
+        limits.mixing(),
+        limits.memory(),
+        limits.script(),
+        limits.recording(),
+        limits.cost(),
+    )
+    .expect("valid limits");
+    HostProfile::new(original.capabilities(), limits).expect("valid profile")
+}
+
+#[cfg(feature = "simulated-ingress")]
+fn profile_with_release_limits(
+    release_share: EventCount,
+    hold_capacity: EventCount,
+) -> HostProfile {
+    use crate::profile::{EventLimits, ProducerShares, RenderLimits};
+
+    let original = mixed_profile();
+    let limits = original.limits();
+    let events = limits.events();
+    let shares = events.shares();
+    let shares = ProducerShares::new(
+        shares.compiled_event_share(),
+        shares.authored_runtime_event_share(),
+        shares.live_event_share(),
+        shares.session_event_share(),
+        shares.internal_event_share(),
+        release_share,
+        hold_capacity,
     )
     .expect("valid shares");
     let events = EventLimits::new(
@@ -417,6 +467,679 @@ fn one_shot_rehearsal(
     }
     assert_eq!(audio.audio.minter.resolve(live), Resolution::Live);
     (samples, audio.report())
+}
+
+#[cfg(feature = "simulated-ingress")]
+#[test]
+fn private_mixed_ingress_reuses_only_after_ordered_release() {
+    use crate::ingress::IngressRefused;
+
+    for compiled_first in [true, false] {
+        let prepared = bound_with_compiled_note_held_at_boundary(compiled_first);
+        let EventPayload::Note {
+            identity: compiled,
+            edge: NoteEdge::On { .. },
+        } = prepared.events[0].payload()
+        else {
+            panic!("compiled onset");
+        };
+        let history = prepared
+            .prepare_history(SampleTime::new(64), PlanPosition::new(256))
+            .expect("history");
+        let suffix = prepared.prepare_suffix(history).expect("suffix");
+        let candidate = prepared.stamp_suffix(suffix).expect("stamp");
+        let (_, mut audio) = prepared
+            .arm_one_shot(candidate, &mixed_profile())
+            .expect("private arm");
+        let first = audio
+            .offer_test_note_on(SampleTime::ZERO, key(48), NoteVelocity::FULL)
+            .expect("first onset");
+        assert_eq!(
+            audio.test_ingress.holds_outstanding(),
+            EventCount::measured(1)
+        );
+        assert_eq!(
+            audio.offer_test_note_off(SampleTime::new(8), compiled),
+            Err(IngressRefused::OrphanRelease { identity: compiled })
+        );
+        audio
+            .offer_test_note_off(SampleTime::new(16), first)
+            .expect("reserved release");
+        assert_eq!(audio.test_ingress.holds_outstanding(), EventCount::NONE);
+        assert_eq!(
+            audio.offer_test_note_off(SampleTime::new(16), first),
+            Err(IngressRefused::OrphanRelease { identity: first })
+        );
+        assert_eq!(
+            audio.offer_test_note_on(SampleTime::new(15), key(49), NoteVelocity::FULL),
+            Err(IngressRefused::NonMonotoneStamp {
+                time: SampleTime::new(15),
+                last: SampleTime::new(16),
+            })
+        );
+        let second = audio
+            .offer_test_note_on(SampleTime::new(16), key(49), NoteVelocity::FULL)
+            .expect("same-time reused onset");
+        assert_eq!(first.index(), second.index());
+        assert_ne!(first, second);
+        let mut samples = [0.0_f32; 256];
+        audio
+            .render_private(
+                AudioBlockMut::new(&mut samples, 256, ChannelLayout::Mono).expect("block"),
+            )
+            .expect("ordered mixed render");
+        assert!(audio.report().adopted);
+        assert_eq!(audio.test_ingress.len(), 0);
+        let sounding = audio
+            .audio
+            .renderer
+            .snapshot_mixed_sounding()
+            .expect("registry");
+        assert_eq!(
+            sounding
+                .live()
+                .iter()
+                .map(|note| note.identity)
+                .collect::<Vec<_>>(),
+            vec![second]
+        );
+    }
+}
+
+#[cfg(feature = "simulated-ingress")]
+#[test]
+fn private_mixed_ingress_arm_refuses_unbounded_release_backlog() {
+    let (prepared, candidate) = one_shot_with_boundary_on(true);
+    let epoch = prepared.epoch();
+    let count = prepared.event_count();
+    let refused = prepared
+        .arm_one_shot(
+            candidate,
+            &profile_with_release_limits(EventCount::measured(16), EventCount::measured(16)),
+        )
+        .expect_err("release share below registered queue depth");
+    assert!(matches!(
+        refused.reason,
+        MixedOneShotArmError::Ingress(
+            crate::ingress::IngressPrepareError::ReleaseBacklogShare {
+                share,
+                capacity,
+            }
+        ) if share == EventCount::measured(16) && capacity == EventCount::measured(32)
+    ));
+    assert_eq!(refused.owner.epoch(), epoch);
+    assert_eq!(refused.owner.event_count(), count);
+    assert_eq!(refused.candidate.suffix.history.epoch(), epoch);
+}
+
+#[cfg(feature = "simulated-ingress")]
+#[test]
+fn private_mixed_ingress_arm_refuses_profile_below_plan_holds() {
+    let (prepared, candidate) = one_shot_with_boundary_on(true);
+    let epoch = prepared.epoch();
+    let refused = prepared
+        .arm_one_shot(
+            candidate,
+            &profile_with_release_limits(EventCount::measured(40), EventCount::measured(1)),
+        )
+        .expect_err("bound plan has two live holds");
+    assert_eq!(
+        refused.reason,
+        MixedOneShotArmError::Admission(MixedOneShotAdmissionError::ProfileMismatch)
+    );
+    assert_eq!(refused.owner.epoch(), epoch);
+    assert_eq!(refused.candidate.suffix.history.epoch(), epoch);
+}
+
+#[cfg(feature = "simulated-ingress")]
+#[test]
+fn private_mixed_ingress_counts_each_resource_and_preserves_release_slot() {
+    use crate::ingress::{ExhaustedResource, IngressRefused};
+
+    let (prepared, candidate) = one_shot_with_boundary_on(true);
+    let (_, mut audio) = prepared
+        .arm_one_shot(candidate, &mixed_profile())
+        .expect("private arm");
+    let first = audio
+        .offer_test_note_on(SampleTime::ZERO, key(48), NoteVelocity::FULL)
+        .expect("first hold");
+    let second = audio
+        .offer_test_note_on(SampleTime::ZERO, key(49), NoteVelocity::FULL)
+        .expect("second hold");
+    assert_eq!(
+        audio.test_ingress.adopted_by(),
+        Some(audio.audio.renderer.epoch())
+    );
+    assert_eq!(
+        audio.offer_test_note_on(SampleTime::ZERO, key(50), NoteVelocity::FULL),
+        Err(IngressRefused::Dropped {
+            resource: ExhaustedResource::Hold,
+        })
+    );
+    assert_eq!(audio.test_ingress.counters().dropped_hold(), 1);
+    audio
+        .offer_test_note_off(SampleTime::ZERO, first)
+        .expect("first protected release");
+    audio
+        .offer_test_note_off(SampleTime::ZERO, second)
+        .expect("second protected release");
+
+    let (prepared, candidate) = one_shot_with_boundary_on(true);
+    let (_, mut audio) = prepared
+        .arm_one_shot(candidate, &mixed_profile())
+        .expect("private arm");
+    for _ in 0..15 {
+        let identity = audio
+            .offer_test_note_on(SampleTime::ZERO, key(48), NoteVelocity::FULL)
+            .expect("queued onset");
+        audio
+            .offer_test_note_off(SampleTime::ZERO, identity)
+            .expect("queued release");
+    }
+    let protected = audio
+        .offer_test_note_on(SampleTime::ZERO, key(48), NoteVelocity::FULL)
+        .expect("last onset reserves release slot");
+    assert_eq!(
+        audio.offer_test_note_on(SampleTime::ZERO, key(49), NoteVelocity::FULL),
+        Err(IngressRefused::Dropped {
+            resource: ExhaustedResource::Slot,
+        })
+    );
+    audio
+        .offer_test_note_off(SampleTime::ZERO, protected)
+        .expect("release fills last slot despite queue pressure");
+    assert_eq!(audio.test_ingress.len(), 32);
+    assert_eq!(audio.test_ingress.counters().dropped_slot(), 1);
+
+    let (prepared, candidate) = one_shot_with_boundary_on(true);
+    let (_, mut audio) = prepared
+        .arm_one_shot(candidate, &mixed_profile())
+        .expect("private arm");
+    audio.audio.minter.retire_first_generation_for_test();
+    for raw in [48, 49] {
+        let identity = audio
+            .offer_test_note_on(SampleTime::ZERO, key(raw), NoteVelocity::FULL)
+            .expect("first generation in range");
+        audio
+            .offer_test_note_off(SampleTime::ZERO, identity)
+            .expect("release retires index");
+    }
+    assert_eq!(
+        audio.offer_test_note_on(SampleTime::ZERO, key(50), NoteVelocity::FULL),
+        Err(IngressRefused::Dropped {
+            resource: ExhaustedResource::Identity,
+        })
+    );
+    assert_eq!(audio.test_ingress.holds_outstanding(), EventCount::NONE);
+    assert_eq!(audio.test_ingress.counters().dropped_identity(), 1);
+}
+
+#[cfg(feature = "simulated-ingress")]
+#[test]
+fn private_mixed_ingress_late_full_queue_fits_adoption_partition() {
+    use crate::publish::ProducerClass;
+
+    let (prepared, candidate) = one_shot_with_boundary_on(true);
+    let (_, mut audio) = prepared
+        .arm_one_shot(candidate, &mixed_profile())
+        .expect("private arm");
+    let mut old = [0.0_f32; 128];
+    audio
+        .render_private(AudioBlockMut::new(&mut old, 128, ChannelLayout::Mono).expect("old"))
+        .expect("old quantum");
+    assert!(!audio.report().adopted);
+    for _ in 0..16 {
+        let identity = audio
+            .offer_test_note_on(SampleTime::ZERO, key(48), NoteVelocity::FULL)
+            .expect("late onset");
+        audio
+            .offer_test_note_off(SampleTime::ZERO, identity)
+            .expect("late protected release");
+    }
+    assert_eq!(audio.test_ingress.len(), 32);
+    let mut boundary = [0.0_f32; 1];
+    audio
+        .render_private(
+            AudioBlockMut::new(&mut boundary, 1, ChannelLayout::Mono).expect("boundary"),
+        )
+        .expect("adoption with full late backlog");
+    assert!(audio.report().adopted);
+    assert_eq!(audio.test_ingress.len(), 0);
+    assert_eq!(
+        audio.arbiter.high_water(ProducerClass::Live),
+        EventCount::measured(16)
+    );
+    assert_eq!(
+        audio.arbiter.high_water(ProducerClass::Release),
+        EventCount::measured(16)
+    );
+    let limits = mixed_profile().limits().events();
+    assert!(audio.arbiter.high_water(ProducerClass::Live) <= limits.shares().live_event_share());
+    assert!(
+        audio.arbiter.high_water(ProducerClass::Release) <= limits.shares().release_event_share()
+    );
+    assert!(audio.arbiter.high_water_external_total() <= limits.max_events_per_quantum());
+}
+
+#[cfg(feature = "simulated-ingress")]
+#[test]
+fn private_mixed_ingress_teardown_classifies_pending_and_faulted_release() {
+    for fault_after_charge in [false, true] {
+        let (prepared, candidate) = one_shot_with_boundary_on(true);
+        let (control, mut audio) = prepared
+            .arm_one_shot(candidate, &mixed_profile())
+            .expect("private arm");
+        let live = audio
+            .offer_test_note_on(SampleTime::ZERO, key(48), NoteVelocity::FULL)
+            .expect("onset");
+        audio
+            .offer_test_note_off(SampleTime::new(8), live)
+            .expect("release spends hold");
+        assert_eq!(audio.test_ingress.holds_outstanding(), EventCount::NONE);
+        if fault_after_charge {
+            audio.test_fail_after_ingress_at = Some(SampleTime::ZERO);
+            let mut samples = [1.0_f32; 128];
+            assert_eq!(
+                audio.render_private(
+                    AudioBlockMut::new(&mut samples, 128, ChannelLayout::Mono).expect("block")
+                ),
+                Err(MixedOneShotRenderError::InjectedAfterIngress)
+            );
+            assert!(samples.iter().all(|sample| *sample == 0.0));
+            let queued = audio.test_ingress.len();
+            let counters = audio.test_ingress.counters();
+            assert_eq!(
+                audio.offer_test_note_on(SampleTime::new(16), key(49), NoteVelocity::FULL),
+                Err(crate::ingress::IngressRefused::TerminalOwner)
+            );
+            assert_eq!(
+                audio.offer_test_note_off(SampleTime::new(16), live),
+                Err(crate::ingress::IngressRefused::TerminalOwner)
+            );
+            assert_eq!(audio.test_ingress.len(), queued);
+            assert_eq!(audio.test_ingress.counters(), counters);
+        }
+        let MixedCollection::Ended(ended) = control.collect(audio).expect("teardown") else {
+            panic!("owner must end");
+        };
+        assert_eq!(
+            ended.end,
+            if fault_after_charge {
+                MixedCollectionEnd::Faulted
+            } else {
+                MixedCollectionEnd::Pending
+            }
+        );
+        let pending = if fault_after_charge {
+            assert!(ended.ingress.queued.is_empty());
+            &ended.ingress.charged_in_faulted_callback
+        } else {
+            assert!(ended.ingress.charged_in_faulted_callback.is_empty());
+            &ended.ingress.queued
+        };
+        assert_eq!(pending.len(), 2);
+        assert_eq!(pending.iter().filter(|entry| entry.1).count(), 1);
+        assert_eq!(ended.ingress.holds_outstanding, EventCount::NONE);
+        assert!(ended.ingress.minted_live.is_empty());
+        assert_eq!(ended.ingress.counters.dropped(), 0);
+    }
+}
+
+#[cfg(feature = "simulated-ingress")]
+#[test]
+fn private_mixed_ingress_fault_retains_earlier_quantum_charges() {
+    let (prepared, candidate) = one_shot_with_boundary_on(true);
+    let (control, mut audio) = prepared
+        .arm_one_shot(candidate, &mixed_profile())
+        .expect("private arm");
+    let first = audio
+        .offer_test_note_on(SampleTime::ZERO, key(48), NoteVelocity::FULL)
+        .expect("first onset");
+    audio
+        .offer_test_note_off(SampleTime::ZERO, first)
+        .expect("first release");
+    let second = audio
+        .offer_test_note_on(SampleTime::new(64), key(49), NoteVelocity::FULL)
+        .expect("second onset");
+    audio
+        .offer_test_note_off(SampleTime::new(64), second)
+        .expect("second release");
+    audio.test_fail_after_ingress_at = Some(SampleTime::new(64));
+    let mut samples = [1.0_f32; 192];
+    assert_eq!(
+        audio.render_private(
+            AudioBlockMut::new(&mut samples, 192, ChannelLayout::Mono).expect("block")
+        ),
+        Err(MixedOneShotRenderError::InjectedAfterIngress)
+    );
+    assert!(samples.iter().all(|sample| *sample == 0.0));
+    assert_eq!(audio.report().completed_quanta, QuantumCount::measured(1));
+    let MixedCollection::Ended(ended) = control.collect(audio).expect("terminal teardown") else {
+        panic!("faulted owner must end");
+    };
+    assert_eq!(ended.end, MixedCollectionEnd::Faulted);
+    assert!(ended.ingress.queued.is_empty());
+    assert_eq!(ended.ingress.charged_in_faulted_callback.len(), 4);
+    assert_eq!(
+        ended
+            .ingress
+            .charged_in_faulted_callback
+            .iter()
+            .map(|(event, redeems)| {
+                let EventPayload::Note { identity, edge } = event.payload() else {
+                    panic!("journal contains only note edges");
+                };
+                (
+                    event.envelope().time(),
+                    identity,
+                    matches!(edge, NoteEdge::Off),
+                    *redeems,
+                )
+            })
+            .collect::<Vec<_>>(),
+        vec![
+            (SampleTime::ZERO, first, false, false),
+            (SampleTime::ZERO, first, true, true),
+            (SampleTime::new(64), second, false, false),
+            (SampleTime::new(64), second, true, true),
+        ]
+    );
+    assert!(ended.sounding.live().is_empty());
+    assert_eq!(ended.boundary_ended.len(), 1);
+    assert!(ended.ingress.minted_live.is_empty());
+    assert_eq!(ended.ingress.holds_outstanding, EventCount::NONE);
+}
+
+#[cfg(feature = "simulated-ingress")]
+#[test]
+fn private_mixed_ingress_resumed_teardown_keeps_pending_release() {
+    let (prepared, candidate) = one_shot_with_boundary_on(true);
+    let (control, mut audio) = prepared
+        .arm_one_shot(candidate, &mixed_profile())
+        .expect("private arm");
+    let live = audio
+        .offer_test_note_on(SampleTime::ZERO, key(48), NoteVelocity::FULL)
+        .expect("onset");
+    let mut samples = [0.0_f32; 129];
+    audio
+        .render_private(AudioBlockMut::new(&mut samples, 129, ChannelLayout::Mono).expect("block"))
+        .expect("adopted render");
+    let MixedCollection::Resumed {
+        control, mut audio, ..
+    } = control.collect(audio).expect("resumed owner")
+    else {
+        panic!("adopted owner must resume");
+    };
+    audio
+        .offer_test_note_off(SampleTime::new(129), live)
+        .expect("pending release");
+    let ended = control.teardown(*audio).expect("resumed teardown");
+    assert_eq!(ended.end, MixedCollectionEnd::ResumedTeardown);
+    assert_eq!(ended.ingress.queued.len(), 1);
+    assert!(ended.ingress.queued[0].1);
+    assert!(ended.ingress.charged_in_faulted_callback.is_empty());
+    assert!(ended.ingress.minted_live.is_empty());
+    assert_eq!(ended.ingress.holds_outstanding, EventCount::NONE);
+    assert_eq!(ended.ingress.counters.orphan_releases(), 0);
+}
+
+#[cfg(feature = "simulated-ingress")]
+fn mixed_ingress_audio(partition: &[usize]) -> (Vec<f32>, Vec<f32>) {
+    let prepared = bound_with_compiled_note_held_at_boundary(true);
+    let plan = std::sync::Arc::clone(&prepared.owner.control.plan);
+    let instance_partition = std::sync::Arc::clone(&prepared.owner.control.partition);
+    let epoch = prepared.epoch();
+    let table = prepared.table_id();
+    let anchor = prepared.owner.control.anchor;
+    let history = prepared
+        .prepare_history(SampleTime::new(128), PlanPosition::new(256))
+        .expect("history");
+    let suffix = prepared.prepare_suffix(history).expect("suffix");
+    let candidate = prepared.stamp_suffix(suffix).expect("stamp");
+    let (_, mut audio) = prepared
+        .arm_one_shot(candidate, &mixed_profile())
+        .expect("private arm");
+    let first = audio
+        .offer_test_note_on(SampleTime::ZERO, key(48), NoteVelocity::FULL)
+        .expect("before-boundary onset");
+    audio
+        .offer_test_note_off(SampleTime::new(80), first)
+        .expect("before-boundary release");
+    let second = audio
+        .offer_test_note_on(SampleTime::new(144), key(49), NoteVelocity::FULL)
+        .expect("after-boundary onset");
+    audio
+        .offer_test_note_off(SampleTime::new(208), second)
+        .expect("after-boundary release");
+    let events = [
+        TimedEvent::new(
+            EventEnvelope::new(epoch, SampleTime::ZERO, TestOrigin::Simulated),
+            EventPayload::Note {
+                identity: first,
+                edge: NoteEdge::On {
+                    slot: audio.audio.note,
+                    key: key(48),
+                    velocity: NoteVelocity::FULL,
+                },
+            },
+        ),
+        TimedEvent::new(
+            EventEnvelope::new(epoch, SampleTime::new(80), TestOrigin::Simulated),
+            EventPayload::Note {
+                identity: first,
+                edge: NoteEdge::Off,
+            },
+        ),
+        TimedEvent::new(
+            EventEnvelope::new(epoch, SampleTime::new(144), TestOrigin::Simulated),
+            EventPayload::Note {
+                identity: second,
+                edge: NoteEdge::On {
+                    slot: audio.audio.note,
+                    key: key(49),
+                    velocity: NoteVelocity::FULL,
+                },
+            },
+        ),
+        TimedEvent::new(
+            EventEnvelope::new(epoch, SampleTime::new(208), TestOrigin::Simulated),
+            EventPayload::Note {
+                identity: second,
+                edge: NoteEdge::Off,
+            },
+        ),
+    ];
+    let mut reference = PreparedRenderer::prepare(plan, anchor, epoch, table).expect("reference");
+    assert!(reference.bind_mixed_partition(instance_partition));
+    let mut mixed = vec![0.0_f32; partition.iter().sum()];
+    let mut offset = 0;
+    for &frames in partition {
+        audio
+            .render_private(
+                AudioBlockMut::new(
+                    &mut mixed[offset..offset + frames],
+                    frames,
+                    ChannelLayout::Mono,
+                )
+                .expect("mixed block"),
+            )
+            .expect("mixed callback");
+        offset += frames;
+    }
+    let mut live_only = vec![0.0_f32; mixed.len()];
+    reference
+        .render(
+            AudioBlockMut::new(&mut live_only, mixed.len(), ChannelLayout::Mono)
+                .expect("reference block"),
+            TimedEvents::new(&events),
+        )
+        .expect("reference callback");
+    assert!(audio.report().adopted);
+    assert!(
+        audio
+            .audio
+            .renderer
+            .snapshot_mixed_sounding()
+            .expect("mixed rows")
+            .live()
+            .is_empty()
+    );
+    assert!(
+        reference
+            .snapshot_mixed_sounding()
+            .expect("reference rows")
+            .live()
+            .is_empty()
+    );
+    (mixed, live_only)
+}
+
+#[cfg(feature = "simulated-ingress")]
+fn mixed_ingress_compiled_baseline(partition: &[usize]) -> Vec<f32> {
+    let prepared = bound_with_compiled_note_held_at_boundary(true);
+    let history = prepared
+        .prepare_history(SampleTime::new(128), PlanPosition::new(256))
+        .expect("history");
+    let suffix = prepared.prepare_suffix(history).expect("suffix");
+    let candidate = prepared.stamp_suffix(suffix).expect("stamp");
+    let (_, mut audio) = prepared
+        .arm_one_shot(candidate, &mixed_profile())
+        .expect("private arm");
+    let mut compiled = vec![0.0_f32; partition.iter().sum()];
+    let mut offset = 0;
+    for &frames in partition {
+        audio
+            .render_private(
+                AudioBlockMut::new(
+                    &mut compiled[offset..offset + frames],
+                    frames,
+                    ChannelLayout::Mono,
+                )
+                .expect("compiled block"),
+            )
+            .expect("compiled callback");
+        offset += frames;
+    }
+    compiled
+}
+
+#[cfg(feature = "simulated-ingress")]
+#[test]
+fn private_mixed_ingress_matches_live_reference_across_adoption() {
+    let (mixed, live_only) = mixed_ingress_audio(&[320]);
+    let compiled = mixed_ingress_compiled_baseline(&[320]);
+    assert!(live_only[64..128].iter().any(|sample| *sample != 0.0));
+    assert!(live_only[208..272].iter().any(|sample| *sample != 0.0));
+    for (index, ((mixed, live), compiled)) in
+        mixed.iter().zip(&live_only).zip(&compiled).enumerate()
+    {
+        assert!(
+            (mixed - (live + compiled)).abs() < 0.00001,
+            "frame {index}: mixed {mixed}, live {live}, compiled {compiled}"
+        );
+    }
+    let (partitioned, partitioned_reference) = mixed_ingress_audio(&[64; 5]);
+    assert_eq!(partitioned, mixed);
+    assert_eq!(partitioned_reference, live_only);
+    assert_eq!(mixed_ingress_compiled_baseline(&[64; 5]), compiled);
+}
+
+#[cfg(feature = "simulated-ingress")]
+#[test]
+fn private_mixed_ingress_live_rows_match_reference_before_and_after_adoption() {
+    let prepared = bound_with_compiled_note_held_at_boundary(true);
+    let plan = std::sync::Arc::clone(&prepared.owner.control.plan);
+    let partition = std::sync::Arc::clone(&prepared.owner.control.partition);
+    let epoch = prepared.epoch();
+    let table = prepared.table_id();
+    let anchor = prepared.owner.control.anchor;
+    let history = prepared
+        .prepare_history(SampleTime::new(128), PlanPosition::new(256))
+        .expect("history");
+    let suffix = prepared.prepare_suffix(history).expect("suffix");
+    let candidate = prepared.stamp_suffix(suffix).expect("stamp");
+    let (_, mut audio) = prepared
+        .arm_one_shot(candidate, &mixed_profile())
+        .expect("private arm");
+    let first = audio
+        .offer_test_note_on(SampleTime::ZERO, key(48), NoteVelocity::FULL)
+        .expect("first onset");
+    audio
+        .offer_test_note_off(SampleTime::new(80), first)
+        .expect("first release");
+    let second = audio
+        .offer_test_note_on(SampleTime::new(144), key(49), NoteVelocity::FULL)
+        .expect("second onset");
+    audio
+        .offer_test_note_off(SampleTime::new(208), second)
+        .expect("second release");
+    let event = |at, identity, edge| {
+        TimedEvent::new(
+            EventEnvelope::new(epoch, SampleTime::new(at), TestOrigin::Simulated),
+            EventPayload::Note { identity, edge },
+        )
+    };
+    let events = [
+        event(
+            0,
+            first,
+            NoteEdge::On {
+                slot: audio.audio.note,
+                key: key(48),
+                velocity: NoteVelocity::FULL,
+            },
+        ),
+        event(80, first, NoteEdge::Off),
+        event(
+            144,
+            second,
+            NoteEdge::On {
+                slot: audio.audio.note,
+                key: key(49),
+                velocity: NoteVelocity::FULL,
+            },
+        ),
+        event(208, second, NoteEdge::Off),
+    ];
+    let mut reference = PreparedRenderer::prepare(plan, anchor, epoch, table).expect("reference");
+    assert!(reference.bind_mixed_partition(partition));
+    for (stage, frames) in [128_usize, 64, 64, 64].into_iter().enumerate() {
+        let mut mixed_output = vec![0.0_f32; frames];
+        let mut reference_output = vec![0.0_f32; frames];
+        audio
+            .render_private(
+                AudioBlockMut::new(&mut mixed_output, frames, ChannelLayout::Mono)
+                    .expect("mixed block"),
+            )
+            .expect("mixed callback");
+        reference
+            .render(
+                AudioBlockMut::new(&mut reference_output, frames, ChannelLayout::Mono)
+                    .expect("reference block"),
+                TimedEvents::new(&events[stage..stage + 1]),
+            )
+            .expect("reference callback");
+        let expected_clock = SampleTime::new([64_u64, 128, 192, 256][stage]);
+        assert_eq!(audio.audio.renderer.clock(), expected_clock);
+        assert_eq!(reference.clock(), expected_clock);
+        assert_eq!(audio.report().adopted, stage >= 2);
+        let mixed_rows = audio
+            .audio
+            .renderer
+            .snapshot_mixed_sounding()
+            .expect("mixed rows");
+        let reference_rows = reference.snapshot_mixed_sounding().expect("reference rows");
+        assert_eq!(mixed_rows.live(), reference_rows.live(), "stage {stage}");
+        let expected = match stage {
+            0 => Some(first),
+            2 => Some(second),
+            _ => None,
+        };
+        assert_eq!(
+            mixed_rows.live().first().map(|note| note.identity),
+            expected
+        );
+    }
 }
 
 #[test]

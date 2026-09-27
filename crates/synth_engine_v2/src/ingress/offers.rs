@@ -1,5 +1,7 @@
 //! Fixed-storage live admission; all preparation remains in the parent module.
 use super::{ExhaustedResource, IngressEntry, IngressRefused, PendingStart, PerformanceIngress};
+#[cfg(all(test, feature = "simulated-ingress"))]
+use crate::identity::LiveRangeMinter;
 use crate::{
     identity::{IdentityError, IdentityTable, NoteIdentity, Resolution},
     plan::{NoteSlot, ParameterSlot},
@@ -8,6 +10,85 @@ use crate::{
     time::{SampleTime, StreamEpoch, TimeSource},
 };
 impl PerformanceIngress {
+    /// Test-only mixed offer through the owner's registered queue and live range.
+    #[cfg(all(test, feature = "simulated-ingress"))]
+    pub(crate) fn offer_mixed_note_on(
+        &mut self,
+        minter: &mut LiveRangeMinter,
+        time: SampleTime,
+        note: NoteSlot,
+        key: crate::quantities::KeyIdentity,
+        velocity: crate::quantities::NoteVelocity,
+    ) -> Result<NoteIdentity, IngressRefused> {
+        self.admit(time)?;
+        if !self.room_for(1) {
+            self.counters.dropped_slot = self.counters.dropped_slot.saturating_add(1);
+            return Err(IngressRefused::Dropped {
+                resource: ExhaustedResource::Slot,
+            });
+        }
+        if self.holds_outstanding >= self.hold_entitlement {
+            self.counters.dropped_hold = self.counters.dropped_hold.saturating_add(1);
+            return Err(IngressRefused::Dropped {
+                resource: ExhaustedResource::Hold,
+            });
+        }
+        let identity = match minter.mint_keyed(note, key) {
+            Ok(identity) => identity,
+            Err(_) => {
+                self.counters.dropped_identity = self.counters.dropped_identity.saturating_add(1);
+                return Err(IngressRefused::Dropped {
+                    resource: ExhaustedResource::Identity,
+                });
+            }
+        };
+        self.holds_outstanding = self
+            .holds_outstanding
+            .checked_add(EventCount::measured(1))
+            .unwrap_or(self.holds_outstanding);
+        self.enqueue_entry(
+            time,
+            EventPayload::Note {
+                identity,
+                edge: NoteEdge::On {
+                    slot: note,
+                    key,
+                    velocity,
+                },
+            },
+            false,
+        );
+        Ok(identity)
+    }
+
+    /// An accepted release trades its reserved hold for a queue entry.
+    #[cfg(all(test, feature = "simulated-ingress"))]
+    pub(crate) fn offer_mixed_note_off(
+        &mut self,
+        minter: &mut LiveRangeMinter,
+        time: SampleTime,
+        identity: NoteIdentity,
+    ) -> Result<(), IngressRefused> {
+        self.admit(time)?;
+        if self.holds_outstanding == EventCount::NONE
+            || minter.release(identity) != Resolution::Live
+        {
+            self.counters.orphan_releases = self.counters.orphan_releases.saturating_add(1);
+            return Err(IngressRefused::OrphanRelease { identity });
+        }
+        self.holds_outstanding =
+            EventCount::measured(self.holds_outstanding.get().saturating_sub(1));
+        self.enqueue_entry(
+            time,
+            EventPayload::Note {
+                identity,
+                edge: NoteEdge::Off,
+            },
+            true,
+        );
+        Ok(())
+    }
+
     /// Whether one new entry fits, together with `holds` further release reservations it
     /// would itself create.
     ///

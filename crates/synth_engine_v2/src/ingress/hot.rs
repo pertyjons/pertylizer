@@ -30,6 +30,35 @@ use crate::publish::{ProducerClass, Publication, PublicationFault};
 use crate::time::SampleTime;
 
 impl PerformanceIngress {
+    /// Copy the fixed queue in FIFO order into prepared private journal storage.
+    #[cfg(all(test, feature = "simulated-ingress"))]
+    pub(crate) fn copy_queue_for_test(
+        &self,
+        destination: &mut [Option<(crate::render::TimedEvent, bool)>],
+    ) -> Option<usize> {
+        if destination.len() < self.len {
+            return None;
+        }
+        let mut cursor = self.tail;
+        for position in 0..self.len {
+            let entry = self.entries.get(cursor).copied().flatten()?;
+            let target = destination.get_mut(position)?;
+            *target = Some((entry.event, entry.redeems_hold));
+            cursor = if cursor + 1 == self.entries.len() {
+                0
+            } else {
+                cursor + 1
+            };
+        }
+        Some(self.len)
+    }
+
+    /// Ordinary ring entries; displaced expressions use separate storage.
+    #[cfg(all(test, feature = "simulated-ingress"))]
+    pub(crate) const fn ring_len_for_test(&self) -> usize {
+        self.len
+    }
+
     /// Charge every entry whose destination this call can reach, and keep the rest.
     ///
     /// `clock` is the render clock this call starts at. The drain records it even when it

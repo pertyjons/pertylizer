@@ -74,6 +74,8 @@
 
 use thiserror::Error;
 
+#[cfg(all(test, feature = "simulated-ingress"))]
+use crate::identity::LiveRangeMinter;
 use crate::identity::{NoteIdentity, ProducerId};
 #[cfg(feature = "simulated-ingress")]
 use crate::plan::CompiledPlan;
@@ -179,6 +181,10 @@ impl std::fmt::Display for ExhaustedResource {
 /// where ADR-0046 clause 3 already places it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
 pub enum IngressRefused {
+    /// The private mixed owner has faulted and cannot service another callback.
+    #[cfg(all(test, feature = "simulated-ingress"))]
+    #[error("private mixed audio owner is terminally faulted")]
+    TerminalOwner,
     /// Invalid, oversized or deferred group; no obligation is changed.
     #[error("release group is not a distinct owned set of at most eight non-deferred notes")]
     ReleaseGroup,
@@ -585,6 +591,17 @@ pub enum IngressPrepareError {
         /// The plan the renderer renders.
         renderer: crate::plan::PlanId,
     },
+    /// The private mixed store must use the renderer's own live range.
+    #[cfg(all(test, feature = "simulated-ingress"))]
+    #[error("the private mixed ingress minter is not the renderer's live producer range")]
+    ForeignLiveRange,
+    /// A whole queued release backlog can converge on one callback.
+    #[cfg(all(test, feature = "simulated-ingress"))]
+    #[error("release share {share} cannot cover private mixed ingress depth {capacity}")]
+    ReleaseBacklogShare {
+        share: EventCount,
+        capacity: EventCount,
+    },
     /// The store identity space is spent.
     ///
     /// Refused rather than reissued: the latch that keeps one store per stream compares
@@ -639,6 +656,51 @@ impl PerformanceIngress {
         producer: ProducerId,
         renderer: &crate::render::PreparedRenderer,
     ) -> Result<Self, IngressPrepareError> {
+        Self::prepare_for(profile, plan, producer, renderer, false)
+    }
+
+    /// The same registered queue, bound to the private mixed audio owner only.
+    /// No production path can lift `MixedProducerPlan` through this constructor.
+    #[cfg(all(test, feature = "simulated-ingress"))]
+    pub(crate) fn prepare_mixed_test(
+        profile: &HostProfile,
+        plan: &CompiledPlan,
+        minter: &LiveRangeMinter,
+        renderer: &crate::render::PreparedRenderer,
+    ) -> Result<Self, IngressPrepareError> {
+        let capacity = profile
+            .limits()
+            .events()
+            .queues()
+            .performance_ingress_capacity();
+        let share = profile.limits().events().shares().release_event_share();
+        if share < capacity {
+            return Err(IngressPrepareError::ReleaseBacklogShare { share, capacity });
+        }
+        let producer = minter.producer();
+        let index = usize::from(producer.as_u16());
+        let ranges = plan.note_producer_ranges();
+        let expected = ranges.get(index).and_then(|count| {
+            let start = ranges
+                .get(..index)?
+                .iter()
+                .try_fold(0_u32, |sum, range| sum.checked_add(range.get()))?;
+            crate::identity::Range::checked(start, count.get())
+        });
+        if minter.id() != renderer.table_id() || expected != Some(minter.span()) {
+            return Err(IngressPrepareError::ForeignLiveRange);
+        }
+        Self::prepare_for(profile, plan, producer, renderer, true)
+    }
+
+    #[cfg(feature = "simulated-ingress")]
+    fn prepare_for(
+        profile: &HostProfile,
+        plan: &CompiledPlan,
+        producer: ProducerId,
+        renderer: &crate::render::PreparedRenderer,
+        mixed_rehearsal: bool,
+    ) -> Result<Self, IngressPrepareError> {
         let epoch = renderer.epoch();
         // **The store's plan must be the renderer's**, because the entitlement comes from
         // one and the identity range is minted through the other.
@@ -663,7 +725,9 @@ impl PerformanceIngress {
         {
             return Err(IngressPrepareError::AuthoredProducer { producer });
         }
-        if let Some(compiled) = plan.compiled_note_producer() {
+        if let Some(compiled) = plan.compiled_note_producer()
+            && !mixed_rehearsal
+        {
             return Err(IngressPrepareError::MixedProducerPlan { compiled });
         }
 
@@ -774,6 +838,12 @@ impl PerformanceIngress {
     /// starts and releases retain their existing separate reservation accounting.
     pub const fn len(&self) -> usize {
         self.len.saturating_add(self.expression_len)
+    }
+
+    /// The storage length used by the private journal.
+    #[cfg(all(test, feature = "simulated-ingress"))]
+    pub(crate) fn queue_capacity_for_test(&self) -> usize {
+        self.entries.len()
     }
 
     /// Whether both event rings are empty; deferred note reservations are separate.

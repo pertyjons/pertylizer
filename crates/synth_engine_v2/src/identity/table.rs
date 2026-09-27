@@ -302,6 +302,37 @@ impl LiveRangeMinter {
     pub(crate) const fn span(&self) -> Range {
         self.0.span
     }
+
+    /// Off-thread classification of occurrences still held by the private rehearsal.
+    #[cfg(all(test, feature = "simulated-ingress"))]
+    pub(crate) fn live_identities_for_test(&self) -> Vec<NoteIdentity> {
+        self.0
+            .slots
+            .iter()
+            .enumerate()
+            .filter_map(|(offset, slot)| {
+                let Slot::Live { generation, .. } = slot else {
+                    return None;
+                };
+                let absolute = self.0.span.start.checked_add(u32::try_from(offset).ok()?)?;
+                Some(NoteIdentity {
+                    table: self.0.id,
+                    index: u16::try_from(absolute).ok()?,
+                    generation: *generation,
+                })
+            })
+            .collect()
+    }
+
+    /// Force the first released generation to retire for a bounded rehearsal.
+    #[cfg(all(test, feature = "simulated-ingress"))]
+    pub(crate) fn retire_first_generation_for_test(&mut self) {
+        assert_eq!(
+            self.0.minted, 0,
+            "generation ceiling changes only before mint"
+        );
+        self.0.generation_ceiling = 0;
+    }
 }
 
 impl LiveNotes {

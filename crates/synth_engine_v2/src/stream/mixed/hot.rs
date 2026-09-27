@@ -108,6 +108,10 @@ impl MixedOneShotAudio {
         if output.frames() == 0 {
             return Ok(());
         }
+        #[cfg(all(test, feature = "simulated-ingress"))]
+        {
+            self.test_ingress_inflight_len = 0;
+        }
         self.render_started = true;
         let result = self.render_private_inner(&mut output);
         if let Err(error) = result {
@@ -122,6 +126,10 @@ impl MixedOneShotAudio {
                 _ => self.audio.renderer.terminal_mixed_fault(&mut output),
             }
             return Err(error);
+        }
+        #[cfg(all(test, feature = "simulated-ingress"))]
+        {
+            self.test_ingress_inflight_len = 0;
         }
         Ok(())
     }
@@ -228,6 +236,26 @@ impl MixedOneShotAudio {
                 }
                 next += 1;
             }
+            #[cfg(all(test, feature = "simulated-ingress"))]
+            {
+                let offset = self.test_ingress_inflight_len;
+                let destination = self
+                    .test_ingress_inflight
+                    .get_mut(offset..)
+                    .ok_or(MixedOneShotRenderError::IngressJournal)?;
+                let before = self
+                    .test_ingress
+                    .copy_queue_for_test(destination)
+                    .ok_or(MixedOneShotRenderError::IngressJournal)?;
+                let charged = self.test_ingress.drain_into(
+                    &mut publication,
+                    self.audio.renderer.diagnostics_mut(),
+                    clock,
+                );
+                self.test_ingress_inflight_len = offset
+                    .saturating_add(before.saturating_sub(self.test_ingress.ring_len_for_test()));
+                charged?;
+            }
             #[cfg(test)]
             if let Some(event) = self.test_live
                 && !self.test_live_spent
@@ -241,6 +269,10 @@ impl MixedOneShotAudio {
                     self.test_live_spent = true;
                 }
             }
+        }
+        #[cfg(all(test, feature = "simulated-ingress"))]
+        if opens_quantum && self.test_fail_after_ingress_at == Some(clock) {
+            return Err(MixedOneShotRenderError::InjectedAfterIngress);
         }
         self.audio
             .renderer

@@ -8,6 +8,8 @@ use std::{marker::PhantomData, rc::Rc, sync::Arc};
 
 use thiserror::Error;
 
+#[cfg(all(test, feature = "simulated-ingress"))]
+use crate::ingress::{IngressCounters, IngressPrepareError, IngressRefused, PerformanceIngress};
 use crate::{
     diagnostics::CompileError,
     host::mixed_targets::{MixedInstancePartition, MixedTargetAdmission},
@@ -229,6 +231,10 @@ pub(crate) enum MixedOneShotArmError {
     /// The closed private render schedule cannot be admitted before arm.
     #[error(transparent)]
     Admission(#[from] MixedOneShotAdmissionError),
+    /// The private ingress queue could not be bound to this owner.
+    #[cfg(all(test, feature = "simulated-ingress"))]
+    #[error(transparent)]
+    Ingress(#[from] IngressPrepareError),
 }
 
 /// Off-thread admission for the closed private one-shot schedule.
@@ -273,6 +279,12 @@ pub(crate) enum MixedOneShotRenderError {
     Pairing,
     #[error("mixed one-shot renderer was already faulted")]
     RendererFaulted,
+    #[cfg(all(test, feature = "simulated-ingress"))]
+    #[error("private mixed ingress journal cannot hold the registered queue")]
+    IngressJournal,
+    #[cfg(all(test, feature = "simulated-ingress"))]
+    #[error("injected private mixed fault after ingress charge")]
+    InjectedAfterIngress,
     #[error("mixed one-shot compiled event at {event} missed clock {clock}")]
     MissedEvent {
         event: SampleTime,
@@ -677,6 +689,18 @@ pub(crate) struct MixedOneShotTeardown {
     boundary_ended: Vec<crate::identity::EndedNote>,
     unpublished_live: Option<NoteIdentity>,
     charged_unregistered_live: Option<NoteIdentity>,
+    #[cfg(all(test, feature = "simulated-ingress"))]
+    ingress: MixedIngressTeardown,
+}
+
+#[cfg(all(test, feature = "simulated-ingress"))]
+#[derive(Debug)]
+struct MixedIngressTeardown {
+    queued: Vec<(TimedEvent, bool)>,
+    charged_in_faulted_callback: Vec<(TimedEvent, bool)>,
+    minted_live: Vec<NoteIdentity>,
+    holds_outstanding: EventCount,
+    counters: IngressCounters,
 }
 
 #[derive(Debug)]
@@ -702,6 +726,9 @@ pub(crate) enum MixedCollectionError {
     EndedPrefix,
     #[error("mixed audio half has not completed compiled authority promotion")]
     UnpromotedAudio,
+    #[cfg(all(test, feature = "simulated-ingress"))]
+    #[error("private mixed ingress journal lost the registered queue")]
+    IngressJournal,
 }
 
 /// Every refusal returns both stopped halves before consuming either one.
@@ -738,12 +765,65 @@ pub(crate) struct MixedOneShotAudio {
     completed_quanta: QuantumCount,
     adoption_after_quanta: Option<QuantumCount>,
     render_started: bool,
+    #[cfg(all(test, feature = "simulated-ingress"))]
+    test_ingress: PerformanceIngress,
+    #[cfg(all(test, feature = "simulated-ingress"))]
+    test_ingress_inflight: Vec<Option<(TimedEvent, bool)>>,
+    #[cfg(all(test, feature = "simulated-ingress"))]
+    test_ingress_inflight_len: usize,
+    #[cfg(all(test, feature = "simulated-ingress"))]
+    test_fail_after_ingress_at: Option<SampleTime>,
     #[cfg(test)]
     test_live: Option<TimedEvent>,
     #[cfg(test)]
     test_live_spent: bool,
     #[cfg(test)]
     test_live_share: EventCount,
+}
+
+#[cfg(all(test, feature = "simulated-ingress"))]
+impl MixedOneShotAudio {
+    /// Private ingress acceptance; the returned identity is the release token.
+    fn offer_test_note_on(
+        &mut self,
+        at: SampleTime,
+        key: crate::quantities::KeyIdentity,
+        velocity: crate::quantities::NoteVelocity,
+    ) -> Result<NoteIdentity, IngressRefused> {
+        if self.fault.is_some() || self.audio.renderer.diagnostics().needs_reprepare() {
+            return Err(IngressRefused::TerminalOwner);
+        }
+        assert!(
+            self.test_live.is_none(),
+            "test live paths cannot be combined"
+        );
+        self.test_ingress.adopt(self.audio.renderer.epoch())?;
+        self.test_ingress.offer_mixed_note_on(
+            &mut self.audio.minter,
+            at,
+            self.audio.note,
+            key,
+            velocity,
+        )
+    }
+
+    /// The exact accepted occurrence redeems its release hold.
+    fn offer_test_note_off(
+        &mut self,
+        at: SampleTime,
+        identity: NoteIdentity,
+    ) -> Result<(), IngressRefused> {
+        if self.fault.is_some() || self.audio.renderer.diagnostics().needs_reprepare() {
+            return Err(IngressRefused::TerminalOwner);
+        }
+        assert!(
+            self.test_live.is_none(),
+            "test live paths cannot be combined"
+        );
+        self.test_ingress.adopt(self.audio.renderer.epoch())?;
+        self.test_ingress
+            .offer_mixed_note_off(&mut self.audio.minter, at, identity)
+    }
 }
 
 /// Off-thread compiled-range custody for one bound mixed plan and stream.
@@ -790,6 +870,8 @@ struct MixedTeardownParts {
     boundary_ended: Vec<crate::identity::EndedNote>,
     unpublished_live: Option<NoteIdentity>,
     charged_unregistered_live: Option<NoteIdentity>,
+    #[cfg(all(test, feature = "simulated-ingress"))]
+    ingress: MixedIngressTeardown,
 }
 
 fn mixed_teardown_parts(
@@ -827,11 +909,34 @@ fn mixed_teardown_parts(
     };
     #[cfg(not(test))]
     let (unpublished_live, charged_unregistered_live) = (None, None);
+    #[cfg(all(test, feature = "simulated-ingress"))]
+    let ingress = {
+        let mut queue = vec![None; audio.test_ingress.queue_capacity_for_test()];
+        let len = audio
+            .test_ingress
+            .copy_queue_for_test(&mut queue)
+            .ok_or(MixedCollectionError::IngressJournal)?;
+        MixedIngressTeardown {
+            queued: queue.into_iter().take(len).flatten().collect(),
+            charged_in_faulted_callback: audio
+                .test_ingress_inflight
+                .iter()
+                .take(audio.test_ingress_inflight_len)
+                .copied()
+                .flatten()
+                .collect(),
+            minted_live: audio.audio.minter.live_identities_for_test(),
+            holds_outstanding: audio.test_ingress.holds_outstanding(),
+            counters: audio.test_ingress.counters(),
+        }
+    };
     Ok(MixedTeardownParts {
         sounding,
         boundary_ended,
         unpublished_live,
         charged_unregistered_live,
+        #[cfg(all(test, feature = "simulated-ingress"))]
+        ingress,
     })
 }
 
@@ -850,6 +955,8 @@ fn mixed_finish_teardown(
         boundary_ended: parts.boundary_ended,
         unpublished_live: parts.unpublished_live,
         charged_unregistered_live: parts.charged_unregistered_live,
+        #[cfg(all(test, feature = "simulated-ingress"))]
+        ingress: parts.ingress,
     }
 }
 
@@ -1412,6 +1519,30 @@ impl MixedJoinedPrepared {
                 }));
             }
         };
+        // The private mixed bound is composed before either owner is consumed:
+        // profile admission covers the sum of all class shares and queue depth <= Live;
+        // the arbiter checks the plan's release-hold sum, actual Session
+        // release/restoration, shifted Compiled suffix, scoped fanout and
+        // full-quantum event storage. The renderer check above
+        // covers the widest payload's timed writes, compiled boundary queue and seed
+        // rows. The ingress constructor below additionally requires a full queued
+        // Release backlog to fit its share, then allocates the sole registered queue.
+        #[cfg(all(test, feature = "simulated-ingress"))]
+        let test_ingress = match PerformanceIngress::prepare_mixed_test(
+            profile,
+            &control.plan,
+            &audio.minter,
+            &audio.renderer,
+        ) {
+            Ok(ingress) => ingress,
+            Err(error) => {
+                return Err(Box::new(MixedOneShotArmRefusal {
+                    reason: error.into(),
+                    owner: self,
+                    candidate,
+                }));
+            }
+        };
         let late_at_arm = candidate.anchor.time() < arm_clock;
         let effective_anchor = StreamAnchor::new(effective, candidate.anchor.position());
         let capsule = match candidate.into_audio_capsule() {
@@ -1460,6 +1591,14 @@ impl MixedJoinedPrepared {
                 completed_quanta: QuantumCount::NONE,
                 adoption_after_quanta: None,
                 render_started: false,
+                #[cfg(all(test, feature = "simulated-ingress"))]
+                test_ingress_inflight: vec![None; test_ingress.queue_capacity_for_test()],
+                #[cfg(all(test, feature = "simulated-ingress"))]
+                test_ingress_inflight_len: 0,
+                #[cfg(all(test, feature = "simulated-ingress"))]
+                test_fail_after_ingress_at: None,
+                #[cfg(all(test, feature = "simulated-ingress"))]
+                test_ingress,
                 #[cfg(test)]
                 test_live: None,
                 #[cfg(test)]
@@ -1881,12 +2020,18 @@ fn prepare_one_shot_arbiter(
     let caps = profile.capabilities();
     let events = profile.limits().events();
     let shares = events.shares();
+    let declared_holds = plan
+        .note_producer_holds()
+        .iter()
+        .try_fold(EventCount::NONE, |sum, count| sum.checked_add(*count))
+        .ok_or(Refused::ProfileMismatch)?;
     if plan.sample_rate() != caps.sample_rate()
         || plan.channel_layout() != caps.channel_layout()
         || plan.maximum_block_size() != caps.maximum_block_size()
         || plan.max_events_per_quantum() != events.max_events_per_quantum()
         || plan.compiled_event_share() != shares.compiled_event_share()
         || plan.forward_event_horizon() != events.forward_event_horizon()
+        || declared_holds > shares.release_hold_capacity()
     {
         return Err(Refused::ProfileMismatch);
     }

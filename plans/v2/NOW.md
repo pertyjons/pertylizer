@@ -246,9 +246,10 @@ stream and one live note slot. It accepts disjoint voice-instance targets and
 refuses shared nodes or compiled writers outside note targets. A constructor
 now consumes that binding and prepares separate compiled and live identity
 range owners with one table identity and stream epoch. Tests cover both
-producer orders and cross-range release refusal. These owners do not yet
-offer mixed ingress, rendering or activation; the existing refusals remain
-in force. An off-thread check now places and stamps the bound stream against
+producer orders and cross-range release refusal. These owners expose no
+production mixed ingress, rendering or activation; the existing refusals remain
+in force. A private test-only owner now offers mixed note ingress.
+An off-thread check now places and stamps the bound stream against
 a disposable copy of only the compiled range. It publishes no events or
 reservations. Tests cover wrong-producer and wrong-capacity refusals, disjoint
 compiled and live indices through copy/commit, and a post-mint refusal.
@@ -368,8 +369,8 @@ mismatch faults the callback or refuses promotion while still allowing the
 correct pair to tear down. Tests cover terminal preflight, a head fault,
 already-faulted renderer state, post-adoption promotion refusal and a fault
 after resumed rendering. The defensive second-arm seam remains open.
-Other same-quantum Session contributors, production live ingress,
-other payload fanout and host resource charges remain open.
+Other same-quantum Session contributors, production mixed ingress with
+payloads beyond this note-only rehearsal, and host resource charges remain open.
 No production mixed offer or command refusal has been lifted.
 The private stamped candidate now has a checked, allocation-free effective-event
 view that applies one displacement on each read without rewriting requested-time
@@ -378,24 +379,33 @@ releases the old compiled occurrence, and plays the destination note after scope
 restoration. In both producer orders its audio matches the sum of separate
 live and compiled references with the same voice history. A release-only
 reference is silent in the boundary and following quanta while the new compiled
-note is audible. The live onset is still directly stamped in the test, and no
-combined host or offer is enabled.
+note is audible. That earlier live onset is directly stamped in its test; the
+new ingress rehearsal below has a separate test-only offer path.
 The existing plan gate already charges the full addressable catch-up batch plus
 one boundary release to Session. The mixed scoped batch is a subset of those
 addresses, and its compiled suffix is a shifted subset of the stream admitted
 against the compiled share. A separate scan of the private event counts would
-repeat those bounds. Payload size, timed-control fanout, scoped-restoration
-scratch, seed storage and the combined Session charge remain open. A combined
-host must suppress the old compiled schedule at the effective boundary and
-account for every other simultaneous contributor before it can offer activation.
-The next proposed `#[cfg(test)]` ingress rehearsal in ADR-0075 uses the registered
-performance-event ingress queue with the audio-owned live range and releases
-by its returned occurrence identity. It must close the open publication,
-payload, scratch and seed bounds before arm. It claims no result-channel or
-source receipt, FIFO tombstone, source-ring, raw-input or recorder bridge;
-those require a later shared charge and explicit contract amendments. The
-private ingress keeps release-at-offer timing only as a rehearsal; a production
-mixed owner needs the ADR-0046/0047/0050/0072 amendments first.
+repeat those bounds. The private arm now composes the existing checked Session,
+Compiled, total-event, payload, timed-control, scoped fanout and seed-storage
+bounds with the plan's declared release holds, the registered queue's Live depth
+and a new full-backlog Release share check. A release share below queue depth
+refuses arm and returns both owners unchanged. Other same-quantum Session
+contributors and host resource charges remain open for a combined host.
+The `#[cfg(test)]` ingress rehearsal in ADR-0075 now offers note-on and exact
+identity release through the audio-owned live range and the registered
+performance-event queue. A slot, hold or identity shortage uses that queue's
+counted drop; a foreign or repeated release is an orphan refusal. Tests cover
+same-time release before reused-index onset, non-monotone stamps, retired
+indices, a full late backlog at adoption, live-only audio and row parity, and
+pending, faulted and resumed teardown. A two-quantum terminal test proves the
+callback journal retains entries charged before and during the fault, including
+a release whose hold was spent at offer. The stopped registry separately reports
+what reached sounding state.
+This remains an internal rehearsal with no result-channel or source receipt,
+FIFO tombstone, source-ring, raw-input or recorder bridge. Those require a
+later shared charge and explicit contract amendments. Release-at-offer timing
+is private to this rehearsal; a production mixed owner needs the
+ADR-0046/0047/0050/0072 amendments first.
 
 ### Selected work — ordered transport through live I/O
 
