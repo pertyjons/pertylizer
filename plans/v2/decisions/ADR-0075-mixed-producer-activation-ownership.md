@@ -1375,8 +1375,9 @@ onsets following an already forwarded later release, repeated frontiers at
 `h + R = N - 2`, and another source withholding its frontier remain explicit
 falsifiers; the fixture must give each a source-order-preserving disposition
 before claiming bounded release service. The current concrete raw owner has
-no frontier coalescing and the current mixed ingress has no result channel, so
-no such claim follows from the isolated ingress rehearsal.
+no frontier coalescing, and the private mixed result ring is neither source
+associated nor connected to a shared ledger, so no such claim follows from
+the isolated ingress rehearsal.
 
 Build the model in stages: first test the shared ledger and retry/retirement
 with bounded fake consumers; then attach the real raw owner and recorder; then
@@ -1473,7 +1474,19 @@ source-service order refuse B as `NonMonotoneStamp`. The mixed offer runs on the
 audio half, whose monotone stamp and forward-horizon checks are separate from
 merger credit. A combined positive onset outcome therefore needs mapped-time
 mixed-offer order and an exact audio-side ingress result returned to the source
-ledger; the current private mixed owner has no such result channel.
+ledger. The private mixed owner now has a test-only, preallocated command and
+result ring across its control/audio split. A command carries its exact onset
+or release request and a local command ID; explicit audio service returns the
+actual ingress identity or refusal with that request. Control reserves a result
+slot until collection and teardown refuses while any command or result is
+outstanding. The two-onset/two-release cross-thread test measures no allocation
+in audio service; separate tests falsify lost original requests when the
+control-side result reservation is exhausted, silent teardown, and acceptance
+of the out-of-order timestamp.
+The ring depth follows the registered ingress queue, but these private test
+rings have no production byte-budget charge. There is still no source identity
+in the command, mapped-time ordering across source rings, callback service,
+combined raw/recorder outcome, or production mixed ingress entitlement.
 
 The same read found that holding a popped onset until tracker credit returns
 can deadlock when its release or required frontier is behind that onset in the
@@ -1488,9 +1501,10 @@ ordinary-cell credit or an explicit rule to skip raw delivery. These are
 falsifiable prerequisites, not an accepted combined admission contract.
 Raw release admission converts its reserved cell to occupancy; the merger can
 observe recorder release publication only in a delivered receipt, and audition
-credit returns through settlement and collection. Mixed ingress currently
-returns only the immediate offer result on its audio half. A shared ledger must
-name each of these distinct events before any credit can be recycled.
+credit returns through settlement and collection. The private mixed channel
+returns an explicit audio-side offer result but has no source or shared-credit
+association. A shared ledger must name each of these distinct events before
+any credit can be recycled.
 EVD-0024's component matrix remains
 insufficient for production capacity; ADR-0022's hardware timing and physical
 round-trip gates remain separate.

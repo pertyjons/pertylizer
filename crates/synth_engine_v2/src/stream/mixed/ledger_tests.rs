@@ -3,7 +3,8 @@
 use std::collections::VecDeque;
 
 use super::{
-    EventPayload, MixedCollection, MixedCollectionEnd, MixedOneShotRenderError, history_tests,
+    EventPayload, MixedCollection, MixedCollectionEnd, MixedIngressOutcome, MixedIngressRequest,
+    MixedIngressSubmitError, MixedOneShotRenderError, history_tests,
 };
 use crate::identity::NoteIdentity;
 use crate::ingress::{ExhaustedResource, IngressRefused};
@@ -23,7 +24,7 @@ use crate::{
     profile::{CaptureLimits, CaptureLimitsInput, RecordingLimits},
     quantities::{
         CapturePassCount, CaptureResultCount, CaptureSourceCount, ChannelLayout, EventCount,
-        HeldNoteCount, KeyIdentity, PreparedBytes, ProjectionTickCount, SampleRate,
+        HeldNoteCount, KeyIdentity, NoteVelocity, PreparedBytes, ProjectionTickCount, SampleRate,
         TrackedInputNoteCount,
     },
     recording::CaptureOutcome,
@@ -1629,6 +1630,227 @@ fn modeled_ring_releases_settle_raw_credit_from_delivered_serial_receipts() {
         model.bind_raw_onset(replay, foreign_release_raw),
         Err(RawOnsetBindError::SourceGeneration)
     );
+}
+
+#[test]
+fn mixed_audio_queue_returns_exact_ingress_results_without_audio_service_allocation() {
+    let (prepared, candidate) = history_tests::one_shot_with_boundary_on(true);
+    let (mut control, mut audio) = prepared
+        .arm_one_shot(candidate, &history_tests::mixed_profile())
+        .unwrap();
+    let first = MixedIngressRequest::Onset {
+        at: SampleTime::new(140),
+        key: KeyIdentity::new(60).unwrap(),
+        velocity: NoteVelocity::FULL,
+    };
+    let second = MixedIngressRequest::Onset {
+        at: SampleTime::new(150),
+        key: KeyIdentity::new(60).unwrap(),
+        velocity: NoteVelocity::FULL,
+    };
+    let first_id = control.submit_ingress(first).unwrap();
+    let second_id = control.submit_ingress(second).unwrap();
+    assert!(control.collect_ingress_result().is_none());
+    audio = std::thread::spawn(move || {
+        assert_eq!(
+            crate::render_allocation::count_allocs(|| audio.service_test_ingress_queue()),
+            0
+        );
+        audio
+    })
+    .join()
+    .unwrap();
+    let first_result = control.collect_ingress_result().unwrap();
+    let second_result = control.collect_ingress_result().unwrap();
+    assert_eq!((first_result.id, first_result.request), (first_id, first));
+    assert_eq!(
+        (second_result.id, second_result.request),
+        (second_id, second)
+    );
+    let MixedIngressOutcome::Onset(Ok(first_identity)) = first_result.outcome else {
+        panic!("first ingress result must retain its minted identity");
+    };
+    let MixedIngressOutcome::Onset(Ok(second_identity)) = second_result.outcome else {
+        panic!("second ingress result must retain its minted identity");
+    };
+    assert_ne!(first_identity, second_identity);
+    assert!(control.collect_ingress_result().is_none());
+
+    let first_release = MixedIngressRequest::Release {
+        at: SampleTime::new(160),
+        identity: first_identity,
+    };
+    let second_release = MixedIngressRequest::Release {
+        at: SampleTime::new(170),
+        identity: second_identity,
+    };
+    let first_release_id = control.submit_ingress(first_release).unwrap();
+    let second_release_id = control.submit_ingress(second_release).unwrap();
+    audio = std::thread::spawn(move || {
+        assert_eq!(
+            crate::render_allocation::count_allocs(|| audio.service_test_ingress_queue()),
+            0
+        );
+        audio
+    })
+    .join()
+    .unwrap();
+    assert_eq!(
+        control.collect_ingress_result(),
+        Some(super::MixedIngressResult {
+            id: first_release_id,
+            request: first_release,
+            outcome: MixedIngressOutcome::Release(Ok(())),
+        })
+    );
+    assert_eq!(
+        control.collect_ingress_result(),
+        Some(super::MixedIngressResult {
+            id: second_release_id,
+            request: second_release,
+            outcome: MixedIngressOutcome::Release(Ok(())),
+        })
+    );
+    assert_eq!(audio.test_ingress.holds_outstanding(), EventCount::NONE);
+    assert!(control.collect_ingress_result().is_none());
+}
+
+#[test]
+fn mixed_ingress_result_reservation_returns_full_request_until_collected() {
+    let (prepared, candidate) = history_tests::one_shot_with_boundary_on(true);
+    let (mut control, mut audio) = prepared
+        .arm_one_shot(candidate, &history_tests::mixed_profile())
+        .unwrap();
+    let request = MixedIngressRequest::Onset {
+        at: SampleTime::new(140),
+        key: KeyIdentity::new(60).unwrap(),
+        velocity: NoteVelocity::FULL,
+    };
+    let capacity = control.ingress_capacity.as_usize();
+    assert!(capacity > 0);
+    for _ in 0..capacity {
+        let _id = control.submit_ingress(request).unwrap();
+    }
+    assert_eq!(
+        control.submit_ingress(request),
+        Err(MixedIngressSubmitError::Full(request))
+    );
+    audio.service_test_ingress_queue();
+    assert_eq!(
+        control.submit_ingress(request),
+        Err(MixedIngressSubmitError::Full(request))
+    );
+    let first = control.collect_ingress_result().unwrap();
+    assert_eq!(first.request, request);
+    let next = control.submit_ingress(request).unwrap();
+    audio.service_test_ingress_queue();
+    let mut found = false;
+    while let Some(result) = control.collect_ingress_result() {
+        if result.id == next {
+            found = true;
+            assert_eq!(result.request, request);
+        }
+    }
+    assert!(found);
+}
+
+#[test]
+fn mixed_ingress_command_id_exhaustion_retains_original_request() {
+    let (prepared, candidate) = history_tests::one_shot_with_boundary_on(true);
+    let (mut control, mut audio) = prepared
+        .arm_one_shot(candidate, &history_tests::mixed_profile())
+        .unwrap();
+    let request = MixedIngressRequest::Onset {
+        at: SampleTime::new(140),
+        key: KeyIdentity::new(60).unwrap(),
+        velocity: NoteVelocity::FULL,
+    };
+    control.last_ingress_id = Some(super::MixedIngressCommandId(u64::MAX));
+    assert_eq!(
+        control.submit_ingress(request),
+        Err(MixedIngressSubmitError::IdentityExhausted(request))
+    );
+    assert_eq!(
+        control.ingress_outstanding,
+        super::MixedIngressQueueCount::NONE
+    );
+    audio.service_test_ingress_queue();
+    assert!(control.collect_ingress_result().is_none());
+    assert_eq!(
+        control.submit_ingress(request),
+        Err(MixedIngressSubmitError::IdentityExhausted(request))
+    );
+}
+
+#[test]
+fn mixed_ingress_result_channel_returns_non_monotone_refusal_with_original() {
+    let (prepared, candidate) = history_tests::one_shot_with_boundary_on(true);
+    let (mut control, mut audio) = prepared
+        .arm_one_shot(candidate, &history_tests::mixed_profile())
+        .unwrap();
+    let later = MixedIngressRequest::Onset {
+        at: SampleTime::new(150),
+        key: KeyIdentity::new(60).unwrap(),
+        velocity: NoteVelocity::FULL,
+    };
+    let earlier = MixedIngressRequest::Onset {
+        at: SampleTime::new(140),
+        key: KeyIdentity::new(60).unwrap(),
+        velocity: NoteVelocity::FULL,
+    };
+    let _later_id = control.submit_ingress(later).unwrap();
+    let earlier_id = control.submit_ingress(earlier).unwrap();
+    audio.service_test_ingress_queue();
+    let _accepted = control.collect_ingress_result().unwrap();
+    assert_eq!(
+        control.collect_ingress_result(),
+        Some(super::MixedIngressResult {
+            id: earlier_id,
+            request: earlier,
+            outcome: MixedIngressOutcome::Onset(Err(IngressRefused::NonMonotoneStamp {
+                time: SampleTime::new(140),
+                last: SampleTime::new(150),
+            })),
+        })
+    );
+}
+
+#[test]
+fn mixed_collection_retains_unresolved_ingress_command_and_result_owners() {
+    let (prepared, candidate) = history_tests::one_shot_with_boundary_on(true);
+    let (mut control, audio) = prepared
+        .arm_one_shot(candidate, &history_tests::mixed_profile())
+        .unwrap();
+    let request = MixedIngressRequest::Onset {
+        at: SampleTime::new(140),
+        key: KeyIdentity::new(60).unwrap(),
+        velocity: NoteVelocity::FULL,
+    };
+    let id = control.submit_ingress(request).unwrap();
+    let refusal = control.collect(audio).unwrap_err();
+    assert_eq!(
+        refusal.reason,
+        super::MixedCollectionError::IngressResultPending
+    );
+    let super::MixedCollectionRefusal {
+        control, mut audio, ..
+    } = *refusal;
+    audio.service_test_ingress_queue();
+    let refusal = control.collect(audio).unwrap_err();
+    assert_eq!(
+        refusal.reason,
+        super::MixedCollectionError::IngressResultPending
+    );
+    let super::MixedCollectionRefusal {
+        mut control, audio, ..
+    } = *refusal;
+    let result = control.collect_ingress_result().unwrap();
+    assert_eq!((result.id, result.request), (id, request));
+    assert!(matches!(result.outcome, MixedIngressOutcome::Onset(Ok(_))));
+    assert!(matches!(
+        control.collect(audio).unwrap(),
+        MixedCollection::Ended(_)
+    ));
 }
 
 #[test]

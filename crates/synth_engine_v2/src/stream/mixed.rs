@@ -6,6 +6,12 @@
 
 use std::{marker::PhantomData, rc::Rc, sync::Arc};
 
+#[cfg(all(test, feature = "simulated-ingress"))]
+use ringbuf::{
+    HeapCons, HeapProd, HeapRb,
+    traits::{Consumer, Producer, Split},
+};
+
 use thiserror::Error;
 
 #[cfg(all(test, feature = "simulated-ingress"))]
@@ -642,7 +648,129 @@ pub(crate) struct MixedOneShotArmRefusal {
 pub(crate) struct MixedOneShotControl {
     control: MixedStreamControl,
     outstanding: Vec<NoteIdentity>,
+    #[cfg(all(test, feature = "simulated-ingress"))]
+    ingress_commands: OpaqueQueue<HeapProd<MixedIngressCommand>>,
+    #[cfg(all(test, feature = "simulated-ingress"))]
+    ingress_results: OpaqueQueue<HeapCons<MixedIngressResult>>,
+    #[cfg(all(test, feature = "simulated-ingress"))]
+    ingress_capacity: MixedIngressQueueCount,
+    #[cfg(all(test, feature = "simulated-ingress"))]
+    ingress_outstanding: MixedIngressQueueCount,
+    #[cfg(all(test, feature = "simulated-ingress"))]
+    last_ingress_id: Option<MixedIngressCommandId>,
     off_thread: PhantomData<Rc<()>>,
+}
+
+#[cfg(all(test, feature = "simulated-ingress"))]
+struct OpaqueQueue<T>(T);
+
+#[cfg(all(test, feature = "simulated-ingress"))]
+impl<T> std::fmt::Debug for OpaqueQueue<T> {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("bounded ingress queue")
+    }
+}
+
+#[cfg(all(test, feature = "simulated-ingress"))]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[must_use]
+struct MixedIngressCommandId(u64);
+
+#[cfg(all(test, feature = "simulated-ingress"))]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd)]
+#[must_use]
+struct MixedIngressQueueCount(usize);
+
+#[cfg(all(test, feature = "simulated-ingress"))]
+impl MixedIngressQueueCount {
+    const NONE: Self = Self(0);
+
+    fn capacity(value: usize) -> Self {
+        assert!(value > 0, "prepared ingress capacity must be nonzero");
+        Self(value)
+    }
+
+    const fn as_usize(self) -> usize {
+        self.0
+    }
+}
+
+#[cfg(all(test, feature = "simulated-ingress"))]
+#[derive(Clone, Copy, Debug, PartialEq)]
+#[must_use]
+enum MixedIngressRequest {
+    Onset {
+        at: SampleTime,
+        key: crate::quantities::KeyIdentity,
+        velocity: crate::quantities::NoteVelocity,
+    },
+    Release {
+        at: SampleTime,
+        identity: NoteIdentity,
+    },
+}
+
+#[cfg(all(test, feature = "simulated-ingress"))]
+#[derive(Clone, Copy, Debug)]
+struct MixedIngressCommand {
+    id: MixedIngressCommandId,
+    request: MixedIngressRequest,
+}
+
+#[cfg(all(test, feature = "simulated-ingress"))]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum MixedIngressOutcome {
+    Onset(Result<NoteIdentity, IngressRefused>),
+    Release(Result<(), IngressRefused>),
+}
+
+#[cfg(all(test, feature = "simulated-ingress"))]
+#[derive(Clone, Copy, Debug, PartialEq)]
+#[must_use]
+struct MixedIngressResult {
+    id: MixedIngressCommandId,
+    request: MixedIngressRequest,
+    outcome: MixedIngressOutcome,
+}
+
+#[cfg(all(test, feature = "simulated-ingress"))]
+#[derive(Debug, Error, PartialEq)]
+enum MixedIngressSubmitError {
+    #[error("mixed ingress command or result capacity is full")]
+    Full(MixedIngressRequest),
+    #[error("mixed ingress command identity is exhausted")]
+    IdentityExhausted(MixedIngressRequest),
+}
+
+#[cfg(all(test, feature = "simulated-ingress"))]
+impl MixedOneShotControl {
+    fn submit_ingress(
+        &mut self,
+        request: MixedIngressRequest,
+    ) -> Result<MixedIngressCommandId, MixedIngressSubmitError> {
+        if self.ingress_outstanding >= self.ingress_capacity {
+            return Err(MixedIngressSubmitError::Full(request));
+        }
+        let serial = self
+            .last_ingress_id
+            .map_or(Some(1), |id| id.0.checked_add(1))
+            .ok_or(MixedIngressSubmitError::IdentityExhausted(request))?;
+        let id = MixedIngressCommandId(serial);
+        self.ingress_commands
+            .0
+            .try_push(MixedIngressCommand { id, request })
+            .map_err(|command| MixedIngressSubmitError::Full(command.request))?;
+        self.last_ingress_id = Some(id);
+        self.ingress_outstanding.0 += 1;
+        Ok(id)
+    }
+
+    fn collect_ingress_result(&mut self) -> Option<MixedIngressResult> {
+        let result = self.ingress_results.0.try_pop()?;
+        assert!(self.ingress_outstanding > MixedIngressQueueCount::NONE);
+        self.ingress_outstanding.0 -= 1;
+        Some(result)
+    }
 }
 
 /// The sole compiled authority after a private adopted owner has rejoined.
@@ -729,6 +857,9 @@ pub(crate) enum MixedCollectionError {
     #[cfg(all(test, feature = "simulated-ingress"))]
     #[error("private mixed ingress journal lost the registered queue")]
     IngressJournal,
+    #[cfg(all(test, feature = "simulated-ingress"))]
+    #[error("private mixed ingress command or result remains uncollected")]
+    IngressResultPending,
 }
 
 /// Every refusal returns both stopped halves before consuming either one.
@@ -768,6 +899,12 @@ pub(crate) struct MixedOneShotAudio {
     #[cfg(all(test, feature = "simulated-ingress"))]
     test_ingress: PerformanceIngress,
     #[cfg(all(test, feature = "simulated-ingress"))]
+    ingress_commands: OpaqueQueue<HeapCons<MixedIngressCommand>>,
+    #[cfg(all(test, feature = "simulated-ingress"))]
+    ingress_results: OpaqueQueue<HeapProd<MixedIngressResult>>,
+    #[cfg(all(test, feature = "simulated-ingress"))]
+    ingress_result_pending: Option<MixedIngressResult>,
+    #[cfg(all(test, feature = "simulated-ingress"))]
     test_ingress_inflight: Vec<Option<(TimedEvent, bool)>>,
     #[cfg(all(test, feature = "simulated-ingress"))]
     test_ingress_inflight_len: usize,
@@ -783,6 +920,35 @@ pub(crate) struct MixedOneShotAudio {
 
 #[cfg(all(test, feature = "simulated-ingress"))]
 impl MixedOneShotAudio {
+    /// Serve only the preallocated command prefix; each result retains its request.
+    fn service_test_ingress_queue(&mut self) {
+        if let Some(pending) = self.ingress_result_pending.take()
+            && let Err(pending) = self.ingress_results.0.try_push(pending)
+        {
+            self.ingress_result_pending = Some(pending);
+            return;
+        }
+        while let Some(command) = self.ingress_commands.0.try_pop() {
+            let outcome = match command.request {
+                MixedIngressRequest::Onset { at, key, velocity } => {
+                    MixedIngressOutcome::Onset(self.offer_test_note_on(at, key, velocity))
+                }
+                MixedIngressRequest::Release { at, identity } => {
+                    MixedIngressOutcome::Release(self.offer_test_note_off(at, identity))
+                }
+            };
+            let result = MixedIngressResult {
+                id: command.id,
+                request: command.request,
+                outcome,
+            };
+            if let Err(result) = self.ingress_results.0.try_push(result) {
+                self.ingress_result_pending = Some(result);
+                break;
+            }
+        }
+    }
+
     /// Private ingress acceptance; the returned identity is the release token.
     fn offer_test_note_on(
         &mut self,
@@ -793,10 +959,9 @@ impl MixedOneShotAudio {
         if self.fault.is_some() || self.audio.renderer.diagnostics().needs_reprepare() {
             return Err(IngressRefused::TerminalOwner);
         }
-        assert!(
-            self.test_live.is_none(),
-            "test live paths cannot be combined"
-        );
+        if self.test_live.is_some() {
+            return Err(IngressRefused::MixedTestConflict);
+        }
         self.test_ingress.adopt(self.audio.renderer.epoch())?;
         self.test_ingress.offer_mixed_note_on(
             &mut self.audio.minter,
@@ -816,10 +981,9 @@ impl MixedOneShotAudio {
         if self.fault.is_some() || self.audio.renderer.diagnostics().needs_reprepare() {
             return Err(IngressRefused::TerminalOwner);
         }
-        assert!(
-            self.test_live.is_none(),
-            "test live paths cannot be combined"
-        );
+        if self.test_live.is_some() {
+            return Err(IngressRefused::MixedTestConflict);
+        }
         self.test_ingress.adopt(self.audio.renderer.epoch())?;
         self.test_ingress
             .offer_mixed_note_off(&mut self.audio.minter, at, identity)
@@ -971,6 +1135,14 @@ impl MixedOneShotControl {
         if !mixed_collection_pair(&self.control, &audio) {
             return Err(Box::new(MixedCollectionRefusal {
                 reason: MixedCollectionError::CrossedPair,
+                control: self,
+                audio,
+            }));
+        }
+        #[cfg(all(test, feature = "simulated-ingress"))]
+        if self.ingress_outstanding > MixedIngressQueueCount::NONE {
+            return Err(Box::new(MixedCollectionRefusal {
+                reason: MixedCollectionError::IngressResultPending,
                 control: self,
                 audio,
             }));
@@ -1543,6 +1715,15 @@ impl MixedJoinedPrepared {
                 }));
             }
         };
+        #[cfg(all(test, feature = "simulated-ingress"))]
+        let ingress_capacity =
+            MixedIngressQueueCount::capacity(test_ingress.queue_capacity_for_test());
+        #[cfg(all(test, feature = "simulated-ingress"))]
+        let (ingress_command_writer, ingress_command_reader) =
+            HeapRb::<MixedIngressCommand>::new(ingress_capacity.as_usize()).split();
+        #[cfg(all(test, feature = "simulated-ingress"))]
+        let (ingress_result_writer, ingress_result_reader) =
+            HeapRb::<MixedIngressResult>::new(ingress_capacity.as_usize()).split();
         let late_at_arm = candidate.anchor.time() < arm_clock;
         let effective_anchor = StreamAnchor::new(effective, candidate.anchor.position());
         let capsule = match candidate.into_audio_capsule() {
@@ -1570,6 +1751,16 @@ impl MixedJoinedPrepared {
             MixedOneShotControl {
                 control,
                 outstanding,
+                #[cfg(all(test, feature = "simulated-ingress"))]
+                ingress_commands: OpaqueQueue(ingress_command_writer),
+                #[cfg(all(test, feature = "simulated-ingress"))]
+                ingress_results: OpaqueQueue(ingress_result_reader),
+                #[cfg(all(test, feature = "simulated-ingress"))]
+                ingress_capacity,
+                #[cfg(all(test, feature = "simulated-ingress"))]
+                ingress_outstanding: MixedIngressQueueCount::NONE,
+                #[cfg(all(test, feature = "simulated-ingress"))]
+                last_ingress_id: None,
                 off_thread: PhantomData,
             },
             MixedOneShotAudio {
@@ -1599,6 +1790,12 @@ impl MixedJoinedPrepared {
                 test_fail_after_ingress_at: None,
                 #[cfg(all(test, feature = "simulated-ingress"))]
                 test_ingress,
+                #[cfg(all(test, feature = "simulated-ingress"))]
+                ingress_commands: OpaqueQueue(ingress_command_reader),
+                #[cfg(all(test, feature = "simulated-ingress"))]
+                ingress_results: OpaqueQueue(ingress_result_writer),
+                #[cfg(all(test, feature = "simulated-ingress"))]
+                ingress_result_pending: None,
                 #[cfg(test)]
                 test_live: None,
                 #[cfg(test)]

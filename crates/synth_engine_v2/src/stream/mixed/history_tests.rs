@@ -473,6 +473,33 @@ fn one_shot_rehearsal(
 
 #[cfg(feature = "simulated-ingress")]
 #[test]
+fn private_mixed_channel_reports_conflict_with_direct_test_live_ownership() {
+    let (prepared, candidate) = one_shot_with_boundary_on(true);
+    let (mut control, mut audio) = prepared
+        .arm_one_shot(candidate, &mixed_profile())
+        .expect("private arm");
+    let _identity = audio
+        .arm_test_live_on(SampleTime::ZERO, key(48), NoteVelocity::FULL)
+        .expect("direct test live owner");
+    let request = MixedIngressRequest::Onset {
+        at: SampleTime::ZERO,
+        key: key(49),
+        velocity: NoteVelocity::FULL,
+    };
+    let id = control.submit_ingress(request).expect("queued request");
+    audio.service_test_ingress_queue();
+    assert_eq!(
+        control.collect_ingress_result(),
+        Some(MixedIngressResult {
+            id,
+            request,
+            outcome: MixedIngressOutcome::Onset(Err(IngressRefused::MixedTestConflict)),
+        })
+    );
+}
+
+#[cfg(feature = "simulated-ingress")]
+#[test]
 fn private_mixed_ingress_reuses_only_after_ordered_release() {
     use crate::ingress::IngressRefused;
 

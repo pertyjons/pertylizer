@@ -185,6 +185,10 @@ pub enum IngressRefused {
     #[cfg(all(test, feature = "simulated-ingress"))]
     #[error("private mixed audio owner is terminally faulted")]
     TerminalOwner,
+    /// The separate private live probe already owns this audio half.
+    #[cfg(all(test, feature = "simulated-ingress"))]
+    #[error("private test live and mixed ingress cannot share one audio half")]
+    MixedTestConflict,
     /// Invalid, oversized or deferred group; no obligation is changed.
     #[error("release group is not a distinct owned set of at most eight non-deferred notes")]
     ReleaseGroup,

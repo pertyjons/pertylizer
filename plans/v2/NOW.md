@@ -349,6 +349,19 @@ a combined positive onset outcome can be promised. Holding a popped onset while
 waiting for tracker credit can also block its own release and frontier behind
 it. Source-local release reservation, audition release credit, terminal refusal
 custody and consumer-specific settlement remain required parts of the design.
+The private mixed owner now rehearses an audio-side result path behind
+`simulated-ingress`. Arm preallocates one command ring and one result ring at
+the registered ingress queue depth. Control submits an exact onset or release
+request with a command ID; explicit audio service returns its actual identity
+or refusal with the original request. A reserved result slot remains charged
+until collection, and owner collection refuses while a command or result is
+outstanding. Tests cover two onsets and releases across threads without
+audio-service allocation, exhausted control-side result reservation, the
+out-of-order timestamp refusal and pending teardown. This private path has no
+source association, mapped-time merger, automatic callback service or
+combined raw/recorder receipt. Its test-only ring storage is bounded by
+ingress depth but has no production host-profile byte charge; production
+admission still needs one.
 An off-thread check now places and stamps the bound stream against
 a disposable copy of only the compiled range. It publishes no events or
 reservations. Tests cover wrong-producer and wrong-capacity refusals, disjoint
