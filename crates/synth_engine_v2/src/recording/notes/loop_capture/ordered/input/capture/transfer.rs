@@ -222,8 +222,7 @@ impl InputCaptureControl {
                 if input.discontinuity.is_none() {
                     input.fail(InputError::PeerInterrupted, None);
                 } else {
-                    input.state = ConnectionState::Quiescing;
-                    input.cancel_unsent();
+                    input.quiesce();
                 }
             }
         }

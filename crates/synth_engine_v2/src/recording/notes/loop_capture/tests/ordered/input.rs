@@ -3,9 +3,9 @@ use super::*;
 use crate::host::{
     ConnectionState, EndpointId,
     input::{
-        InputCapacity, InputCaptureError, InputCaptureSession, InputError, InputLimits,
-        InputObservation, InputOutcome, InputRate, InputTick, InputTickSpan, SimulatedInputClock,
-        SimulatedNoteInput,
+        InputCapacity, InputCaptureError, InputCaptureSession, InputDiscontinuity, InputError,
+        InputLimits, InputObservation, InputOutcome, InputRate, InputTick, InputTickSpan,
+        SimulatedInputClock, SimulatedNoteInput,
     },
 };
 
@@ -441,8 +441,8 @@ fn input_loss_without_final_callback_retains_take_and_reconnect_stays_ready() {
 }
 
 #[test]
-fn full_input_storage_keeps_accepted_cells_first_refusal_and_silences_next_callback() {
-    let (mut owner, generations) = linked(4, 32);
+fn protected_input_storage_keeps_accepted_cells_first_refusal_and_silences_next_callback() {
+    let (mut owner, generations) = linked(6, 32);
     transport(&mut owner, 512);
     owner.pump().unwrap();
     let _audio = render_input(&mut owner, 128, &[128]);
@@ -463,7 +463,7 @@ fn full_input_storage_keeps_accepted_cells_first_refusal_and_silences_next_callb
                     SampleTime::new(90),
                     Midi1Input::from_bytes([0x90, 62, 1]).unwrap()
                 ),
-                Err(InputCaptureError::Input(InputError::Full))
+                Err(InputCaptureError::Input(InputError::ProtectedCapacity))
             ));
         }),
         0
@@ -503,6 +503,25 @@ fn full_input_storage_keeps_accepted_cells_first_refusal_and_silences_next_callb
     assert_eq!(
         owner.result().unwrap().sealed_outcome(),
         CaptureOutcome::Interrupted
+    );
+}
+
+#[test]
+fn ordinary_full_raw_storage_keeps_the_original_capture_discontinuity() {
+    let (mut owner, generations) = linked(2, 32);
+    let generation = generations[0];
+    let _id = owner.advance_frontier(generation, tick(0, 128)).unwrap();
+    let refused = InputObservation::Frontier { tick: tick(0, 256) };
+    assert!(matches!(
+        owner.advance_frontier(generation, tick(0, 256)),
+        Err(InputCaptureError::Input(InputError::Full))
+    ));
+    assert_eq!(
+        owner.input(generation).unwrap().discontinuity().unwrap(),
+        InputDiscontinuity {
+            reason: InputError::Full,
+            observation: Some(refused),
+        }
     );
 }
 
@@ -598,6 +617,28 @@ fn complete_result_closes_inputs_and_requires_outcomes_before_release() {
         owner.into_parts().err().unwrap().error(),
         InputCaptureError::Input(InputError::Retained)
     ));
+}
+
+#[test]
+fn complete_result_with_held_note_releases_raw_claims_before_reconnect() {
+    let (mut owner, generations) = linked(8, 32);
+    transport(&mut owner, 128);
+    message(&mut owner, generations[0], 0, 10, 10, [0x90, 60, 100]);
+    frontier(&mut owner, generations, 128);
+    owner.pump().unwrap();
+    let _audio = render_input(&mut owner, 512, &[256]);
+    owner.finalize().unwrap();
+    owner.close_completed().unwrap();
+    for generation in generations {
+        owner.acknowledge_input_quiescence(generation).unwrap();
+        while owner.collect_input(generation).unwrap().is_some() {}
+    }
+    while owner.collect().is_some() {}
+    let (_take, mut inputs) = owner.into_parts().unwrap();
+    for (input, generation) in inputs.iter_mut().zip(generations) {
+        input.retire(generation).unwrap();
+        assert_ne!(input.begin().unwrap(), generation);
+    }
 }
 
 #[test]

@@ -273,6 +273,11 @@ cannot end a newer occurrence. Its consumers are still fake. Joined teardown
 after a terminal fault remains open. Raw occupancy, frontiers, capture reserve,
 the real recorder and the mixed renderer remain to be connected. It does not yet
 produce a combined consumer outcome or qualify protected-release service.
+The actual simulated raw-input owner now preallocates a held-key ledger and
+reserves raw cells for matched releases and frontiers. Its terminal refusal
+still quiesces that source. The modeled source ring has no shared charge with
+these real raw cells, the recorder or mixed ingress, so this is a local safety
+gate rather than Phase 9 host acceptance.
 The concrete host connection remains open.
 An off-thread check now places and stamps the bound stream against
 a disposable copy of only the compiled range. It publishes no events or

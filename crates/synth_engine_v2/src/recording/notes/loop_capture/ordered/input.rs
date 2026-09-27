@@ -14,13 +14,14 @@ use crate::{
         ConnectionGeneration, ConnectionState, EndpointId,
         session::{SessionSourceAction, SessionSourceId},
     },
-    quantities::PreparedBytes,
+    quantities::{KeyIdentity, PreparedBytes},
     recording::notes::{
         ControllerSnapshot,
         loop_capture::{LoopCaptureError, LoopCaptureSession},
     },
     time::SampleTime,
 };
+use synth_core::MidiChannel;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum InputDelivery {
@@ -43,8 +44,15 @@ struct InputEntry {
     outcome: Option<InputOutcome>,
 }
 
+#[derive(Clone, Copy)]
+struct RawHeldOnset {
+    id: InputEventId,
+    channel: MidiChannel,
+    key: KeyIdentity,
+}
+
 /// One independently generated connection. Endpoint settings are off-thread;
-/// `bytes` charges this inline owner and every fixed observation/receipt cell.
+/// `bytes` charges this inline owner, every observation/receipt cell and the held-key ledger.
 #[must_use]
 pub struct SimulatedNoteInput {
     endpoint: EndpointId,
@@ -53,6 +61,8 @@ pub struct SimulatedNoteInput {
     clock: Option<SimulatedInputClock>,
     binding: Option<ConnectionGeneration>,
     slots: Box<[Option<InputEntry>]>,
+    held_onsets: Box<[Option<RawHeldOnset>]>,
+    release_reservations: usize,
     serial: u64,
     last_tick: Option<InputTick>,
     last_arrival: Option<SampleTime>,
@@ -72,6 +82,11 @@ impl SimulatedNoteInput {
         let count = usize::try_from(limits.cells.as_u32()).map_err(|_| InputError::Layout)?;
         let bytes = count
             .checked_mul(size_of::<Option<InputEntry>>())
+            .and_then(|bytes| {
+                count
+                    .checked_mul(size_of::<Option<RawHeldOnset>>())
+                    .and_then(|holds| bytes.checked_add(holds))
+            })
             .and_then(|bytes| bytes.checked_add(size_of::<Self>()))
             .filter(|bytes| *bytes <= isize::MAX as usize)
             .and_then(|bytes| u64::try_from(bytes).ok())
@@ -88,6 +103,11 @@ impl SimulatedNoteInput {
             .try_reserve_exact(count)
             .map_err(|_| InputError::Allocation)?;
         slots.resize_with(count, || None);
+        let mut held_onsets = Vec::new();
+        held_onsets
+            .try_reserve_exact(count)
+            .map_err(|_| InputError::Allocation)?;
+        held_onsets.resize_with(count, || None);
         Ok(Self {
             endpoint,
             generation: None,
@@ -95,6 +115,8 @@ impl SimulatedNoteInput {
             clock: None,
             binding: None,
             slots: slots.into_boxed_slice(),
+            held_onsets: held_onsets.into_boxed_slice(),
+            release_reservations: 0,
             serial: 0,
             last_tick: None,
             last_arrival: None,
@@ -149,6 +171,7 @@ impl SimulatedNoteInput {
             ConnectionState::Stopped | ConnectionState::Unavailable
         ) || !self.quiescent
             || self.slots.iter().any(Option::is_some)
+            || self.release_reservations != 0
             || self.binding.is_some()
         {
             return Err(InputError::State);
@@ -159,6 +182,10 @@ impl SimulatedNoteInput {
         self.state = ConnectionState::Preparing;
         self.clock = None;
         self.serial = 0;
+        self.release_reservations = 0;
+        for hold in &mut self.held_onsets {
+            *hold = None;
+        }
         self.last_tick = None;
         self.last_arrival = None;
         self.frontier = SampleTime::ZERO;
@@ -242,6 +269,7 @@ impl SimulatedNoteInput {
         if self.state != ConnectionState::Quiescing
             || !self.quiescent
             || self.slots.iter().any(Option::is_some)
+            || self.release_reservations != 0
         {
             return Err(InputError::Retained);
         }

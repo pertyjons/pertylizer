@@ -812,19 +812,16 @@ resulting terminal disposition.
 It must distinguish an audition source receipt from raw capture's
 `InputReceipt` and identify where each is settled.
 
-The raw-capture part of a protected-release rehearsal has a narrower candidate
-gate, requiring `N >= 5` to accept an onset after the initial frontier. Let
+The raw owner now enforces a local protected-capacity gate, requiring `N >= 5`
+to accept an onset while its initial frontier remains uncollected. Let
 `N` be the source's configured raw-cell count (`N = 32` in the concrete
 example host), `h` its occupied cells including the initial frontier
-and uncollected receipts, and `R` its outstanding release reservations. The
-current raw owner does not track `R`. Its capacity check permits any message,
-including `KeyRelease`, only when `h <= N - 2`; it permits a frontier only when
-`h <= N - 1`. A frontier at `h = N - 2` can therefore consume a supposed
-release reserve, while permitting a release at `h = N - 1` would consume the
-last frontier cell.
+and uncollected receipts, and `R` its outstanding release reservations. It
+counts `h` from the actual fixed slots and tracks `R` in a preallocated
+same-source, same-channel, same-key ledger. A release redeems the oldest
+matching accepted onset; a release without a match is ordinary input.
 
-A future host must track `h` across accepted raw admissions and collected
-receipts. While `R > 0`, it must preserve `h + R <= N - 1`. An onset's raw cell
+While `R > 0`, the raw owner preserves `h + R <= N - 1`. An onset's raw cell
 and its future release reservation must be preflighted as one charge before
 raw admission: `(h, R)` becomes `(h + 1, R + 1)`, requiring
 `h + R <= N - 4` beforehand and `h + R <= N - 2` afterward. No raw-accepted
@@ -834,14 +831,20 @@ Redeeming one reservation changes `(h, R)` to `(h + 1, R - 1)` and preserves
 the sum, so it passes the raw capacity check. With `R = 0`, an ordinary
 non-onset message still follows the raw owner's `h <= N - 2` capacity check.
 Clock, ordering, identity and state checks can still refuse an observation
-before or after that capacity check and need their own disposition.
+before or after that capacity check. Every raw offer refusal remains terminal
+and retains its first discontinuity. With no held release, ordinary storage
+exhaustion remains `Full`; a reservation shortage is `ProtectedCapacity`.
+Closing admission after either a complete or interrupted take clears the
+local release claims while the take retains its accepted prefix. This local
+owner does not supply the host's combined refusal disposition.
 
-These are candidate raw safety gates, not an accepted end-to-end release law:
+These local raw safety gates are not an accepted end-to-end release law:
 source-ring admission, refused-onset FIFO, audition credit, renderer-held cells
-and bounded service remain open. A test pins the raw owner's message/frontier
-capacity asymmetry; a protected host must also falsify its shadow count against
-actual receipts and show that ordinary refusal does not call raw admission or
-quiesce the source.
+and bounded service remain open. Actual-owner tests cover the five- and
+six-cell boundaries, repeated-key FIFO, and terminal refusal. A protected
+host must falsify its shared credit against actual raw receipts and ensure an
+ordinary capacity refusal stops before raw admission, so it does not quiesce
+the source.
 
 An end-to-end candidate that preclaims only source-ring, raw and audition
 credit is falsified by the recorder's shared tracker. The concrete bridge

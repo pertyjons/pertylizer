@@ -4,11 +4,11 @@ use crate::{
     time::{FrameCount, issue_epoch},
 };
 
-fn ready(uncertainty: u64) -> (SimulatedNoteInput, ConnectionGeneration) {
+fn ready_with_cells(uncertainty: u64, cells: u32) -> (SimulatedNoteInput, ConnectionGeneration) {
     let mut input = SimulatedNoteInput::new(
         EndpointId::new("oracle".to_owned()).unwrap(),
         InputLimits {
-            cells: InputCapacity::new(4).unwrap(),
+            cells: InputCapacity::new(cells).unwrap(),
             bytes: PreparedBytes::measured(65536),
         },
     )
@@ -28,6 +28,9 @@ fn ready(uncertainty: u64) -> (SimulatedNoteInput, ConnectionGeneration) {
         .unwrap();
     input.start(generation).unwrap();
     (input, generation)
+}
+fn ready(uncertainty: u64) -> (SimulatedNoteInput, ConnectionGeneration) {
+    ready_with_cells(uncertainty, 6)
 }
 #[test]
 fn uncertainty_and_identity_exhaustion_keep_first_failure_and_accepted_prefix() {
@@ -93,45 +96,143 @@ fn source_regression_and_nominal_before_frontier_are_discontinuities() {
 }
 
 #[test]
-fn key_release_needs_a_free_message_cell_before_the_frontier_cell() {
+fn raw_admission_preserves_a_held_notes_release_and_frontier_cells() {
     let note = Midi1Input::from_bytes([0x90, 60, 100]).unwrap();
     let release = Midi1Input::from_bytes([0x80, 60, 0]).unwrap();
     let (mut admitted, generation) = ready(0);
     let _id = admitted
         .offer_message(generation, InputTick::new(10), SampleTime::new(10), note)
         .unwrap();
+    assert_eq!(admitted.release_reservations, 1);
     let _id = admitted
-        .offer_message(generation, InputTick::new(11), SampleTime::new(11), release)
+        .offer_message(
+            generation,
+            InputTick::new(11),
+            SampleTime::new(11),
+            Midi1Input::from_bytes([0xB0, 64, 127]).unwrap(),
+        )
         .unwrap();
     let _id = admitted
         .advance_frontier(generation, InputTick::new(12))
         .unwrap();
+    let _id = admitted
+        .offer_message(generation, InputTick::new(13), SampleTime::new(13), release)
+        .unwrap();
+    assert_eq!(admitted.release_reservations, 0);
+    assert_eq!(admitted.state(), ConnectionState::Running);
+
+    let (mut refused, generation) = ready_with_cells(0, 4);
+    assert_eq!(
+        refused.offer_message(generation, InputTick::new(10), SampleTime::new(10), note),
+        Err(InputError::ProtectedCapacity)
+    );
+    assert_eq!(
+        refused.discontinuity().unwrap().reason,
+        InputError::ProtectedCapacity
+    );
+
+    let (mut frontier_only, generation) = ready_with_cells(0, 5);
+    let _id = frontier_only
+        .offer_message(generation, InputTick::new(10), SampleTime::new(10), note)
+        .unwrap();
+    let _id = frontier_only
+        .advance_frontier(generation, InputTick::new(11))
+        .unwrap();
+    let _id = frontier_only
+        .offer_message(generation, InputTick::new(12), SampleTime::new(12), release)
+        .unwrap();
+    assert_eq!(frontier_only.state(), ConnectionState::Running);
+
+    let (mut frontier_refused, generation) = ready_with_cells(0, 5);
+    let _id = frontier_refused
+        .offer_message(generation, InputTick::new(10), SampleTime::new(10), note)
+        .unwrap();
+    let _id = frontier_refused
+        .advance_frontier(generation, InputTick::new(11))
+        .unwrap();
+    assert_eq!(
+        frontier_refused.advance_frontier(generation, InputTick::new(12)),
+        Err(InputError::ProtectedCapacity)
+    );
+
+    let (mut unmatched, generation) = ready_with_cells(0, 5);
+    let _id = unmatched
+        .offer_message(generation, InputTick::new(10), SampleTime::new(10), note)
+        .unwrap();
+    let _id = unmatched
+        .advance_frontier(generation, InputTick::new(11))
+        .unwrap();
+    assert_eq!(
+        unmatched.offer_message(
+            generation,
+            InputTick::new(12),
+            SampleTime::new(12),
+            Midi1Input::from_bytes([0x80, 61, 0]).unwrap(),
+        ),
+        Err(InputError::ProtectedCapacity)
+    );
 
     let (mut refused, generation) = ready(0);
     let _id = refused
         .offer_message(generation, InputTick::new(10), SampleTime::new(10), note)
         .unwrap();
     let _id = refused
-        .offer_message(generation, InputTick::new(11), SampleTime::new(11), note)
+        .advance_frontier(generation, InputTick::new(11))
         .unwrap();
     assert_eq!(
-        refused.offer_message(generation, InputTick::new(12), SampleTime::new(12), release),
-        Err(InputError::Full)
+        refused.offer_message(
+            generation,
+            InputTick::new(12),
+            SampleTime::new(12),
+            Midi1Input::from_bytes([0xB0, 64, 127]).unwrap(),
+        ),
+        Err(InputError::ProtectedCapacity)
     );
     assert_eq!(refused.state(), ConnectionState::Quiescing);
-    assert_eq!(refused.discontinuity().unwrap().reason, InputError::Full);
+    assert_eq!(refused.release_reservations, 0);
 
-    let (mut frontier_only, generation) = ready(0);
-    let _id = frontier_only
+    let (mut full, generation) = ready_with_cells(0, 2);
+    let _id = full
+        .advance_frontier(generation, InputTick::new(10))
+        .unwrap();
+    assert_eq!(
+        full.advance_frontier(generation, InputTick::new(11)),
+        Err(InputError::Full)
+    );
+    assert_eq!(full.discontinuity().unwrap().reason, InputError::Full);
+}
+
+#[test]
+fn raw_repeated_key_releases_redeem_the_oldest_accepted_onset() {
+    let note = Midi1Input::from_bytes([0x90, 60, 100]).unwrap();
+    let release = Midi1Input::from_bytes([0x90, 60, 0]).unwrap();
+    let (mut input, generation) = ready_with_cells(0, 8);
+    let first = input
         .offer_message(generation, InputTick::new(10), SampleTime::new(10), note)
         .unwrap();
-    let _id = frontier_only
+    let second = input
         .offer_message(generation, InputTick::new(11), SampleTime::new(11), note)
         .unwrap();
-    let _id = frontier_only
-        .advance_frontier(generation, InputTick::new(12))
+    assert_eq!(input.release_reservations, 2);
+    let _id = input
+        .offer_message(generation, InputTick::new(12), SampleTime::new(12), release)
         .unwrap();
-    assert_eq!(frontier_only.state(), ConnectionState::Running);
+    assert_eq!(input.release_reservations, 1);
+    assert_eq!(
+        input
+            .held_onsets
+            .iter()
+            .flatten()
+            .map(|hold| hold.id)
+            .collect::<Vec<_>>(),
+        [second]
+    );
+    let _id = input
+        .offer_message(generation, InputTick::new(13), SampleTime::new(13), release)
+        .unwrap();
+    assert_eq!(input.release_reservations, 0);
+    assert!(input.held_onsets.iter().all(Option::is_none));
+    assert_ne!(first, second);
 }
 #[test]
 fn failed_preparation_is_retained_and_retry_is_explicit() {

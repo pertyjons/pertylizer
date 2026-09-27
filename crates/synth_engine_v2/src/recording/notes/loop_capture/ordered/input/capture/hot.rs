@@ -6,7 +6,7 @@ use super::super::{
 use super::{InputCaptureError, InputCaptureSession, LoopRecordingSession};
 use crate::{
     host::{
-        ConnectionGeneration, ConnectionState,
+        ConnectionGeneration,
         session::{LoopSessionError, SessionCommand, SessionCommandId, SessionReceipt},
     },
     looping::LoopSnapshot,
@@ -194,8 +194,7 @@ impl InputCaptureSession {
     pub(super) fn close_inputs(&mut self) {
         self.closed = true;
         for input in &mut self.inputs {
-            input.state = ConnectionState::Quiescing;
-            input.cancel_unsent();
+            input.quiesce();
         }
     }
     pub fn acknowledge_input_quiescence(

@@ -1217,7 +1217,7 @@ fn uncertainty_uses_frozen_selection_and_cannot_report_complete_after_fault() {
 #[test]
 fn input_cell_credit_is_held_after_core_collection_until_input_receipt_collection() {
     for collect_input in [false, true] {
-        let (mut control, audio, _halt, generations) = split(3, 2);
+        let (mut control, audio, _halt, generations) = split(5, 2);
         for (port, generation) in generations.into_iter().enumerate() {
             let _id = control
                 .offer_observation(
@@ -1249,7 +1249,7 @@ fn input_cell_credit_is_held_after_core_collection_until_input_receipt_collectio
         if collect_input {
             assert!(result.is_ok());
         } else {
-            assert_eq!(result, Err((original, InputError::Full)));
+            assert_eq!(result, Err((original, InputError::ProtectedCapacity)));
         }
     }
 }

@@ -24,6 +24,8 @@ pub enum InputError {
     Future,
     #[error("input receipt storage is full")]
     Full,
+    #[error("input admission cannot preserve note-release and frontier reservations")]
+    ProtectedCapacity,
     #[error("source ring retry was terminally retired while full")]
     SourceQueueFull,
     #[error("input identity space is exhausted")]
