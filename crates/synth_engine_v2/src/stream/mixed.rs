@@ -12,16 +12,18 @@ use crate::{
     diagnostics::CompileError,
     host::mixed_targets::{MixedInstancePartition, MixedTargetAdmission},
     identity::{
-        CompiledRangeMinter, IdentityTable, LiveRangeMinter, NoteIdentity, ProducerId, TableId,
+        CompiledRangeMinter, IdentityTable, LiveRangeMinter, NoteIdentity, ProducerId, Resolution,
+        TableId,
     },
     plan::{CompiledPlan, NoteSlot, PlanId},
     quantities::{EventCount, HeldNoteCount, ParameterValue},
     render::{EventEnvelope, EventPayload, PreparedRenderer, ScopedParameterRestore, TimedEvent},
     schedule::{
-        AdmittedCompiledStream, Closed, CompiledPayload, OpenNote, OpenNotes, Opened,
-        SchedulePrepareError,
+        AdmittedCompiledStream, Closed, CompiledEvent, CompiledPayload, OpenNote, OpenNotes,
+        Opened, SchedulePrepareError,
     },
-    time::{PlanPosition, SampleTime, StreamAnchor, StreamEpoch, TimeSource, issue_epoch},
+    time::{Located, PlanPosition, SampleTime, StreamAnchor, StreamEpoch, TimeSource, issue_epoch},
+    transport::ActivationSequence,
 };
 
 /// Why a bound mixed stream could not be prepared.
@@ -110,6 +112,70 @@ pub enum MixedSuffixPrepareError {
     CountUnrepresentable,
 }
 
+/// Why a private bound suffix could not be placed and stamped against a compiled-range copy.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
+pub enum MixedStampPrepareError {
+    /// This selection came from another prepared owner.
+    #[error("mixed suffix selection belongs to another prepared owner")]
+    ForeignCandidate,
+    /// Its private source indices no longer select a strict suffix in source order.
+    #[error("mixed suffix source selection is invalid at index {event_index}")]
+    InvalidSelection {
+        /// The rejected source index.
+        event_index: usize,
+    },
+    /// An old compiled reservation was not live in the copied minter.
+    #[error("old compiled reservation {identity} resolved as {resolution:?}")]
+    StaleReservation {
+        /// The reservation that could not be released.
+        identity: NoteIdentity,
+        /// Its resolution in the copied compiled range.
+        resolution: Resolution,
+    },
+    /// Releasing the old set left another compiled index live.
+    #[error("{live} compiled notes remain after releasing the old schedule")]
+    OldReservationsRemain {
+        /// The unexpected live count.
+        live: HeldNoteCount,
+    },
+    /// Placement or stamping refused with the original source index preserved.
+    #[error(transparent)]
+    Schedule(#[from] SchedulePrepareError),
+    /// A no-stealing selection emitted an extra or missing stamped event.
+    #[error("mixed suffix selected {selected} source events but stamped {stamped}")]
+    EventCountMismatch {
+        /// Selected source events.
+        selected: EventCount,
+        /// Actual stamped events.
+        stamped: EventCount,
+    },
+    /// A stealing artifact appeared despite target binding's no-stealing rule.
+    #[error("mixed suffix stamping encountered a stealing artifact")]
+    UnexpectedSteal,
+    /// The copied minter and the stamped outstanding set disagree.
+    #[error("mixed suffix holds {live} notes but stamped {outstanding}")]
+    OutstandingMismatch {
+        /// Live notes in the private compiled minter.
+        live: HeldNoteCount,
+        /// Identities held by the private stamped schedule.
+        outstanding: HeldNoteCount,
+    },
+    /// A stamped note edge escaped the compiled producer's range.
+    #[error("mixed suffix source event {event_index} names {identity} outside the compiled range")]
+    IdentityOutsideRange {
+        /// Position in the owner's admitted source stream.
+        event_index: usize,
+        /// The foreign or out-of-range identity.
+        identity: NoteIdentity,
+    },
+    /// A private count exceeds its typed representation.
+    #[error("mixed suffix stamped count cannot be represented")]
+    CountUnrepresentable,
+    /// The private restoration batch no longer has its admitted requested-time shape.
+    #[error("mixed scoped restoration batch disagrees with the requested-time candidate")]
+    InvalidRestoration,
+}
+
 /// One private, off-thread compiled prefix and scoped restoration batch.
 ///
 /// It is bound to one prepared mixed owner and destination. Its event and note books do
@@ -152,6 +218,42 @@ pub struct MixedSuffixCandidate {
     included_count: EventCount,
     omitted_releases: EventCount,
     omitted_expressions: EventCount,
+}
+
+/// One private requested-time mixed schedule for the first activation rehearsal.
+///
+/// Its ordered events contain scoped restoration before any equal-time suffix edge.
+/// The restoration batch moves out of the retained suffix history into that list,
+/// leaving the history's restoration count at zero. The copied minter and
+/// outstanding set cannot be promoted through this API;
+/// boundary release, displacement and combined capacity remain unproved.
+#[must_use]
+pub struct MixedStampedCandidate {
+    #[allow(dead_code)]
+    suffix: MixedSuffixCandidate,
+    anchor: StreamAnchor,
+    supersedes: ActivationSequence,
+    #[allow(dead_code)]
+    events: Vec<TimedEvent>,
+    event_count: EventCount,
+    restoration_count: EventCount,
+    #[allow(dead_code)]
+    outstanding: Vec<NoteIdentity>,
+    outstanding_count: HeldNoteCount,
+    #[allow(dead_code)]
+    minter: CompiledRangeMinter,
+}
+
+impl std::fmt::Debug for MixedStampedCandidate {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("MixedStampedCandidate")
+            .field("anchor", &self.anchor)
+            .field("supersedes", &self.supersedes)
+            .field("event_count", &self.event_count)
+            .field("restoration_count", &self.restoration_count)
+            .field("outstanding_count", &self.outstanding_count)
+            .finish_non_exhaustive()
+    }
 }
 
 impl std::fmt::Debug for MixedSuffixCandidate {
@@ -759,6 +861,171 @@ impl MixedJoinedPrepared {
             omitted_expressions: EventCount::measured(omitted_expressions),
         })
     }
+
+    /// Place and stamp a private first-activation suffix against only a compiled-range copy.
+    ///
+    /// The old initial schedule's reservations are released in that copy before stamping.
+    /// The returned list orders requested-time restoration before suffix events at the
+    /// destination. There is still no producer-scoped boundary release or offer path.
+    pub fn stamp_suffix(
+        &self,
+        mut suffix: MixedSuffixCandidate,
+    ) -> Result<MixedStampedCandidate, MixedStampPrepareError> {
+        let control = &self.owner.control;
+        let history = &suffix.history;
+        if history.plan != control.plan.id()
+            || history.epoch != control.epoch
+            || history.table != control.minter.id()
+        {
+            return Err(MixedStampPrepareError::ForeignCandidate);
+        }
+        let stream = control.stream.events();
+        if suffix.included_count.as_usize() != Some(suffix.included.len()) {
+            return Err(MixedStampPrepareError::CountUnrepresentable);
+        }
+        let anchor = StreamAnchor::new(history.requested, history.position);
+        let mut placed = Vec::with_capacity(suffix.included.len());
+        let mut previous = None;
+        for &event_index in &suffix.included {
+            let Some(event) = stream.get(event_index) else {
+                return Err(MixedStampPrepareError::InvalidSelection { event_index });
+            };
+            if event_index < history.prefix_end || previous.is_some_and(|last| event_index <= last)
+            {
+                return Err(MixedStampPrepareError::InvalidSelection { event_index });
+            }
+            previous = Some(event_index);
+            let time = match anchor.locate(event.position()) {
+                Located::At(time) => time,
+                Located::BeforeAnchor => {
+                    return Err(MixedStampPrepareError::Schedule(
+                        SchedulePrepareError::BeforeAnchor {
+                            event_index,
+                            position: event.position(),
+                            anchor: anchor.position(),
+                        },
+                    ));
+                }
+                Located::Unrepresentable => {
+                    return Err(MixedStampPrepareError::Schedule(
+                        SchedulePrepareError::TimeUnrepresentable {
+                            event_index,
+                            position: event.position(),
+                        },
+                    ));
+                }
+            };
+            placed.push(CompiledEvent::new(time, event.payload()));
+        }
+        if suffix.history.restoration_count.as_usize() != Some(suffix.history.restoration.len())
+            || suffix.history.restoration.iter().any(|event| {
+                event.envelope().time() != history.requested
+                    || event.envelope().epoch() != history.epoch
+                    || !matches!(event.payload(), EventPayload::ScopedRestore(_))
+            })
+        {
+            return Err(MixedStampPrepareError::InvalidRestoration);
+        }
+
+        let mut minter = control.minter.working_copy();
+        for &identity in &self.outstanding {
+            let resolution = minter.release(identity);
+            if resolution != Resolution::Live {
+                return Err(MixedStampPrepareError::StaleReservation {
+                    identity,
+                    resolution,
+                });
+            }
+        }
+        if minter.live() != 0 {
+            return Err(MixedStampPrepareError::OldReservationsRemain {
+                live: HeldNoteCount::measured(minter.live()),
+            });
+        }
+        let stamped =
+            crate::schedule::stamp_all(&mut minter, &control.plan, control.epoch, &placed)
+                .map_err(|error| {
+                    MixedStampPrepareError::Schedule(super::rebase(error, &suffix.included))
+                })?;
+        if stamped.released_after_steal != 0
+            || stamped.expressions_after_steal != 0
+            || stamped.events.iter().any(|event| {
+                matches!(
+                    event.payload(),
+                    EventPayload::Fade { .. } | EventPayload::Reset { .. }
+                )
+            })
+        {
+            return Err(MixedStampPrepareError::UnexpectedSteal);
+        }
+        let stamped_count = EventCount::measured(
+            u32::try_from(stamped.events.len())
+                .map_err(|_| MixedStampPrepareError::CountUnrepresentable)?,
+        );
+        if stamped_count != suffix.included_count {
+            return Err(MixedStampPrepareError::EventCountMismatch {
+                selected: suffix.included_count,
+                stamped: stamped_count,
+            });
+        }
+        let outstanding_count = HeldNoteCount::measured(
+            u32::try_from(stamped.outstanding.len())
+                .map_err(|_| MixedStampPrepareError::CountUnrepresentable)?,
+        );
+        if minter.live() != outstanding_count.get() {
+            return Err(MixedStampPrepareError::OutstandingMismatch {
+                live: HeldNoteCount::measured(minter.live()),
+                outstanding: outstanding_count,
+            });
+        }
+        let span = minter.span();
+        for (stamped_index, event) in stamped.events.iter().enumerate() {
+            let identity = match event.payload() {
+                EventPayload::Note { identity, .. }
+                | EventPayload::Expression { identity, .. }
+                | EventPayload::Bend { identity, .. }
+                | EventPayload::Fade { identity, .. }
+                | EventPayload::Reset { identity } => Some(identity),
+                EventPayload::ScopedRestore(_)
+                | EventPayload::ReleaseGroup(_)
+                | EventPayload::Controller(_)
+                | EventPayload::RestoreController(_)
+                | EventPayload::SetParameter { .. } => None,
+            };
+            if let Some(identity) = identity
+                && (identity.table() != minter.id() || !span.contains(identity.index()))
+            {
+                let event_index = suffix.included.get(stamped_index).copied().ok_or(
+                    MixedStampPrepareError::InvalidSelection {
+                        event_index: stamped_index,
+                    },
+                )?;
+                return Err(MixedStampPrepareError::IdentityOutsideRange {
+                    event_index,
+                    identity,
+                });
+            }
+        }
+        let restoration_count = suffix.history.restoration_count;
+        let mut events = std::mem::take(&mut suffix.history.restoration);
+        suffix.history.restoration_count = EventCount::NONE;
+        events.extend(stamped.events);
+        let event_count = EventCount::measured(
+            u32::try_from(events.len())
+                .map_err(|_| MixedStampPrepareError::CountUnrepresentable)?,
+        );
+        Ok(MixedStampedCandidate {
+            suffix,
+            anchor,
+            supersedes: ActivationSequence::INITIAL,
+            events,
+            event_count,
+            restoration_count,
+            outstanding: stamped.outstanding,
+            outstanding_count,
+            minter,
+        })
+    }
 }
 
 impl MixedHistoryCandidate {
@@ -797,7 +1064,8 @@ impl MixedHistoryCandidate {
         self.restoration_count
     }
 
-    /// Notes the boundary release must end, captured before suffix pairing can change the book.
+    /// Notes open in the new destination timeline whose restoration gates must be zero.
+    /// This is separate from the old renderer's sounding notes, which need boundary release.
     pub const fn open_at_destination_count(&self) -> HeldNoteCount {
         self.open_count
     }
@@ -822,6 +1090,34 @@ impl MixedSuffixCandidate {
     /// The immutable boundary-open snapshot, retained separately from suffix pairing.
     pub const fn open_at_destination_count(&self) -> HeldNoteCount {
         self.history.open_count
+    }
+}
+
+impl MixedStampedCandidate {
+    /// The requested-time anchor used to place the private suffix.
+    pub const fn anchor(&self) -> StreamAnchor {
+        self.anchor
+    }
+
+    /// The initial sequence this first-activation rehearsal would supersede.
+    /// Any later offer must compare it with the audio owner's in-force sequence.
+    pub const fn supersedes(&self) -> ActivationSequence {
+        self.supersedes
+    }
+
+    /// Scoped restoration and suffix events in their requested-time order.
+    pub const fn event_count(&self) -> EventCount {
+        self.event_count
+    }
+
+    /// Scoped restoration events at the front of the private ordered list.
+    pub const fn restoration_count(&self) -> EventCount {
+        self.restoration_count
+    }
+
+    /// Notes the privately stamped suffix leaves reserved in its compiled range.
+    pub const fn outstanding_count(&self) -> HeldNoteCount {
+        self.outstanding_count
     }
 }
 

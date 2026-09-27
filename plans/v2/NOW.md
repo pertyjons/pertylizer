@@ -250,11 +250,14 @@ a synthetic sample-positioned controller target before preparation. It exposes
 no event extraction, render, ingress or activation path. A suffix builder now
 classifies the bound source indices and counts crossing releases and
 expressions without producing the exclusive whole-group gate write. Repeated
-keys pair suffix occurrences before prefix occurrences. This private selection
-still needs suffix placement and stamping and the same effective-time
-displacement for suffix and restoration batch. It has no offer path.
-A producer-scoped boundary release, combined capacity charge, shared/global
-influence law, handoff and retirement remain open.
+keys pair suffix occurrences before prefix occurrences. A private first-activation
+candidate now places that selection at the requested anchor, releases old
+compiled reservations in a compiled-range copy and stamps the suffix there.
+It retains the new outstanding set and initial sequence baseline, with scoped
+restoration before a suffix onset at the destination sample. It has no offer
+path. The producer-scoped boundary release, one effective-time displacement
+for restoration and suffix, combined capacity charge, shared/global influence
+law, handoff and retirement remain open.
 
 ### Selected work — ordered transport through live I/O
 

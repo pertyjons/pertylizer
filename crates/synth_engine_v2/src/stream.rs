@@ -46,8 +46,8 @@ mod live;
 mod mixed;
 pub use mixed::{
     MixedHistoryCandidate, MixedHistoryPrepareError, MixedInitialPrepareError, MixedJoinedPrepared,
-    MixedJoinedStream, MixedStreamAudio, MixedStreamControl, MixedStreamOpenError,
-    MixedSuffixCandidate, MixedSuffixPrepareError,
+    MixedJoinedStream, MixedStampPrepareError, MixedStampedCandidate, MixedStreamAudio,
+    MixedStreamControl, MixedStreamOpenError, MixedSuffixCandidate, MixedSuffixPrepareError,
 };
 
 use std::sync::Arc;

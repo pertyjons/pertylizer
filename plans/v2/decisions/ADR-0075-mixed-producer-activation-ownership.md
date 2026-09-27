@@ -210,6 +210,32 @@ new scoped gate-down and a revised capacity charge first. A suffix bend or
 expression whose note-on was in the prefix is also dropped and counted,
 as in the exclusive path; one paired with a suffix note remains in the suffix.
 
+For the private first-activation rehearsal, suffix placement uses one anchor
+equating the requested sample time with the destination plan position. A
+candidate stamped against a copy of the compiled range retains that copy, its
+new outstanding identity set, the anchor and `ActivationSequence::INITIAL` as
+the baseline it would supersede. A later offer must compare that baseline with
+the audio owner's in-force sequence and refuse a stale candidate; equal private
+identity values do not establish freshness. Before stamping, checked release
+of the old schedule's outstanding set must leave the copied minter empty;
+afterwards its live count must equal the new outstanding set. Without stealing,
+each selected source event must yield exactly one stamped event. These checks
+are private preparation evidence, not an offer or a combined capacity claim.
+
+The private requested-time list orders scoped restoration before suffix
+events at the destination. At a future effective boundary, the combined order
+must be producer-scoped release of the *old renderer's sounding compiled
+occurrences*, then that restoration, then those suffix events. Both prepared
+parts must receive the same effective-time displacement. The destination-open
+snapshot describes the *new timeline* and selects zero gates and triggers for
+restoration; it does not name old-renderer occurrences to release. A suffix
+note-on exactly at the destination must follow restoration, or the restoration
+could lower its gate and replace its magnitude. A private prepared list may
+prove the latter two steps' order now; the first step, effective-time shift,
+live preservation and same-quantum capacity remain prerequisites to an offer.
+A destination-time note-on rendered silent or re-pitched by restoration
+falsifies this order.
+
 Rehearsal falsifiers are a last note-on magnitude before a seek with compiled
 producer second, repeated-key prefix pairing, zero gates and triggers for
 destination-open notes, exact group count, immutable owner/minter custody,

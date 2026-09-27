@@ -655,3 +655,248 @@ fn crossing_release_is_absent_from_private_suffix_selection() {
         assert_eq!(suffix.open_at_destination_count().get(), 1);
     }
 }
+
+#[test]
+fn private_stamp_releases_only_its_copy_and_orders_restoration_before_destination_on() {
+    for compiled_first in [true, false] {
+        let prepared = bound_with_events(compiled_first, |note| {
+            vec![
+                PlanEvent::new(
+                    PlanPosition::ZERO,
+                    CompiledPayload::NoteOn {
+                        slot: note,
+                        key: key(60),
+                        velocity: NoteVelocity::FULL,
+                    },
+                ),
+                PlanEvent::new(
+                    PlanPosition::new(10),
+                    CompiledPayload::NoteOn {
+                        slot: note,
+                        key: key(72),
+                        velocity: NoteVelocity::FULL,
+                    },
+                ),
+                PlanEvent::new(
+                    PlanPosition::new(20),
+                    CompiledPayload::NoteOff {
+                        slot: note,
+                        key: key(60),
+                    },
+                ),
+            ]
+        });
+        let original = prepared.outstanding[0];
+        assert_eq!(
+            prepared.owner.control.minter.resolve(original),
+            Resolution::Live
+        );
+        let history = prepared
+            .prepare_history(SampleTime::new(64), PlanPosition::new(10))
+            .expect("prefix");
+        let suffix = prepared.prepare_suffix(history).expect("suffix selection");
+        assert_eq!(suffix.included, vec![1]);
+        let stamped = prepared.stamp_suffix(suffix).expect("private stamp");
+        let restoration_count = prepared.owner.control.partition.restoration_groups().len();
+        assert_eq!(
+            stamped.anchor(),
+            StreamAnchor::new(SampleTime::new(64), PlanPosition::new(10))
+        );
+        assert_eq!(stamped.supersedes(), ActivationSequence::INITIAL);
+        assert_eq!(
+            stamped.restoration_count().as_usize(),
+            Some(restoration_count)
+        );
+        assert!(stamped.suffix.history.restoration.is_empty());
+        assert_eq!(stamped.suffix.history.restoration_count(), EventCount::NONE);
+        assert_eq!(
+            stamped.event_count().as_usize(),
+            Some(restoration_count + 1)
+        );
+        assert_eq!(stamped.outstanding_count().get(), 1);
+        assert_eq!(stamped.minter.live(), 1);
+        assert_eq!(stamped.outstanding.len(), 1);
+        assert_eq!(
+            stamped.minter.resolve(stamped.outstanding[0]),
+            Resolution::Live
+        );
+        assert_eq!(
+            prepared.owner.control.minter.resolve(original),
+            Resolution::Live,
+            "the authoritative compiled range cannot be released by rehearsal"
+        );
+        for event in &stamped.events[..restoration_count] {
+            assert!(matches!(event.payload(), EventPayload::ScopedRestore(_)));
+            assert_eq!(event.envelope().time(), SampleTime::new(64));
+        }
+        let last = stamped.events[restoration_count];
+        assert!(matches!(
+            last.payload(),
+            EventPayload::Note {
+                edge: crate::render::NoteEdge::On { key: on_key, .. },
+                ..
+            } if on_key == key(72)
+        ));
+        assert_eq!(last.envelope().time(), SampleTime::new(64));
+        assert!(
+            stamped
+                .events
+                .iter()
+                .all(|event| !matches!(event.payload(), EventPayload::SetParameter { .. }))
+        );
+        assert!(stamped.outstanding.iter().all(|identity| {
+            prepared
+                .owner
+                .control
+                .minter
+                .span()
+                .contains(identity.index())
+        }));
+    }
+}
+
+#[test]
+fn private_stamp_refuses_unrepresentable_suffix_time_and_invalid_selection() {
+    let prepared = bound_with_events(true, |note| {
+        vec![
+            PlanEvent::new(
+                PlanPosition::ZERO,
+                CompiledPayload::NoteOn {
+                    slot: note,
+                    key: key(60),
+                    velocity: NoteVelocity::FULL,
+                },
+            ),
+            PlanEvent::new(
+                PlanPosition::new(10),
+                CompiledPayload::NoteOn {
+                    slot: note,
+                    key: key(72),
+                    velocity: NoteVelocity::FULL,
+                },
+            ),
+            PlanEvent::new(
+                PlanPosition::new(20),
+                CompiledPayload::NoteOff {
+                    slot: note,
+                    key: key(60),
+                },
+            ),
+            PlanEvent::new(
+                PlanPosition::new(200),
+                CompiledPayload::Bend {
+                    slot: note,
+                    key: key(72),
+                    cents: Cents::new(25.0).expect("finite bend"),
+                },
+            ),
+        ]
+    });
+    let original = prepared.outstanding[0];
+    assert_eq!(
+        prepared.owner.control.minter.resolve(original),
+        Resolution::Live
+    );
+    let history = prepared
+        .prepare_history(SampleTime::new(64), PlanPosition::new(10))
+        .expect("prefix");
+    let mut suffix = prepared.prepare_suffix(history).expect("suffix selection");
+    suffix.included[0] = usize::MAX;
+    assert_eq!(
+        prepared
+            .stamp_suffix(suffix)
+            .expect_err("invalid private index"),
+        MixedStampPrepareError::InvalidSelection {
+            event_index: usize::MAX
+        }
+    );
+    let history = prepared
+        .prepare_history(SampleTime::new(64), PlanPosition::new(10))
+        .expect("prefix");
+    let mut suffix = prepared.prepare_suffix(history).expect("suffix selection");
+    suffix.included.swap(0, 1);
+    assert_eq!(
+        prepared
+            .stamp_suffix(suffix)
+            .expect_err("reordered indices"),
+        MixedStampPrepareError::InvalidSelection { event_index: 1 }
+    );
+    let history = prepared
+        .prepare_history(SampleTime::new(64), PlanPosition::new(10))
+        .expect("prefix");
+    let mut suffix = prepared.prepare_suffix(history).expect("suffix selection");
+    suffix.included[0] = 0;
+    assert_eq!(
+        prepared
+            .stamp_suffix(suffix)
+            .expect_err("prefix source selected"),
+        MixedStampPrepareError::InvalidSelection { event_index: 0 }
+    );
+
+    let last_boundary = u64::MAX - (u64::MAX % u64::from(crate::time::QUANTUM_FRAMES));
+    let history = prepared
+        .prepare_history(SampleTime::new(last_boundary), PlanPosition::new(10))
+        .expect("representable boundary");
+    let suffix = prepared.prepare_suffix(history).expect("suffix selection");
+    assert_eq!(
+        prepared
+            .stamp_suffix(suffix)
+            .expect_err("placed bend exceeds engine time"),
+        MixedStampPrepareError::Schedule(SchedulePrepareError::TimeUnrepresentable {
+            event_index: 3,
+            position: PlanPosition::new(200),
+        })
+    );
+    assert_eq!(prepared.outstanding_count(), 1);
+    assert_eq!(
+        prepared.owner.control.minter.resolve(original),
+        Resolution::Live
+    );
+}
+
+#[test]
+fn private_stamp_refuses_inconsistent_old_reservation_custody() {
+    let make_prepared = || {
+        bound_with_events(true, |note| {
+            vec![PlanEvent::new(
+                PlanPosition::ZERO,
+                CompiledPayload::NoteOn {
+                    slot: note,
+                    key: key(60),
+                    velocity: NoteVelocity::FULL,
+                },
+            )]
+        })
+    };
+    let mut missing = make_prepared();
+    missing.outstanding.clear();
+    let history = missing
+        .prepare_history(SampleTime::new(64), PlanPosition::new(10))
+        .expect("prefix");
+    let suffix = missing.prepare_suffix(history).expect("empty suffix");
+    assert_eq!(
+        missing
+            .stamp_suffix(suffix)
+            .expect_err("unlisted live index"),
+        MixedStampPrepareError::OldReservationsRemain {
+            live: HeldNoteCount::measured(1),
+        }
+    );
+
+    let mut duplicate = make_prepared();
+    let identity = duplicate.outstanding[0];
+    duplicate.outstanding.push(identity);
+    let history = duplicate
+        .prepare_history(SampleTime::new(64), PlanPosition::new(10))
+        .expect("prefix");
+    let suffix = duplicate.prepare_suffix(history).expect("empty suffix");
+    assert_eq!(
+        duplicate
+            .stamp_suffix(suffix)
+            .expect_err("duplicate reservation"),
+        MixedStampPrepareError::StaleReservation {
+            identity,
+            resolution: Resolution::Orphan(crate::identity::OrphanCause::FreeIndex),
+        }
+    );
+}
