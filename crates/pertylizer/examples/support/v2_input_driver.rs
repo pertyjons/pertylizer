@@ -1,6 +1,6 @@
 //! ALSA callback custody for the concrete simulated-input fixture.
 use crate::input_host::{
-    self, HostOutcome, LiveAudio, archive::RetainedRuns, managed::ManagedRun,
+    self, HostOutcome, InputOfferError, LiveAudio, archive::RetainedRuns, managed::ManagedRun,
     prepare::PreparedAttempt, source::SourceProducer,
 };
 use cpal::{
@@ -288,8 +288,19 @@ fn service(managed: &mut ManagedRun, stopped: &mut bool) -> Result<(), Box<dyn s
     let mut input_fault = false;
     managed.service(
         |result| {
-            if let Err(refusal) = result {
-                eprintln!("source_refusal={refusal:?}");
+            if let Err(fault) = result {
+                match fault {
+                    InputOfferError::Refused(observation, reason) => {
+                        eprintln!("source_refusal={observation:?} reason={reason:?}");
+                    }
+                    InputOfferError::Accepted {
+                        id,
+                        error,
+                        settlement_error,
+                    } => {
+                        eprintln!("accepted_input_fault={id:?} error={error:?} settlement={settlement_error:?}");
+                    }
+                }
                 input_fault = true;
             }
         },
@@ -309,7 +320,7 @@ fn service(managed: &mut ManagedRun, stopped: &mut bool) -> Result<(), Box<dyn s
         println!("audition={id:?} outcome={outcome:?}");
     }
     if input_fault {
-        return Err(error("input delivery refused"));
+        return Err(error("input delivery failed"));
     }
     Ok(())
 }

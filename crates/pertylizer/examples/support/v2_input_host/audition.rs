@@ -2,7 +2,7 @@
 use super::*;
 use synth_engine_v2::{
     host::{
-        input::{InputRate, InputTick, InputTickSpan, SimulatedInputClock},
+        input::{InputTick, SimulatedInputClock},
         live::{AuditionId, AuditionOutcome, LiveInputError, SwappingLiveStream},
     },
     ingress::ReleaseCause,
@@ -13,7 +13,6 @@ use synth_engine_v2::{
     profile::HostProfile,
     quantities::{Amplitude, EventCount, Frequency, HeldNoteCount, NormalizedLevel, Seconds},
     recording::notes::{AuditionTrace, Midi1Input},
-    time::{FrameCount, StreamEpoch},
     tuning::PreparedTuning,
 };
 
@@ -21,6 +20,15 @@ use synth_engine_v2::{
 struct Packet {
     id: AuditionId,
     at: SampleTime,
+    input: Midi1Input,
+}
+
+#[derive(Clone, Copy)]
+pub(super) struct PreparedPacket {
+    source: ConnectionGeneration,
+    port: usize,
+    serial: u64,
+    tick: InputTick,
     input: Midi1Input,
 }
 
@@ -52,10 +60,11 @@ pub struct AuditionAudio {
     refused: Option<Packet>,
 }
 impl AuditionControl {
-    pub fn prepare(
+    /// `clocks` are the exact values passed to the two core input owners.
+    pub(super) fn prepare(
         profile: HostProfile,
-        epoch: StreamEpoch,
         sources: [ConnectionGeneration; 2],
+        clocks: [SimulatedInputClock; 2],
     ) -> Result<(Self, AuditionAudio, PreparedBytes), Box<dyn std::error::Error>> {
         let graph = live_graph()?;
         let quota = EventCount::measured(2 * super::source::SOURCE_OUTSTANDING.get());
@@ -110,15 +119,6 @@ impl AuditionControl {
                     + 512,
             )?)
             .ok_or("live result layout overflow")?;
-        let clock = |ticks| -> Result<_, Box<dyn std::error::Error>> {
-            Ok(SimulatedInputClock::new(
-                epoch,
-                SampleTime::ZERO,
-                InputTick::new(0),
-                InputRate::new(FrameCount::new(1), InputTickSpan::new(ticks))?,
-                InputTickSpan::new(0),
-            ))
-        };
         Ok((
             Self {
                 swaps,
@@ -130,7 +130,7 @@ impl AuditionControl {
                 _outcomes: outcomes,
                 outstanding: 0,
                 sources,
-                clocks: [clock(1)?, clock(2)?],
+                clocks,
                 serials: [0; 2],
             },
             AuditionAudio {
@@ -150,13 +150,14 @@ impl AuditionControl {
             PreparedBytes::measured(bytes),
         ))
     }
-    pub fn offer(
-        &mut self,
+    /// A pure reservation check. The core classifies invalid source time.
+    pub(super) fn preflight(
+        &self,
         source: ConnectionGeneration,
         observation: InputObservation,
-    ) -> Result<AuditionTrace, InputError> {
+    ) -> Result<Option<PreparedPacket>, InputError> {
         let InputObservation::Message { tick, input, .. } = observation else {
-            return Ok(AuditionTrace::NotOffered);
+            return Ok(None);
         };
         if self.outstanding >= self.queue.capacity().get() {
             return Err(InputError::Full);
@@ -166,15 +167,31 @@ impl AuditionControl {
             .iter()
             .position(|generation| *generation == source)
             .ok_or(InputError::Stale)?;
-        let at = self.clocks[port].map(tick)?;
         let serial = self.serials[port]
             .checked_add(1)
             .ok_or(InputError::IdentityExhausted)?;
-        let id = AuditionId::new(source, serial).map_err(|_| InputError::IdentityExhausted)?;
+        let _id = AuditionId::new(source, serial).map_err(|_| InputError::IdentityExhausted)?;
+        Ok(Some(PreparedPacket {
+            source,
+            port,
+            serial,
+            tick,
+            input,
+        }))
+    }
+    /// Commit follows raw acceptance; failure retains an accepted core ID.
+    pub(super) fn commit(&mut self, prepared: PreparedPacket) -> Result<AuditionTrace, InputError> {
+        let at = self.clocks[prepared.port].map(prepared.tick)?;
+        let id = AuditionId::new(prepared.source, prepared.serial)
+            .map_err(|_| InputError::IdentityExhausted)?;
         self.queue
-            .try_push(Packet { id, at, input })
+            .try_push(Packet {
+                id,
+                at,
+                input: prepared.input,
+            })
             .map_err(|_| InputError::Full)?;
-        self.serials[port] = serial;
+        self.serials[prepared.port] = prepared.serial;
         self.outstanding += 1;
         Ok(AuditionTrace::Pending(id))
     }
@@ -188,6 +205,10 @@ impl AuditionControl {
         let outcome = self.outcomes.try_pop()?;
         self.outstanding -= 1;
         Some(outcome)
+    }
+    #[cfg(test)]
+    pub(super) fn custody(&self) -> ([u64; 2], usize, usize) {
+        (self.serials, self.outstanding, self.queue.occupied_len())
     }
 }
 impl AuditionAudio {

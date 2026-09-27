@@ -546,6 +546,21 @@ renderer admits a later serial with an earlier nominal time, so source arrival
 order alone cannot pair its releases. A new consumer must either reject that
 regression before receipt or prove a shared execution order across boundaries.
 
+The non-shipping concrete bridge's `PreparedAttempt` passes the same clocks to
+raw input and audition, and commits an audition packet only after raw admission.
+Raw input rejects a decreasing source tick or invalid arrival before that
+commit; a regression or future-arrival refusal leaves audition serial, queue
+and credit unchanged.
+
+Within this bridge, accepted messages from one source have nondecreasing
+mapped times, and equal times retain serial order in the live renderer. This
+check occurs after the source ring has received the observation, so it does not
+establish the earlier pre-receipt requirement for a protected release lane.
+The bridge distinguishes a refused original returned without a raw ID from an
+audition fault carrying an already accepted raw input ID. A regression or
+future-arrival refusal and an accepted-ID audition fault request a host halt.
+Renderer-held capacity and the release-credit equation remain open.
+
 The future proof must carry a potential onset, its source/channel/key FIFO
 tombstone, tracker cell, identity, ingress hold, protected release path and
 result custody through every handoff. An onset refused after an upstream

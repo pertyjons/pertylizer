@@ -43,6 +43,7 @@ pub struct PreparedAttempt {
     )>,
     pub(super) owner: InputCaptureSession,
     pub(super) generations: [ConnectionGeneration; 2],
+    pub(super) clocks: [SimulatedInputClock; 2],
     pub(super) bytes: PreparedBytes,
 }
 impl PreparedAttempt {
@@ -94,11 +95,8 @@ impl PreparedAttempt {
         Ok(prepared)
     }
     pub fn with_audition(mut self) -> Result<Self, Box<dyn std::error::Error>> {
-        let (control, audio, bytes) = super::audition::AuditionControl::prepare(
-            self.profile,
-            self.epoch(),
-            self.generations,
-        )?;
+        let (control, audio, bytes) =
+            super::audition::AuditionControl::prepare(self.profile, self.generations, self.clocks)?;
         self.bytes = PreparedBytes::measured(
             self.bytes
                 .get()
@@ -188,6 +186,7 @@ impl PreparedAttempt {
         let mut inputs = Vec::new();
         let mut sources = Vec::new();
         let mut generations = Vec::new();
+        let mut clocks = Vec::new();
         for port in 0..2 {
             let mut input = SimulatedNoteInput::new(
                 EndpointId::new(format!("simulated-{port}"))?,
@@ -197,16 +196,8 @@ impl PreparedAttempt {
                 },
             )?;
             let generation = input.begin()?;
-            input.prepare(
-                generation,
-                SimulatedInputClock::new(
-                    capture.initial().epoch,
-                    SampleTime::ZERO,
-                    InputTick::new(0),
-                    InputRate::new(FrameCount::new(1), InputTickSpan::new(port + 1))?,
-                    InputTickSpan::new(0),
-                ),
-            )?;
+            let clock = simulated_clock(capture.initial().epoch, port)?;
+            input.prepare(generation, clock)?;
             sources.push(input.bind_capture(
                 generation,
                 &mut capture,
@@ -216,6 +207,7 @@ impl PreparedAttempt {
                 .checked_add(input.bytes().get())
                 .ok_or("input layout overflow")?;
             generations.push(generation);
+            clocks.push(clock);
             inputs.push(input);
         }
         let _ticket = capture.arm_at(
@@ -275,6 +267,9 @@ impl PreparedAttempt {
         let [first, second] = generations.as_slice() else {
             return Err("input generation count".into());
         };
+        let [first_clock, second_clock] = clocks.as_slice() else {
+            return Err("input clock count".into());
+        };
         Ok(Self {
             profile,
             start,
@@ -282,7 +277,22 @@ impl PreparedAttempt {
             audition: None,
             owner,
             generations: [*first, *second],
+            clocks: [*first_clock, *second_clock],
             bytes: PreparedBytes::measured(bytes),
         })
     }
+}
+
+pub(super) fn simulated_clock(
+    epoch: StreamEpoch,
+    port: u64,
+) -> Result<SimulatedInputClock, InputError> {
+    let ticks = port.checked_add(1).ok_or(InputError::ClockRange)?;
+    Ok(SimulatedInputClock::new(
+        epoch,
+        SampleTime::ZERO,
+        InputTick::new(0),
+        InputRate::new(FrameCount::new(1), InputTickSpan::new(ticks))?,
+        InputTickSpan::new(0),
+    ))
 }

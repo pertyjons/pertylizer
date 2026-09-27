@@ -49,12 +49,12 @@ impl SourceInbox {
         )
     }
 
-    /// A fixed prefix, including refusals after closure. An accepted ID retains the
-    /// observation in core; a refusal returns its original value to `receive`.
+    /// A fixed prefix, including refusals after closure. A refusal returns the
+    /// original; an accepted ID with a fault must never be retried.
     pub fn service(
         &mut self,
         control: &mut LiveControl,
-        mut receive: impl FnMut(Result<InputEventId, (InputObservation, InputError)>),
+        mut receive: impl FnMut(InputOfferResult),
     ) {
         let prefix = self.queue.occupied_len();
         for _ in 0..prefix {

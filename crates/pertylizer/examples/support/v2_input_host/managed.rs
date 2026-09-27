@@ -224,7 +224,7 @@ impl ManagedRun {
     /// Admission and execution have distinct identified outcomes. Both are reported.
     pub fn service(
         &mut self,
-        mut input: impl FnMut(Result<InputEventId, (InputObservation, InputError)>),
+        mut input: impl FnMut(InputOfferResult),
         mut command: impl FnMut(LoopTransferId, HostOutcome),
         mut receipt: impl FnMut(InputReceipt),
     ) -> Result<(), HostError> {

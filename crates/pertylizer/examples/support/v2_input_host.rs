@@ -55,6 +55,21 @@ pub enum HostOutcome {
     Cancelled,
 }
 
+/// An accepted observation stays in core custody even if its audition handoff fails.
+#[derive(Debug, Error, PartialEq)]
+pub enum InputOfferError {
+    #[error("input observation refused: {1}")]
+    Refused(InputObservation, InputError),
+    #[error("accepted input {id:?} has an audition handoff error: {error}")]
+    Accepted {
+        id: InputEventId,
+        error: InputError,
+        settlement_error: Option<InputError>,
+    },
+}
+
+pub type InputOfferResult = Result<InputEventId, InputOfferError>;
+
 #[derive(Debug, Error)]
 pub enum HostError {
     #[error("input producers or their queued observations have not been closed")]
@@ -172,38 +187,46 @@ impl LiveControl {
         &mut self,
         generation: ConnectionGeneration,
         observation: InputObservation,
-    ) -> Result<InputEventId, (InputObservation, InputError)> {
-        let trace = match self.audition.as_mut() {
-            Some(audition) => match audition.offer(generation, observation) {
+    ) -> InputOfferResult {
+        let prepared = match self.audition.as_ref() {
+            Some(audition) => match audition.preflight(generation, observation) {
+                Ok(prepared) => prepared,
+                Err(error) => {
+                    self.halt.request_invalid();
+                    return Err(InputOfferError::Refused(observation, error));
+                }
+            },
+            None => None,
+        };
+        let id = self
+            .core
+            .offer_observation(generation, observation)
+            .map_err(|(original, error)| InputOfferError::Refused(original, error))?;
+        let trace = match (self.audition.as_mut(), prepared) {
+            (Some(audition), Some(prepared)) => match audition.commit(prepared) {
                 Ok(trace) => trace,
                 Err(error) => {
                     self.halt.request_invalid();
-                    return Err((observation, error));
+                    return Err(InputOfferError::Accepted {
+                        id,
+                        error,
+                        settlement_error: None,
+                    });
                 }
             },
-            None => synth_engine_v2::recording::notes::AuditionTrace::NotOffered,
-        };
-        let id = match self.core.offer_observation(generation, observation) {
-            Ok(id) => id,
-            Err(refusal) => {
-                if let Some(audition) = &mut self.audition
-                    && audition.settle(trace).is_err()
-                {
-                    self.halt.request_invalid();
-                }
-                return Err(refusal);
-            }
+            _ => synth_engine_v2::recording::notes::AuditionTrace::NotOffered,
         };
         if let Err(error) = self.core.set_audition(id, trace) {
-            // The core already accepted the input. Halt before a caller can retry it;
-            // joined recovery retains that original input and its audition outcome.
             self.halt.request_invalid();
-            if let Some(audition) = &mut self.audition {
-                audition
-                    .settle(trace)
-                    .map_err(|settlement| (observation, settlement))?;
-            }
-            return Err((observation, error));
+            let settlement_error = self
+                .audition
+                .as_mut()
+                .and_then(|audition| audition.settle(trace).err());
+            return Err(InputOfferError::Accepted {
+                id,
+                error,
+                settlement_error,
+            });
         }
         Ok(id)
     }

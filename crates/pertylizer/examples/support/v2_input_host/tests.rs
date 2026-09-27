@@ -105,13 +105,7 @@ fn fixture() -> (LiveControl, LiveAudio, [ConnectionGeneration; 2]) {
         input
             .prepare(
                 generation,
-                SimulatedInputClock::new(
-                    capture.initial().epoch,
-                    SampleTime::ZERO,
-                    InputTick::new(0),
-                    InputRate::new(FrameCount::new(1), InputTickSpan::new(port + 1)).unwrap(),
-                    InputTickSpan::new(0),
-                ),
+                prepare::simulated_clock(capture.initial().epoch, port).unwrap(),
             )
             .unwrap();
         sources.push(
@@ -226,6 +220,89 @@ fn reunited(control: LiveControl, audio: LiveAudio) -> InputCaptureSession {
         Err(ReuniteError::Core(error, _, _)) => panic!("core reunion: {}", error.error()),
         Err(ReuniteError::Audition(_, _, _, error)) => panic!("audition reunion: {error}"),
     }
+}
+
+#[test]
+fn raw_time_refusal_does_not_create_audition_custody() {
+    for (tick, arrival, error) in [
+        (279, 300, InputError::Order),
+        (300, 299, InputError::Future),
+    ] {
+        let (mut control, mut audio, generations) = fixture();
+        let profile = HostProfile::harness(
+            SampleRate::new(48000.0).unwrap(),
+            FrameCount::new(8192),
+            ChannelLayout::Mono,
+        )
+        .unwrap();
+        let clocks = [
+            prepare::simulated_clock(audio.core.acknowledged().epoch, 0).unwrap(),
+            prepare::simulated_clock(audio.core.acknowledged().epoch, 1).unwrap(),
+        ];
+        let (audition, audition_audio, _bytes) =
+            super::audition::AuditionControl::prepare(profile, generations, clocks).unwrap();
+        control.audition = Some(audition);
+        audio.audition = Some(audition_audio);
+        frontier(&mut control, generations, 256);
+        message(&mut control, generations[0], 280, [0x90, 60, 100]);
+        let before = control.audition.as_ref().unwrap().custody();
+        let observation = InputObservation::Message {
+            tick: InputTick::new(tick),
+            arrival: SampleTime::new(arrival),
+            input: Midi1Input::from_bytes([0x80, 60, 0]).unwrap(),
+        };
+        assert_eq!(
+            control.offer(generations[0], observation),
+            Err(InputOfferError::Refused(observation, error))
+        );
+        assert_eq!(control.audition.as_ref().unwrap().custody(), before);
+        assert!(control.halt_handle().is_requested());
+    }
+}
+
+#[test]
+fn post_receipt_audition_fault_returns_accepted_id_without_retryable_input() {
+    let (mut control, mut audio, generations) = fixture();
+    let profile = HostProfile::harness(
+        SampleRate::new(48000.0).unwrap(),
+        FrameCount::new(8192),
+        ChannelLayout::Mono,
+    )
+    .unwrap();
+    let epoch = audio.core.acknowledged().epoch;
+    let clocks = [
+        SimulatedInputClock::new(
+            epoch,
+            SampleTime::ZERO,
+            InputTick::new(999),
+            InputRate::new(FrameCount::new(1), InputTickSpan::new(1)).unwrap(),
+            InputTickSpan::new(0),
+        ),
+        prepare::simulated_clock(epoch, 1).unwrap(),
+    ];
+    let (audition, audition_audio, _bytes) =
+        super::audition::AuditionControl::prepare(profile, generations, clocks).unwrap();
+    control.audition = Some(audition);
+    audio.audition = Some(audition_audio);
+    frontier(&mut control, generations, 256);
+    let observation = InputObservation::Message {
+        tick: InputTick::new(280),
+        arrival: SampleTime::new(280),
+        input: Midi1Input::from_bytes([0x90, 60, 100]).unwrap(),
+    };
+    let InputOfferError::Accepted {
+        id,
+        error,
+        settlement_error,
+    } = control.offer(generations[0], observation).unwrap_err()
+    else {
+        panic!("core must retain the accepted input");
+    };
+    assert_eq!(id.generation(), generations[0]);
+    assert_eq!(error, InputError::ClockRange);
+    assert_eq!(settlement_error, None);
+    assert_eq!(control.audition.as_ref().unwrap().custody(), ([0; 2], 0, 0));
+    assert!(control.halt_handle().is_requested());
 }
 
 #[test]
@@ -374,7 +451,10 @@ fn producer_queue_full_and_joined_shutdown_return_every_original_observation() {
     control.halt_handle().request_device_lost();
     let mut refusals = Vec::new();
     inbox.service(&mut control, |outcome| {
-        refusals.push(outcome.unwrap_err().0)
+        let InputOfferError::Refused(original, _) = outcome.unwrap_err() else {
+            panic!("expected an unaccepted observation");
+        };
+        refusals.push(original)
     });
     assert_eq!(refusals.len(), 16);
     assert!(inbox.is_empty());
@@ -628,8 +708,11 @@ fn audible_capture_uses_real_voices_sustain_panic_and_resolved_raw_receipts() {
         .unwrap();
         let (live_control, live_audio, _bytes) = super::audition::AuditionControl::prepare(
             profile,
-            audio.core.acknowledged().epoch,
             generations,
+            [
+                prepare::simulated_clock(audio.core.acknowledged().epoch, 0).unwrap(),
+                prepare::simulated_clock(audio.core.acknowledged().epoch, 1).unwrap(),
+            ],
         )
         .unwrap();
         control.audition = Some(live_control);
@@ -1121,7 +1204,10 @@ fn audition_credit_exhaustion_retains_results_and_refused_release_without_a_fina
         |_| {},
     )
     .unwrap();
-    assert_eq!(refused, Some((release, InputError::Full)));
+    assert_eq!(
+        refused,
+        Some(InputOfferError::Refused(release, InputError::Full))
+    );
     assert!(run.halt_handle().is_requested());
     assert!(run.close_source(first).is_ok());
     assert!(run.close_source(second).is_ok());
@@ -1155,8 +1241,11 @@ fn recording_across_swap_preserves_raw_repeated_keys_sustain_and_execution_epoch
         .unwrap();
         let (live_control, live_audio, _bytes) = super::audition::AuditionControl::prepare(
             profile,
-            audio.core.acknowledged().epoch,
             generations,
+            [
+                prepare::simulated_clock(audio.core.acknowledged().epoch, 0).unwrap(),
+                prepare::simulated_clock(audio.core.acknowledged().epoch, 1).unwrap(),
+            ],
         )
         .unwrap();
         control.audition = Some(live_control);
