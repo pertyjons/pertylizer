@@ -13,6 +13,7 @@ use crate::ir::{
     ExecutionScope, GraphIr, IrNodeKind, NodeId, NoteProducerDeclaration, PlanDeclarations, PortId,
     SignalDomain, parameters,
 };
+use crate::node::kernels::{NodeState, Playback};
 use crate::plan::{ParameterInstanceSpan, ParameterSlot};
 use crate::profile::HostProfile;
 use crate::quantities::{
@@ -20,6 +21,10 @@ use crate::quantities::{
     NoteVelocity, ParameterValue, SampleRate, Seconds, VoiceCount,
 };
 use crate::render::slot::SlotState;
+use crate::sample::{
+    PlayDirection, PlayMode, PlaybackRegion, PreparedSample, SampleFrame, SampleMap, SampleMapRef,
+    SampleRef, SampleZone,
+};
 use crate::schedule::AdmittedCompiledStream;
 use crate::time::{
     FrameCount, PlanPosition, QUANTUM_FRAMES, SampleTime, StreamAnchor, StreamEpoch, TimeSource,
@@ -39,7 +44,7 @@ fn value(raw: f32) -> ParameterValue {
     ParameterValue::new(raw).expect("finite parameter")
 }
 
-fn binding(compiled_first: bool) -> (MixedTargetAdmission, crate::plan::NoteSlot) {
+fn producers(compiled_first: bool) -> Vec<NoteProducerDeclaration> {
     let compiled = NoteProducerDeclaration {
         compiled: true,
         simultaneous_notes: HeldNoteCount::measured(2),
@@ -50,6 +55,14 @@ fn binding(compiled_first: bool) -> (MixedTargetAdmission, crate::plan::NoteSlot
         simultaneous_notes: HeldNoteCount::measured(2),
         simultaneous_holds: EventCount::measured(2),
     };
+    if compiled_first {
+        vec![compiled, live]
+    } else {
+        vec![live, compiled]
+    }
+}
+
+fn binding(compiled_first: bool) -> (MixedTargetAdmission, crate::plan::NoteSlot) {
     let ir = GraphIr::builder()
         .node(
             SOURCE,
@@ -107,11 +120,7 @@ fn binding(compiled_first: bool) -> (MixedTargetAdmission, crate::plan::NoteSlot
             crate::tuning::PreparedTuning::equal_temperament().expect("tuning"),
         )
         .declaring(PlanDeclarations {
-            note_producers: if compiled_first {
-                vec![compiled, live]
-            } else {
-                vec![live, compiled]
-            },
+            note_producers: producers(compiled_first),
             held_notes: HeldNoteCount::measured(4),
             ..PlanDeclarations::default()
         })
@@ -130,6 +139,83 @@ fn binding(compiled_first: bool) -> (MixedTargetAdmission, crate::plan::NoteSlot
     let stream = AdmittedCompiledStream::admit(&plan, &[]).expect("empty compiled stream");
     (
         MixedTargetAdmission::admit(plan, stream, slot).expect("disjoint mixed targets"),
+        slot,
+    )
+}
+
+fn sampler_binding(compiled_first: bool) -> (MixedTargetAdmission, crate::plan::NoteSlot) {
+    let rate = SampleRate::new(48_000.0).expect("sample rate");
+    let sample = PreparedSample::prepare(vec![0.25; 4096], ChannelLayout::Mono, rate)
+        .expect("finite mono sample");
+    let region =
+        PlaybackRegion::new(SampleFrame::new(0), SampleFrame::new(4096)).expect("nonempty region");
+    let ir = GraphIr::builder()
+        .sample(sample)
+        .sample_map(SampleMap::new(vec![SampleZone::new(
+            SampleRef::new(0),
+            KeyIdentity::LOWEST,
+            region,
+        )]))
+        .node(
+            SOURCE,
+            IrNodeKind::Sampler {
+                map: SampleMapRef::new(0),
+                level: Amplitude::UNITY,
+                velocity_sensitivity: NormalizedLevel::FULL,
+                start_offset: NormalizedLevel::ZERO,
+                play_mode: PlayMode::Sustain,
+                direction: PlayDirection::Forward,
+            },
+            ExecutionScope::Voice,
+        )
+        .node(
+            ENVELOPE,
+            IrNodeKind::Envelope {
+                attack: Seconds::ZERO,
+                decay: Seconds::ZERO,
+                sustain: NormalizedLevel::FULL,
+                release: Seconds::ZERO,
+                velocity_sensitivity: NormalizedLevel::ZERO,
+            },
+            ExecutionScope::Voice,
+        )
+        .node(AMPLIFIER, IrNodeKind::Amplifier, ExecutionScope::Voice)
+        .node(OUTPUT, IrNodeKind::Output, ExecutionScope::Global)
+        .connect(
+            (SOURCE, PortId::FIRST),
+            (AMPLIFIER, PortId::FIRST),
+            SignalDomain::Audio,
+        )
+        .connect(
+            (ENVELOPE, PortId::FIRST),
+            (AMPLIFIER, crate::node::AMPLIFIER_CONTROL),
+            SignalDomain::Control,
+        )
+        .connect(
+            (AMPLIFIER, PortId::FIRST),
+            (OUTPUT, PortId::FIRST),
+            SignalDomain::Audio,
+        )
+        .tuning(
+            ExecutionScope::Voice,
+            crate::tuning::PreparedTuning::equal_temperament().expect("tuning"),
+        )
+        .declaring(PlanDeclarations {
+            note_producers: producers(compiled_first),
+            held_notes: HeldNoteCount::measured(4),
+            ..PlanDeclarations::default()
+        })
+        .build()
+        .expect("sampler mixed graph");
+    let profile =
+        HostProfile::harness(rate, FrameCount::new(512), ChannelLayout::Mono).expect("profile");
+    let plan = compile(&ir, &RenderConfig::new(profile))
+        .into_plan()
+        .expect("admitted sampler plan");
+    let slot = plan.resolve_note(ENVELOPE).expect("playable envelope");
+    let stream = AdmittedCompiledStream::admit(&plan, &[]).expect("empty compiled stream");
+    (
+        MixedTargetAdmission::admit(plan, stream, slot).expect("disjoint sampler targets"),
         slot,
     )
 }
@@ -226,6 +312,11 @@ fn scoped_restoration_keeps_live_rows_and_audio_in_both_producer_orders() {
         let (mut plain, mut mixed, identity, epoch) = renderers(&binding, note);
         let before_live = states(&mixed, binding.instance_partition().live_rows());
         assert!(!binding.instance_partition().global_rows().is_empty());
+        assert!(!binding.instance_partition().shared_sum_nodes().is_empty());
+        assert!(
+            binding.instance_partition().shared_sum_rows().is_empty(),
+            "inserted voice-sum steps currently declare no controls"
+        );
         let before_global = states(&mixed, binding.instance_partition().global_rows());
         let gate_span = group(&binding, gate).instances();
         for instance in gate_span.first()..gate_span.first() + gate_span.count() {
@@ -288,6 +379,123 @@ fn scoped_restoration_keeps_live_rows_and_audio_in_both_producer_orders() {
             assert_eq!(mixed.parameter_slots[row].automated(), ParameterValue::ZERO);
             assert_eq!(mixed.parameter_slots[row].current(), ParameterValue::ZERO);
         }
+    }
+}
+
+#[test]
+fn scoped_trigger_restoration_falls_without_retriggering_or_moving_live_state() {
+    for compiled_first in [true, false] {
+        let (binding, note) = sampler_binding(compiled_first);
+        let trigger = binding
+            .plan()
+            .resolve_parameter(SOURCE, parameters::SAMPLER_TRIGGER)
+            .expect("sampler trigger");
+        let span = group(&binding, trigger).instances();
+        let live_instance = binding.instance_partition().spans().1.indices().start as usize;
+        let live_node = binding.plan().parameter_targets()[trigger.index() + live_instance]
+            .node
+            .index();
+        let (mut reference, mut mixed, identity, epoch) = renderers(&binding, note);
+        assert!(reference.bind_mixed_partition(Arc::clone(binding.partition_arc())));
+        let live_on = TimedEvent::new(
+            EventEnvelope::new(epoch, SampleTime::ZERO, TimeSource::Simulated),
+            EventPayload::Note {
+                identity,
+                edge: NoteEdge::On {
+                    slot: note,
+                    key: KeyIdentity::LOWEST,
+                    velocity: NoteVelocity::FULL,
+                },
+            },
+        );
+        let compiled_on = TimedEvent::new(
+            EventEnvelope::new(epoch, SampleTime::ZERO, TimeSource::Compiled),
+            EventPayload::ScopedRestore(ScopedParameterRestore::override_for(
+                group(&binding, trigger),
+                ParameterValue::ONE,
+            )),
+        );
+        let pitch = binding
+            .plan()
+            .resolve_parameter(SOURCE, parameters::SAMPLER_PITCH)
+            .expect("sampler pitch");
+        let root = crate::tuning::PreparedTuning::equal_temperament()
+            .expect("tuning")
+            .frequency_of(KeyIdentity::LOWEST);
+        let compiled_pitch = TimedEvent::new(
+            EventEnvelope::new(epoch, SampleTime::ZERO, TimeSource::Compiled),
+            EventPayload::ScopedRestore(ScopedParameterRestore::override_for(
+                group(&binding, pitch),
+                ParameterValue::from_frequency(root),
+            )),
+        );
+        let start = [live_on, compiled_on, compiled_pitch];
+        assert!(
+            render(&mut mixed, &start)
+                .iter()
+                .any(|sample| *sample != 0.0)
+        );
+        let _ = render(&mut reference, &start);
+        let before_positions: Vec<_> = (span.first()..span.first() + span.count())
+            .map(|instance| {
+                let row = trigger.index() + instance as usize;
+                let node = binding.plan().parameter_targets()[row].node.index();
+                let position = match mixed.node_states()[node] {
+                    NodeState::Sampler {
+                        position,
+                        playback: Playback::Playing,
+                        held: true,
+                        ..
+                    } => position,
+                    state => panic!("compiled trigger did not start: {state:?}"),
+                };
+                (row, node, position)
+            })
+            .collect();
+        mixed.seed_for_adoption();
+        let restore = TimedEvent::new(
+            EventEnvelope::new(epoch, SampleTime::new((4 * Q) as u64), TimeSource::Compiled),
+            EventPayload::ScopedRestore(ScopedParameterRestore::override_for(
+                group(&binding, trigger),
+                ParameterValue::ZERO,
+            )),
+        );
+        let _ = render(&mut mixed, &[restore]);
+        let _ = render(&mut reference, &[]);
+        assert_eq!(mixed.diagnostics().foreign_slot_events(), 0);
+        for (row, node, before_position) in before_positions {
+            match mixed.node_states()[node] {
+                NodeState::Sampler {
+                    position,
+                    playback: Playback::Fading,
+                    held: false,
+                    ..
+                } => assert!(
+                    position > before_position,
+                    "a rising edge would restart compiled instance {node}"
+                ),
+                state => panic!("compiled trigger did not fall: {state:?}"),
+            }
+            assert_eq!(mixed.parameter_slots[row].automated(), ParameterValue::ZERO);
+        }
+        assert_eq!(
+            states(&mixed, binding.instance_partition().live_rows()),
+            states(&reference, binding.instance_partition().live_rows())
+        );
+        for node in binding.instance_partition().live_nodes() {
+            assert_eq!(
+                mixed.node_states()[node.index()],
+                reference.node_states()[node.index()]
+            );
+        }
+        assert!(matches!(
+            mixed.node_states()[live_node],
+            NodeState::Sampler {
+                playback: Playback::Playing,
+                held: true,
+                ..
+            }
+        ));
     }
 }
 

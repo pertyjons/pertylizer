@@ -235,10 +235,14 @@ that partition; an ordinary renderer or a span crossing into live rows refuses
 it. The mixed renderer seeds only compiled rows, and controller restoration
 retargets both layers once. Renderer-level tests cover held-live audio parity,
 the next smoothed live write and modulation, sample and quantum controls,
-global-row preservation, invalid spans and allocation-free resolution. The
-joined mixed owner still exposes no render, ingress or activation path; trigger
-edge and shared-row preservation checks, a compiled history builder, combined
-capacity charge, shared/global influence law, handoff and retirement remain open.
+global-row preservation, invalid spans and allocation-free resolution. A
+sampler test now checks that a compiled trigger falls without restarting its
+playback or changing held live state, in both producer orders. The current
+lowering gives shared voice-sum steps no parameter rows, as the test fixture
+asserts; a future lowering with such rows still needs a preservation check.
+The joined mixed owner still exposes no render, ingress or activation path;
+a compiled history builder, combined capacity charge, shared/global influence
+law, handoff and retirement remain open.
 
 ### Selected work — ordered transport through live I/O
 
