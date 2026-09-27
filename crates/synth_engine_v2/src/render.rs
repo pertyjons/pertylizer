@@ -340,6 +340,65 @@ pub enum NoteEdge {
     Off,
 }
 
+/// One compiled-only restoration restricted to an admitted parameter-group span.
+/// Construction needs an admitted group; the renderer independently checks its bound scope.
+#[derive(Debug, Clone, Copy, PartialEq)]
+#[must_use]
+pub struct ScopedParameterRestore {
+    slot: crate::plan::ParameterSlot,
+    instances: crate::plan::ParameterInstanceSpan,
+    value: ParameterValue,
+    /// `None` restores only the override; `Some(None)` clears a controller source.
+    controller: Option<Option<ParameterValue>>,
+}
+
+impl ScopedParameterRestore {
+    /// Restore the override layer of one admitted mixed group.
+    #[must_use = "the scoped restoration must be retained until its event is handled"]
+    pub const fn override_for(
+        group: crate::host::mixed_targets::MixedRestorationGroup,
+        value: ParameterValue,
+    ) -> Self {
+        Self {
+            slot: group.parameter(),
+            instances: group.instances(),
+            value,
+            controller: None,
+        }
+    }
+
+    /// Restore both layers of one admitted mixed controller group in one retarget.
+    #[must_use = "the scoped restoration must be retained until its event is handled"]
+    pub const fn controller_for(
+        group: crate::host::mixed_targets::MixedRestorationGroup,
+        override_value: ParameterValue,
+        controller: Option<ParameterValue>,
+    ) -> Self {
+        Self {
+            slot: group.parameter(),
+            instances: group.instances(),
+            value: override_value,
+            controller: Some(controller),
+        }
+    }
+
+    pub(crate) const fn slot(self) -> crate::plan::ParameterSlot {
+        self.slot
+    }
+
+    pub(crate) const fn instances(self) -> crate::plan::ParameterInstanceSpan {
+        self.instances
+    }
+
+    pub(crate) const fn value(self) -> ParameterValue {
+        self.value
+    }
+
+    pub(crate) const fn controller(self) -> Option<Option<ParameterValue>> {
+        self.controller
+    }
+}
+
 impl NoteEdge {
     /// The control value this edge sets.
     ///
@@ -374,6 +433,8 @@ pub enum EventPayload {
     Controller(crate::controller::ControllerChange),
     /// Restore both layers of a controller source at an activation boundary.
     RestoreController(crate::controller::ControllerRestore),
+    /// Restore only the compiled instances of one admitted mixed parameter group.
+    ScopedRestore(ScopedParameterRestore),
     /// Set one compiled parameter slot.
     ///
     /// The slot, not the `(node, parameter)` pair: [`CompiledPlan::resolve_parameter`]
@@ -592,6 +653,8 @@ pub struct PreparedRenderer {
     /// be memory admission never accounted for — and the `Arc` is cloned once at
     /// preparation, never on the audio thread.
     plan: std::sync::Arc<CompiledPlan>,
+    /// Bound off-thread for mixed streams; ordinary streams have no scoped-restore authority.
+    mixed_partition: Option<std::sync::Arc<crate::host::mixed_targets::MixedInstancePartition>>,
     epoch: StreamEpoch,
     anchor: StreamAnchor,
     clock: SampleTime,
@@ -918,6 +981,7 @@ impl PreparedRenderer {
             // sized by the extent the assignment reached rather than by a count of
             // uniform slots.
             buffers: vec![0.0; plan.arena_samples()],
+            mixed_partition: None,
             output_carry,
             // Primed: `Q` frames of silence are already available to serve.
             carry_frames: quantum,
@@ -981,6 +1045,18 @@ impl PreparedRenderer {
             channels,
             diagnostics: DiagnosticsReport::default(),
         })
+    }
+
+    /// Bind the immutable mixed partition before this renderer reaches an audio callback.
+    pub(crate) fn bind_mixed_partition(
+        &mut self,
+        partition: std::sync::Arc<crate::host::mixed_targets::MixedInstancePartition>,
+    ) -> bool {
+        if self.mixed_partition.is_some() || partition.plan_id() != self.plan.id() {
+            return false;
+        }
+        self.mixed_partition = Some(partition);
+        true
     }
 
     /// This stream's epoch.
@@ -1173,6 +1249,10 @@ impl PreparedRenderer {
         &self.plan
     }
 }
+
+#[cfg(test)]
+#[path = "tests/mixed_restoration.rs"]
+mod mixed_restoration_tests;
 
 /// The hot path: everything that runs on the audio thread.
 ///

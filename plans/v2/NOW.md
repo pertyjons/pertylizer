@@ -230,7 +230,15 @@ catch-up, reseed, activation or render path.
 The partition now also enumerates one checked compiled-instance span per
 addressable local parameter group and cross-checks that the spans cover exactly
 the compiled rows in either producer order. Global parameter rows are excluded.
-No scoped event or renderer path uses these spans yet.
+A scoped restoration event now reaches only an exact span in a renderer bound to
+that partition; an ordinary renderer or a span crossing into live rows refuses
+it. The mixed renderer seeds only compiled rows, and controller restoration
+retargets both layers once. Renderer-level tests cover held-live audio parity,
+the next smoothed live write and modulation, sample and quantum controls,
+global-row preservation, invalid spans and allocation-free resolution. The
+joined mixed owner still exposes no render, ingress or activation path; trigger
+edge and shared-row preservation checks, a compiled history builder, combined
+capacity charge, shared/global influence law, handoff and retirement remain open.
 
 ### Selected work — ordered transport through live I/O
 

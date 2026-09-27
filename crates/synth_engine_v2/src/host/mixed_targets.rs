@@ -387,6 +387,10 @@ impl MixedTargetAdmission {
         &self.partition
     }
 
+    pub(crate) const fn partition_arc(&self) -> &Arc<MixedInstancePartition> {
+        &self.partition
+    }
+
     /// Move the checked values into the split stream constructor exactly once.
     pub(crate) fn into_parts(self) -> MixedTargetParts {
         MixedTargetParts {
@@ -553,6 +557,7 @@ fn build_partition(
     if restored_rows.len() != compiled_rows.len() {
         return Err(MixedTargetError::InstancePartition);
     }
+    restoration_groups.sort_unstable_by_key(|group| group.parameter.index());
     Ok(MixedInstancePartition {
         plan: plan.id(),
         compiled_producer,

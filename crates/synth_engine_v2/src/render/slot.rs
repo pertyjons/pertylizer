@@ -123,6 +123,17 @@ impl SlotState {
         self.retarget()
     }
 
+    /// Restore both source layers with one retarget, so an adoption's seed is spent once.
+    pub(crate) fn restore(
+        &mut self,
+        override_value: ParameterValue,
+        controller: Option<ParameterValue>,
+    ) -> ParameterValue {
+        self.override_value = Some(override_value);
+        self.controller = controller;
+        self.retarget()
+    }
+
     /// Re-derive the resolved value and make it the segment's target.
     ///
     /// ADR-0006 clause 3: a retarget continues from the **current** value, never from the

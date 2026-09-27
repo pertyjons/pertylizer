@@ -64,6 +64,8 @@ impl LoopSettings {
 pub enum LoopPrepareError {
     #[error("live release groups cannot enter a compiled loop template")]
     LiveReleaseGroup,
+    #[error("scoped mixed restoration cannot enter an exclusive compiled loop")]
+    ScopedRestore,
     #[error("loop entry lies outside the interval")]
     Entry,
     #[error("loop profile does not match the compiled plan")]

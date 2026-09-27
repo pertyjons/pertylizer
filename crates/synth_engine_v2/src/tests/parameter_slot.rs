@@ -294,6 +294,30 @@ fn a_seeded_slot_takes_its_next_write_as_a_step_whatever_its_policy() {
 }
 
 #[test]
+fn controller_restoration_spends_one_seed_for_both_layers() {
+    let mut slot = SlotState::prepared(
+        ModulationLaw::DecibelAdditive,
+        ParameterUnit::LinearAmplitude,
+        crate::node::Smoothing::None,
+        value(0.0),
+    );
+    slot.smooth_over(10);
+    let _ = slot.control(Some(value(0.25)));
+    slot.seed();
+    assert_eq!(
+        slot.restore(value(0.8), None),
+        value(0.8),
+        "clearing the controller and restoring the override is one seeded step"
+    );
+    assert_eq!(slot.current(), value(0.8));
+    assert_eq!(
+        slot.write_override(value(0.4)),
+        value(0.8),
+        "the following write ramps because the seed was spent once"
+    );
+}
+
+#[test]
 fn the_kernel_reads_the_segment_per_frame_and_a_step_policy_renders_as_before() {
     // Through the renderer: a sine at amplitude 0 written to 1 at the boundary. Under the
     // declared `None` policy quantum 1 is at full amplitude from its first frame; under a

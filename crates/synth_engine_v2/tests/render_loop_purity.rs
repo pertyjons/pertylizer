@@ -901,6 +901,15 @@ fn every_call_the_render_loop_makes_is_inside_the_checked_region() {
         "out_layout",
         "channels",
         "parameter_targets",
+        // The bound mixed partition is immutable and prepared off-thread. These two
+        // accessors borrow sorted slices; the binary search reads at most log2(groups)
+        // entries and neither allocates nor locks. `instances` and `controller` are
+        // Copy field reads on the checked group/span and scoped payload.
+        "restoration_groups",
+        "compiled_rows",
+        "binary_search_by_key",
+        "instances",
+        "controller",
         // `CompiledPlan::parameter_row_for_identity` centralizes the note-instance row
         // calculation shared by admission and rendering. It reads two immutable plan
         // rows with `get`, checks the voice index and uses checked addition. It allocates,

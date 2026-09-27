@@ -40,6 +40,9 @@ pub enum MixedInitialPrepareError {
     /// A stealing policy or steal artifact appeared despite mixed no-stealing admission.
     #[error("mixed preparation encountered a stealing policy or steal artifact")]
     UnexpectedSteal,
+    /// A scoped restoration appeared in an initial schedule built from note-only input.
+    #[error("mixed initial schedule contains a scoped restoration")]
+    UnexpectedScopedRestore,
     /// Stamping left a different number of held indices and recorded obligations.
     #[error("compiled range holds {live} notes but the schedule records {outstanding}")]
     OutstandingMismatch { live: u32, outstanding: usize },
@@ -199,7 +202,7 @@ impl MixedStreamControl {
         {
             return Err(Box::new((MixedStreamOpenError::Partition, binding)));
         }
-        let renderer = match PreparedRenderer::prepare(
+        let mut renderer = match PreparedRenderer::prepare(
             Arc::clone(binding.plan_arc()),
             anchor,
             epoch,
@@ -210,6 +213,9 @@ impl MixedStreamControl {
                 return Err(Box::new((MixedStreamOpenError::Compile(error), binding)));
             }
         };
+        if !renderer.bind_mixed_partition(Arc::clone(binding.partition_arc())) {
+            return Err(Box::new((MixedStreamOpenError::Partition, binding)));
+        }
         let parts = binding.into_parts();
         let audio_partition = Arc::clone(&parts.partition);
         Ok((
@@ -374,6 +380,12 @@ impl MixedJoinedStream {
         let span = minter.span();
         for (event_index, event) in stamped.events.iter().enumerate() {
             let identity = match event.payload() {
+                EventPayload::ScopedRestore(_) => {
+                    return Err(Box::new((
+                        MixedInitialPrepareError::UnexpectedScopedRestore,
+                        self,
+                    )));
+                }
                 EventPayload::Note { identity, .. }
                 | EventPayload::Expression { identity, .. }
                 | EventPayload::Bend { identity, .. }

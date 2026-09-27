@@ -38,6 +38,63 @@ impl AudioBlockMut<'_> {
 }
 
 impl PreparedRenderer {
+    /// Seed only rows a compiled activation is allowed to restore in a mixed renderer.
+    /// Ordinary renderers retain the exclusive whole-table rule.
+    pub(crate) fn seed_for_adoption(&mut self) {
+        if let Some(partition) = &self.mixed_partition {
+            for row in partition.compiled_rows() {
+                if let Some(slot) = self.parameter_slots.get_mut(row.index()) {
+                    slot.seed();
+                }
+            }
+        } else {
+            for slot in &mut self.parameter_slots {
+                slot.seed();
+            }
+        }
+    }
+
+    /// Recheck a scoped event against this renderer's bound mixed partition.
+    /// An ordinary renderer has no such authority. The address table lookup and
+    /// checked group bounds prevent a valid span from spilling into the next group.
+    fn scoped_target(
+        &self,
+        restore: crate::render::ScopedParameterRestore,
+    ) -> Option<ResolvedTarget> {
+        let partition = self.mixed_partition.as_ref()?;
+        let slot = restore.slot();
+        if partition.plan_id() != self.plan.id() || slot.plan() != self.plan.id() {
+            return None;
+        }
+        let groups = partition.restoration_groups();
+        let group = groups
+            .binary_search_by_key(&slot.index(), |group| group.parameter().index())
+            .ok()
+            .and_then(|index| groups.get(index))?;
+        if group.parameter() != slot || group.instances() != restore.instances() {
+            return None;
+        }
+        let first = usize::try_from(restore.instances().first()).ok()?;
+        let rows = usize::try_from(restore.instances().count()).ok()?;
+        let target = self.plan.parameter_targets().get(slot.index())?;
+        if target.controller != restore.controller().is_some() {
+            return None;
+        }
+        let instances = usize::try_from(target.instances.get()).ok()?;
+        if rows == 0 || first.checked_add(rows)? > instances {
+            return None;
+        }
+        let absolute = slot.index().checked_add(first)?;
+        let end = absolute.checked_add(rows)?;
+        if end > self.plan.parameter_targets().len() || end > self.parameter_slots.len() {
+            return None;
+        }
+        Some(ResolvedTarget {
+            slot: absolute,
+            rows,
+        })
+    }
+
     pub(crate) fn note_context(
         &self,
         node: crate::plan::NodeSlot,
@@ -167,12 +224,10 @@ impl PreparedRenderer {
             self.diagnostics.count_late_activation();
         }
 
-        // `SOUND-INV-024`: an activation never ramps. The catch-up that follows this
-        // adoption writes every prepared target, and each slot takes that write as a step
-        // whatever its policy — seeded with current equal to target and nothing remaining.
-        for slot in &mut self.parameter_slots {
-            slot.seed();
-        }
+        // `SOUND-INV-024`: an activation never ramps. The ordinary catch-up writes every
+        // prepared target; a mixed catch-up will write only the compiled partition's
+        // rows. Seed exactly that scope so a skipped live row's next write still ramps.
+        self.seed_for_adoption();
 
         self.adoption_gate_len = 0;
         for index in 0..activation.producers.len() {
@@ -324,6 +379,7 @@ impl PreparedRenderer {
                     change.slot().parameter().plan() != self.plan.id()
                 }
                 EventPayload::SetParameter { slot, .. } => slot.plan() != self.plan.id(),
+                EventPayload::ScopedRestore(restore) => self.scoped_target(restore).is_none(),
                 // A note edge's provenance is its **identity's table**, not a node address:
                 // `SOUND-INV-017` removes the node from the release, so there is no slot to
                 // compare. An identity from another table is the same class of stale as a
@@ -528,8 +584,27 @@ impl PreparedRenderer {
                     slot.index()..slot.index().saturating_add(target.instances.get() as usize)
                 {
                     if let Some(composed) = self.parameter_slots.get_mut(row) {
-                        let _ = composed.control(restore.controller);
-                        let _ = composed.write_override(restore.override_value);
+                        let _ = composed.restore(restore.override_value, restore.controller);
+                    }
+                }
+            }
+            EventPayload::ScopedRestore(restore) => {
+                let Some(target) = self.scoped_target(restore) else {
+                    return;
+                };
+                let Some(group) = self.plan.parameter_targets().get(restore.slot().index()) else {
+                    return;
+                };
+                if restore.controller().is_none() && matches!(group.rate, ControlRate::Sample) {
+                    return;
+                }
+                for row in target.slot..target.slot + target.rows {
+                    if let Some(composed) = self.parameter_slots.get_mut(row) {
+                        if let Some(controller) = restore.controller() {
+                            let _ = composed.restore(restore.value(), controller);
+                        } else {
+                            let _ = composed.write_override(restore.value());
+                        }
                     }
                 }
             }
@@ -1217,6 +1292,16 @@ impl PreparedRenderer {
                         slot: slot.index(),
                         rows: row.instances.get() as usize,
                     }),
+                EventPayload::ScopedRestore(restore) => {
+                    let group = self.plan.parameter_targets().get(restore.slot().index());
+                    if restore.controller().is_none()
+                        && group.is_some_and(|row| matches!(row.rate, ControlRate::Sample))
+                    {
+                        self.scoped_target(restore)
+                    } else {
+                        None
+                    }
+                }
                 // ADR-0058 clause 5: the taken note is ended as its fade begins. Its own
                 // release, should one reach the loop, is then an orphan; the compiled path
                 // drops it at preparation and counts it there. The fade and the reset land
@@ -1279,6 +1364,9 @@ impl PreparedRenderer {
         match payload {
             EventPayload::Note { edge, .. } => Some(edge.value()),
             EventPayload::SetParameter { value, .. } => Some(value),
+            EventPayload::ScopedRestore(restore) => {
+                restore.controller().is_none().then_some(restore.value())
+            }
             EventPayload::ReleaseGroup(_)
             | EventPayload::RestoreController(_)
             | EventPayload::Controller(_)

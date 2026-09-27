@@ -216,6 +216,7 @@ fn normalize_candidate(
     for event in candidate.events.iter().take(count) {
         let payload = match event.payload() {
             EventPayload::ReleaseGroup(_) => return Err(LoopPrepareError::LiveReleaseGroup),
+            EventPayload::ScopedRestore(_) => return Err(LoopPrepareError::ScopedRestore),
             EventPayload::Note {
                 identity,
                 edge:
@@ -274,6 +275,7 @@ fn normalize_candidate(
         .map_err(|_| LoopPrepareError::Allocation)?;
     for event in &candidate.catch_up {
         match event.payload() {
+            EventPayload::ScopedRestore(_) => return Err(LoopPrepareError::ScopedRestore),
             payload @ (EventPayload::SetParameter { .. }
             | EventPayload::Controller(_)
             | EventPayload::RestoreController(_)) => catch_up.push(payload),
