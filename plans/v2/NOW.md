@@ -208,6 +208,11 @@ queue custody. A terminal refusal retains its original and reason across the
 producer/inbox handoff; the raw owner keeps a separate quality fault when an
 earlier discontinuity already owns the primary reason. This establishes the
 producer order prerequisite but grants no capacity or protected-release credit.
+An independent design read found that merger forwarding cannot recycle ingress
+hold or tracker credit: another source's earlier mapped-time onset can execute
+before that release. The two-source ingress regression now runs in the workspace
+gate and proves the consumer ordering and hold refusal. A combined admission
+ledger, tracker-reserve proof and protected release service remain open.
 The off-thread target binding owns its validated plan, one admitted compiled
 stream and one live note slot. It accepts disjoint voice-instance targets and
 refuses shared nodes or compiled writers outside note targets. A constructor
