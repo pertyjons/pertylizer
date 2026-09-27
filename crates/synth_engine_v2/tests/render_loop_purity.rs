@@ -908,6 +908,14 @@ fn every_call_the_render_loop_makes_is_inside_the_checked_region() {
         "restoration_groups",
         "compiled_rows",
         "binary_search_by_key",
+        // The mixed boundary preflight reads the prepared compiled producer and its
+        // checked identity span. `indices` builds a stack-only Range, and the search
+        // reads the already sorted compiled-row slice without allocation or locking.
+        // A foreign row returns an error before the sounding registry is mutated.
+        "compiled_producer",
+        "spans",
+        "indices",
+        "binary_search",
         "instances",
         "controller",
         // `CompiledPlan::parameter_row_for_identity` centralizes the note-instance row

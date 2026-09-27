@@ -246,68 +246,167 @@ impl PreparedRenderer {
                 crate::identity::ReleaseScope::Producer(producer),
                 &mut activation.ended,
             );
-            let mut reported = 0_u32;
-            while reported < ended.get() {
-                let Some(Some(note)) = activation.ended.get(reported as usize).copied() else {
+            self.queue_ended_notes(&activation.ended, ended);
+        }
+    }
+
+    /// Queue the gate and trigger writes for notes a producer release already ended.
+    /// The caller owns the bounded ended storage and has checked its scope.
+    fn queue_ended_notes(
+        &mut self,
+        ended_notes: &[Option<crate::identity::EndedNote>],
+        ended: crate::quantities::HeldNoteCount,
+    ) {
+        let mut reported = 0_u32;
+        while reported < ended.get() {
+            let Some(Some(note)) = ended_notes.get(reported as usize).copied() else {
+                break;
+            };
+            reported = reported.saturating_add(1);
+            let Some(target) = self.plan.note_targets().get(note.note.index()).copied() else {
+                continue;
+            };
+            let Some(slot) = self.adoption_gates.get_mut(self.adoption_gate_len) else {
+                break;
+            };
+            *slot = TimedControl {
+                // The boundary itself. A gate lowered here is lowered at the first
+                // sample the new mapping governs, which is what "at the boundary" means
+                // for a sample-positioned effect.
+                offset: crate::time::QuantumOffset::ZERO,
+                control: target.control,
+                value: crate::quantities::ParameterValue::ZERO,
+            };
+            let Some(row) = self.voice_row(target.parameter.index(), note.index) else {
+                continue;
+            };
+            self.adoption_gate_len = self.adoption_gate_len.saturating_add(1);
+            if let Some(entry) = self.adoption_gate_slots.get_mut(self.adoption_gate_len - 1) {
+                *entry = row;
+            }
+            // ADR-0026: the boundary release lowers the note's trigger destinations
+            // beside its gate, so a sampler does not play on across a seek its
+            // envelope was cut at. Sized with the gates: a note's width per identity.
+            for position in 0..self.plan.note_magnitudes_of(note.note).len() {
+                let Some(magnitude) = self
+                    .plan
+                    .note_magnitudes_of(note.note)
+                    .get(position)
+                    .copied()
+                else {
                     break;
                 };
-                reported = reported.saturating_add(1);
-                let Some(target) = self.plan.note_targets().get(note.note.index()).copied() else {
+                if magnitude.magnitude != crate::node::NoteMagnitude::Trigger {
                     continue;
-                };
+                }
                 let Some(slot) = self.adoption_gates.get_mut(self.adoption_gate_len) else {
                     break;
                 };
                 *slot = TimedControl {
-                    // The boundary itself. A gate lowered here is lowered at the first
-                    // sample the new mapping governs, which is what "at the boundary" means
-                    // for a sample-positioned effect.
                     offset: crate::time::QuantumOffset::ZERO,
-                    control: target.control,
+                    control: magnitude.control,
                     value: crate::quantities::ParameterValue::ZERO,
                 };
-                let Some(row) = self.voice_row(target.parameter.index(), note.index) else {
+                let Some(row) = self.voice_row(magnitude.parameter.index(), note.index) else {
                     continue;
                 };
                 self.adoption_gate_len = self.adoption_gate_len.saturating_add(1);
                 if let Some(entry) = self.adoption_gate_slots.get_mut(self.adoption_gate_len - 1) {
                     *entry = row;
                 }
-                // ADR-0026: the boundary release lowers the note's trigger destinations
-                // beside its gate, so a sampler does not play on across a seek its
-                // envelope was cut at. Sized with the gates: a note's width per identity.
-                for position in 0..self.plan.note_magnitudes_of(note.note).len() {
-                    let Some(magnitude) = self
-                        .plan
-                        .note_magnitudes_of(note.note)
-                        .get(position)
-                        .copied()
-                    else {
-                        break;
-                    };
-                    if magnitude.magnitude != crate::node::NoteMagnitude::Trigger {
-                        continue;
-                    }
-                    let Some(slot) = self.adoption_gates.get_mut(self.adoption_gate_len) else {
-                        break;
-                    };
-                    *slot = TimedControl {
-                        offset: crate::time::QuantumOffset::ZERO,
-                        control: magnitude.control,
-                        value: crate::quantities::ParameterValue::ZERO,
-                    };
-                    let Some(row) = self.voice_row(magnitude.parameter.index(), note.index) else {
-                        continue;
-                    };
-                    self.adoption_gate_len = self.adoption_gate_len.saturating_add(1);
-                    if let Some(entry) =
-                        self.adoption_gate_slots.get_mut(self.adoption_gate_len - 1)
-                    {
-                        *entry = row;
-                    }
-                }
             }
         }
+    }
+
+    /// Preflight and end only the sounding compiled occurrences of a bound mixed renderer.
+    /// All target, span and queue checks happen before the registry is changed. A later
+    /// mixed adoption will own the preallocated `ended_notes` and call this once at its
+    /// effective boundary. It must publish complete scoped restoration in that boundary
+    /// quantum: seeding marks every compiled row, while the queued release writes only
+    /// gate and trigger rows. Leaving another mark for a later ordinary write would make
+    /// that write step instead of ramp. This helper alone grants no activation path.
+    #[allow(dead_code)] // The mixed adoption owner is not connected yet.
+    pub(crate) fn release_mixed_compiled_boundary(
+        &mut self,
+        producer: crate::identity::ProducerId,
+        ended_notes: &mut [Option<crate::identity::EndedNote>],
+    ) -> Result<crate::quantities::HeldNoteCount, crate::render::MixedBoundaryReleaseError> {
+        use crate::render::MixedBoundaryReleaseError as Refused;
+
+        let partition = self.mixed_partition.as_ref().ok_or(Refused::Unbound)?;
+        let expected = partition.compiled_producer();
+        if producer != expected {
+            return Err(Refused::WrongProducer {
+                expected,
+                offered: producer,
+            });
+        }
+        if self.adoption_gate_len != 0 {
+            return Err(Refused::PendingBoundary);
+        }
+        let compiled_span = partition.spans().0;
+        if ended_notes.len() < compiled_span.indices().len() {
+            return Err(Refused::EndedStorage);
+        }
+        let count = self
+            .live_notes
+            .preview_producer(producer, ended_notes)
+            .ok_or(Refused::EndedStorage)?;
+        let mut needed = 0_usize;
+        for index in 0..count.get() as usize {
+            let Some(Some(note)) = ended_notes.get(index).copied() else {
+                return Err(Refused::EndedStorage);
+            };
+            if note.note.plan() != self.plan.id() || !compiled_span.contains(note.index) {
+                return Err(Refused::UnboundTarget { note: note.note });
+            }
+            let Some(target) = self.plan.note_targets().get(note.note.index()) else {
+                return Err(Refused::UnboundTarget { note: note.note });
+            };
+            let Some(gate_row) = self.voice_row(target.parameter.index(), note.index) else {
+                return Err(Refused::UnboundTarget { note: note.note });
+            };
+            let gate_row = crate::plan::ParameterRow::new(self.plan.id(), gate_row);
+            if partition.compiled_rows().binary_search(&gate_row).is_err() {
+                return Err(Refused::UnboundTarget { note: note.note });
+            }
+            needed = needed.checked_add(1).ok_or(Refused::GateStorage {
+                needed: usize::MAX,
+                available: self.adoption_gates.len(),
+            })?;
+            for magnitude in self.plan.note_magnitudes_of(note.note) {
+                if magnitude.magnitude != crate::node::NoteMagnitude::Trigger {
+                    continue;
+                }
+                let Some(row) = self.voice_row(magnitude.parameter.index(), note.index) else {
+                    return Err(Refused::UnboundTarget { note: note.note });
+                };
+                let row = crate::plan::ParameterRow::new(self.plan.id(), row);
+                if partition.compiled_rows().binary_search(&row).is_err() {
+                    return Err(Refused::UnboundTarget { note: note.note });
+                }
+                needed = needed.checked_add(1).ok_or(Refused::GateStorage {
+                    needed: usize::MAX,
+                    available: self.adoption_gates.len(),
+                })?;
+            }
+        }
+        let available = self
+            .adoption_gates
+            .len()
+            .min(self.adoption_gate_slots.len());
+        if needed > available {
+            return Err(Refused::GateStorage { needed, available });
+        }
+        // SOUND-INV-024: the boundary ends compiled controls without a ramp. On a
+        // bound mixed renderer this seeds only compiled rows, leaving live ramps intact.
+        self.seed_for_adoption();
+        let released = self.live_notes.release_all(
+            crate::identity::ReleaseScope::Producer(producer),
+            ended_notes,
+        );
+        self.queue_ended_notes(ended_notes, released);
+        Ok(released)
     }
 
     /// How many quanta a call for `frames` frames will render.

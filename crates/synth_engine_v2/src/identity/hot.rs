@@ -480,6 +480,36 @@ impl LiveNotes {
         Some(note)
     }
 
+    /// Snapshot one producer's sounding notes into caller-owned storage before a mixed
+    /// boundary release mutates the registry. `None` means the producer is absent or the
+    /// buffer is shorter than its admitted span; neither case changes the registry.
+    #[allow(dead_code)] // The mixed adoption owner is not connected yet.
+    pub(crate) fn preview_producer(
+        &self,
+        producer: super::ProducerId,
+        ended: &mut [Option<super::EndedNote>],
+    ) -> Option<HeldNoteCount> {
+        let range = self.ranges.get(usize::from(producer.as_u16()))?;
+        let first = range.start as usize;
+        let last = first.checked_add(range.len as usize)?;
+        if ended.len() < last.saturating_sub(first) {
+            return None;
+        }
+        let mut count = 0_u32;
+        for index in first..last {
+            let Some(Some(live)) = self.slots.get(index) else {
+                continue;
+            };
+            let out = ended.get_mut(count as usize)?;
+            *out = Some(super::EndedNote {
+                note: live.note,
+                index: u16::try_from(index).unwrap_or(u16::MAX),
+            });
+            count = count.saturating_add(1);
+        }
+        Some(HeldNoteCount::measured(count))
+    }
+
     /// End every note in `scope`, writing each one's node into `ended`.
     ///
     /// The registry half of ADR-0046 clause 6's bounded mass release, and the half

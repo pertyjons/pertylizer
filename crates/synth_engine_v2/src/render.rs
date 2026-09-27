@@ -21,6 +21,27 @@ use crate::plan::{CompiledPlan, PlanOp};
 use crate::quantities::{ChannelLayout, EventCount, ParameterValue, RecordCount};
 use crate::time::{FrameCount, QUANTUM_FRAMES, SampleTime, StreamAnchor, StreamEpoch, TimeSource};
 
+/// Why a bound mixed renderer could not release its sounding compiled producer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+#[allow(dead_code)] // The mixed adoption owner is not connected yet.
+pub(crate) enum MixedBoundaryReleaseError {
+    #[error("renderer has no mixed instance partition")]
+    Unbound,
+    #[error("producer {offered} is not the bound compiled producer {expected}")]
+    WrongProducer {
+        expected: crate::identity::ProducerId,
+        offered: crate::identity::ProducerId,
+    },
+    #[error("a previous boundary release is still queued")]
+    PendingBoundary,
+    #[error("the ended-note buffer is shorter than the compiled producer span")]
+    EndedStorage,
+    #[error("sounding note {note:?} has a destination outside compiled-owned rows")]
+    UnboundTarget { note: crate::plan::NoteSlot },
+    #[error("{needed} boundary controls exceed {available} prepared slots")]
+    GateStorage { needed: usize, available: usize },
+}
+
 /// How many bytes preparing a renderer will allocate for one call's event
 /// resolution, given a plan's capacities.
 ///

@@ -25,7 +25,7 @@ use crate::sample::{
     PlayDirection, PlayMode, PlaybackRegion, PreparedSample, SampleFrame, SampleMap, SampleMapRef,
     SampleRef, SampleZone,
 };
-use crate::schedule::AdmittedCompiledStream;
+use crate::schedule::{AdmittedCompiledStream, CompiledPayload, PlanEvent};
 use crate::time::{
     FrameCount, PlanPosition, QUANTUM_FRAMES, SampleTime, StreamAnchor, StreamEpoch, TimeSource,
     issue_epoch,
@@ -136,7 +136,19 @@ fn binding(compiled_first: bool) -> (MixedTargetAdmission, crate::plan::NoteSlot
         .into_plan()
         .expect("admitted plan");
     let slot = plan.resolve_note(ENVELOPE).expect("playable envelope");
-    let stream = AdmittedCompiledStream::admit(&plan, &[]).expect("empty compiled stream");
+    // Bind the same compiled target the rendered compiled-provenance onset names.
+    let stream = AdmittedCompiledStream::admit(
+        &plan,
+        &[PlanEvent::new(
+            PlanPosition::ZERO,
+            CompiledPayload::NoteOn {
+                slot,
+                key: KeyIdentity::LOWEST,
+                velocity: NoteVelocity::FULL,
+            },
+        )],
+    )
+    .expect("compiled note stream");
     (
         MixedTargetAdmission::admit(plan, stream, slot).expect("disjoint mixed targets"),
         slot,
@@ -213,7 +225,19 @@ fn sampler_binding(compiled_first: bool) -> (MixedTargetAdmission, crate::plan::
         .into_plan()
         .expect("admitted sampler plan");
     let slot = plan.resolve_note(ENVELOPE).expect("playable envelope");
-    let stream = AdmittedCompiledStream::admit(&plan, &[]).expect("empty compiled stream");
+    // Bind the same compiled target the rendered compiled-provenance onset names.
+    let stream = AdmittedCompiledStream::admit(
+        &plan,
+        &[PlanEvent::new(
+            PlanPosition::ZERO,
+            CompiledPayload::NoteOn {
+                slot,
+                key: KeyIdentity::LOWEST,
+                velocity: NoteVelocity::FULL,
+            },
+        )],
+    )
+    .expect("compiled sampler note stream");
     (
         MixedTargetAdmission::admit(plan, stream, slot).expect("disjoint sampler targets"),
         slot,
@@ -292,6 +316,272 @@ fn render(renderer: &mut PreparedRenderer, events: &[TimedEvent]) -> Vec<f32> {
         .render(block, TimedEvents::new(events))
         .expect("bounded render");
     samples
+}
+
+fn render_quantum(renderer: &mut PreparedRenderer, events: &[TimedEvent]) -> Vec<f32> {
+    let mut samples = vec![0.0_f32; Q];
+    let block = AudioBlockMut::new(&mut samples, Q, ChannelLayout::Mono).expect("quantum block");
+    renderer
+        .render(block, TimedEvents::new(events))
+        .expect("bounded quantum render");
+    samples
+}
+
+#[test]
+fn mixed_boundary_release_ends_only_sounding_compiled_notes() {
+    for compiled_first in [true, false] {
+        for sampler in [false, true] {
+            let (binding, note) = if sampler {
+                sampler_binding(compiled_first)
+            } else {
+                binding(compiled_first)
+            };
+            let mut table =
+                IdentityTable::from_admitted_ranges(binding.plan().note_producer_ranges())
+                    .expect("identity ranges");
+            let compiled = table
+                .mint(binding.instance_partition().compiled_producer(), note)
+                .expect("compiled identity");
+            let live = table
+                .mint(binding.live_producer(), note)
+                .expect("live identity");
+            let epoch = issue_epoch().expect("epoch");
+            let mut mixed = PreparedRenderer::prepare(
+                Arc::clone(binding.plan_arc()),
+                ANCHOR,
+                epoch,
+                table.id(),
+            )
+            .expect("mixed renderer");
+            let mut live_only = PreparedRenderer::prepare(
+                Arc::clone(binding.plan_arc()),
+                ANCHOR,
+                epoch,
+                table.id(),
+            )
+            .expect("live reference");
+            assert!(mixed.bind_mixed_partition(Arc::clone(binding.partition_arc())));
+            assert!(live_only.bind_mixed_partition(Arc::clone(binding.partition_arc())));
+            let onset = |identity, source| {
+                TimedEvent::new(
+                    EventEnvelope::new(epoch, SampleTime::ZERO, source),
+                    EventPayload::Note {
+                        identity,
+                        edge: NoteEdge::On {
+                            slot: note,
+                            key: KeyIdentity::LOWEST,
+                            velocity: NoteVelocity::FULL,
+                        },
+                    },
+                )
+            };
+            let live_on = onset(live, TimeSource::Simulated);
+            let compiled_on = onset(compiled, TimeSource::Compiled);
+            let _ = render_quantum(&mut mixed, &[]);
+            let _ = render_quantum(&mut live_only, &[]);
+            let _ = render_quantum(&mut mixed, &[compiled_on, live_on]);
+            let _ = render_quantum(&mut live_only, &[live_on]);
+            assert_eq!(mixed.live_notes.note_of(compiled), Some(note));
+            assert_eq!(mixed.live_notes.note_of(live), Some(note));
+            let gate = binding.plan().note_targets()[note.index()].parameter;
+            let gate_row = binding
+                .plan()
+                .parameter_row_for_identity(gate, compiled.index())
+                .expect("compiled gate row");
+            mixed.parameter_slots[gate_row.index()].smooth_over(2 * QUANTUM_FRAMES);
+            for magnitude in binding.plan().note_magnitudes_of(note) {
+                if magnitude.magnitude == crate::node::NoteMagnitude::Trigger {
+                    let row = binding
+                        .plan()
+                        .parameter_row_for_identity(magnitude.parameter, compiled.index())
+                        .expect("compiled trigger row");
+                    mixed.parameter_slots[row.index()].smooth_over(2 * QUANTUM_FRAMES);
+                }
+            }
+            let invalid_note = crate::plan::NoteSlot::new(binding.plan().id(), usize::MAX);
+            mixed
+                .live_notes
+                .admit(compiled, invalid_note, KeyIdentity::LOWEST);
+            let mut ended = [None; 2];
+            assert_eq!(
+                mixed.release_mixed_compiled_boundary(
+                    binding.instance_partition().compiled_producer(),
+                    &mut ended,
+                ),
+                Err(super::MixedBoundaryReleaseError::UnboundTarget { note: invalid_note })
+            );
+            assert_eq!(mixed.live_notes.note_of(compiled), Some(invalid_note));
+            assert_eq!(mixed.adoption_gate_len, 0);
+            mixed.live_notes.admit(compiled, note, KeyIdentity::LOWEST);
+            let before_live = states(&mixed, binding.instance_partition().live_rows());
+            let mut too_short = [None; 1];
+            assert_eq!(
+                mixed.release_mixed_compiled_boundary(
+                    binding.instance_partition().compiled_producer(),
+                    &mut too_short,
+                ),
+                Err(super::MixedBoundaryReleaseError::EndedStorage)
+            );
+            assert_eq!(
+                mixed.release_mixed_compiled_boundary(binding.live_producer(), &mut ended),
+                Err(super::MixedBoundaryReleaseError::WrongProducer {
+                    expected: binding.instance_partition().compiled_producer(),
+                    offered: binding.live_producer(),
+                })
+            );
+            assert_eq!(mixed.live_notes.note_of(compiled), Some(note));
+            assert_eq!(mixed.live_notes.note_of(live), Some(note));
+            assert_eq!(mixed.adoption_gate_len, 0);
+            let saved_gates = std::mem::take(&mut mixed.adoption_gates);
+            assert_eq!(
+                mixed.release_mixed_compiled_boundary(
+                    binding.instance_partition().compiled_producer(),
+                    &mut ended,
+                ),
+                Err(super::MixedBoundaryReleaseError::GateStorage {
+                    needed: 1 + usize::from(sampler),
+                    available: 0,
+                })
+            );
+            assert_eq!(mixed.live_notes.note_of(compiled), Some(note));
+            assert_eq!(mixed.live_notes.note_of(live), Some(note));
+            mixed.adoption_gates = saved_gates;
+            let mut released = HeldNoteCount::NONE;
+            let allocations = crate::render_allocation::count_allocs(|| {
+                released = mixed
+                    .release_mixed_compiled_boundary(
+                        binding.instance_partition().compiled_producer(),
+                        &mut ended,
+                    )
+                    .expect("bound compiled release");
+            });
+            assert_eq!(allocations, 0);
+            assert_eq!(released.get(), 1);
+            assert_eq!(ended[0].map(|entry| entry.index), Some(compiled.index()));
+            assert_eq!(mixed.live_notes.note_of(compiled), None);
+            assert_eq!(mixed.live_notes.note_of(live), Some(note));
+            assert_eq!(
+                states(&mixed, binding.instance_partition().live_rows()),
+                before_live
+            );
+            let trigger_count = binding
+                .plan()
+                .note_magnitudes_of(note)
+                .iter()
+                .filter(|magnitude| magnitude.magnitude == crate::node::NoteMagnitude::Trigger)
+                .count();
+            assert_eq!(mixed.adoption_gate_len, 1 + trigger_count);
+            assert_eq!(sampler, trigger_count > 0);
+            let mut released_rows = Vec::new();
+            for index in 0..mixed.adoption_gate_len {
+                let row = crate::plan::ParameterRow::new(
+                    binding.plan().id(),
+                    mixed.adoption_gate_slots[index],
+                );
+                released_rows.push(row);
+                assert!(
+                    binding
+                        .instance_partition()
+                        .compiled_rows()
+                        .binary_search(&row)
+                        .is_ok()
+                );
+                assert_eq!(mixed.adoption_gates[index].value, ParameterValue::ZERO);
+            }
+            assert_eq!(
+                mixed.release_mixed_compiled_boundary(
+                    binding.instance_partition().compiled_producer(),
+                    &mut ended,
+                ),
+                Err(super::MixedBoundaryReleaseError::PendingBoundary)
+            );
+            let _ = render_quantum(&mut mixed, &[]);
+            let _ = render_quantum(&mut live_only, &[]);
+            assert_eq!(mixed.adoption_gate_len, 0);
+            for row in released_rows {
+                assert_eq!(
+                    mixed.parameter_slots[row.index()].current(),
+                    ParameterValue::ZERO
+                );
+            }
+            assert_eq!(
+                states(&mixed, binding.instance_partition().live_rows()),
+                states(&live_only, binding.instance_partition().live_rows())
+            );
+            let actual = render_quantum(&mut mixed, &[]);
+            let expected = render_quantum(&mut live_only, &[]);
+            assert!(actual.iter().any(|sample| *sample != 0.0));
+            assert_eq!(actual, expected, "compiled release changed live output");
+        }
+    }
+}
+
+#[test]
+fn mixed_boundary_release_refuses_missing_compiled_gate_or_trigger_row() {
+    for compiled_first in [true, false] {
+        for sampler in [false, true] {
+            let (mut binding, note) = if sampler {
+                sampler_binding(compiled_first)
+            } else {
+                binding(compiled_first)
+            };
+            let mut table =
+                IdentityTable::from_admitted_ranges(binding.plan().note_producer_ranges())
+                    .expect("identity ranges");
+            let compiled = table
+                .mint(binding.instance_partition().compiled_producer(), note)
+                .expect("compiled identity");
+            let parameter = if sampler {
+                binding
+                    .plan()
+                    .note_magnitudes_of(note)
+                    .iter()
+                    .find(|magnitude| magnitude.magnitude == crate::node::NoteMagnitude::Trigger)
+                    .expect("sampler trigger")
+                    .parameter
+            } else {
+                binding.plan().note_targets()[note.index()].parameter
+            };
+            let row = binding
+                .plan()
+                .parameter_row_for_identity(parameter, compiled.index())
+                .expect("compiled row");
+            assert!(binding.omit_compiled_row_for_test(row));
+            let epoch = issue_epoch().expect("epoch");
+            let mut renderer = PreparedRenderer::prepare(
+                Arc::clone(binding.plan_arc()),
+                ANCHOR,
+                epoch,
+                table.id(),
+            )
+            .expect("renderer");
+            assert!(renderer.bind_mixed_partition(Arc::clone(binding.partition_arc())));
+            let _ = render_quantum(&mut renderer, &[]);
+            let onset = TimedEvent::new(
+                EventEnvelope::new(epoch, SampleTime::ZERO, TimeSource::Compiled),
+                EventPayload::Note {
+                    identity: compiled,
+                    edge: NoteEdge::On {
+                        slot: note,
+                        key: KeyIdentity::LOWEST,
+                        velocity: NoteVelocity::FULL,
+                    },
+                },
+            );
+            let _ = render_quantum(&mut renderer, &[onset]);
+            assert_eq!(renderer.live_notes.note_of(compiled), Some(note));
+            let mut ended = [None; 2];
+            assert_eq!(
+                renderer.release_mixed_compiled_boundary(
+                    binding.instance_partition().compiled_producer(),
+                    &mut ended,
+                ),
+                Err(super::MixedBoundaryReleaseError::UnboundTarget { note })
+            );
+            assert_eq!(renderer.live_notes.note_of(compiled), Some(note));
+            assert_eq!(renderer.adoption_gate_len, 0);
+        }
+    }
 }
 
 fn states(renderer: &PreparedRenderer, rows: &[crate::plan::ParameterRow]) -> Vec<SlotState> {

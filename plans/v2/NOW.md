@@ -265,8 +265,18 @@ scratch reserved one write per ended identity while its pending queue reserved a
 gate plus trigger writes. The scratch and its admission charge now reserve the
 same full boundary queue beside a full event quantum. That queue uses the plan's
 widest gate-plus-magnitudes width, avoiding event-group and parameter-fanout costs
-on every held identity; storage invariants check both bounds. The mixed release
-path itself remains unimplemented.
+on every held identity; storage invariants check both bounds. The mixed
+activation release handoff remains unimplemented.
+An internal renderer rehearsal now previews sounding compiled notes before
+releasing them, checks producer and compiled-owned gate/trigger rows, and
+refuses inadequate storage before changing its registry. After preflight it
+seeds only compiled rows so the boundary release does not ramp. Renderer tests
+use directly stamped compiled-provenance and simulated live onsets in both
+producer orders, including a sampler trigger and synthetic missing rows; the
+compiled occurrence ends while live output and rows match a live-only reference.
+The helper is not connected to mixed activation. That owner must publish the
+complete scoped restoration in the same boundary quantum to consume all
+compiled seed marks; the offer refusal remains.
 
 ### Selected work — ordered transport through live I/O
 

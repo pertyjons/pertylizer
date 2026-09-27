@@ -246,6 +246,25 @@ keeps its requested-time stamps; the future audio-side offer must select and
 check its actual boundary and apply the same displacement at every read. This
 private timing check grants no offer or combined capacity admission.
 
+The renderer now has an internal producer-scoped boundary-release rehearsal. It
+previews sounding notes in caller-owned storage, checks the bound compiled
+producer, each gate and trigger row against the compiled partition, and the
+prepared queue capacity before clearing the registry. It then calls the same
+`seed_for_adoption` path and gate/trigger enqueue path as ordinary adoption;
+the seed is scoped to compiled rows because this renderer is mixed-bound. The
+future activation owner must publish complete scoped restoration in that same
+boundary quantum so seed marks on rows without a release write do not survive
+to a later ordinary write and turn its ramp into a step. A short ended-note
+buffer, a live-producer request, an unbound target, insufficient gate storage
+or a pending boundary must leave the registry and pending gates unchanged.
+Renderer tests use directly stamped compiled-provenance and
+simulated live note-ons against an admitted compiled target, in both producer
+orders. They check a sampler trigger, audible live preservation, and synthetic
+missing gate/trigger partition rows. These falsify a release that ends nothing,
+touches live state or fails to apply boundary controls. The helper is not yet
+called by a mixed activation owner; complete seed consumption, effective-time
+selection, combined capacity, source custody and offer remain unproved.
+
 Rehearsal falsifiers are a last note-on magnitude before a seek with compiled
 producer second, repeated-key prefix pairing, zero gates and triggers for
 destination-open notes, exact group count, immutable owner/minter custody,

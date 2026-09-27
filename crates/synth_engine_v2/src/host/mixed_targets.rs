@@ -397,6 +397,18 @@ impl MixedTargetAdmission {
         &self.partition
     }
 
+    /// Corrupt one bound row for a renderer refusal test before the partition is shared.
+    #[cfg(test)]
+    pub(crate) fn omit_compiled_row_for_test(&mut self, row: ParameterRow) -> bool {
+        let Some(partition) = Arc::get_mut(&mut self.partition) else {
+            return false;
+        };
+        let Ok(index) = partition.compiled_rows.binary_search(&row) else {
+            return false;
+        };
+        partition.compiled_rows.remove(index) == row
+    }
+
     /// Move the checked values into the split stream constructor exactly once.
     pub(crate) fn into_parts(self) -> MixedTargetParts {
         MixedTargetParts {
