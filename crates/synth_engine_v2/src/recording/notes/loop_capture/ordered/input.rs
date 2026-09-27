@@ -61,6 +61,7 @@ pub struct SimulatedNoteInput {
     state: ConnectionState,
     clock: Option<SimulatedInputClock>,
     binding: Option<ConnectionGeneration>,
+    capacity: InputCapacity,
     slots: Box<[Option<InputEntry>]>,
     held_onsets: Box<[Option<RawHeldOnset>]>,
     release_reservations: usize,
@@ -115,6 +116,7 @@ impl SimulatedNoteInput {
             state: ConnectionState::Stopped,
             clock: None,
             binding: None,
+            capacity: limits.cells,
             slots: slots.into_boxed_slice(),
             held_onsets: held_onsets.into_boxed_slice(),
             release_reservations: 0,
@@ -163,6 +165,16 @@ impl SimulatedNoteInput {
     }
     pub const fn bytes(&self) -> PreparedBytes {
         self.bytes
+    }
+
+    /// Current raw-cell occupancy and matched-release reservations. This
+    /// off-thread snapshot does not reserve capacity for a later source offer.
+    pub fn pressure(&self) -> InputPressure {
+        InputPressure::new(
+            InputCellCount::measured(self.slots.iter().filter(|slot| slot.is_some()).count()),
+            InputCellCount::measured(self.release_reservations),
+            self.capacity,
+        )
     }
 
     /// An explicit same-endpoint attempt. Retirement must precede another attempt.

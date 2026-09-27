@@ -32,6 +32,48 @@ fn ready_with_cells(uncertainty: u64, cells: u32) -> (SimulatedNoteInput, Connec
 fn ready(uncertainty: u64) -> (SimulatedNoteInput, ConnectionGeneration) {
     ready_with_cells(uncertainty, 6)
 }
+
+#[test]
+fn raw_pressure_counts_retained_cells_and_release_reservations() {
+    let (mut input, generation) = ready_with_cells(0, 8);
+    let pressure = |input: &SimulatedNoteInput| {
+        let pressure = input.pressure();
+        (
+            pressure.occupied().as_usize(),
+            pressure.release_reservations().as_usize(),
+            pressure.capacity().as_u32(),
+        )
+    };
+    assert_eq!(pressure(&input), (1, 0, 8));
+    for (time, velocity) in [(10, 100), (20, 110)] {
+        let _id = input
+            .offer_message(
+                generation,
+                InputTick::new(time),
+                SampleTime::new(time),
+                Midi1Input::from_bytes([0x90, 60, velocity]).unwrap(),
+            )
+            .unwrap();
+    }
+    assert_eq!(pressure(&input), (3, 2, 8));
+    let _release = input
+        .offer_message(
+            generation,
+            InputTick::new(30),
+            SampleTime::new(30),
+            Midi1Input::from_bytes([0x80, 60, 0]).unwrap(),
+        )
+        .unwrap();
+    assert_eq!(pressure(&input), (4, 1, 8));
+    let _frontier = input
+        .advance_frontier(generation, InputTick::new(40))
+        .unwrap();
+    assert_eq!(pressure(&input), (5, 1, 8));
+    input.device_lost(generation).unwrap();
+    assert_eq!(pressure(&input), (5, 0, 8));
+    assert_eq!(std::iter::from_fn(|| input.collect()).count(), 5);
+    assert_eq!(pressure(&input), (0, 0, 8));
+}
 #[test]
 fn uncertainty_and_identity_exhaustion_keep_first_failure_and_accepted_prefix() {
     for uncertain in [false, true] {

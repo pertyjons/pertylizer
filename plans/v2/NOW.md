@@ -307,8 +307,8 @@ fixture. The separate fake-consumer settlement refuses entries bound to a raw
 onset ID.
 The model already returned ingress credit for its modeled refusal at source
 service. Result and ledger credits stay charged; this serial raw/recorder
-probe has no actual mixed-ingress offer, shared raw-capacity charge or
-concrete source-ring handoff.
+probe has no actual mixed-ingress offer or concrete source-ring handoff.
+It has no concrete shared raw-capacity charge.
 The modeled queue now also offers its three onsets to the private test-only
 mixed owner beside the serial raw/recorder owner. It forwards each queued
 key and velocity and retains the source-to-identity association in its ledger;
@@ -320,8 +320,19 @@ identities at teardown. All three raw/recorder pairs still deliver and capture
 completes. The model retains accepted ingress credits, result cells and ledger
 entries because the private owner gives no per-occurrence outcome after the
 fault and the fixture has no joined redemption rule. It uses direct offers
-from modeled queues, no shared raw-capacity charge and no production mixed
-offer.
+from modeled queues and has no concrete shared raw-capacity charge or production
+mixed offer.
+The raw owner now exposes typed read-only occupancy, matched-release
+reservations and configured capacity. The two-source model charges a pending
+raw onset and its future release before queue custody. Ordinary packets also
+claim pending raw cells. Actual offers convert pending charges to occupied cells;
+the model compares its pressure with the raw owner's snapshot after batches of
+onsets, releases, frontiers and receipts. At eight cells, both preflights refuse
+an onset when retained onsets or ordinary packets exhaust protected capacity;
+retiring a pending ring retry returns its modeled raw charge. This is a model
+of shared capacity for the tested running owners, not an atomic
+charge held by the concrete source ring or raw owner. A real handoff and joined
+host result remain open.
 An off-thread check now places and stamps the bound stream against
 a disposable copy of only the compiled range. It publishes no events or
 reservations. Tests cover wrong-producer and wrong-capacity refusals, disjoint

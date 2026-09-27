@@ -1426,7 +1426,7 @@ an entry bound to a raw ID.
 The model already returned ingress credit for its modeled refusal at source
 service, while result and ledger credits stay charged. The serial owner still
 receives direct offers from the modeled queue rather than a concrete source-ring
-handoff; there is no shared raw-capacity charge, actual mixed-ingress result or
+handoff; there is no concrete shared raw-capacity charge, actual mixed-ingress result or
 combined host outcome.
 The next local probe forwards three modeled onset/release occurrences to the
 private test-only mixed owner beside an actual serial raw/recorder owner. The
@@ -1440,8 +1440,23 @@ identities and redemption flags in mixed teardown classification. Independent
 serial capture delivers all three raw/recorder pairs and seals complete. Model
 ingress credits for the two accepted identities stay charged alongside result
 and ledger cells. The private owner has no per-occurrence outcome after the
-fault, and the fixture has no shared raw-capacity charge, concrete source-ring
-handoff, joined fault outcome or production mixed offer.
+fault, and the fixture has no concrete shared raw-capacity charge, concrete
+source-ring handoff, joined fault outcome or production mixed offer.
+The actual raw owner now reports a typed read-only snapshot of occupied cells,
+matched-release reservations and configured capacity. The two-source model
+charges a pending onset and its future raw release before queue custody. Queued
+ordinary packets also claim pending raw cells. Raw offers convert pending
+charges to occupied cells; frontiers and collected receipts update the shadow.
+Its pressure equals the real raw owner's snapshot after each batch of onset,
+release, frontier and receipt handoffs in both serial fixtures, including the
+mixed hold refusal and later fault. With eight raw cells, the model and the raw
+owner's admission preflight both refuse an onset after retained onsets or
+ordinary packets exhaust protected capacity. A retired source-ring retry
+returns its pending modeled raw charge. A discrepancy at a comparison or
+preflight is a falsifier for this running-owner shadow accounting; raw owner
+faults are outside the model. The snapshot grants no future reservation,
+so concurrent source offers and the concrete source-ring handoff still need a
+shared atomic admission rule before this can qualify a combined host.
 EVD-0024's component matrix remains
 insufficient for production capacity; ADR-0022's hardware timing and physical
 round-trip gates remain separate.

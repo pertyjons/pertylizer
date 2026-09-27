@@ -11,9 +11,9 @@ use crate::{
     host::{
         ConnectionGeneration, EndpointId,
         input::{
-            InputCapacity, InputCaptureSession, InputEventId, InputLimits, InputObservation,
-            InputOutcome, InputRate, InputReceipt, InputTick, InputTickSpan, SimulatedInputClock,
-            SimulatedNoteInput,
+            InputCapacity, InputCaptureSession, InputError, InputEventId, InputLimits,
+            InputObservation, InputOutcome, InputRate, InputReceipt, InputTick, InputTickSpan,
+            SimulatedInputClock, SimulatedNoteInput,
         },
         session::{
             LoopRecordingSession, SessionCommand, SessionCommandCapacity, SessionLimits,
@@ -84,6 +84,7 @@ enum RingPacket {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum NoCreditReason {
     SourceReserve,
+    RawCapture,
     Tracker,
     Ingress,
     Results,
@@ -107,7 +108,8 @@ enum CauseOrigin {
 impl TerminalReason {
     const fn origin(self) -> CauseOrigin {
         match self {
-            Self::NoCredit(NoCreditReason::SourceReserve) | Self::Order => CauseOrigin::SourceLocal,
+            Self::NoCredit(NoCreditReason::SourceReserve | NoCreditReason::RawCapture)
+            | Self::Order => CauseOrigin::SourceLocal,
             Self::NoCredit(_) | Self::ReleaseIdentity => CauseOrigin::SharedState,
         }
     }
@@ -219,6 +221,7 @@ struct Entry {
     released: bool,
     raw_held: bool,
     raw_onset: Option<InputEventId>,
+    raw_release: Option<InputEventId>,
     ingress_held: bool,
     ingress_disposition: IngressDisposition,
     result_held: bool,
@@ -258,6 +261,55 @@ struct Counts {
     ledger: usize,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct RawShadow {
+    occupied: usize,
+    queued_onsets: usize,
+    queued_ordinary: usize,
+    release_reservations: usize,
+    capacity: InputCapacity,
+}
+
+impl RawShadow {
+    fn new(capacity: InputCapacity) -> Self {
+        Self {
+            occupied: 1,
+            queued_onsets: 0,
+            queued_ordinary: 0,
+            release_reservations: 0,
+            capacity,
+        }
+    }
+
+    fn capacity_size(self) -> usize {
+        usize::try_from(self.capacity.as_u32()).expect("fixture target represents input cells")
+    }
+
+    fn can_charge_onset(self) -> bool {
+        self.occupied
+            .checked_add(self.queued_onsets)
+            .and_then(|count| count.checked_add(self.queued_ordinary))
+            .and_then(|count| count.checked_add(self.release_reservations))
+            .zip(self.capacity_size().checked_sub(4))
+            .is_some_and(|(claimed, limit)| claimed <= limit)
+    }
+
+    fn can_charge_ordinary(self) -> bool {
+        let Some(claimed) = self
+            .occupied
+            .checked_add(self.queued_onsets)
+            .and_then(|count| count.checked_add(self.queued_ordinary))
+            .and_then(|count| count.checked_add(self.release_reservations))
+        else {
+            return false;
+        };
+        let protected = if self.release_reservations > 0 { 3 } else { 2 };
+        self.capacity_size()
+            .checked_sub(protected)
+            .is_some_and(|limit| claimed <= limit)
+    }
+}
+
 /// Onset queue custody acquires four shared credits, its ring cell and one
 /// future release cell. Consumers return only their own credits after their
 /// outcomes; removing a source packet does not redeem its release reserve.
@@ -271,6 +323,7 @@ struct Model {
     terminal_fault: Option<(ModelSource, TerminalFault)>,
     entries: Vec<Entry>,
     raw_binding: [Option<(ConnectionGeneration, u64)>; 2],
+    raw_shadow: Option<[RawShadow; 2]>,
     next: u64,
     next_release: u64,
     used: Counts,
@@ -290,6 +343,7 @@ impl Model {
             terminal_fault: None,
             entries: Vec::new(),
             raw_binding: [None, None],
+            raw_shadow: None,
             next: 0,
             next_release: 0,
             used: Counts {
@@ -303,6 +357,11 @@ impl Model {
         }
     }
 
+    fn with_raw_capacity(mut self, capacity: InputCapacity) -> Self {
+        self.raw_shadow = Some([RawShadow::new(capacity); 2]);
+        self
+    }
+
     fn onset_preflight(&self, source: ModelSource) -> OnsetPreflight {
         let index = source.index();
         if self.host_halted {
@@ -313,6 +372,12 @@ impl Model {
         }
         if self.release_reservations[index] + 2 > self.ring_limit {
             return OnsetPreflight::NoCredit(NoCreditReason::SourceReserve);
+        }
+        if self
+            .raw_shadow
+            .is_some_and(|raw| !raw[index].can_charge_onset())
+        {
+            return OnsetPreflight::NoCredit(NoCreditReason::RawCapture);
         }
         for (used, limit, reason) in [
             (
@@ -382,6 +447,10 @@ impl Model {
         self.used.ingress += 1;
         self.used.results += 1;
         self.used.ledger += 1;
+        if let Some(raw) = self.raw_shadow.as_mut() {
+            raw[index].queued_onsets += 1;
+            raw[index].release_reservations += 1;
+        }
         let attempt = Attempt {
             id: OccurrenceId(next),
             key: Key {
@@ -460,6 +529,10 @@ impl Model {
         self.used.tracker -= pending.charge.tracker;
         self.used.ingress -= pending.charge.ingress;
         self.used.results -= pending.charge.results;
+        if let Some(raw) = self.raw_shadow.as_mut() {
+            raw[index].queued_onsets -= 1;
+            raw[index].release_reservations -= 1;
+        }
         self.source_holds.push(SourceHold {
             id: pending.attempt.id,
             key: pending.attempt.key,
@@ -497,6 +570,10 @@ impl Model {
         };
         if !raw {
             self.used.tracker -= 1;
+            if let Some(shadow) = self.raw_shadow.as_mut() {
+                shadow[source.index()].queued_onsets -= 1;
+                shadow[source.index()].release_reservations -= 1;
+            }
         }
         if !ingress {
             self.used.ingress -= 1;
@@ -507,6 +584,7 @@ impl Model {
             released: false,
             raw_held: raw,
             raw_onset: None,
+            raw_release: None,
             ingress_held: ingress,
             ingress_disposition: if ingress {
                 IngressDisposition::Pending
@@ -524,11 +602,17 @@ impl Model {
             && self.retry_pending[index].is_none()
             && self.release_pending[index].is_none()
             && self.rings[index].len() + self.release_reservations[index] < self.ring_limit
+            && self
+                .raw_shadow
+                .is_none_or(|raw| raw[index].can_charge_ordinary())
     }
 
     fn offer_ordinary(&mut self, source: ModelSource) {
         assert!(self.can_offer_ordinary(source));
         let index = source.index();
+        if let Some(raw) = self.raw_shadow.as_mut() {
+            raw[index].queued_ordinary += 1;
+        }
         self.rings[index].push_back(RingPacket::Ordinary);
     }
 
@@ -537,6 +621,12 @@ impl Model {
             self.rings[source.index()].pop_front(),
             Some(RingPacket::Ordinary)
         ));
+        if let Some(raw) = self.raw_shadow.as_mut() {
+            let pressure = &mut raw[source.index()];
+            assert!(pressure.queued_ordinary > 0);
+            pressure.queued_ordinary -= 1;
+            pressure.occupied += 1;
+        }
     }
 
     fn offer_release(
@@ -754,7 +844,44 @@ impl Model {
         }
         self.entry_mut(id).raw_onset = Some(raw_id);
         self.raw_binding[source] = Some((generation, serial));
+        if let Some(raw) = self.raw_shadow.as_mut() {
+            assert!(raw[source].queued_onsets > 0);
+            raw[source].queued_onsets -= 1;
+            raw[source].occupied += 1;
+        }
         Ok(())
+    }
+
+    fn admit_raw_release(&mut self, id: OccurrenceId, raw_id: InputEventId) {
+        let entry = self.entry_mut(id);
+        assert!(entry.released && entry.raw_held && entry.raw_release.is_none());
+        let onset = entry.raw_onset.expect("raw onset must precede release");
+        assert_eq!(raw_id.generation(), onset.generation());
+        assert!(raw_id.serial() > onset.serial());
+        let source = entry.key.source.index();
+        entry.raw_release = Some(raw_id);
+        if let Some(raw) = self.raw_shadow.as_mut() {
+            assert!(raw[source].release_reservations > 0);
+            raw[source].release_reservations -= 1;
+            raw[source].occupied += 1;
+        }
+    }
+
+    fn admit_raw_frontier(&mut self, source: ModelSource) {
+        if let Some(raw) = self.raw_shadow.as_mut() {
+            raw[source.index()].occupied += 1;
+        }
+    }
+
+    fn collect_raw_receipts(&mut self, source: ModelSource, count: usize) {
+        if let Some(raw) = self.raw_shadow.as_mut() {
+            assert!(raw[source.index()].occupied >= count);
+            raw[source.index()].occupied -= count;
+        }
+    }
+
+    fn raw_pressure(&self, source: ModelSource) -> RawShadow {
+        self.raw_shadow.expect("raw-capacity fixture")[source.index()]
     }
 
     fn settle_delivered_raw_release(
@@ -763,6 +890,7 @@ impl Model {
         onset: &InputReceipt,
         release: &InputReceipt,
     ) -> Result<(), RawReceiptSettlementError> {
+        let checked_raw = self.raw_shadow.is_some();
         let entry = self.entry_mut(id);
         if !entry.released || !entry.raw_held {
             return Err(RawReceiptSettlementError::Unreleased);
@@ -784,6 +912,7 @@ impl Model {
         if release.matched_onset != Some(raw_onset)
             || release.id.generation() != raw_onset.generation()
             || release.id.serial() <= raw_onset.serial()
+            || (checked_raw && entry.raw_release != Some(release.id))
         {
             return Err(RawReceiptSettlementError::WrongRelease);
         }
@@ -1161,11 +1290,161 @@ fn bridge_serial_owner(stop: u64) -> (InputCaptureSession, [ConnectionGeneration
     (owner, generations)
 }
 
+fn assert_raw_pressure(
+    model: &Model,
+    owner: &InputCaptureSession,
+    generations: [ConnectionGeneration; 2],
+) {
+    for (source, generation) in [ModelSource::First, ModelSource::Second]
+        .into_iter()
+        .zip(generations)
+    {
+        let shadow = model.raw_pressure(source);
+        let actual = owner.input(generation).unwrap().pressure();
+        assert_eq!(shadow.queued_onsets, 0);
+        assert_eq!(shadow.queued_ordinary, 0);
+        assert_eq!(shadow.occupied, actual.occupied().as_usize());
+        assert_eq!(
+            shadow.release_reservations,
+            actual.release_reservations().as_usize()
+        );
+        assert_eq!(shadow.capacity, actual.capacity());
+    }
+}
+
+#[test]
+fn raw_capacity_preflight_matches_the_source_capture_boundary() {
+    let epoch = issue_epoch().unwrap();
+    let (mut raw, generation) = bridge_raw_input(epoch, 0);
+    let mut model = Model::new(limits(3), 4).with_raw_capacity(InputCapacity::new(8).unwrap());
+    for (key, time) in [(60, 10), (61, 20)] {
+        let note = input(0x90, key, 100);
+        let expected = model.submit(ModelSource::First, note).unwrap();
+        let (id, _, queued) = model.service_with_input(ModelSource::First, true, false);
+        assert_eq!(id, expected);
+        let raw_id = raw
+            .offer_message(
+                generation,
+                InputTick::new(time),
+                SampleTime::new(time),
+                queued,
+            )
+            .unwrap();
+        model.bind_raw_onset(id, raw_id).unwrap();
+    }
+    let pressure = raw.pressure();
+    let shadow = model.raw_pressure(ModelSource::First);
+    assert_eq!(shadow.occupied, pressure.occupied().as_usize());
+    assert_eq!(
+        shadow.release_reservations,
+        pressure.release_reservations().as_usize()
+    );
+    assert_eq!(shadow.capacity, pressure.capacity());
+
+    let third = input(0x90, 62, 100);
+    assert_eq!(
+        model.onset_preflight(ModelSource::First),
+        OnsetPreflight::NoCredit(NoCreditReason::RawCapture)
+    );
+    assert_eq!(
+        raw.preflight_observation(
+            generation,
+            InputObservation::Message {
+                tick: InputTick::new(30),
+                arrival: SampleTime::new(30),
+                input: third,
+            },
+        ),
+        Err(InputError::ProtectedCapacity)
+    );
+}
+
+#[test]
+fn queued_ordinary_packets_count_against_later_raw_onset_admission() {
+    let epoch = issue_epoch().unwrap();
+    let (mut raw, generation) = bridge_raw_input(epoch, 0);
+    let mut model = Model::new(limits(1), 4).with_raw_capacity(InputCapacity::new(8).unwrap());
+    let ordinary = input(0xe0, 0, 64);
+    for _ in 0..4 {
+        model.offer_ordinary(ModelSource::First);
+    }
+    assert_eq!(model.raw_pressure(ModelSource::First).queued_ordinary, 4);
+    assert_eq!(
+        model.onset_preflight(ModelSource::First),
+        OnsetPreflight::NoCredit(NoCreditReason::RawCapture)
+    );
+    for time in 10..14 {
+        let _id = raw
+            .offer_message(
+                generation,
+                InputTick::new(time),
+                SampleTime::new(time),
+                ordinary,
+            )
+            .unwrap();
+        model.service_ordinary(ModelSource::First);
+    }
+    let shadow = model.raw_pressure(ModelSource::First);
+    let pressure = raw.pressure();
+    assert_eq!(shadow.occupied, pressure.occupied().as_usize());
+    assert_eq!(shadow.queued_ordinary, 0);
+    assert_eq!(
+        shadow.release_reservations,
+        pressure.release_reservations().as_usize()
+    );
+    assert_eq!(
+        model.onset_preflight(ModelSource::First),
+        OnsetPreflight::NoCredit(NoCreditReason::RawCapture)
+    );
+    assert_eq!(
+        raw.preflight_observation(
+            generation,
+            InputObservation::Message {
+                tick: InputTick::new(20),
+                arrival: SampleTime::new(20),
+                input: input(0x90, 60, 100),
+            },
+        ),
+        Err(InputError::ProtectedCapacity)
+    );
+}
+
+#[test]
+fn retiring_a_source_retry_returns_its_pending_raw_charge() {
+    let mut model = Model::new(limits(1), 4).with_raw_capacity(InputCapacity::new(8).unwrap());
+    for _ in 0..3 {
+        model.offer_ordinary(ModelSource::First);
+    }
+    let retry = match model.submit(ModelSource::First, input(0x90, 60, 100)) {
+        Err(SubmitError::Retry(token)) => token,
+        other => panic!("expected pending retry: {other:?}"),
+    };
+    let pending = model.raw_pressure(ModelSource::First);
+    assert_eq!(
+        (
+            pending.occupied,
+            pending.queued_onsets,
+            pending.release_reservations
+        ),
+        (1, 1, 1)
+    );
+    model.retire(retry).unwrap();
+    let retired = model.raw_pressure(ModelSource::First);
+    assert_eq!(
+        (
+            retired.occupied,
+            retired.queued_onsets,
+            retired.release_reservations
+        ),
+        (1, 0, 0)
+    );
+}
+
 #[test]
 fn modeled_ring_releases_settle_raw_credit_from_delivered_serial_receipts() {
     let (mut owner, generations) = bridge_serial_owner(128);
 
-    let mut model = Model::new(limits(3), 4);
+    let mut model = Model::new(limits(3), 4).with_raw_capacity(InputCapacity::new(8).unwrap());
     let onsets = [
         (ModelSource::First, input(0x90, 60, 100), 10),
         (ModelSource::Second, input(0x90, 60, 110), 11),
@@ -1190,6 +1469,7 @@ fn modeled_ring_releases_settle_raw_credit_from_delivered_serial_receipts() {
         model.bind_raw_onset(id, raw_id).unwrap();
         admitted.push((id, key, raw_id));
     }
+    assert_raw_pressure(&model, &owner, generations);
     let releases = [
         (ModelSource::First, input(0x90, 60, 0), ids[0], 20),
         (ModelSource::Second, input(0x90, 60, 0), ids[1], 21),
@@ -1213,8 +1493,10 @@ fn modeled_ring_releases_settle_raw_credit_from_delivered_serial_receipts() {
         let raw_id = owner
             .offer_message(generation, InputTick::new(time), at, queued)
             .unwrap();
+        model.admit_raw_release(route.id, raw_id);
         routed.push((route.id, key, raw_id));
     }
+    assert_raw_pressure(&model, &owner, generations);
     assert_eq!(
         model.used,
         Counts {
@@ -1224,11 +1506,16 @@ fn modeled_ring_releases_settle_raw_credit_from_delivered_serial_receipts() {
             ledger: 3
         }
     );
-    for generation in generations {
+    for (source, generation) in [ModelSource::First, ModelSource::Second]
+        .into_iter()
+        .zip(generations)
+    {
         let _frontier = owner
             .advance_frontier(generation, InputTick::new(128))
             .unwrap();
+        model.admit_raw_frontier(source);
     }
+    assert_raw_pressure(&model, &owner, generations);
     owner.pump().unwrap();
     let mut audio = vec![0.0; 512];
     assert_eq!(
@@ -1245,6 +1532,19 @@ fn modeled_ring_releases_settle_raw_credit_from_delivered_serial_receipts() {
         })
         .collect();
     assert_eq!(receipts.len(), 10);
+    for (source, generation) in [ModelSource::First, ModelSource::Second]
+        .into_iter()
+        .zip(generations)
+    {
+        model.collect_raw_receipts(
+            source,
+            receipts
+                .iter()
+                .filter(|receipt| receipt.id.generation() == generation)
+                .count(),
+        );
+    }
+    assert_raw_pressure(&model, &owner, generations);
     owner.finalize().unwrap();
     assert_eq!(
         owner.result().unwrap().sealed_outcome(),
@@ -1338,7 +1638,7 @@ fn mixed_hold_refusal_and_later_fault_leave_serial_capture_receipts_independent(
     let (control, mut mixed) = prepared
         .arm_one_shot(candidate, &history_tests::mixed_profile())
         .unwrap();
-    let mut model = Model::new(limits(3), 4);
+    let mut model = Model::new(limits(3), 4).with_raw_capacity(InputCapacity::new(8).unwrap());
     let onsets = [
         (ModelSource::First, input(0x90, 60, 100), 140),
         (ModelSource::Second, input(0x90, 60, 110), 141),
@@ -1382,6 +1682,7 @@ fn mixed_hold_refusal_and_later_fault_leave_serial_capture_receipts_independent(
             other => panic!("unexpected mixed onset disposition: {other:?}"),
         }
     }
+    assert_raw_pressure(&model, &owner, generations);
     assert_eq!(mixed.test_ingress.counters().dropped_hold(), 1);
     assert_eq!(
         model.entry_mut(ids[2]).ingress_disposition,
@@ -1429,6 +1730,7 @@ fn mixed_hold_refusal_and_later_fault_leave_serial_capture_receipts_independent(
                 queued,
             )
             .unwrap();
+        model.admit_raw_release(route.id, raw_id);
         if route.ingress {
             let IngressDisposition::Accepted(identity) =
                 model.entry_mut(route.id).ingress_disposition
@@ -1439,6 +1741,7 @@ fn mixed_hold_refusal_and_later_fault_leave_serial_capture_receipts_independent(
         }
         routed.push((route.id, key, raw_id));
     }
+    assert_raw_pressure(&model, &owner, generations);
     assert_eq!(mixed.test_ingress.holds_outstanding(), EventCount::NONE);
     let mut first = [0.0_f32; 128];
     mixed
@@ -1493,11 +1796,16 @@ fn mixed_hold_refusal_and_later_fault_leave_serial_capture_receipts_independent(
         ]
     );
 
-    for generation in generations {
+    for (source, generation) in [ModelSource::First, ModelSource::Second]
+        .into_iter()
+        .zip(generations)
+    {
         let _frontier = owner
             .advance_frontier(generation, InputTick::new(256))
             .unwrap();
+        model.admit_raw_frontier(source);
     }
+    assert_raw_pressure(&model, &owner, generations);
     owner.pump().unwrap();
     let mut samples = [0.0_f32; 512];
     owner
@@ -1510,6 +1818,19 @@ fn mixed_hold_refusal_and_later_fault_leave_serial_capture_receipts_independent(
             std::iter::from_fn(|| owner.collect_input(generation).unwrap()).collect::<Vec<_>>()
         })
         .collect();
+    for (source, generation) in [ModelSource::First, ModelSource::Second]
+        .into_iter()
+        .zip(generations)
+    {
+        model.collect_raw_receipts(
+            source,
+            receipts
+                .iter()
+                .filter(|receipt| receipt.id.generation() == generation)
+                .count(),
+        );
+    }
+    assert_raw_pressure(&model, &owner, generations);
     owner.finalize().unwrap();
     assert_eq!(
         owner.result().unwrap().sealed_outcome(),

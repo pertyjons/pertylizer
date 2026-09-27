@@ -71,6 +71,51 @@ impl InputCapacity {
         self.0
     }
 }
+
+/// Measured raw observation or release-reservation cells.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[must_use]
+pub struct InputCellCount(usize);
+impl InputCellCount {
+    pub(super) const fn measured(cells: usize) -> Self {
+        Self(cells)
+    }
+    pub const fn as_usize(self) -> usize {
+        self.0
+    }
+}
+
+/// Read-only pressure on one raw input owner's configured cells.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[must_use]
+pub struct InputPressure {
+    occupied: InputCellCount,
+    release_reservations: InputCellCount,
+    capacity: InputCapacity,
+}
+impl InputPressure {
+    pub(super) const fn new(
+        occupied: InputCellCount,
+        release_reservations: InputCellCount,
+        capacity: InputCapacity,
+    ) -> Self {
+        Self {
+            occupied,
+            release_reservations,
+            capacity,
+        }
+    }
+    pub const fn occupied(self) -> InputCellCount {
+        self.occupied
+    }
+    pub const fn release_reservations(self) -> InputCellCount {
+        self.release_reservations
+    }
+    pub const fn capacity(self) -> InputCapacity {
+        self.capacity
+    }
+}
+
 #[derive(Debug, Clone, Copy)]
 #[must_use]
 pub struct InputLimits {
