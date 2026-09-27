@@ -2,6 +2,7 @@
 
 use std::collections::VecDeque;
 
+use super::{MixedIngressOriginId, MixedIngressOutcome, MixedIngressRequest, history_tests};
 use crate::{
     recording::notes::{Midi1Event, Midi1Input},
     time::SampleTime,
@@ -268,4 +269,106 @@ fn frontier_between_packets_does_not_close_its_equal_time() {
     assert_eq!(stage.next(), None);
     stage.frontier(Source::First, SampleTime::new(151)).unwrap();
     assert_eq!(stage.pop_next(), Some((Source::Second, onset(3, 150))));
+}
+
+#[test]
+fn bounded_stage_feeds_actual_mixed_command_results_in_time_order() {
+    for compiled_first in [true, false] {
+        let (prepared, candidate) = history_tests::one_shot_with_boundary_on(compiled_first);
+        let (mut control, mut audio) = prepared
+            .arm_one_shot(candidate, &history_tests::mixed_profile())
+            .unwrap();
+        let mut stage = Stage::new(2);
+        stage.onset(Source::First, onset(1, 150)).unwrap();
+        stage.onset(Source::Second, onset(2, 140)).unwrap();
+        stage.release(Source::Second, release(2, 145)).unwrap();
+        stage
+            .frontier(Source::Second, SampleTime::new(151))
+            .unwrap();
+        assert_eq!(stage.pressure(Source::Second), (2, 0));
+
+        let (source, first) = stage.pop_next().unwrap();
+        assert_eq!(source, Source::Second);
+        let Midi1Event::NoteOn { key, velocity } = first.original.event() else {
+            panic!("first staged packet must be an onset");
+        };
+        let first_request = MixedIngressRequest::Onset {
+            origin: MixedIngressOriginId(first.occurrence.0),
+            at: first.at,
+            key,
+            velocity,
+        };
+        let first_command = control.submit_ingress(first_request).unwrap();
+        audio.service_test_ingress_queue();
+        let first_result = control.collect_ingress_result().unwrap();
+        assert_eq!(
+            (first_result.id, first_result.request),
+            (first_command, first_request)
+        );
+        let MixedIngressOutcome::Onset(Ok(first_identity)) = first_result.outcome else {
+            panic!("the earlier staged onset must be accepted");
+        };
+
+        let (source, second) = stage.pop_next().unwrap();
+        assert_eq!((source, second), (Source::Second, release(2, 145)));
+        let second_request = MixedIngressRequest::Release {
+            origin: MixedIngressOriginId(second.occurrence.0),
+            at: second.at,
+            identity: first_identity,
+        };
+        let second_command = control.submit_ingress(second_request).unwrap();
+        audio.service_test_ingress_queue();
+        let second_result = control.collect_ingress_result().unwrap();
+        assert_eq!(
+            (second_result.id, second_result.request),
+            (second_command, second_request)
+        );
+        assert_eq!(second_result.outcome, MixedIngressOutcome::Release(Ok(())));
+
+        let (source, third) = stage.pop_next().unwrap();
+        assert_eq!((source, third), (Source::First, onset(1, 150)));
+        let Midi1Event::NoteOn { key, velocity } = third.original.event() else {
+            panic!("waiting staged packet must be an onset");
+        };
+        let third_request = MixedIngressRequest::Onset {
+            origin: MixedIngressOriginId(third.occurrence.0),
+            at: third.at,
+            key,
+            velocity,
+        };
+        let third_command = control.submit_ingress(third_request).unwrap();
+        audio.service_test_ingress_queue();
+        let third_result = control.collect_ingress_result().unwrap();
+        assert_eq!(
+            (third_result.id, third_result.request),
+            (third_command, third_request)
+        );
+        let MixedIngressOutcome::Onset(Ok(third_identity)) = third_result.outcome else {
+            panic!("waiting staged onset must be accepted");
+        };
+        assert_ne!(first_identity, third_identity);
+
+        stage.release(Source::First, release(1, 160)).unwrap();
+        stage
+            .frontier(Source::Second, SampleTime::new(161))
+            .unwrap();
+        let (source, last) = stage.pop_next().unwrap();
+        assert_eq!((source, last), (Source::First, release(1, 160)));
+        let last_request = MixedIngressRequest::Release {
+            origin: MixedIngressOriginId(last.occurrence.0),
+            at: last.at,
+            identity: third_identity,
+        };
+        let last_command = control.submit_ingress(last_request).unwrap();
+        audio.service_test_ingress_queue();
+        let last_result = control.collect_ingress_result().unwrap();
+        assert_eq!(
+            (last_result.id, last_result.request),
+            (last_command, last_request)
+        );
+        assert_eq!(last_result.outcome, MixedIngressOutcome::Release(Ok(())));
+        assert!(control.collect_ingress_result().is_none());
+        assert_eq!(stage.pressure(Source::First), (0, 0));
+        assert_eq!(stage.pressure(Source::Second), (0, 0));
+    }
 }

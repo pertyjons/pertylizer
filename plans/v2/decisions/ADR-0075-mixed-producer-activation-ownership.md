@@ -1611,10 +1611,25 @@ Its frontier 151 releases the wait while frontier 150 does not. A second fixture
 keeps one hundred consecutive frontiers behind a full lane, then verifies its
 final frontier only after both earlier packets leave. A third fixture places
 frontier 150 between two packets and proves an equal-time peer still waits.
-These tests do not connect the example's source rings, raw owner or mixed
-command ring. They do not assign a host fault or resolve ordinary packets,
-refund authority, teardown, or the shared admission charge; the preceding
-falsifiers remain open.
+These stage-only fixtures do not connect the example's source rings, raw owner
+or mixed command ring. They do not assign a host fault or resolve ordinary
+packets, refund authority, teardown, or the shared admission charge; the
+preceding falsifiers remain open.
+
+`bounded_stage_feeds_actual_mixed_command_results_in_time_order` now feeds the
+stage's selected packets to the private mixed control/audio command ring in
+both compiled/live producer orders. Source B's onset at 140 and its protected
+release at 145 return accepted audio-side results before source A's waiting
+onset at 150. B's applied frontier 151 lets the stage select A's onset, and
+B's later frontier 161 lets it select A's release at 160. Each command/result
+echoes its staged occurrence origin and request, and the release uses the
+accepted onset identity.
+The separate `mixed_ingress_result_channel_returns_non_monotone_refusal_with_original`
+test demonstrates the audio refusal if 150 is offered before 140; the stage
+test requires the positive result for 140 before 150 in both producer orders.
+This is a direct stage-to-mixed-ring rehearsal with synthetic packets. It does
+not include concrete source-ring custody, raw admission, the recorder, a shared
+charge, or a positive combined host receipt.
 
 The same read found that holding a popped onset until tracker credit returns
 can deadlock when its release or required frontier is behind that onset in the

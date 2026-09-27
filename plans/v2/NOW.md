@@ -366,6 +366,14 @@ does not close an equal-time packet. This stage-capacity and ordering model has
 no concrete source-ring or raw-owner charge, ordinary-packet disposition,
 refund authority, joined fault teardown or production mixed offer.
 
+The bounded stage now also drives the private audio-owned mixed command/result
+ring in a two-source test. With either compiled/live producer order, it feeds
+the earlier onset and its matched release before the waiting onset, then
+releases that onset; each actual audio result accepts the staged request and
+echoes its occurrence origin. This joins stage ordering to mixed ingress
+results, but still uses synthetic stage packets and bypasses raw input,
+the concrete source rings, recorder and combined admission.
+
 ADR-0075 records why raw service must not wait for a mixed-time peer frontier:
 the recorder needs far-ahead source frontiers to release its own bounded cells.
 A separate bounded mixed staging and result path remains open.
