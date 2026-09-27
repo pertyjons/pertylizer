@@ -388,6 +388,14 @@ repeat those bounds. Payload size, timed-control fanout, scoped-restoration
 scratch, seed storage and the combined Session charge remain open. A combined
 host must suppress the old compiled schedule at the effective boundary and
 account for every other simultaneous contributor before it can offer activation.
+The next proposed `#[cfg(test)]` ingress rehearsal in ADR-0075 uses the registered
+performance-event ingress queue with the audio-owned live range and releases
+by its returned occurrence identity. It must close the open publication,
+payload, scratch and seed bounds before arm. It claims no result-channel or
+source receipt, FIFO tombstone, source-ring, raw-input or recorder bridge;
+those require a later shared charge and explicit contract amendments. The
+private ingress keeps release-at-offer timing only as a rehearsal; a production
+mixed owner needs the ADR-0046/0047/0050/0072 amendments first.
 
 ### Selected work — ordered transport through live I/O
 

@@ -1180,14 +1180,72 @@ that can affect that instance follows its declared ordering law or refuses
 admission. The combined Session charge and
 same-quantum producer total must fit admission.
 
-One candidate order is to build an isolated audio-owned live ingress with
-source/result/held-cell credits and protected releases, then add
-producer-to-target admission and scoped restoration, then integrate compiled
-partition custody and test the full command matrix above. The target-binding
-prerequisite leaves every mixed-plan, adopted-store, activation and loop-owner
-live-ingress refusal in force. A later implementation may lift only the
-refusal whose replacement contract and falsifiers it has proved and explicitly
-amended; ADR-0072's exclusive owner remains unchanged until that boundary.
+### First mixed-ingress rehearsal boundary
+
+The next internal rehearsal may enqueue a live onset only through an exclusive
+`&mut MixedOneShotAudio` operation. It has no source-ring, raw-input, recorder,
+result-channel or key-matching bridge. Returning a `NoteIdentity` proves only
+private ingress acceptance, not execution or a source, model or cross-thread
+receipt. The caller must present that exact identity for release; a refused
+onset returns no identity. A foreign or already released identity gets
+`OrphanRelease`, not a drop. Bend, sustain, transport, capture, mass release and
+stealing remain refused. Audio-side minting is test-only rehearsal work, not an
+amendment to ADR-0050's off-thread minter rule or ADR-0072's exclusive-owner
+exception. Its constructor and offer operations are `#[cfg(test)]`; no
+production mixed offer is exposed by this step.
+
+The rehearsal uses the existing registered performance-event ingress queue,
+not a second live source store or another drop licence. The test-only mixed
+constructor binds that store to the plan, epoch, table, live producer and span;
+its note offers use only the audio owner's `LiveRangeMinter`. The public
+`PerformanceIngress::prepare` keeps its mixed-plan refusal. An onset checks
+the registered ingress slot and release hold before minting its range-scoped
+identity last, so their acquisition is atomic. Exhausting slot, hold or
+identity uses that queue's existing counted `Dropped` outcome. An onset stamped
+before the last accepted release refuses as `NonMonotoneStamp` before taking a
+slot, hold or identity. That monotone-stamp check is the private store's
+time-order fence, separate from possible index retirement at the generation
+ceiling. In this private single-producer store, the exact release converts its
+hold into a queue entry and frees the minter index when offered, as the
+existing ingress does. A second release of that identity is therefore
+`OrphanRelease`. Its later onsets must follow the
+release's stamp and FIFO order, including across adoption. This release-at-offer
+timing is a test-only rehearsal, not authority to extend ADR-0072's exception
+to a production mixed owner; that needs explicit amendments to ADR-0046,
+ADR-0047, ADR-0050 and ADR-0072. A later source bridge cannot recycle
+cross-source tracker or hold credit merely because it forwarded a release.
+Source/channel/key FIFO tombstones and outcome cells remain bridge work.
+
+Before the private owner can arm with this store, it must derive checked bounds
+from the bound plan and profile for worst-case Live and Release publication,
+Session boundary release and scoped restoration, Compiled suffix, total event
+cap, payload size, timed-control fanout and scratch, and seed storage. Missing
+or excessive bounds refuse arm without consuming either owner. The open bounds
+in NOW.md are work to close, not admission already granted here. Teardown
+without another callback must classify queued ingress entries, minted live
+identities, final ingress counters and accepted pending releases, including a
+release whose hold was spent before a callback fault.
+
+The rehearsal fails if a release of an accepted identity is lost to queue
+pressure, a same-time release and reused-index onset execute in reverse FIFO
+order, a retired index is counted as free for a later onset, or late
+backlog exceeds `live_event_share`, `release_event_share` or the combined
+quantum cap at adoption. It must refuse compiled-range identities and match
+live audio and rows to a live-only reference with onset and release on both
+sides of adoption. It must classify pending, faulted and resumed owners on
+teardown. Callback-partition
+equality is asserted only for compared callbacks that all succeed; fault
+occurrence and rollback still need a separate rule.
+
+One candidate order is to build this isolated rehearsal, then integrate the
+source-ring and recorder with one shared charge and a same-key FIFO ledger,
+then test the full command and loop matrix above. Existing target binding and
+scoped restoration are prerequisites already present in the private owner. The
+target-binding prerequisite leaves every mixed-plan, adopted-store, activation
+and loop-owner live-ingress refusal in force. A later implementation may lift
+only a refusal whose replacement contract and falsifiers it has proved and
+explicitly amended. ADR-0072's exclusive owner remains unchanged until that
+boundary.
 EVD-0024's component matrix remains
 insufficient for production capacity; ADR-0022's hardware timing and physical
 round-trip gates remain separate.
