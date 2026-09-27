@@ -218,6 +218,9 @@ pub(crate) enum MixedOneShotArmError {
     /// Defensive check: a stamped `INITIAL` candidate lost its successor.
     #[error(transparent)]
     Capsule(#[from] MixedCapsulePrepareError),
+    /// Prepared release and timed-control storage cannot cover the bound span.
+    #[error(transparent)]
+    Storage(#[from] crate::render::MixedBoundaryStorageError),
 }
 
 /// Why a private mixed schedule cannot be read at an effective render boundary.
@@ -908,6 +911,16 @@ impl MixedJoinedPrepared {
         if audio.renderer.diagnostics().needs_reprepare() {
             return Err(Box::new(MixedOneShotArmRefusal {
                 reason: MixedOneShotArmError::FaultedRenderer,
+                owner: self,
+                candidate,
+            }));
+        }
+        if let Err(error) = audio
+            .renderer
+            .check_mixed_boundary_storage(audio.compiled_ended.len())
+        {
+            return Err(Box::new(MixedOneShotArmRefusal {
+                reason: error.into(),
                 owner: self,
                 candidate,
             }));

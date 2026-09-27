@@ -305,6 +305,26 @@ impl LiveRangeMinter {
 }
 
 impl LiveNotes {
+    /// The registry's own admitted span for a producer, read during off-thread
+    /// mixed boundary preflight rather than inferred from another partition.
+    pub(crate) fn producer_range(&self, producer: ProducerId) -> Option<Range> {
+        self.ranges.get(usize::from(producer.as_u16())).copied()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn shorten_producer_range_for_test(&mut self, producer: ProducerId) {
+        if let Some(range) = self.ranges.get_mut(usize::from(producer.as_u16())) {
+            range.len = range.len.saturating_sub(1);
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn restore_producer_range_for_test(&mut self, producer: ProducerId, span: Range) {
+        if let Some(range) = self.ranges.get_mut(usize::from(producer.as_u16())) {
+            *range = span;
+        }
+    }
+
     /// A registry for the occurrences a table with these ranges can mint.
     ///
     /// Takes the minting table's [`TableId`] rather than issuing one: an occurrence carries

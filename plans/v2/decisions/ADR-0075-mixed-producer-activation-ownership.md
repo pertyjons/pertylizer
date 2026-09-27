@@ -441,16 +441,27 @@ cannot resume or rearm. Terminal teardown likewise destroys both halves and
 both lists off-thread. The accepted candidate cannot be withdrawn while audio
 runs.
 
-Before a render path is added, extend the off-thread arm preflight to prove the
-ended-note span and gate/trigger queue bounds. A capacity refusal then returns
-the stamped candidate and joined owner unchanged, with the one transition still
-available for a corrected attempt. The current non-renderable arm may be built
-before that proof, but its audio half cannot accept a callback. The private
-fault rules do not decide ADR-0073's future combined-host terminal scope. The
-payload, timed fanout, scratch and seed charges and the crossing-release
-amendments to ADR-0051 clause 5 and SOUND-INV-018 remain
-necessary before a production offer, alongside the other combined-host
-acceptance work in this ADR.
+The off-thread arm now checks the ended-note span against the renderer's own
+compiled registry range, which must equal the bound partition, and checks the
+actual gate, trigger and timed-control storage. The timed-control bound includes
+a full external event quantum beside the compiled release queue; the queue's
+per-note width conservatively includes every magnitude, though release writes
+only gate and Trigger rows. These storage inequalities hold by valid renderer
+construction; a defensive refusal after corrupted storage returns the stamped
+candidate and joined owner unchanged, with the one transition still available
+for a corrected attempt. This does not prove a combined producer share, payload
+fanout or the restoration-plus-suffix-and-live event count at the boundary.
+Before any private mixed audio callback or render path can run, off-thread
+admission must prove that all boundary-quantum events fit the event limit and
+that their total control writes, including scoped restoration and the compiled
+release, fit the timed-control storage. Otherwise the renderer can refuse the
+event span or silently omit a control write when its scratch fills. A queued
+prior release remains a defensive arm refusal and a terminal boundary fault if
+it somehow appears later. The private fault rules do not decide ADR-0073's
+future combined-host terminal scope. The payload, timed fanout, scratch and
+seed charges and the crossing-release amendments to ADR-0051 clause 5 and
+SOUND-INV-018 remain necessary before a production offer, alongside the other
+combined-host acceptance work in this ADR.
 
 The rehearsal's defensive second-arm seam fails if it changes owner state.
 Ordinary rehearsal checks fail if carry-only output adopts; old boundary-time

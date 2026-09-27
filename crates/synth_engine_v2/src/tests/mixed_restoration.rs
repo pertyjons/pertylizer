@@ -40,6 +40,106 @@ const CONTROLLER: NodeId = NodeId::new(6);
 const Q: usize = QUANTUM_FRAMES as usize;
 const ANCHOR: StreamAnchor = StreamAnchor::new(SampleTime::ZERO, PlanPosition::ZERO);
 
+#[test]
+fn mixed_boundary_storage_preflight_reads_actual_registry_and_prepared_buffers() {
+    for compiled_first in [true, false] {
+        let (binding, _) = binding(compiled_first);
+        let table = IdentityTable::from_admitted_ranges(binding.plan().note_producer_ranges())
+            .expect("identity ranges");
+        let epoch = issue_epoch().expect("epoch");
+        let mut renderer =
+            PreparedRenderer::prepare(Arc::clone(binding.plan_arc()), ANCHOR, epoch, table.id())
+                .expect("mixed renderer");
+        assert!(renderer.bind_mixed_partition(Arc::clone(binding.partition_arc())));
+        let compiled = binding.instance_partition().compiled_producer();
+        let span = binding.instance_partition().spans().0;
+        let ended = span.indices().len();
+        let plan = binding.plan();
+        let gate_needed = ended * plan.max_writes_per_note().get() as usize;
+        let event_width = super::release_group_writes(plan.max_writes_per_note())
+            .fanned_out(plan.sample_positioned_fan_out())
+            .widest(plan.steal_expansion())
+            .get() as usize;
+        let timed_needed = plan
+            .max_events_per_quantum()
+            .as_usize()
+            .expect("event count")
+            * event_width
+            + gate_needed
+            + plan.modulated_sample_positioned_rows() as usize;
+        assert!(gate_needed > 0);
+        assert!(timed_needed > gate_needed);
+        assert!(renderer.adoption_gates.len() >= gate_needed);
+        assert!(renderer.adoption_gate_slots.len() >= gate_needed);
+        assert!(renderer.timed_controls.len() >= timed_needed);
+        assert_eq!(renderer.live_notes.producer_range(compiled), Some(span));
+        assert_eq!(renderer.check_mixed_boundary_storage(ended), Ok(()));
+        renderer.adoption_gate_len = 1;
+        assert_eq!(
+            renderer.check_mixed_boundary_storage(ended),
+            Err(super::MixedBoundaryStorageError::PendingBoundary)
+        );
+        renderer.adoption_gate_len = 0;
+        assert_eq!(
+            renderer.check_mixed_boundary_storage(ended - 1),
+            Err(super::MixedBoundaryStorageError::Ended {
+                needed: ended,
+                available: ended - 1,
+            })
+        );
+
+        let gates = renderer.adoption_gates.clone();
+        renderer.adoption_gates.truncate(gate_needed);
+        assert_eq!(renderer.check_mixed_boundary_storage(ended), Ok(()));
+        renderer.adoption_gates.truncate(gate_needed - 1);
+        assert_eq!(
+            renderer.check_mixed_boundary_storage(ended),
+            Err(super::MixedBoundaryStorageError::Gate {
+                needed: gate_needed,
+                available: gate_needed - 1,
+            })
+        );
+        renderer.adoption_gates = gates;
+        assert_eq!(renderer.check_mixed_boundary_storage(ended), Ok(()));
+
+        let slots = renderer.adoption_gate_slots.clone();
+        renderer.adoption_gate_slots.truncate(gate_needed);
+        assert_eq!(renderer.check_mixed_boundary_storage(ended), Ok(()));
+        renderer.adoption_gate_slots.truncate(gate_needed - 1);
+        assert_eq!(
+            renderer.check_mixed_boundary_storage(ended),
+            Err(super::MixedBoundaryStorageError::Gate {
+                needed: gate_needed,
+                available: gate_needed - 1,
+            })
+        );
+        renderer.adoption_gate_slots = slots;
+        assert_eq!(renderer.check_mixed_boundary_storage(ended), Ok(()));
+
+        let controls = renderer.timed_controls.clone();
+        renderer.timed_controls.truncate(timed_needed);
+        assert_eq!(renderer.check_mixed_boundary_storage(ended), Ok(()));
+        renderer.timed_controls.truncate(timed_needed - 1);
+        assert_eq!(
+            renderer.check_mixed_boundary_storage(ended),
+            Err(super::MixedBoundaryStorageError::Timed {
+                needed: timed_needed,
+                available: timed_needed - 1,
+            })
+        );
+        renderer.timed_controls = controls;
+        assert_eq!(renderer.check_mixed_boundary_storage(ended), Ok(()));
+
+        renderer
+            .live_notes
+            .shorten_producer_range_for_test(compiled);
+        assert_eq!(
+            renderer.check_mixed_boundary_storage(ended),
+            Err(super::MixedBoundaryStorageError::Partition)
+        );
+    }
+}
+
 fn value(raw: f32) -> ParameterValue {
     ParameterValue::new(raw).expect("finite parameter")
 }

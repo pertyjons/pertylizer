@@ -46,6 +46,25 @@ pub(crate) enum MixedBoundaryReleaseError {
     GateStorage { needed: usize, available: usize },
 }
 
+/// Why a stopped mixed renderer cannot prove boundary storage before arm.
+/// Every variant is defensive for a valid bound owner prepared from one plan;
+/// tests shorten actual storage to verify that preflight itself does not mutate.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+pub(crate) enum MixedBoundaryStorageError {
+    #[error("renderer has no matching mixed partition and registry range")]
+    Partition,
+    #[error("a prior boundary release is still queued")]
+    PendingBoundary,
+    #[error("mixed boundary storage extent cannot be represented")]
+    ExtentUnrepresentable,
+    #[error("compiled boundary needs {needed} ended-note cells, but has {available}")]
+    Ended { needed: usize, available: usize },
+    #[error("compiled boundary needs {needed} gate and trigger cells, but has {available}")]
+    Gate { needed: usize, available: usize },
+    #[error("prepared timed-control storage needs {needed} cells, but has {available}")]
+    Timed { needed: usize, available: usize },
+}
+
 /// The compiled release and the mapping the boundary replaced.
 /// A future mixed schedule must keep the retired anchor with its old event list
 /// until that list can be reclaimed off the audio thread.
@@ -123,6 +142,13 @@ pub fn release_group_writes(
     writes: crate::quantities::WritesPerNote,
 ) -> crate::quantities::WritesPerNote {
     crate::quantities::WritesPerNote::at_least(writes.get().saturating_mul(8))
+}
+
+/// The preparation bound for one external event's sample-positioned writes.
+fn widest_event_writes(plan: &CompiledPlan) -> crate::quantities::WritesPerNote {
+    release_group_writes(plan.max_writes_per_note())
+        .fanned_out(plan.sample_positioned_fan_out())
+        .widest(plan.steal_expansion())
 }
 
 /// How many bytes preparing a renderer will allocate for the sample-positioned
@@ -996,10 +1022,8 @@ impl PreparedRenderer {
         // What the widest of this plan's events writes: a note-on's expansion, gate included,
         // or a sample-positioned parameter write fanned out over the instances of the widest
         // group such a write can address (`P06-S001`).
-        let writes_per_note = release_group_writes(plan.max_writes_per_note())
-            .fanned_out(plan.sample_positioned_fan_out())
-            .widest(plan.steal_expansion())
-            .get() as usize;
+        let writes_per_note =
+            usize::try_from(widest_event_writes(&plan).get()).unwrap_or(usize::MAX);
         // A mass release writes the gate and trigger destinations of each ended note.
         // It does not expand a release group, fan a parameter across voices or steal.
         let boundary_writes_per_note = plan.max_writes_per_note().get() as usize;
@@ -1111,6 +1135,92 @@ impl PreparedRenderer {
         }
         self.mixed_partition = Some(partition);
         true
+    }
+
+    /// Prove stopped mixed boundary storage against the registry's own producer range.
+    /// This checks the release queue and storage sized for one full external quantum.
+    /// The combined boundary event count and its fanout remain separate proof obligations
+    /// before any private mixed render path can use that storage.
+    pub(crate) fn check_mixed_boundary_storage(
+        &self,
+        ended_notes_len: usize,
+    ) -> Result<(), MixedBoundaryStorageError> {
+        use MixedBoundaryStorageError as Refused;
+
+        let partition = self.mixed_partition.as_ref().ok_or(Refused::Partition)?;
+        let compiled = partition.compiled_producer();
+        let span = partition.spans().0;
+        if partition.plan_id() != self.plan.id()
+            || self.live_notes.producer_range(compiled) != Some(span)
+        {
+            return Err(Refused::Partition);
+        }
+        if self.adoption_gate_len != 0 {
+            return Err(Refused::PendingBoundary);
+        }
+        let notes = span.indices().len();
+        if ended_notes_len < notes {
+            return Err(Refused::Ended {
+                needed: notes,
+                available: ended_notes_len,
+            });
+        }
+        // A release writes a gate plus only Trigger magnitudes. The plan's gate
+        // plus *all* magnitudes is a conservative bound for every compiled slot.
+        let note_writes = usize::try_from(self.plan.max_writes_per_note().get())
+            .map_err(|_| Refused::ExtentUnrepresentable)?;
+        let boundary_writes = notes
+            .checked_mul(note_writes)
+            .ok_or(Refused::ExtentUnrepresentable)?;
+        let gate_available = self
+            .adoption_gates
+            .len()
+            .min(self.adoption_gate_slots.len());
+        if gate_available < boundary_writes {
+            return Err(Refused::Gate {
+                needed: boundary_writes,
+                available: gate_available,
+            });
+        }
+        let event_count = self
+            .plan
+            .max_events_per_quantum()
+            .as_usize()
+            .ok_or(Refused::ExtentUnrepresentable)?;
+        let event_writes = usize::try_from(widest_event_writes(&self.plan).get())
+            .map_err(|_| Refused::ExtentUnrepresentable)?;
+        let modulation_writes = usize::try_from(self.plan.modulated_sample_positioned_rows())
+            .map_err(|_| Refused::ExtentUnrepresentable)?;
+        let timed_needed = event_count
+            .checked_mul(event_writes)
+            .and_then(|count| count.checked_add(boundary_writes))
+            .and_then(|count| count.checked_add(modulation_writes))
+            .ok_or(Refused::ExtentUnrepresentable)?;
+        if self.timed_controls.len() < timed_needed {
+            return Err(Refused::Timed {
+                needed: timed_needed,
+                available: self.timed_controls.len(),
+            });
+        }
+        Ok(())
+    }
+
+    #[cfg(test)]
+    pub(crate) fn shorten_mixed_registry_range_for_test(&mut self) {
+        if let Some(partition) = &self.mixed_partition {
+            self.live_notes
+                .shorten_producer_range_for_test(partition.compiled_producer());
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn restore_mixed_registry_range_for_test(&mut self) {
+        if let Some(partition) = &self.mixed_partition {
+            self.live_notes.restore_producer_range_for_test(
+                partition.compiled_producer(),
+                partition.spans().0,
+            );
+        }
     }
 
     /// This stream's epoch.

@@ -1086,6 +1086,100 @@ fn private_one_shot_arm_timing_refusal_preserves_both_inputs() {
 }
 
 #[test]
+fn private_one_shot_arm_refuses_short_ended_storage_and_can_retry() {
+    for compiled_first in [true, false] {
+        let mut prepared = bound_with_events(compiled_first, |note| {
+            vec![PlanEvent::new(
+                PlanPosition::ZERO,
+                CompiledPayload::NoteOn {
+                    slot: note,
+                    key: key(60),
+                    velocity: NoteVelocity::FULL,
+                },
+            )]
+        });
+        let old = prepared.outstanding[0];
+        let needed = prepared.owner.audio.compiled_ended.len();
+        let history = prepared
+            .prepare_history(SampleTime::new(64), PlanPosition::new(10))
+            .expect("history");
+        let suffix = prepared.prepare_suffix(history).expect("suffix");
+        let candidate = prepared.stamp_suffix(suffix).expect("stamp");
+        prepared.owner.audio.compiled_ended.clear();
+        let refused = prepared.arm_one_shot(candidate).expect_err("short buffer");
+        let MixedOneShotArmRefusal {
+            reason,
+            mut owner,
+            candidate,
+        } = *refused;
+        assert_eq!(
+            reason,
+            MixedOneShotArmError::Storage(crate::render::MixedBoundaryStorageError::Ended {
+                needed,
+                available: 0,
+            })
+        );
+        assert_eq!(owner.owner.control.minter.resolve(old), Resolution::Live);
+        assert_eq!(owner.owner.audio.renderer.clock(), SampleTime::ZERO);
+        assert_eq!(candidate.anchor.time(), SampleTime::new(64));
+        owner.owner.audio.compiled_ended.resize(needed, None);
+        let (control, audio) = owner.arm_one_shot(candidate).expect("corrected storage");
+        assert_eq!(control.control.minter.resolve(old), Resolution::Live);
+        assert_eq!(audio.timing.effective(), SampleTime::new(64));
+    }
+}
+
+#[test]
+fn private_one_shot_arm_refuses_registry_partition_mismatch_without_consuming_inputs() {
+    for compiled_first in [true, false] {
+        let mut prepared = bound_with_events(compiled_first, |note| {
+            vec![PlanEvent::new(
+                PlanPosition::ZERO,
+                CompiledPayload::NoteOn {
+                    slot: note,
+                    key: key(60),
+                    velocity: NoteVelocity::FULL,
+                },
+            )]
+        });
+        let old = prepared.outstanding[0];
+        let history = prepared
+            .prepare_history(SampleTime::new(64), PlanPosition::new(10))
+            .expect("history");
+        let suffix = prepared.prepare_suffix(history).expect("suffix");
+        let candidate = prepared.stamp_suffix(suffix).expect("stamp");
+        prepared
+            .owner
+            .audio
+            .renderer
+            .shorten_mixed_registry_range_for_test();
+        let refused = prepared
+            .arm_one_shot(candidate)
+            .expect_err("registry mismatch");
+        let MixedOneShotArmRefusal {
+            reason,
+            mut owner,
+            candidate,
+        } = *refused;
+        assert_eq!(
+            reason,
+            MixedOneShotArmError::Storage(crate::render::MixedBoundaryStorageError::Partition)
+        );
+        assert_eq!(owner.owner.control.minter.resolve(old), Resolution::Live);
+        assert_eq!(owner.owner.audio.renderer.clock(), SampleTime::ZERO);
+        assert_eq!(candidate.anchor.time(), SampleTime::new(64));
+        owner
+            .owner
+            .audio
+            .renderer
+            .restore_mixed_registry_range_for_test();
+        let (control, audio) = owner.arm_one_shot(candidate).expect("restored range");
+        assert_eq!(control.control.minter.resolve(old), Resolution::Live);
+        assert_eq!(audio.timing.effective(), SampleTime::new(64));
+    }
+}
+
+#[test]
 fn private_effective_timing_refuses_suffix_overflow_after_restoration_fits() {
     let prepared = bound_with_events(true, |note| {
         vec![

@@ -299,9 +299,14 @@ one stamped candidate while stopped: it checks plan, epoch, table and initial
 sequence, fixes the effective boundary and displacement from the renderer clock,
 then splits the retained control from the audio half and old event list. A
 refusal returns both inputs unchanged. The split audio owner has no render path
-yet. Before one is added, arm must prove the ended-note span and gate/trigger
-queue bounds. The combined-host resource charge remains open. No production
-mixed offer or command refusal has been lifted.
+yet. Arm now checks the renderer registry's compiled span against the bound
+partition and proves the actual ended-note, release-queue and timed-control
+storage. Corrupted storage refuses without consuming the attempt. The check
+does not admit the combined boundary event count or its control-write fanout;
+the private mixed render path remains blocked until an off-thread proof covers
+restoration, suffix and live events in the same quantum. Combined same-quantum
+shares, payload fanout and the host resource charge remain open.
+No production mixed offer or command refusal has been lifted.
 The private stamped candidate now has a checked, allocation-free effective-event
 view that applies one displacement on each read without rewriting requested-time
 stamps. A renderer rehearsal reads that actual candidate after a delayed boundary,
