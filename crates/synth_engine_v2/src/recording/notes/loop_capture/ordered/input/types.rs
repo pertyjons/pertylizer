@@ -119,6 +119,9 @@ pub enum InputOutcome {
 pub struct InputReceipt {
     pub audition: crate::recording::notes::AuditionTrace,
     pub id: InputEventId,
+    /// The oldest held onset redeemed by this raw release at admission.
+    /// This is independent of the eventual recording or audition outcome.
+    pub matched_onset: Option<InputEventId>,
     pub observation: InputObservation,
     pub clock: SimulatedInputClock,
     pub outcome: InputOutcome,

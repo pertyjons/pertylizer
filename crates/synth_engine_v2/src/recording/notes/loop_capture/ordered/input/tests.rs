@@ -225,10 +225,20 @@ fn raw_repeated_key_releases_redeem_the_oldest_accepted_onset() {
         .offer_message(generation, InputTick::new(11), SampleTime::new(11), note)
         .unwrap();
     assert_eq!(input.release_reservations, 2);
-    let _id = input
+    let first_release = input
         .offer_message(generation, InputTick::new(12), SampleTime::new(12), release)
         .unwrap();
     assert_eq!(input.release_reservations, 1);
+    assert_eq!(
+        input
+            .slots
+            .iter()
+            .flatten()
+            .find(|entry| entry.id == first_release)
+            .unwrap()
+            .matched_onset,
+        Some(first)
+    );
     assert_eq!(
         input
             .held_onsets
@@ -238,12 +248,65 @@ fn raw_repeated_key_releases_redeem_the_oldest_accepted_onset() {
             .collect::<Vec<_>>(),
         [second]
     );
-    let _id = input
+    let second_release = input
         .offer_message(generation, InputTick::new(13), SampleTime::new(13), release)
         .unwrap();
     assert_eq!(input.release_reservations, 0);
+    assert_eq!(
+        input
+            .slots
+            .iter()
+            .flatten()
+            .find(|entry| entry.id == second_release)
+            .unwrap()
+            .matched_onset,
+        Some(second)
+    );
     assert!(input.held_onsets.iter().all(Option::is_none));
     assert_ne!(first, second);
+}
+
+#[test]
+fn cancelled_raw_receipts_keep_matched_and_unmatched_release_identity() {
+    let (mut input, generation) = ready_with_cells(0, 8);
+    let onset = input
+        .offer_message(
+            generation,
+            InputTick::new(10),
+            SampleTime::new(10),
+            Midi1Input::from_bytes([0x90, 60, 100]).unwrap(),
+        )
+        .unwrap();
+    let unmatched = input
+        .offer_message(
+            generation,
+            InputTick::new(11),
+            SampleTime::new(11),
+            Midi1Input::from_bytes([0x80, 61, 0]).unwrap(),
+        )
+        .unwrap();
+    let matched = input
+        .offer_message(
+            generation,
+            InputTick::new(12),
+            SampleTime::new(12),
+            Midi1Input::from_bytes([0x80, 60, 0]).unwrap(),
+        )
+        .unwrap();
+    input.device_lost(generation).unwrap();
+    let receipts: Vec<_> = std::iter::from_fn(|| input.collect()).collect();
+    let unmatched_receipt = receipts
+        .iter()
+        .find(|receipt| receipt.id == unmatched)
+        .unwrap();
+    let matched_receipt = receipts
+        .iter()
+        .find(|receipt| receipt.id == matched)
+        .unwrap();
+    assert_eq!(unmatched_receipt.matched_onset, None);
+    assert_eq!(matched_receipt.matched_onset, Some(onset));
+    assert!(matches!(unmatched_receipt.outcome, InputOutcome::Cancelled));
+    assert!(matches!(matched_receipt.outcome, InputOutcome::Cancelled));
 }
 
 #[test]

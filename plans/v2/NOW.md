@@ -287,6 +287,13 @@ pairing, and retained raw input IDs. The raw owner and recorder are parallel
 test sinks. The probe has no real source-ring handoff, raw `InputReceipt`
 settlement, combined result or mixed ingress. Model raw, result and ledger
 credits stay held.
+The actual serial `InputCaptureSession` now retains each raw release's
+`matched_onset` in its `InputReceipt`. A two-source test compares that typed
+raw link with the recorder occurrence carried by the same delivered receipt,
+including repeated keys. Separate standalone and serial-session device-loss
+tests show that cancelled raw receipts retain the admission-time link. These
+tests join identities for delivered pairs in the serial fixture but do not
+charge the modeled source ring or mixed ingress.
 The concrete host connection remains open.
 An off-thread check now places and stamps the bound stream against
 a disposable copy of only the compiled range. It publishes no events or

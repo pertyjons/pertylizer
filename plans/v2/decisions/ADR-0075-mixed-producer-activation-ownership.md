@@ -1400,6 +1400,18 @@ join the raw owner to the recorder, collect raw `InputReceipt`s, exercise the
 concrete ring handoff, or test recorder tracker pressure or mixed ingress.
 Its observed pairing is a local prerequisite, not an end-to-end identity or
 positive combined-outcome claim.
+The actual serial input/capture owner now carries `matched_onset` in each raw
+release's `InputReceipt`, naming the oldest held raw `InputEventId` redeemed
+at admission. A serial two-source test joins this link to the recorder's
+`PerformedOccurrenceId` in delivered publication receipts, with two repeated
+keys on one source and a same-key note on another. The test stays within its
+two-held-note recorder profile and checks complete capture. Separate
+standalone and serial-session device-loss fixtures check that cancelled
+releases retain the raw link. The delivered pairs in this serial fixture
+establish raw/recorder identity correlation; a cancelled release can name a
+raw onset without any recorder occurrence. This does not give the
+modeled source ring an actual raw receipt, a shared charge or a mixed-ingress
+outcome.
 EVD-0024's component matrix remains
 insufficient for production capacity; ADR-0022's hardware timing and physical
 round-trip gates remain separate.

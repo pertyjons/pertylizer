@@ -20,6 +20,7 @@ enum ProtectedClass {
     },
     MatchedRelease {
         hold_index: usize,
+        onset_id: InputEventId,
     },
     Ordinary,
     Frontier,
@@ -249,18 +250,21 @@ impl SimulatedNoteInput {
                     key,
                 },
                 Midi1Event::KeyRelease { key, .. } => {
-                    let mut selected: Option<(usize, u64)> = None;
+                    let mut selected: Option<(usize, InputEventId)> = None;
                     for (index, hold) in self.held_onsets.iter().enumerate() {
                         if let Some(hold) = hold
                             && hold.channel == input.channel()
                             && hold.key == key
-                            && selected.is_none_or(|(_, serial)| hold.id.serial < serial)
+                            && selected.is_none_or(|(_, id)| hold.id.serial < id.serial)
                         {
-                            selected = Some((index, hold.id.serial));
+                            selected = Some((index, hold.id));
                         }
                     }
-                    selected.map_or(ProtectedClass::Ordinary, |(hold_index, _)| {
-                        ProtectedClass::MatchedRelease { hold_index }
+                    selected.map_or(ProtectedClass::Ordinary, |(hold_index, onset_id)| {
+                        ProtectedClass::MatchedRelease {
+                            hold_index,
+                            onset_id,
+                        }
                     })
                 }
                 Midi1Event::Sustain { .. } | Midi1Event::PitchBend { .. } => {
@@ -331,6 +335,10 @@ impl SimulatedNoteInput {
         self.slots[index] = Some(InputEntry {
             audition: crate::recording::notes::AuditionTrace::NotOffered,
             id,
+            matched_onset: match class {
+                ProtectedClass::MatchedRelease { onset_id, .. } => Some(onset_id),
+                _ => None,
+            },
             observation,
             nominal,
             forwarded: None,
@@ -345,7 +353,7 @@ impl SimulatedNoteInput {
                 self.held_onsets[hold_index] = Some(RawHeldOnset { id, channel, key });
                 self.release_reservations += 1;
             }
-            ProtectedClass::MatchedRelease { hold_index } => {
+            ProtectedClass::MatchedRelease { hold_index, .. } => {
                 self.held_onsets[hold_index] = None;
                 self.release_reservations -= 1;
             }
@@ -376,6 +384,7 @@ impl SimulatedNoteInput {
         let receipt = InputReceipt {
             audition: entry.audition,
             id: entry.id,
+            matched_onset: entry.matched_onset,
             observation: entry.observation,
             clock,
             outcome,

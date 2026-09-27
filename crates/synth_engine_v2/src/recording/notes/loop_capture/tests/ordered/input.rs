@@ -642,6 +642,102 @@ fn complete_result_with_held_note_releases_raw_claims_before_reconnect() {
 }
 
 #[test]
+fn actual_input_receipts_join_raw_release_fifo_to_recorder_occurrences() {
+    let (mut owner, generations) = linked(12, 32);
+    transport(&mut owner, 128);
+    message(&mut owner, generations[0], 0, 10, 10, [0x90, 60, 100]);
+    message(&mut owner, generations[0], 0, 20, 20, [0x90, 60, 110]);
+    message(&mut owner, generations[1], 1, 35, 35, [0x90, 60, 120]);
+    message(&mut owner, generations[0], 0, 30, 30, [0x90, 60, 0]);
+    message(&mut owner, generations[1], 1, 45, 45, [0x80, 60, 0]);
+    message(&mut owner, generations[0], 0, 40, 40, [0x80, 60, 0]);
+    frontier(&mut owner, generations, 128);
+    owner.pump().unwrap();
+    let _audio = render_input(&mut owner, 512, &[256]);
+    owner.pump().unwrap();
+
+    let first: Vec<_> =
+        std::iter::from_fn(|| owner.collect_input(generations[0]).unwrap()).collect();
+    let second: Vec<_> =
+        std::iter::from_fn(|| owner.collect_input(generations[1]).unwrap()).collect();
+    owner.finalize().unwrap();
+    assert_eq!(
+        owner.result().unwrap().sealed_outcome(),
+        CaptureOutcome::Complete
+    );
+    let published = |receipt: &crate::host::input::InputReceipt| match &receipt.outcome {
+        InputOutcome::Delivered(SessionSourceOutcome::Published(record)) => {
+            record.occurrence.unwrap()
+        }
+        _ => panic!("message must have a recorder publication"),
+    };
+    assert_eq!(first.len(), 6);
+    assert_eq!(second.len(), 4);
+    assert_eq!(
+        first
+            .iter()
+            .map(|entry| entry.id.serial())
+            .collect::<Vec<_>>(),
+        [1, 2, 3, 4, 5, 6]
+    );
+    assert_eq!(
+        second
+            .iter()
+            .map(|entry| entry.id.serial())
+            .collect::<Vec<_>>(),
+        [1, 2, 3, 4]
+    );
+    let first_onset = &first[1];
+    let second_onset = &first[2];
+    let first_release = &first[3];
+    let second_release = &first[4];
+    let other_onset = &second[1];
+    let other_release = &second[2];
+    assert_eq!(first_onset.matched_onset, None);
+    assert_eq!(second_onset.matched_onset, None);
+    assert_eq!(first_release.matched_onset, Some(first_onset.id));
+    assert_eq!(second_release.matched_onset, Some(second_onset.id));
+    assert_eq!(other_release.matched_onset, Some(other_onset.id));
+    assert_ne!(first_onset.id.generation(), other_onset.id.generation());
+    assert_eq!(published(first_release), published(first_onset));
+    assert_eq!(published(second_release), published(second_onset));
+    assert_eq!(published(other_release), published(other_onset));
+    assert_ne!(published(first_release), published(second_release));
+    assert_ne!(published(first_release), published(other_release));
+}
+
+#[test]
+fn input_capture_loss_keeps_the_cancelled_releases_raw_onset_link() {
+    let (mut owner, generations) = linked(8, 32);
+    let generation = generations[0];
+    let onset = owner
+        .offer_message(
+            generation,
+            tick(0, 10),
+            SampleTime::new(10),
+            Midi1Input::from_bytes([0x90, 60, 100]).unwrap(),
+        )
+        .unwrap();
+    let release = owner
+        .offer_message(
+            generation,
+            tick(0, 20),
+            SampleTime::new(20),
+            Midi1Input::from_bytes([0x80, 60, 0]).unwrap(),
+        )
+        .unwrap();
+    owner.device_lost(generation).unwrap();
+    let receipts: Vec<_> =
+        std::iter::from_fn(|| owner.collect_input(generation).unwrap()).collect();
+    let release_receipt = receipts
+        .iter()
+        .find(|receipt| receipt.id == release)
+        .unwrap();
+    assert_eq!(release_receipt.matched_onset, Some(onset));
+    assert!(matches!(release_receipt.outcome, InputOutcome::Cancelled));
+}
+
+#[test]
 fn exact_budgets_and_attachment_refusals_preserve_owners() {
     let (session, inputs, _) = prepared(8, 32);
     let bytes = inputs[0].bytes().get();

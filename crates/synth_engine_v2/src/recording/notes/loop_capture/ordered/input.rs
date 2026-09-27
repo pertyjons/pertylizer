@@ -38,6 +38,7 @@ enum SourceFaultStage {
 struct InputEntry {
     audition: crate::recording::notes::AuditionTrace,
     id: InputEventId,
+    matched_onset: Option<InputEventId>,
     observation: InputObservation,
     nominal: SampleTime,
     forwarded: Option<InputDelivery>,
@@ -216,6 +217,7 @@ impl SimulatedNoteInput {
                 generation,
                 serial: 1,
             },
+            matched_onset: None,
             observation: InputObservation::Frontier {
                 tick: clock.tick_origin,
             },
