@@ -16,7 +16,9 @@ use crate::{
         TableId,
     },
     plan::{CompiledPlan, NoteSlot, PlanId},
-    quantities::{EventCount, HeldNoteCount, ParameterValue},
+    profile::HostProfile,
+    publish::PublicationArbiter,
+    quantities::{EventCount, HeldNoteCount, ParameterValue, VoiceCount},
     render::{EventEnvelope, EventPayload, PreparedRenderer, ScopedParameterRestore, TimedEvent},
     schedule::{
         AdmittedCompiledStream, Closed, CompiledEvent, CompiledPayload, OpenNote, OpenNotes,
@@ -194,7 +196,7 @@ pub(crate) enum MixedCapsulePrepareError {
 }
 
 /// Why the private one-shot audio owner could not be armed off-thread.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
+#[derive(Debug, Clone, Copy, PartialEq, Error)]
 pub(crate) enum MixedOneShotArmError {
     /// The candidate belongs to another bound plan, stream or table.
     #[error("mixed one-shot candidate belongs to another prepared owner")]
@@ -221,6 +223,39 @@ pub(crate) enum MixedOneShotArmError {
     /// Prepared release and timed-control storage cannot cover the bound span.
     #[error(transparent)]
     Storage(#[from] crate::render::MixedBoundaryStorageError),
+    /// The closed private render schedule cannot be admitted before arm.
+    #[error(transparent)]
+    Admission(#[from] MixedOneShotAdmissionError),
+}
+
+/// Off-thread admission for the closed private one-shot schedule.
+/// No production live ingress or other Session contributor is attached yet.
+#[derive(Debug, Clone, Copy, PartialEq, Error)]
+pub(crate) enum MixedOneShotAdmissionError {
+    #[error("mixed one-shot profile differs from the bound render plan")]
+    ProfileMismatch,
+    #[error("mixed one-shot candidate count disagrees with its event list")]
+    CandidateCount,
+    #[error("mixed one-shot event {event_index} violates the restoration/suffix split")]
+    CandidateShape { event_index: usize },
+    #[error("mixed restoration needs {needed} Session credits, but has {available}")]
+    SessionShare {
+        needed: EventCount,
+        available: EventCount,
+    },
+    #[error("mixed suffix at {at} needs {needed} Compiled credits, but has {available}")]
+    CompiledShare {
+        at: SampleTime,
+        needed: EventCount,
+        available: EventCount,
+    },
+    #[error("mixed restoration spans {rows:?} rows, above fanout {admitted:?}")]
+    TimedFanout {
+        rows: VoiceCount,
+        admitted: VoiceCount,
+    },
+    #[error(transparent)]
+    Arbiter(#[from] crate::profile::ProfileError),
 }
 
 /// Why a private mixed schedule cannot be read at an effective render boundary.
@@ -559,6 +594,7 @@ pub(crate) struct MixedOneShotControl {
 #[allow(dead_code)] // The one-shot audio scheduler is the next slice.
 pub(crate) struct MixedOneShotAudio {
     audio: MixedStreamAudio,
+    arbiter: PublicationArbiter,
     events: Vec<TimedEvent>,
     next: usize,
     capsule: Box<MixedAudioCandidate>,
@@ -883,6 +919,7 @@ impl MixedJoinedPrepared {
     pub(crate) fn arm_one_shot(
         self,
         candidate: MixedStampedCandidate,
+        profile: &HostProfile,
     ) -> Result<(MixedOneShotControl, MixedOneShotAudio), Box<MixedOneShotArmRefusal>> {
         let control = &self.owner.control;
         let audio = &self.owner.audio;
@@ -951,6 +988,22 @@ impl MixedJoinedPrepared {
                 }));
             }
         };
+        let arbiter = match prepare_one_shot_arbiter(
+            &control.plan,
+            &control.partition,
+            &candidate,
+            timing,
+            profile,
+        ) {
+            Ok(arbiter) => arbiter,
+            Err(error) => {
+                return Err(Box::new(MixedOneShotArmRefusal {
+                    reason: error.into(),
+                    owner: self,
+                    candidate,
+                }));
+            }
+        };
         let late_at_arm = candidate.anchor.time() < arm_clock;
         let effective_anchor = StreamAnchor::new(effective, candidate.anchor.position());
         let capsule = match candidate.into_audio_capsule() {
@@ -982,6 +1035,7 @@ impl MixedJoinedPrepared {
             },
             MixedOneShotAudio {
                 audio,
+                arbiter,
                 events,
                 next: 0,
                 capsule,
@@ -1386,6 +1440,128 @@ fn check_mixed_event_order(events: &[TimedEvent]) -> Result<(), MixedStampPrepar
         }
     }
     Ok(())
+}
+
+/// Bind one closed private publication arbiter to the profile that will run it.
+/// The candidate is still owned by the caller, so every refusal precedes boxing and
+/// leaves the one arm attempt available. A future mixed host must admit other Session
+/// contributors and live ingress in this same arbiter before lifting the offer refusal.
+fn prepare_one_shot_arbiter(
+    plan: &CompiledPlan,
+    partition: &MixedInstancePartition,
+    candidate: &MixedStampedCandidate,
+    timing: MixedEffectiveTiming,
+    profile: &HostProfile,
+) -> Result<PublicationArbiter, MixedOneShotAdmissionError> {
+    use MixedOneShotAdmissionError as Refused;
+
+    let caps = profile.capabilities();
+    let events = profile.limits().events();
+    let shares = events.shares();
+    if plan.sample_rate() != caps.sample_rate()
+        || plan.channel_layout() != caps.channel_layout()
+        || plan.maximum_block_size() != caps.maximum_block_size()
+        || plan.max_events_per_quantum() != events.max_events_per_quantum()
+        || plan.compiled_event_share() != shares.compiled_event_share()
+        || plan.forward_event_horizon() != events.forward_event_horizon()
+    {
+        return Err(Refused::ProfileMismatch);
+    }
+
+    let restoration = candidate
+        .restoration_count
+        .as_usize()
+        .ok_or(Refused::CandidateCount)?;
+    if candidate.event_count.as_usize() != Some(candidate.events.len())
+        || restoration > candidate.events.len()
+        || restoration != partition.restoration_groups().len()
+    {
+        return Err(Refused::CandidateCount);
+    }
+    let fanout = plan.sample_positioned_fan_out();
+    let mut last_time = None;
+    let mut last_quantum = None;
+    let mut compiled_count = EventCount::NONE;
+    let compiled_share = shares.compiled_event_share();
+    for (index, event) in candidate.events.iter().copied().enumerate() {
+        let at = event
+            .envelope()
+            .time()
+            .checked_add(timing.shift())
+            .map_err(|_| Refused::CandidateShape { event_index: index })?;
+        if event.envelope().source() != TimeSource::Compiled
+            || last_time.is_some_and(|previous| at < previous)
+        {
+            return Err(Refused::CandidateShape { event_index: index });
+        }
+        last_time = Some(at);
+        if index < restoration {
+            let EventPayload::ScopedRestore(scoped) = event.payload() else {
+                return Err(Refused::CandidateShape { event_index: index });
+            };
+            let Some(group) = partition.restoration_groups().get(index) else {
+                return Err(Refused::CandidateShape { event_index: index });
+            };
+            if at != timing.effective()
+                || scoped.slot() != group.parameter()
+                || scoped.instances() != group.instances()
+            {
+                return Err(Refused::CandidateShape { event_index: index });
+            }
+            let Some(target) = plan.parameter_targets().get(scoped.slot().index()) else {
+                return Err(Refused::CandidateShape { event_index: index });
+            };
+            if matches!(target.rate, crate::plan::ControlRate::Sample) {
+                if scoped.controller().is_some() {
+                    return Err(Refused::CandidateShape { event_index: index });
+                }
+                let rows = VoiceCount::measured(scoped.instances().count());
+                if rows > fanout {
+                    return Err(Refused::TimedFanout {
+                        rows,
+                        admitted: fanout,
+                    });
+                }
+            }
+        } else {
+            if matches!(event.payload(), EventPayload::ScopedRestore(_)) || at < timing.effective()
+            {
+                return Err(Refused::CandidateShape { event_index: index });
+            }
+            let quantum = at.quantum_index();
+            if last_quantum != Some(quantum) {
+                last_quantum = Some(quantum);
+                compiled_count = EventCount::NONE;
+            }
+            compiled_count = compiled_count
+                .checked_add(EventCount::measured(1))
+                .ok_or(Refused::CandidateCount)?;
+            if compiled_count > compiled_share {
+                return Err(Refused::CompiledShare {
+                    at,
+                    needed: compiled_count,
+                    available: compiled_share,
+                });
+            }
+        }
+    }
+
+    let session_needed = candidate
+        .restoration_count
+        .checked_add(EventCount::measured(1))
+        .ok_or(Refused::CandidateCount)?;
+    let session_share = shares.session_event_share();
+    if session_needed > session_share {
+        return Err(Refused::SessionShare {
+            needed: session_needed,
+            available: session_share,
+        });
+    }
+
+    // Session and Compiled each fit their own share; their sum fits the quantum
+    // cap by HostProfile construction. The renderer's storage preflight covers
+    // that cap times its widest event, the compiled release and modulation.
+    PublicationArbiter::prepare_one_quantum(profile).map_err(Refused::Arbiter)
 }
 
 impl MixedHistoryCandidate {

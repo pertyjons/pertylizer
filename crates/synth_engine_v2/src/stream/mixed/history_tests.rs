@@ -87,6 +87,122 @@ fn bound_with_events(
     .expect("stamped initial schedule")
 }
 
+fn mixed_profile() -> HostProfile {
+    HostProfile::harness(
+        SampleRate::new(48_000.0).expect("rate"),
+        FrameCount::new(512),
+        ChannelLayout::Mono,
+    )
+    .expect("profile")
+}
+
+fn profile_with_session_share(session: EventCount) -> HostProfile {
+    use crate::profile::{EventLimits, ProducerShares, RenderLimits};
+
+    let original = mixed_profile();
+    let limits = original.limits();
+    let events = limits.events();
+    let shares = events.shares();
+    let shares = ProducerShares::new(
+        shares.compiled_event_share(),
+        shares.authored_runtime_event_share(),
+        shares.live_event_share(),
+        session,
+        shares.internal_event_share(),
+        shares.release_event_share(),
+        shares.release_hold_capacity(),
+    )
+    .expect("valid shares");
+    let events = EventLimits::new(
+        events.max_events_per_quantum(),
+        events.max_note_expansion_per_tick(),
+        events.max_scheduled_events_in_flight(),
+        events.forward_event_horizon(),
+        events.queues(),
+        shares,
+    )
+    .expect("valid event limits");
+    let limits = RenderLimits::new(
+        limits.stream(),
+        limits.graph(),
+        limits.voices(),
+        events,
+        limits.observation(),
+        limits.mixing(),
+        limits.memory(),
+        limits.script(),
+        limits.recording(),
+        limits.cost(),
+    )
+    .expect("valid limits");
+    HostProfile::new(original.capabilities(), limits).expect("valid profile")
+}
+
+fn one_shot_with_boundary_on(compiled_first: bool) -> (MixedJoinedPrepared, MixedStampedCandidate) {
+    one_shot_with_boundary_on_at(compiled_first, SampleTime::new(64))
+}
+
+fn one_shot_with_boundary_on_at(
+    compiled_first: bool,
+    requested: SampleTime,
+) -> (MixedJoinedPrepared, MixedStampedCandidate) {
+    let prepared = bound_with_events(compiled_first, |note| {
+        vec![PlanEvent::new(
+            PlanPosition::new(10),
+            CompiledPayload::NoteOn {
+                slot: note,
+                key: key(60),
+                velocity: NoteVelocity::FULL,
+            },
+        )]
+    });
+    let history = prepared
+        .prepare_history(requested, PlanPosition::new(10))
+        .expect("history");
+    let suffix = prepared.prepare_suffix(history).expect("suffix");
+    let candidate = prepared.stamp_suffix(suffix).expect("stamp");
+    (prepared, candidate)
+}
+
+fn one_shot_at_compiled_share(
+    compiled_first: bool,
+) -> (MixedJoinedPrepared, MixedStampedCandidate) {
+    let share = mixed_profile()
+        .limits()
+        .events()
+        .shares()
+        .compiled_event_share();
+    assert_eq!(share.get() % 2, 0);
+    let prepared = bound_with_events(compiled_first, |note| {
+        let mut events = Vec::new();
+        for frame in 0..share.get() / 2 {
+            let at = PlanPosition::new(u64::from(frame));
+            events.push(PlanEvent::new(
+                at,
+                CompiledPayload::NoteOn {
+                    slot: note,
+                    key: key(60),
+                    velocity: NoteVelocity::FULL,
+                },
+            ));
+            events.push(PlanEvent::new(
+                at,
+                CompiledPayload::NoteOff {
+                    slot: note,
+                    key: key(60),
+                },
+            ));
+        }
+        events
+    });
+    let history = prepared
+        .prepare_history(SampleTime::new(32), PlanPosition::ZERO)
+        .expect("empty prefix");
+    let suffix = prepared.prepare_suffix(history).expect("full suffix");
+    let candidate = prepared.stamp_suffix(suffix).expect("valid stamp");
+    (prepared, candidate)
+}
+
 fn mixed_plan(compiled_first: bool) -> CompiledPlan {
     let compiled = NoteProducerDeclaration {
         compiled: true,
@@ -172,13 +288,7 @@ fn mixed_plan(compiled_first: bool) -> CompiledPlan {
         })
         .build()
         .expect("mixed graph");
-    let profile = HostProfile::harness(
-        SampleRate::new(48_000.0).expect("rate"),
-        FrameCount::new(512),
-        ChannelLayout::Mono,
-    )
-    .expect("profile");
-    compile(&ir, &RenderConfig::new(profile))
+    compile(&ir, &RenderConfig::new(mixed_profile()))
         .into_plan()
         .expect("plan")
 }
@@ -891,7 +1001,9 @@ fn private_one_shot_arm_fixes_boundary_and_splits_identity_custody() {
         );
         let candidate = prepared.stamp_suffix(suffix).expect("private stamp");
         let restoration_count = candidate.restoration_count();
-        let (control, audio) = prepared.arm_one_shot(candidate).expect("one arm");
+        let (control, audio) = prepared
+            .arm_one_shot(candidate, &mixed_profile())
+            .expect("one arm");
         assert_eq!(control.control.minter.resolve(old), Resolution::Live);
         assert_eq!(control.outstanding, vec![old]);
         assert_eq!(audio.audio.renderer.clock(), SampleTime::ZERO);
@@ -960,7 +1072,9 @@ fn private_one_shot_arm_returns_foreign_candidate_without_changing_owner() {
         let table = prepared.table_id();
         let original = prepared.outstanding[0];
         let count = prepared.event_count();
-        let refused = prepared.arm_one_shot(candidate).expect_err("foreign epoch");
+        let refused = prepared
+            .arm_one_shot(candidate, &mixed_profile())
+            .expect_err("foreign epoch");
         assert_eq!(refused.reason, MixedOneShotArmError::ForeignCandidate);
         assert_eq!(refused.owner.epoch(), epoch);
         assert_eq!(refused.owner.table_id(), table);
@@ -989,7 +1103,9 @@ fn private_one_shot_arm_returns_foreign_candidate_without_changing_owner() {
             .expect("retry history");
         let suffix = returned.prepare_suffix(history).expect("retry suffix");
         let candidate = returned.stamp_suffix(suffix).expect("retry stamp");
-        let (control, audio) = returned.arm_one_shot(candidate).expect("retry arm");
+        let (control, audio) = returned
+            .arm_one_shot(candidate, &mixed_profile())
+            .expect("retry arm");
         assert_eq!(control.control.minter.resolve(original), Resolution::Live);
         assert_eq!(audio.timing.effective(), SampleTime::new(64));
     }
@@ -1003,7 +1119,9 @@ fn private_one_shot_arm_uses_on_grid_request_without_extra_quantum() {
         .expect("history");
     let suffix = prepared.prepare_suffix(history).expect("suffix");
     let candidate = prepared.stamp_suffix(suffix).expect("stamp");
-    let (_, audio) = prepared.arm_one_shot(candidate).expect("arm");
+    let (_, audio) = prepared
+        .arm_one_shot(candidate, &mixed_profile())
+        .expect("arm");
     assert_eq!(audio.timing.effective(), SampleTime::new(64));
     assert_eq!(audio.timing.shift(), FrameCount::ZERO);
     assert!(!audio.late_at_arm);
@@ -1029,7 +1147,9 @@ fn private_one_shot_arm_uses_next_unrendered_quantum_after_request() {
         .expect("history");
     let suffix = prepared.prepare_suffix(history).expect("suffix");
     let candidate = prepared.stamp_suffix(suffix).expect("stamp");
-    let (_, audio) = prepared.arm_one_shot(candidate).expect("arm");
+    let (_, audio) = prepared
+        .arm_one_shot(candidate, &mixed_profile())
+        .expect("arm");
     assert_eq!(audio.timing.effective(), SampleTime::new(64));
     assert_eq!(audio.timing.shift(), FrameCount::new(32));
     assert!(audio.late_at_arm);
@@ -1061,7 +1181,7 @@ fn private_one_shot_arm_timing_refusal_preserves_both_inputs() {
     let count = prepared.event_count();
     let original = prepared.outstanding[0];
     let refused = prepared
-        .arm_one_shot(candidate)
+        .arm_one_shot(candidate, &mixed_profile())
         .expect_err("shift overflows");
     assert!(matches!(
         refused.reason,
@@ -1106,7 +1226,9 @@ fn private_one_shot_arm_refuses_short_ended_storage_and_can_retry() {
         let suffix = prepared.prepare_suffix(history).expect("suffix");
         let candidate = prepared.stamp_suffix(suffix).expect("stamp");
         prepared.owner.audio.compiled_ended.clear();
-        let refused = prepared.arm_one_shot(candidate).expect_err("short buffer");
+        let refused = prepared
+            .arm_one_shot(candidate, &mixed_profile())
+            .expect_err("short buffer");
         let MixedOneShotArmRefusal {
             reason,
             mut owner,
@@ -1123,7 +1245,9 @@ fn private_one_shot_arm_refuses_short_ended_storage_and_can_retry() {
         assert_eq!(owner.owner.audio.renderer.clock(), SampleTime::ZERO);
         assert_eq!(candidate.anchor.time(), SampleTime::new(64));
         owner.owner.audio.compiled_ended.resize(needed, None);
-        let (control, audio) = owner.arm_one_shot(candidate).expect("corrected storage");
+        let (control, audio) = owner
+            .arm_one_shot(candidate, &mixed_profile())
+            .expect("corrected storage");
         assert_eq!(control.control.minter.resolve(old), Resolution::Live);
         assert_eq!(audio.timing.effective(), SampleTime::new(64));
     }
@@ -1154,7 +1278,7 @@ fn private_one_shot_arm_refuses_registry_partition_mismatch_without_consuming_in
             .renderer
             .shorten_mixed_registry_range_for_test();
         let refused = prepared
-            .arm_one_shot(candidate)
+            .arm_one_shot(candidate, &mixed_profile())
             .expect_err("registry mismatch");
         let MixedOneShotArmRefusal {
             reason,
@@ -1173,10 +1297,244 @@ fn private_one_shot_arm_refuses_registry_partition_mismatch_without_consuming_in
             .audio
             .renderer
             .restore_mixed_registry_range_for_test();
-        let (control, audio) = owner.arm_one_shot(candidate).expect("restored range");
+        let (control, audio) = owner
+            .arm_one_shot(candidate, &mixed_profile())
+            .expect("restored range");
         assert_eq!(control.control.minter.resolve(old), Resolution::Live);
         assert_eq!(audio.timing.effective(), SampleTime::new(64));
     }
+}
+
+#[test]
+fn private_one_shot_arm_refuses_wrong_profile_before_consuming_candidate() {
+    for compiled_first in [true, false] {
+        let (prepared, candidate) = one_shot_with_boundary_on(compiled_first);
+        let wrong = HostProfile::harness(
+            SampleRate::new(48_000.0).expect("rate"),
+            FrameCount::new(256),
+            ChannelLayout::Mono,
+        )
+        .expect("alternate profile");
+        let refused = prepared
+            .arm_one_shot(candidate, &wrong)
+            .expect_err("foreign profile");
+        assert_eq!(
+            refused.reason,
+            MixedOneShotArmError::Admission(MixedOneShotAdmissionError::ProfileMismatch)
+        );
+        assert_eq!(refused.owner.owner.audio.renderer.clock(), SampleTime::ZERO);
+        let (control, audio) = refused
+            .owner
+            .arm_one_shot(refused.candidate, &mixed_profile())
+            .expect("correct profile");
+        assert_eq!(control.control.epoch, audio.audio.renderer.epoch());
+        assert_eq!(
+            audio.arbiter.max_events_per_quantum(),
+            audio.audio.renderer.plan().max_events_per_quantum()
+        );
+    }
+}
+
+#[test]
+fn private_one_shot_arm_refuses_restoration_plus_release_above_session_share() {
+    for compiled_first in [true, false] {
+        let (prepared, candidate) = one_shot_with_boundary_on(compiled_first);
+        let restoration = candidate.restoration_count;
+        assert!(restoration.get() > 0);
+        let profile = profile_with_session_share(restoration);
+        let refused = prepared
+            .arm_one_shot(candidate, &profile)
+            .expect_err("session boundary over share");
+        assert_eq!(
+            refused.reason,
+            MixedOneShotArmError::Admission(MixedOneShotAdmissionError::SessionShare {
+                needed: restoration
+                    .checked_add(EventCount::measured(1))
+                    .expect("one release"),
+                available: restoration,
+            })
+        );
+        assert_eq!(refused.owner.owner.audio.renderer.clock(), SampleTime::ZERO);
+        let (control, audio) = refused
+            .owner
+            .arm_one_shot(refused.candidate, &mixed_profile())
+            .expect("original share");
+        assert_eq!(control.control.epoch, audio.audio.renderer.epoch());
+    }
+}
+
+#[test]
+fn private_one_shot_arm_checks_actual_split_and_shifted_compiled_density() {
+    for compiled_first in [true, false] {
+        let (prepared, mut candidate) =
+            one_shot_with_boundary_on_at(compiled_first, SampleTime::new(32));
+        assert_eq!(candidate.events[0].envelope().time(), SampleTime::new(32));
+        assert_eq!(
+            candidate
+                .effective_timing(SampleTime::new(64))
+                .expect("one delayed boundary")
+                .shift(),
+            FrameCount::new(32)
+        );
+        let first = candidate.events[0];
+        let suffix = candidate.events[candidate.restoration_count.get() as usize];
+        candidate.events[0] = suffix;
+        let refused = prepared
+            .arm_one_shot(candidate, &mixed_profile())
+            .expect_err("non-restoration in Session prefix");
+        assert_eq!(
+            refused.reason,
+            MixedOneShotArmError::Admission(MixedOneShotAdmissionError::CandidateShape {
+                event_index: 0,
+            })
+        );
+        let mut candidate = refused.candidate;
+        candidate.events[0] = first;
+        let share = mixed_profile()
+            .limits()
+            .events()
+            .shares()
+            .compiled_event_share();
+        let additions = share.get() as usize;
+        candidate
+            .events
+            .extend(std::iter::repeat_n(suffix, additions));
+        candidate.event_count =
+            EventCount::measured(u32::try_from(candidate.events.len()).expect("test list count"));
+        let refused = refused
+            .owner
+            .arm_one_shot(candidate, &mixed_profile())
+            .expect_err("compiled boundary over share");
+        assert_eq!(
+            refused.reason,
+            MixedOneShotArmError::Admission(MixedOneShotAdmissionError::CompiledShare {
+                at: SampleTime::new(64),
+                needed: share
+                    .checked_add(EventCount::measured(1))
+                    .expect("one extra"),
+                available: share,
+            })
+        );
+        assert_eq!(refused.owner.owner.audio.renderer.clock(), SampleTime::ZERO);
+    }
+}
+
+#[test]
+fn private_one_shot_arm_accepts_a_valid_suffix_at_exact_compiled_share() {
+    let share = mixed_profile()
+        .limits()
+        .events()
+        .shares()
+        .compiled_event_share();
+    assert_eq!(share.get() % 2, 0);
+    for compiled_first in [true, false] {
+        let (prepared, candidate) = one_shot_at_compiled_share(compiled_first);
+        assert_eq!(
+            candidate.events.len() - candidate.restoration_count.get() as usize,
+            share.get() as usize
+        );
+        assert_eq!(
+            candidate
+                .effective_timing(SampleTime::new(64))
+                .expect("shifted quantum")
+                .shift(),
+            FrameCount::new(32)
+        );
+        let (control, audio) = prepared
+            .arm_one_shot(candidate, &mixed_profile())
+            .expect("exact admitted Compiled share");
+        assert_eq!(control.control.epoch, audio.audio.renderer.epoch());
+    }
+}
+
+#[test]
+fn private_one_shot_arm_groups_suffix_density_after_effective_shift() {
+    let share = mixed_profile()
+        .limits()
+        .events()
+        .shares()
+        .compiled_event_share();
+    for compiled_first in [true, false] {
+        let (prepared, mut candidate) = one_shot_at_compiled_share(compiled_first);
+        let last = *candidate.events.last().expect("nonempty suffix");
+        assert_eq!(last.envelope().time(), SampleTime::new(79));
+        candidate.events.push(last);
+        candidate.event_count =
+            EventCount::measured(u32::try_from(candidate.events.len()).expect("test list count"));
+        let suffix = &candidate.events[candidate.restoration_count.get() as usize..];
+        let before = suffix
+            .iter()
+            .filter(|event| event.envelope().time().quantum_index() == 0)
+            .count();
+        let after = suffix.len() - before;
+        assert_eq!(before + after, share.get() as usize + 1);
+        assert!(before < share.get() as usize);
+        assert!(after < share.get() as usize);
+        let refused = prepared
+            .arm_one_shot(candidate, &mixed_profile())
+            .expect_err("shifted boundary quantum exceeds Compiled share");
+        assert_eq!(
+            refused.reason,
+            MixedOneShotArmError::Admission(MixedOneShotAdmissionError::CompiledShare {
+                at: SampleTime::new(111),
+                needed: share
+                    .checked_add(EventCount::measured(1))
+                    .expect("one extra"),
+                available: share,
+            })
+        );
+    }
+}
+
+#[test]
+fn private_one_shot_arm_rejects_reordered_effective_suffix() {
+    let (prepared, mut candidate) = one_shot_with_boundary_on(true);
+    let index = candidate.restoration_count.get() as usize;
+    let event = candidate.events[index];
+    candidate.events[index] = TimedEvent::new(
+        EventEnvelope::new(
+            event.envelope().epoch(),
+            SampleTime::new(128),
+            event.envelope().source(),
+        ),
+        event.payload(),
+    );
+    candidate.events.push(event);
+    candidate.event_count =
+        EventCount::measured(u32::try_from(candidate.events.len()).expect("test list count"));
+    let refused = prepared
+        .arm_one_shot(candidate, &mixed_profile())
+        .expect_err("suffix time moved backwards");
+    assert_eq!(
+        refused.reason,
+        MixedOneShotArmError::Admission(MixedOneShotAdmissionError::CandidateShape {
+            event_index: index + 1,
+        })
+    );
+}
+
+#[test]
+fn private_one_shot_arm_refuses_restoration_spending_compiled_credit() {
+    let (prepared, mut candidate) = one_shot_with_boundary_on(false);
+    let suffix = candidate.restoration_count.get() as usize;
+    let original = candidate.events[suffix];
+    candidate.events[suffix] = candidate.events[0];
+    let refused = prepared
+        .arm_one_shot(candidate, &mixed_profile())
+        .expect_err("scoped restoration in Compiled suffix");
+    assert_eq!(
+        refused.reason,
+        MixedOneShotArmError::Admission(MixedOneShotAdmissionError::CandidateShape {
+            event_index: suffix,
+        })
+    );
+    let mut candidate = refused.candidate;
+    candidate.events[suffix] = original;
+    let (control, audio) = refused
+        .owner
+        .arm_one_shot(candidate, &mixed_profile())
+        .expect("corrected payload split");
+    assert_eq!(control.control.epoch, audio.audio.renderer.epoch());
 }
 
 #[test]

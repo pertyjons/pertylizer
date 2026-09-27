@@ -302,10 +302,13 @@ refusal returns both inputs unchanged. The split audio owner has no render path
 yet. Arm now checks the renderer registry's compiled span against the bound
 partition and proves the actual ended-note, release-queue and timed-control
 storage. Corrupted storage refuses without consuming the attempt. The check
-does not admit the combined boundary event count or its control-write fanout;
-the private mixed render path remains blocked until an off-thread proof covers
-restoration, suffix and live events in the same quantum. Combined same-quantum
-shares, payload fanout and the host resource charge remain open.
+is followed by profile-matched admission of the closed candidate before arm
+consumes it: actual restoration spends Session, shifted suffix spends Compiled,
+and a one-quantum arbiter stays with the audio half. Refusals preserve both
+inputs. The private render path still needs its held-live test through that
+arbiter and its callback, fault and retirement laws. Other same-quantum Session
+contributors, production live ingress, other payload fanout and host resource
+charges remain open.
 No production mixed offer or command refusal has been lifted.
 The private stamped candidate now has a checked, allocation-free effective-event
 view that applies one displacement on each read without rewriting requested-time

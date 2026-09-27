@@ -383,16 +383,17 @@ remains in carry. It records the checked uniform displacement, effective anchor
 arm clock. A timing or pairing refusal leaves the renderer and control minter
 unchanged.
 
-The armed audio owner remains pending until its fixed boundary. Each callback,
-before or after adoption, preflights the renderer's epoch and table, fault
-state, latched arbiter, output layout and maximum block before any publication
-or boundary change. A foreign arbiter or invalid output shape returns with the
-output untouched and may be retried with the correct call; while pending, the
-fixed boundary stays the same. An internal epoch/table mismatch or already
-faulted renderer is terminal
-and silences the complete callback. A call served entirely from carry does
-not adopt. In a call crossing the boundary, the head publishes every old event
-strictly before it; the tail starts with adoption. A head fault silences the
+The armed audio owner remains pending until its fixed boundary. It owns exactly
+one prepared publication arbiter; no callback accepts a caller-supplied second
+arbiter, and its storage returns for off-thread destruction with the owner.
+Each callback, before or after adoption, preflights the renderer's epoch and
+table, fault state, output layout and maximum block before any publication or
+boundary change. An invalid output shape returns with the output untouched and
+may be retried with the correct call; while pending, the fixed boundary stays
+the same. An internal epoch/table mismatch or already faulted renderer is
+terminal and silences the complete callback. A call served entirely from carry
+does not adopt. In a call crossing the boundary, the head publishes every old
+event strictly before it; the tail starts with adoption. A head fault silences the
 whole callback and leaves the candidate unadopted. The boundary step's clock,
 partition, producer, pending-boundary, ended-storage, gate-storage and
 unbound-target refusals are terminal too, with the candidate unadopted.
@@ -449,19 +450,36 @@ per-note width conservatively includes every magnitude, though release writes
 only gate and Trigger rows. These storage inequalities hold by valid renderer
 construction; a defensive refusal after corrupted storage returns the stamped
 candidate and joined owner unchanged, with the one transition still available
-for a corrected attempt. This does not prove a combined producer share, payload
-fanout or the restoration-plus-suffix-and-live event count at the boundary.
+for a corrected attempt. This storage check alone does not prove the combined
+producer load, scoped fanout or restoration-plus-suffix-and-live event count.
+Arm also compares the supplied profile's sample rate, layout, maximum block,
+event cap, Compiled share and forward horizon with the bound plan. The Session
+share comes from that profile and is checked against the candidate's actual
+closed-schedule charge. Arm checks the actual restoration/suffix payload split
+and nondecreasing effective times. It charges restoration plus one release
+operation to Session and checks every shifted suffix quantum against the same
+Compiled share as the old admitted stream. It prepares the single-quantum
+arbiter before consuming the
+candidate. A sample-positioned scoped restoration span must fit the plan's
+admitted fanout; with the prior storage check, the closed private schedule's
+event and control writes fit the prepared buffers. Every admission refusal
+returns both inputs unchanged. This closed schedule has no production live
+ingress or other Session contributor. The required held-live rehearsal must
+publish its live note through a test-only Live seam in this same arbiter;
+directly stamping the renderer does
+not discharge it. The audio half still exposes no callback or render path.
 Before any private mixed audio callback or render path can run, off-thread
-admission must prove that all boundary-quantum events fit the event limit and
-that their total control writes, including scoped restoration and the compiled
-release, fit the timed-control storage. Otherwise the renderer can refuse the
-event span or silently omit a control write when its scratch fills. A queued
-prior release remains a defensive arm refusal and a terminal boundary fault if
-it somehow appears later. The private fault rules do not decide ADR-0073's
-future combined-host terminal scope. The payload, timed fanout, scratch and
-seed charges and the crossing-release amendments to ADR-0051 clause 5 and
-SOUND-INV-018 remain necessary before a production offer, alongside the other
-combined-host acceptance work in this ADR.
+admission must prove that all contributors in that path fit their shares and the
+event limit and that their total control writes, including scoped restoration
+and the compiled release, fit the timed-control storage. Otherwise the renderer
+can refuse the event span or silently omit a control write when its scratch
+fills. A queued prior release remains a defensive arm refusal and a terminal
+boundary fault if it somehow appears later. The private fault rules do not
+decide ADR-0073's future combined-host terminal scope. Payload size, fanout for
+other event classes and producers, scratch and seed charges, and the
+crossing-release
+amendments to ADR-0051 clause 5 and SOUND-INV-018 remain necessary before a
+production offer, alongside the other combined-host acceptance work in this ADR.
 
 The rehearsal's defensive second-arm seam fails if it changes owner state.
 Ordinary rehearsal checks fail if carry-only output adopts; old boundary-time
