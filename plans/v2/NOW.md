@@ -227,6 +227,10 @@ share the immutable partition. Note gate and magnitude destinations must fall
 inside their producer's local partition. Shared sums and global sources still
 need influence and ordering laws; the partition provides no row-scoped
 catch-up, reseed, activation or render path.
+The partition now also enumerates one checked compiled-instance span per
+addressable local parameter group and cross-checks that the spans cover exactly
+the compiled rows in either producer order. Global parameter rows are excluded.
+No scoped event or renderer path uses these spans yet.
 
 ### Selected work — ordered transport through live I/O
 

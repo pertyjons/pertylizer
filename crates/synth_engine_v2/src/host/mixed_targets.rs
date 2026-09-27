@@ -14,8 +14,8 @@ use thiserror::Error;
 use crate::identity::{INDEX_SPACE, ProducerId, Range};
 use crate::ir::StealingPolicy;
 use crate::plan::{
-    CompiledPlan, NodeRole, NodeSlot, NoteSlot, ParameterRow, ParameterSlot, PlanId, PlanOp,
-    VoiceInstanceIndex,
+    CompiledPlan, NodeRole, NodeSlot, NoteSlot, ParameterInstanceSpan, ParameterRow, ParameterSlot,
+    PlanId, PlanOp, VoiceInstanceIndex,
 };
 use crate::schedule::{AdmittedCompiledStream, CompiledPayload};
 
@@ -84,6 +84,27 @@ pub struct MixedInstancePartition {
     live_rows: Vec<ParameterRow>,
     shared_sum_rows: Vec<ParameterRow>,
     global_rows: Vec<ParameterRow>,
+    restoration_groups: Vec<MixedRestorationGroup>,
+}
+
+/// One addressable group and the compiled producer's checked instance span in it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[must_use]
+pub struct MixedRestorationGroup {
+    parameter: ParameterSlot,
+    instances: ParameterInstanceSpan,
+}
+
+impl MixedRestorationGroup {
+    /// The group's first parameter row.
+    pub const fn parameter(self) -> ParameterSlot {
+        self.parameter
+    }
+
+    /// The compiled producer's relative instance span within that group.
+    pub const fn instances(self) -> ParameterInstanceSpan {
+        self.instances
+    }
 }
 
 impl MixedInstancePartition {
@@ -140,6 +161,12 @@ impl MixedInstancePartition {
     /// Parameter rows on nodes outside the voice instance groups.
     pub fn global_rows(&self) -> &[ParameterRow] {
         &self.global_rows
+    }
+
+    /// Every addressable group whose compiled rows need scoped restoration.
+    /// Each group appears once; event payload and Session-share costs still need measurement.
+    pub fn restoration_groups(&self) -> &[MixedRestorationGroup] {
+        &self.restoration_groups
     }
 
     pub(crate) const fn spans(&self) -> (Range, Range) {
@@ -475,6 +502,57 @@ fn build_partition(
             return Err(MixedTargetError::InstancePartition);
         }
     }
+    let mut restoration_groups = Vec::new();
+    let mut restored_rows = BTreeSet::new();
+    let compiled_indices = compiled_span.indices();
+    for address in plan.parameter_addresses() {
+        let target = plan
+            .parameter_targets()
+            .get(address.slot.index())
+            .ok_or(MixedTargetError::InstancePartition)?;
+        if target.instances != plan.voice_instances() {
+            continue;
+        }
+        let span = ParameterInstanceSpan::checked(
+            compiled_indices.start,
+            compiled_indices.end - compiled_indices.start,
+            target.instances,
+        )
+        .ok_or(MixedTargetError::InstancePartition)?;
+        let first_index =
+            u16::try_from(span.first()).map_err(|_| MixedTargetError::InstancePartition)?;
+        let first_row = plan
+            .parameter_row_for_identity(address.slot, first_index)
+            .ok_or(MixedTargetError::InstancePartition)?;
+        if compiled_rows.binary_search(&first_row).is_err() {
+            continue;
+        }
+        for index in span.indices() {
+            let index = u16::try_from(index).map_err(|_| MixedTargetError::InstancePartition)?;
+            let row = plan
+                .parameter_row_for_identity(address.slot, index)
+                .ok_or(MixedTargetError::InstancePartition)?;
+            if compiled_rows.binary_search(&row).is_err() || !restored_rows.insert(row) {
+                return Err(MixedTargetError::InstancePartition);
+            }
+        }
+        for index in live_span.indices() {
+            let index = u16::try_from(index).map_err(|_| MixedTargetError::InstancePartition)?;
+            let row = plan
+                .parameter_row_for_identity(address.slot, index)
+                .ok_or(MixedTargetError::InstancePartition)?;
+            if live_rows.binary_search(&row).is_err() {
+                return Err(MixedTargetError::InstancePartition);
+            }
+        }
+        restoration_groups.push(MixedRestorationGroup {
+            parameter: address.slot,
+            instances: span,
+        });
+    }
+    if restored_rows.len() != compiled_rows.len() {
+        return Err(MixedTargetError::InstancePartition);
+    }
     Ok(MixedInstancePartition {
         plan: plan.id(),
         compiled_producer,
@@ -489,6 +567,7 @@ fn build_partition(
         live_rows,
         shared_sum_rows,
         global_rows,
+        restoration_groups,
     })
 }
 

@@ -225,6 +225,35 @@ impl ParameterRow {
     }
 }
 
+/// A checked contiguous set of instances within one parameter group.
+/// Its indices are relative to the group's first [`ParameterSlot`] row.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[must_use]
+pub struct ParameterInstanceSpan {
+    first: u32,
+    len: u32,
+}
+
+impl ParameterInstanceSpan {
+    pub(crate) fn checked(first: u32, len: u32, instances: VoiceCount) -> Option<Self> {
+        (len > 0 && first.checked_add(len)? <= instances.get()).then_some(Self { first, len })
+    }
+
+    /// The first instance index within the group.
+    pub const fn first(self) -> u32 {
+        self.first
+    }
+
+    /// The number of instance rows in the span.
+    pub const fn count(self) -> u32 {
+        self.len
+    }
+
+    pub(crate) fn indices(self) -> std::ops::Range<u32> {
+        self.first..self.first + self.len
+    }
+}
+
 /// One node that accepts note edges, by index.
 ///
 /// The note-side twin of [`ParameterSlot`], and it exists for the same reason: an event

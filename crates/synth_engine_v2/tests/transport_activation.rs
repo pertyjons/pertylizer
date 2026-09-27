@@ -2480,8 +2480,15 @@ fn mixed_producers_with_source_scope(
     let ir = GraphIr::builder()
         .node(
             SOURCE,
-            IrNodeKind::Constant {
-                level: Amplitude::new(1.0).expect("finite"),
+            if source_scope == ExecutionScope::Global && scope == ExecutionScope::Voice {
+                IrNodeKind::Sine {
+                    frequency: synth_engine_v2::quantities::Frequency::new(220.0).expect("finite"),
+                    amplitude: Amplitude::new(1.0).expect("finite"),
+                }
+            } else {
+                IrNodeKind::Constant {
+                    level: Amplitude::new(1.0).expect("finite"),
+                }
             },
             source_scope,
         )
@@ -2546,6 +2553,8 @@ fn mixed_target_binding_accepts_disjoint_voice_instances_in_both_producer_orders
         );
         let partition = binding.instance_partition();
         assert_eq!(partition.plan_id(), expected_plan.id());
+        assert!(!partition.compiled_rows().is_empty());
+        assert!(!partition.restoration_groups().is_empty());
         assert_eq!(partition.live_producer(), binding.live_producer());
         assert_eq!(
             partition.compiled_producer(),
@@ -2604,6 +2613,44 @@ fn mixed_target_binding_accepts_disjoint_voice_instances_in_both_producer_orders
             assert!(group.windows(2).all(|pair| pair[0] < pair[1]));
             assert!(group.iter().all(|row| row.plan() == expected_plan.id()));
         }
+        let restored_rows: BTreeSet<_> = partition
+            .restoration_groups()
+            .iter()
+            .flat_map(|group| {
+                let span = group.instances();
+                (span.first()..span.first() + span.count())
+                    .map(|instance| group.parameter().index() + instance as usize)
+            })
+            .collect();
+        assert_eq!(
+            restored_rows,
+            partition
+                .compiled_rows()
+                .iter()
+                .map(|row| row.index())
+                .collect()
+        );
+        assert!(partition.restoration_groups().len() <= expected_plan.parameter_addresses().len());
+        let group_addresses: BTreeSet<_> = partition
+            .restoration_groups()
+            .iter()
+            .map(|group| group.parameter().index())
+            .collect();
+        assert_eq!(group_addresses.len(), partition.restoration_groups().len());
+        for group in partition.restoration_groups() {
+            assert_eq!(group.parameter().plan(), expected_plan.id());
+            assert_eq!(
+                group.instances().first(),
+                if compiled_first { 0 } else { 4 }
+            );
+            assert_eq!(group.instances().count(), 4);
+        }
+        let restored_count: usize = partition
+            .restoration_groups()
+            .iter()
+            .map(|group| group.instances().count() as usize)
+            .sum();
+        assert_eq!(restored_count, partition.compiled_rows().len());
 
         let target = expected_plan.note_targets()[slot.index()];
         let destinations: Vec<_> = std::iter::once(target.parameter)
@@ -2683,6 +2730,22 @@ fn mixed_instance_partition_keeps_a_global_upstream_source_separate() {
         .expect("the note destinations still address separate voice instances");
     let partition = binding.instance_partition();
     assert_eq!(partition.global_nodes().len(), 1);
+    assert!(!partition.global_rows().is_empty());
+    let restored_rows: BTreeSet<_> = partition
+        .restoration_groups()
+        .iter()
+        .flat_map(|group| {
+            let span = group.instances();
+            (span.first()..span.first() + span.count())
+                .map(|instance| group.parameter().index() + instance as usize)
+        })
+        .collect();
+    assert!(
+        partition
+            .global_rows()
+            .iter()
+            .all(|row| !restored_rows.contains(&row.index()))
+    );
     assert!(
         partition
             .compiled_nodes()
