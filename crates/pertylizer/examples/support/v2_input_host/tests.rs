@@ -1856,6 +1856,39 @@ fn producer_rejects_repeated_frontier_before_ring_custody() {
 }
 
 #[test]
+fn concrete_source_accepts_a_message_at_its_prior_frontier() {
+    use super::source::SourceInbox;
+    let (mut control, audio, generations) = fixture();
+    let clock = prepare::simulated_clock(audio.core.acknowledged().epoch, 0).unwrap();
+    let (mut producer, mut inbox) =
+        SourceInbox::prepare(generations[0], control.halt_handle(), clock);
+    let frontier = InputObservation::Frontier {
+        tick: InputTick::new(10),
+    };
+    let message = InputObservation::Message {
+        tick: InputTick::new(10),
+        arrival: SampleTime::new(10),
+        input: Midi1Input::from_bytes([0x90, 60, 100]).unwrap(),
+    };
+    let first = producer.submit_owned(frontier).unwrap().parts().1;
+    let second = producer.submit_owned(message).unwrap().parts().1;
+    assert!(!control.halt_handle().is_requested());
+    let mut offered = Vec::new();
+    inbox.service_handoff_identified(&mut control, |handoff, report| {
+        assert!(report.attribution_error.is_none());
+        offered.push((handoff.unwrap(), report.offer.result));
+    });
+    assert_eq!(offered.len(), 2);
+    assert_eq!(offered[0].0.stamp().queue(), first);
+    assert_eq!(offered[0].0.observation(), frontier);
+    assert!(offered[0].1.is_ok());
+    assert_eq!(offered[1].0.stamp().queue(), second);
+    assert_eq!(offered[1].0.observation(), message);
+    assert!(offered[1].1.is_ok());
+    assert!(inbox.close(producer).is_ok());
+}
+
+#[test]
 fn producer_rejects_unmappable_clock_before_ring_custody() {
     use super::source::{SourceInbox, SourceSendError};
     let (mut control, audio, generations) = fixture();

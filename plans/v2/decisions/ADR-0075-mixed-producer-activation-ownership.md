@@ -1540,7 +1540,7 @@ its ingress credit charged. Ingress, result and ledger credit stay charged
 without stopped-owner proof; the model neither retries the refused release
 nor claims joined teardown redemption.
 A V2-local two-head merge selector refuses to choose a stamped packet while
-an empty peer has no serviced frontier at or beyond the candidate time. Only
+an empty peer has no serviced frontier strictly beyond the candidate time. Only
 the positive ordering fixtures use its gated model service helper; other model
 fixtures use direct service to isolate individual laws or consumer behavior.
 The selector chooses the least stamped onset or release head and uses source
@@ -1549,14 +1549,15 @@ them to the private mixed command ring in 140-before-150 order; both results
 accept.
 Another queues source A's onset at 140 and release at 145 beside source B's
 onset at 150. A's two packets enter the private mixed command ring first, the
-release retains A's accepted identity, and B stays held at A's serviced frontier
-149 before proceeding at the candidate time, 150. A separate selector test
+release retains A's accepted identity, and B stays held at A's serviced
+frontiers 149 and 150 before proceeding at 151. A separate selector test
 holds a later release behind the peer onset and chooses the lower source index
 in both release/onset tie directions.
 Neither command-order fixture repeats the earlier raw-bound counterexample. A
 source frontier must follow its last submitted onset or release stamp. An onset
 or release earlier than the source's last submitted stamp faults even without a
-frontier; one at or before a frontier also faults with its original. The
+frontier; one before a frontier also faults with its original. An equal-time
+message remains legal, so that frontier cannot close the candidate time. The
 release check precedes same-key matching: stale unmatched or retired releases
 fault, and a retired onset tombstone remains. These are laws for stamped
 modeled head selection and source ordering. The model does not schedule
@@ -1571,6 +1572,30 @@ frontier. The new model fixture schedules that release before the frontier;
 concrete source-ring and callback service remain open. A release earlier than
 any more recent submitted source onset or release stamp is rejected at source
 custody, even if it matches an older held onset.
+The concrete source producer and raw owner both accept a message at the
+previous frontier time. A source-ring fixture submits that equal-time message;
+the V2-local selector fixture holds the peer at frontier 150, then chooses the
+lower source index when the equal-time head arrives. That source's next
+frontier at 151 then releases the waiting peer. The separate 149/150/151
+fixture shows that without an equal-time head the frontier itself must pass
+the candidate time. This strict frontier gate matches raw publication, which
+holds messages at its current frontier.
+
+An independent design read falsified an undivided shared atomic stage-credit
+pool: source A can consume every credit with heads waiting for B while B needs
+one credit to publish the frontier or earlier head that unblocks A. Calling B's
+refusal `MixedStageFull` does not restore progress. A protected mixed onset also
+needs a future release reservation that ordinary traffic cannot spend, and
+consecutive stage frontiers must not exhaust credit behind a waiting head.
+Before implementation, the stage needs a peer-progress path available despite
+the other source's saturation (for example reserved per-source credit or an
+uncharged frontier), a joint onset/release reservation, and bounded progress
+through arbitrarily many consecutive stage frontiers behind a wait (for example
+stage-only coalescing). Refund authority must reject duplicate and stale
+claims; every raw refusal and ordinary packet needs an exact disposition, and
+joined teardown must conserve all outstanding credits. A terminal shortage is
+valid only when its owner and original are identified and peer silence is not
+misattributed. These are design falsifiers, not an accepted stage contract.
 
 The same read found that holding a popped onset until tracker credit returns
 can deadlock when its release or required frontier is behind that onset in the

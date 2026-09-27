@@ -486,7 +486,7 @@ impl Model {
             return Err(SubmitError::Halted(input));
         }
         if mapped_at.is_some_and(|at| {
-            self.merge_frontiers[index].is_some_and(|last| at <= last)
+            self.merge_frontiers[index].is_some_and(|last| at < last)
                 || self.merge_last_submitted[index].is_some_and(|last| at < last)
         }) {
             self.fault(source, input, TerminalReason::Order);
@@ -627,8 +627,8 @@ impl Model {
         self.service_with_input(source, raw, ingress).0
     }
 
-    /// An empty source can rule out later stamped onsets and releases at or
-    /// before this time. Ordinary packets are outside this selector model.
+    /// An empty source can rule out later stamped onsets and releases before
+    /// this time. Ordinary packets are outside this selector model.
     /// This models a serviced frontier, not one still in its source ring.
     fn advance_merge_frontier(&mut self, source: ModelSource, at: SampleTime) -> bool {
         let index = source.index();
@@ -666,7 +666,7 @@ impl Model {
         let peer = candidates[1 - candidate.1.index()];
         if head(peer).is_some_and(|(at, _)| at >= candidate.0)
             || (self.rings[peer.index()].is_empty()
-                && self.merge_frontiers[peer.index()].is_some_and(|at| at >= candidate.0))
+                && self.merge_frontiers[peer.index()].is_some_and(|at| at > candidate.0))
         {
             Some((candidate.1, candidate.2))
         } else {
@@ -798,7 +798,7 @@ impl Model {
             return Err(ReleaseOfferError::Halted(input));
         }
         if mapped_at.is_some_and(|at| {
-            self.merge_frontiers[index].is_some_and(|last| at <= last)
+            self.merge_frontiers[index].is_some_and(|last| at < last)
                 || self.merge_last_submitted[index].is_some_and(|last| at < last)
         }) {
             self.fault(source, input, TerminalReason::Order);
@@ -2466,6 +2466,8 @@ fn merged_release_precedes_later_peer_onset_and_keeps_its_identity() {
     assert!(model.advance_merge_frontier(ModelSource::First, SampleTime::new(149)));
     assert_eq!(model.next_merged_stamped(), None);
     assert!(model.advance_merge_frontier(ModelSource::First, SampleTime::new(150)));
+    assert_eq!(model.next_merged_stamped(), None);
+    assert!(model.advance_merge_frontier(ModelSource::First, SampleTime::new(151)));
     assert_eq!(
         model.next_merged_stamped(),
         Some((ModelSource::Second, MergedHeadKind::Onset))
@@ -2542,6 +2544,8 @@ fn merged_release_waits_for_earlier_peer_and_ties_use_source_order() {
     );
     assert_eq!(model.next_merged_stamped(), None);
     assert!(model.advance_merge_frontier(ModelSource::Second, SampleTime::new(160)));
+    assert_eq!(model.next_merged_stamped(), None);
+    assert!(model.advance_merge_frontier(ModelSource::Second, SampleTime::new(161)));
     assert_eq!(
         model
             .service_next_merged_release()
@@ -2628,6 +2632,70 @@ fn merged_release_waits_for_earlier_peer_and_ties_use_source_order() {
             .service_next_merged_release()
             .map(|(source, route)| (source, route.id)),
         Some((ModelSource::Second, second))
+    );
+}
+
+#[test]
+fn a_frontier_does_not_exclude_an_equal_time_peer_message() {
+    let mut model = Model::new(limits(2), 4);
+    let waiting = model
+        .submit_at(
+            ModelSource::Second,
+            input(0x90, 62, 100),
+            Some(SampleTime::new(150)),
+        )
+        .unwrap();
+    assert!(model.advance_merge_frontier(ModelSource::First, SampleTime::new(150)));
+    assert_eq!(model.next_merged_onset(), None);
+    let equal = model
+        .submit_at(
+            ModelSource::First,
+            input(0x90, 60, 100),
+            Some(SampleTime::new(150)),
+        )
+        .unwrap();
+    assert_eq!(
+        model.service_next_merged_onset(false, true),
+        Some((ModelSource::First, equal))
+    );
+    assert_eq!(model.next_merged_onset(), None);
+    assert!(model.advance_merge_frontier(ModelSource::First, SampleTime::new(151)));
+    assert_eq!(
+        model.service_next_merged_onset(false, true),
+        Some((ModelSource::Second, waiting))
+    );
+
+    let mut releases = Model::new(limits(2), 4);
+    let held = releases
+        .submit_at(
+            ModelSource::First,
+            input(0x90, 60, 100),
+            Some(SampleTime::new(140)),
+        )
+        .unwrap();
+    assert_eq!(releases.service(ModelSource::First, false, true), held);
+    assert!(releases.advance_merge_frontier(ModelSource::First, SampleTime::new(150)));
+    releases
+        .submit_at(
+            ModelSource::Second,
+            input(0x90, 62, 100),
+            Some(SampleTime::new(150)),
+        )
+        .unwrap();
+    assert_eq!(releases.next_merged_onset(), None);
+    assert_eq!(
+        releases.offer_release_at(
+            ModelSource::First,
+            input(0x80, 60, 0),
+            Some(SampleTime::new(150)),
+        ),
+        Ok(ReleaseOffer::Queued(held))
+    );
+    assert_eq!(
+        releases
+            .service_next_merged_release()
+            .map(|(source, route)| (source, route.id)),
+        Some((ModelSource::First, held))
     );
 }
 
