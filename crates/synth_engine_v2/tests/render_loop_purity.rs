@@ -901,6 +901,11 @@ fn every_call_the_render_loop_makes_is_inside_the_checked_region() {
         "out_layout",
         "channels",
         "parameter_targets",
+        // `CompiledPlan::parameter_row_for_identity` centralizes the note-instance row
+        // calculation shared by admission and rendering. It reads two immutable plan
+        // rows with `get`, checks the voice index and uses checked addition. It allocates,
+        // locks and performs I/O nowhere; an invalid group or index returns `None`.
+        "parameter_row_for_identity",
         "sample_rate",
         "id",
         // `NoteIdentity::table` is a `const fn` field read. The renderer compares it against

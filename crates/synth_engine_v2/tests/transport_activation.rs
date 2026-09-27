@@ -6,11 +6,13 @@
 
 mod common;
 
+use std::collections::BTreeSet;
+
 use synth_engine_v2::admit::AdmissionError;
 use synth_engine_v2::host::mixed_targets::{MixedTargetAdmission, MixedTargetError};
 use synth_engine_v2::identity::ProducerId;
 use synth_engine_v2::ir::{ExecutionScope, GraphIr, IrNodeKind, NodeId, PortId, SignalDomain};
-use synth_engine_v2::plan::CompiledPlan;
+use synth_engine_v2::plan::{CompiledPlan, NodeSlot, PlanOp};
 use synth_engine_v2::publish::{ProducerClass, PublicationArbiter};
 use synth_engine_v2::quantities::{
     Amplitude, ChannelLayout, EventCount, KeyIdentity, NormalizedLevel, NoteVelocity, Seconds,
@@ -2457,6 +2459,14 @@ fn compiled_and_live_producers() -> CompiledPlan {
 }
 
 fn mixed_producers(scope: ExecutionScope, compiled_first: bool) -> CompiledPlan {
+    mixed_producers_with_source_scope(scope, scope, compiled_first)
+}
+
+fn mixed_producers_with_source_scope(
+    scope: ExecutionScope,
+    source_scope: ExecutionScope,
+    compiled_first: bool,
+) -> CompiledPlan {
     let compiled = synth_engine_v2::ir::NoteProducerDeclaration {
         compiled: true,
         simultaneous_notes: synth_engine_v2::quantities::HeldNoteCount::measured(4),
@@ -2473,7 +2483,7 @@ fn mixed_producers(scope: ExecutionScope, compiled_first: bool) -> CompiledPlan 
             IrNodeKind::Constant {
                 level: Amplitude::new(1.0).expect("finite"),
             },
-            scope,
+            source_scope,
         )
         .node(
             ENVELOPE,
@@ -2534,7 +2544,250 @@ fn mixed_target_binding_accepts_disjoint_voice_instances_in_both_producer_orders
             binding.live_producer(),
             ProducerId::new(u16::from(compiled_first))
         );
+        let partition = binding.instance_partition();
+        assert_eq!(partition.plan_id(), expected_plan.id());
+        assert_eq!(partition.live_producer(), binding.live_producer());
+        assert_eq!(
+            partition.compiled_producer(),
+            ProducerId::new(u16::from(!compiled_first))
+        );
+
+        let all_nodes: BTreeSet<_> = expected_plan
+            .ops()
+            .iter()
+            .filter_map(|op| match op {
+                PlanOp::Node(step) => Some(step.node()),
+                _ => None,
+            })
+            .collect();
+        let groups = [
+            partition.compiled_nodes(),
+            partition.live_nodes(),
+            partition.shared_sum_nodes(),
+            partition.global_nodes(),
+        ];
+        let partitioned_nodes: BTreeSet<_> = groups
+            .iter()
+            .flat_map(|group| group.iter().copied())
+            .collect();
+        assert_eq!(partitioned_nodes, all_nodes);
+        assert_eq!(
+            groups.iter().map(|group| group.len()).sum::<usize>(),
+            all_nodes.len()
+        );
+        assert!(partition.shared_sum_nodes().iter().any(|node| {
+            !expected_plan
+                .parameter_targets()
+                .iter()
+                .any(|row| row.node == *node)
+        }));
+
+        let row_groups = [
+            partition.compiled_rows(),
+            partition.live_rows(),
+            partition.shared_sum_rows(),
+            partition.global_rows(),
+        ];
+        let row_indices: BTreeSet<_> = row_groups
+            .iter()
+            .flat_map(|group| group.iter().map(|row| row.index()))
+            .collect();
+        assert_eq!(
+            row_indices,
+            (0..expected_plan.parameter_targets().len()).collect()
+        );
+        assert_eq!(
+            row_groups.iter().map(|group| group.len()).sum::<usize>(),
+            expected_plan.parameter_targets().len()
+        );
+        for group in row_groups {
+            assert!(group.windows(2).all(|pair| pair[0] < pair[1]));
+            assert!(group.iter().all(|row| row.plan() == expected_plan.id()));
+        }
+
+        let target = expected_plan.note_targets()[slot.index()];
+        let destinations: Vec<_> = std::iter::once(target.parameter)
+            .chain(
+                expected_plan
+                    .note_magnitudes_of(slot)
+                    .iter()
+                    .map(|magnitude| magnitude.parameter),
+            )
+            .collect();
+        let note_destination_rows: BTreeSet<_> = destinations
+            .iter()
+            .flat_map(|first| (0..8).map(|index| first.index() + index))
+            .collect();
+        assert!(
+            partition
+                .live_rows()
+                .iter()
+                .any(|row| !note_destination_rows.contains(&row.index()))
+        );
+        let compiled_indices = if compiled_first { 0..4 } else { 4..8 };
+        let live_indices = if compiled_first { 4..8 } else { 0..4 };
+        for first in expected_plan.instance_groups() {
+            if expected_plan.sum_groups().contains(first) {
+                for index in 0..8 {
+                    assert!(
+                        partition
+                            .shared_sum_nodes()
+                            .contains(&NodeSlot::new(first.index() + index))
+                    );
+                }
+            } else {
+                for index in compiled_indices.clone() {
+                    assert!(
+                        partition
+                            .compiled_nodes()
+                            .contains(&NodeSlot::new(first.index() + index))
+                    );
+                }
+                for index in live_indices.clone() {
+                    assert!(
+                        partition
+                            .live_nodes()
+                            .contains(&NodeSlot::new(first.index() + index))
+                    );
+                }
+            }
+        }
+        for first in destinations {
+            for index in compiled_indices.clone() {
+                assert!(
+                    partition
+                        .compiled_rows()
+                        .iter()
+                        .any(|row| row.index() == first.index() + index)
+                );
+            }
+            for index in live_indices.clone() {
+                assert!(
+                    partition
+                        .live_rows()
+                        .iter()
+                        .any(|row| row.index() == first.index() + index)
+                );
+            }
+        }
     }
+}
+
+#[test]
+fn mixed_instance_partition_keeps_a_global_upstream_source_separate() {
+    let plan =
+        mixed_producers_with_source_scope(ExecutionScope::Voice, ExecutionScope::Global, true);
+    let slot = plan.resolve_note(ENVELOPE).expect("playable envelope");
+    let stream = admitted(&plan, &[note(&plan, 0, true)]);
+    let binding = MixedTargetAdmission::admit(plan, stream, slot)
+        .expect("the note destinations still address separate voice instances");
+    let partition = binding.instance_partition();
+    assert_eq!(partition.global_nodes().len(), 1);
+    assert!(
+        partition
+            .compiled_nodes()
+            .iter()
+            .all(|node| !partition.global_nodes().contains(node))
+    );
+    assert!(
+        partition
+            .live_nodes()
+            .iter()
+            .all(|node| !partition.global_nodes().contains(node))
+    );
+}
+
+#[test]
+fn mixed_instance_partition_includes_per_voice_widening_steps() {
+    const STEREO_MONITOR: NodeId = NodeId::new(31);
+    let ir = GraphIr::builder()
+        .node(
+            SOURCE,
+            IrNodeKind::Constant {
+                level: Amplitude::new(1.0).expect("finite"),
+            },
+            ExecutionScope::Voice,
+        )
+        .node(
+            ENVELOPE,
+            IrNodeKind::Envelope {
+                attack: Seconds::new(0.0).expect("finite"),
+                decay: Seconds::new(0.0).expect("finite"),
+                sustain: NormalizedLevel::FULL,
+                release: Seconds::new(0.0).expect("finite"),
+                velocity_sensitivity: NormalizedLevel::FULL,
+            },
+            ExecutionScope::Voice,
+        )
+        .node(AMPLIFIER, IrNodeKind::Amplifier, ExecutionScope::Voice)
+        .node(
+            STEREO_MONITOR,
+            IrNodeKind::StereoMonitor,
+            ExecutionScope::Voice,
+        )
+        .node(OUTPUT, IrNodeKind::Output, ExecutionScope::Global)
+        .connect(
+            (SOURCE, PortId::FIRST),
+            (AMPLIFIER, PortId::FIRST),
+            SignalDomain::Audio,
+        )
+        .connect(
+            (ENVELOPE, PortId::FIRST),
+            (AMPLIFIER, synth_engine_v2::node::AMPLIFIER_CONTROL),
+            SignalDomain::Control,
+        )
+        .connect(
+            (AMPLIFIER, PortId::FIRST),
+            (STEREO_MONITOR, PortId::FIRST),
+            SignalDomain::Audio,
+        )
+        .connect(
+            (STEREO_MONITOR, PortId::FIRST),
+            (OUTPUT, PortId::FIRST),
+            SignalDomain::Audio,
+        )
+        .declaring(synth_engine_v2::ir::PlanDeclarations {
+            note_producers: vec![
+                synth_engine_v2::ir::NoteProducerDeclaration {
+                    compiled: true,
+                    simultaneous_notes: synth_engine_v2::quantities::HeldNoteCount::measured(4),
+                    simultaneous_holds: EventCount::NONE,
+                },
+                synth_engine_v2::ir::NoteProducerDeclaration {
+                    compiled: false,
+                    simultaneous_notes: synth_engine_v2::quantities::HeldNoteCount::measured(4),
+                    simultaneous_holds: EventCount::measured(4),
+                },
+            ],
+            held_notes: synth_engine_v2::quantities::HeldNoteCount::measured(8),
+            ..synth_engine_v2::ir::PlanDeclarations::default()
+        })
+        .build()
+        .expect("a readable stereo voice plan");
+    let plan = common::admit(&ir, common::profile(TOTAL as u64, ChannelLayout::Stereo));
+    let slot = plan.resolve_note(ENVELOPE).expect("playable envelope");
+    let stream = admitted(&plan, &[note(&plan, 0, true)]);
+    let binding = MixedTargetAdmission::admit(plan, stream, slot)
+        .expect("the note destinations are still disjoint");
+    let plan = binding.plan();
+    let grouped: BTreeSet<_> = plan
+        .instance_groups()
+        .iter()
+        .flat_map(|first| (0..8).map(|index| NodeSlot::new(first.index() + index)))
+        .collect();
+    let partition = binding.instance_partition();
+    assert!(
+        partition
+            .compiled_nodes()
+            .iter()
+            .any(|node| !grouped.contains(node))
+    );
+    assert!(
+        partition
+            .live_nodes()
+            .iter()
+            .any(|node| !grouped.contains(node))
+    );
 }
 
 #[test]
@@ -2549,6 +2802,11 @@ fn mixed_stream_opens_split_owners_from_the_bound_plan_and_stream() {
             MixedJoinedStream::open(binding, ORIGIN).expect("the bound split stream prepares");
         let control = owner.control();
         let audio = owner.audio();
+
+        assert!(std::ptr::eq(
+            control.instance_partition(),
+            audio.instance_partition()
+        ));
 
         assert_eq!(control.plan().id(), stream.plan());
         assert_eq!(control.stream(), &stream);

@@ -10,7 +10,7 @@ use thiserror::Error;
 
 use crate::{
     diagnostics::CompileError,
-    host::mixed_targets::MixedTargetAdmission,
+    host::mixed_targets::{MixedInstancePartition, MixedTargetAdmission},
     identity::{
         CompiledRangeMinter, IdentityTable, LiveRangeMinter, NoteIdentity, ProducerId, TableId,
     },
@@ -120,6 +120,7 @@ pub struct MixedStreamControl {
     stream: AdmittedCompiledStream,
     minter: CompiledRangeMinter,
     compiled_slots: Vec<NoteSlot>,
+    partition: Arc<MixedInstancePartition>,
 }
 
 /// Audio-side live-range custody and renderer for a split-born mixed stream.
@@ -130,6 +131,7 @@ pub struct MixedStreamAudio {
     renderer: PreparedRenderer,
     minter: LiveRangeMinter,
     note: NoteSlot,
+    partition: Arc<MixedInstancePartition>,
 }
 
 impl MixedStreamControl {
@@ -190,6 +192,10 @@ impl MixedStreamControl {
             || live.producer() != binding.live_producer()
             || compiled.id() != table_id
             || live.id() != table_id
+            || binding.instance_partition().plan_id() != binding.plan().id()
+            || binding.instance_partition().compiled_producer() != compiled.producer()
+            || binding.instance_partition().live_producer() != live.producer()
+            || binding.instance_partition().spans() != (compiled.span(), live.span())
         {
             return Err(Box::new((MixedStreamOpenError::Partition, binding)));
         }
@@ -204,20 +210,23 @@ impl MixedStreamControl {
                 return Err(Box::new((MixedStreamOpenError::Compile(error), binding)));
             }
         };
-        let (plan, stream, note, _producer, compiled_slots) = binding.into_parts();
+        let parts = binding.into_parts();
+        let audio_partition = Arc::clone(&parts.partition);
         Ok((
             Self {
                 epoch,
                 anchor,
-                plan,
-                stream,
+                plan: parts.plan,
+                stream: parts.stream,
                 minter: compiled,
-                compiled_slots,
+                compiled_slots: parts.compiled_slots,
+                partition: parts.partition,
             },
             MixedStreamAudio {
                 renderer,
                 minter: live,
-                note,
+                note: parts.live_slot,
+                partition: audio_partition,
             },
         ))
     }
@@ -255,6 +264,11 @@ impl MixedStreamControl {
     /// The note slots reached by the owned compiled stream.
     pub fn compiled_slots(&self) -> &[NoteSlot] {
         &self.compiled_slots
+    }
+
+    /// The immutable local-instance partition shared with the audio half.
+    pub fn instance_partition(&self) -> &MixedInstancePartition {
+        &self.partition
     }
 
     /// Check the bound stream against this control's compiled range off-thread.
@@ -414,6 +428,11 @@ impl MixedJoinedPrepared {
 }
 
 impl MixedStreamAudio {
+    /// The immutable local-instance partition shared with the control half.
+    pub fn instance_partition(&self) -> &MixedInstancePartition {
+        &self.partition
+    }
+
     /// The renderer and live owner share this epoch with the compiled control.
     pub const fn epoch(&self) -> StreamEpoch {
         self.renderer.epoch()

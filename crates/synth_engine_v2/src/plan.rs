@@ -193,6 +193,38 @@ impl ParameterSlot {
     }
 }
 
+/// One row inside a plan's parameter target table.
+///
+/// A [`ParameterSlot`] addresses a whole parameter group and its writes fan out across
+/// instances. A row is one instance's destination and cannot be used as that group address.
+///
+/// ```compile_fail
+/// use synth_engine_v2::plan::{ParameterRow, ParameterSlot};
+/// fn group_write(row: ParameterRow) { let _: ParameterSlot = row; }
+/// ```
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[must_use]
+pub struct ParameterRow {
+    plan: PlanId,
+    index: usize,
+}
+
+impl ParameterRow {
+    pub(crate) const fn new(plan: PlanId, index: usize) -> Self {
+        Self { plan, index }
+    }
+
+    /// The plan whose target table this row indexes.
+    pub const fn plan(self) -> PlanId {
+        self.plan
+    }
+
+    /// The index of this one target row.
+    pub const fn index(self) -> usize {
+        self.index
+    }
+}
+
 /// One node that accepts note edges, by index.
 ///
 /// The note-side twin of [`ParameterSlot`], and it exists for the same reason: an event
@@ -286,6 +318,29 @@ pub enum InputBinding {
     Mirrors(u8),
 }
 
+/// One local voice position within a plan's admitted identity partition.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct VoiceInstanceIndex(usize);
+
+impl VoiceInstanceIndex {
+    pub(crate) const fn measured(index: usize) -> Self {
+        Self(index)
+    }
+
+    pub(crate) const fn as_usize(self) -> usize {
+        self.0
+    }
+}
+
+/// Where lowering says one scheduled node step writes state or an output region.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum NodeRole {
+    Unclassified,
+    Global,
+    Local(VoiceInstanceIndex),
+    SharedSum,
+}
+
 /// One step of the schedule: which kernel runs, over which slots.
 ///
 /// This is what [ADR-0004](../../plans/v2/decisions/ADR-0004-native-node-representation.md)
@@ -309,6 +364,7 @@ pub struct NodeStep {
     out_layout: ChannelLayout,
     io: Box<StepInputs>,
     in_place_safe: bool,
+    role: NodeRole,
 }
 
 /// Immutable after admission; sized for every YAMS source without widening each plan operation.
@@ -359,12 +415,25 @@ impl NodeStep {
                 order: [u8::MAX; MAX_INPUTS + 1],
             }),
             in_place_safe,
+            role: NodeRole::Unclassified,
         };
         // Ordered by slot index until the arena has run. Lowering's slots are virtual and
         // have no offset yet; [`Self::remap`] resolves the order again over the regions
         // they were assigned, which is the order the binding actually walks.
         step.resolve(&[]);
         step
+    }
+
+    /// Attach lowering's instance or shared-sum classification to this step.
+    #[must_use = "the returned step carries its classified role"]
+    pub(crate) fn with_role(mut self, role: NodeRole) -> Self {
+        self.role = role;
+        self
+    }
+
+    /// The scope this step itself writes, including inserted helper steps.
+    pub(crate) const fn role(&self) -> NodeRole {
+        self.role
     }
 
     /// Work out what each input is, and the order the regions are borrowed in.
@@ -528,6 +597,7 @@ impl PartialEq for NodeStep {
             && self.io.bindings == other.io.bindings
             && self.io.order == other.io.order
             && self.in_place_safe == other.in_place_safe
+            && self.role == other.role
     }
 }
 
@@ -1568,6 +1638,31 @@ impl CompiledPlan {
     /// Indexed by [`ParameterSlot`] on the audio thread; never searched.
     pub fn parameter_targets(&self) -> &[ParameterTarget] {
         &self.parameter_targets
+    }
+
+    /// Resolve one occurrence's destination inside an addressable parameter group.
+    /// The renderer and off-thread mixed target binding use this one mapping.
+    pub(crate) fn parameter_row_for_identity(
+        &self,
+        first: ParameterSlot,
+        index: u16,
+    ) -> Option<ParameterRow> {
+        if first.plan() != self.id {
+            return None;
+        }
+        let target = self.parameter_targets.get(first.index())?;
+        let instances = target.instances.get() as usize;
+        let row = if instances <= 1 {
+            first.index()
+        } else {
+            let voice = usize::from(index);
+            if voice >= instances {
+                return None;
+            }
+            first.index().checked_add(voice)?
+        };
+        self.parameter_targets.get(row)?;
+        Some(ParameterRow::new(self.id, row))
     }
 
     /// The slot an addressed parameter compiles to, or `None` if the plan has no such

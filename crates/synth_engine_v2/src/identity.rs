@@ -353,6 +353,10 @@ impl Range {
         let index = u32::from(index);
         index >= self.start && index < self.start.saturating_add(self.len)
     }
+
+    pub(crate) fn indices(self) -> std::ops::Range<u32> {
+        self.start..self.start.saturating_add(self.len)
+    }
 }
 
 /// One note a mass release ended: the node it played and the partition index it held,

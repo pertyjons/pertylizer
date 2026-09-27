@@ -993,13 +993,12 @@ impl PreparedRenderer {
     /// a group of several — an identity the plan's partition does not hold — so nothing is
     /// written rather than another voice's row.
     fn voice_row(&self, first: usize, index: u16) -> Option<usize> {
-        let target = self.plan.parameter_targets().get(first)?;
-        let instances = target.instances.get() as usize;
-        if instances <= 1 {
-            return Some(first);
-        }
-        let voice = usize::from(index);
-        (voice < instances).then_some(first.saturating_add(voice))
+        self.plan
+            .parameter_row_for_identity(
+                crate::plan::ParameterSlot::new(self.plan.id(), first),
+                index,
+            )
+            .map(crate::plan::ParameterRow::index)
     }
 
     /// The voice instance a steal's identity names, or `None` where the index lies outside

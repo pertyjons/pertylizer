@@ -220,6 +220,13 @@ initial schedule with private events and a committed compiled-range minter,
 or return the unchanged owner on refusal. The sealed value has no render,
 offer, split or event-extraction API; cross-thread handoff and retirement are
 still unbuilt.
+The binding now retains lowering's step classification: local voice steps,
+shared voice-sum steps and global steps, including rowless inserted work. It
+derives typed parameter rows from the classified nodes, and both joined halves
+share the immutable partition. Note gate and magnitude destinations must fall
+inside their producer's local partition. Shared sums and global sources still
+need influence and ordering laws; the partition provides no row-scoped
+catch-up, reseed, activation or render path.
 
 ### Selected work — ordered transport through live I/O
 

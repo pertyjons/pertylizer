@@ -4,13 +4,19 @@
 //! and live note slot. It does not prepare ingress, activate transport, or permit
 //! mixed rendering.
 
-use std::{collections::BTreeSet, sync::Arc};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    sync::Arc,
+};
 
 use thiserror::Error;
 
 use crate::identity::{INDEX_SPACE, ProducerId, Range};
 use crate::ir::StealingPolicy;
-use crate::plan::{CompiledPlan, NodeSlot, NoteSlot, ParameterSlot};
+use crate::plan::{
+    CompiledPlan, NodeRole, NodeSlot, NoteSlot, ParameterRow, ParameterSlot, PlanId, PlanOp,
+    VoiceInstanceIndex,
+};
 use crate::schedule::{AdmittedCompiledStream, CompiledPayload};
 
 /// Why the first target-binding shape cannot be admitted.
@@ -46,6 +52,108 @@ pub enum MixedTargetError {
         /// The overlapping node instance.
         node: NodeSlot,
     },
+    /// The plan's voice groups, parameter rows and admitted identity spans disagree.
+    #[error("mixed voice instance partition cannot represent the admitted plan")]
+    InstancePartition,
+    /// A note destination is outside the producer's instance-local rows.
+    #[error("note destination row {row:?} is outside its producer's instance partition")]
+    DestinationOutsidePartition {
+        /// The gate or magnitude destination that could not be owned.
+        row: ParameterRow,
+    },
+}
+
+/// The local node instances and rows each producer can address in one immutable plan.
+///
+/// Shared voice-sum steps and global nodes stay separate. This partition does not classify
+/// influence from a global source into a local instance, and grants no mixed rendering or
+/// activation.
+#[derive(Debug)]
+#[must_use]
+pub struct MixedInstancePartition {
+    plan: PlanId,
+    compiled_producer: ProducerId,
+    live_producer: ProducerId,
+    compiled_span: Range,
+    live_span: Range,
+    compiled_nodes: Vec<NodeSlot>,
+    live_nodes: Vec<NodeSlot>,
+    shared_sum_nodes: Vec<NodeSlot>,
+    global_nodes: Vec<NodeSlot>,
+    compiled_rows: Vec<ParameterRow>,
+    live_rows: Vec<ParameterRow>,
+    shared_sum_rows: Vec<ParameterRow>,
+    global_rows: Vec<ParameterRow>,
+}
+
+impl MixedInstancePartition {
+    /// The plan whose nodes and parameter rows are partitioned.
+    pub const fn plan_id(&self) -> PlanId {
+        self.plan
+    }
+
+    /// The compiled producer whose identity span selects local instances.
+    pub const fn compiled_producer(&self) -> ProducerId {
+        self.compiled_producer
+    }
+
+    /// The live producer whose identity span selects local instances.
+    pub const fn live_producer(&self) -> ProducerId {
+        self.live_producer
+    }
+
+    /// Every local node instance selected by the compiled span, including rowless steps.
+    pub fn compiled_nodes(&self) -> &[NodeSlot] {
+        &self.compiled_nodes
+    }
+
+    /// Every local node instance selected by the live span, including rowless steps.
+    pub fn live_nodes(&self) -> &[NodeSlot] {
+        &self.live_nodes
+    }
+
+    /// Voice-sum steps that write one output shared by both producers.
+    pub fn shared_sum_nodes(&self) -> &[NodeSlot] {
+        &self.shared_sum_nodes
+    }
+
+    /// Nodes outside the voice instance groups.
+    pub fn global_nodes(&self) -> &[NodeSlot] {
+        &self.global_nodes
+    }
+
+    /// All parameter rows on compiled local node instances.
+    pub fn compiled_rows(&self) -> &[ParameterRow] {
+        &self.compiled_rows
+    }
+
+    /// All parameter rows on live local node instances.
+    pub fn live_rows(&self) -> &[ParameterRow] {
+        &self.live_rows
+    }
+
+    /// Parameter rows on shared voice-sum steps, if a future lowering creates any.
+    pub fn shared_sum_rows(&self) -> &[ParameterRow] {
+        &self.shared_sum_rows
+    }
+
+    /// Parameter rows on nodes outside the voice instance groups.
+    pub fn global_rows(&self) -> &[ParameterRow] {
+        &self.global_rows
+    }
+
+    pub(crate) const fn spans(&self) -> (Range, Range) {
+        (self.compiled_span, self.live_span)
+    }
+}
+
+/// Named transfer of the bound values into their two range owners.
+pub(crate) struct MixedTargetParts {
+    pub(crate) plan: Arc<CompiledPlan>,
+    pub(crate) stream: AdmittedCompiledStream,
+    pub(crate) live_slot: NoteSlot,
+    pub(crate) compiled_slots: Vec<NoteSlot>,
+    pub(crate) partition: Arc<MixedInstancePartition>,
 }
 
 /// A refused binding returns its plan, stream and live slot for a corrected retry.
@@ -85,6 +193,7 @@ pub struct MixedTargetAdmission {
     compiled_span: Range,
     live_span: Range,
     compiled_slots: Vec<NoteSlot>,
+    partition: Arc<MixedInstancePartition>,
 }
 
 impl MixedTargetAdmission {
@@ -134,8 +243,8 @@ impl MixedTargetAdmission {
                 .ok_or(MixedTargetError::ProducerShape)?;
             let live_span = Range::checked(live_start, live_end - live_start)
                 .ok_or(MixedTargetError::ProducerShape)?;
-            let compiled_range = compiled_start..compiled_end;
-            let live_range = live_start..live_end;
+            let partition =
+                build_partition(&plan, compiled, live_producer, compiled_span, live_span)?;
 
             let mut compiled_slots = BTreeSet::new();
             for (event_index, event) in stream.events().iter().enumerate() {
@@ -153,13 +262,33 @@ impl MixedTargetAdmission {
             }
 
             let mut compiled_nodes = BTreeSet::new();
+            let mut compiled_rows = BTreeSet::new();
             for slot in compiled_slots.iter().copied() {
-                expand_slot(&plan, slot, compiled_range.clone(), &mut compiled_nodes)?;
+                expand_slot(
+                    &plan,
+                    slot,
+                    compiled_span,
+                    &mut compiled_nodes,
+                    &mut compiled_rows,
+                )?;
             }
             let mut live_nodes = BTreeSet::new();
-            expand_slot(&plan, live_slot, live_range, &mut live_nodes)?;
+            let mut live_rows = BTreeSet::new();
+            expand_slot(&plan, live_slot, live_span, &mut live_nodes, &mut live_rows)?;
             if let Some(node) = compiled_nodes.intersection(&live_nodes).next().copied() {
                 return Err(MixedTargetError::SharedNode { node });
+            }
+            if let Some(row) = compiled_rows
+                .iter()
+                .find(|row| partition.compiled_rows.binary_search(row).is_err())
+            {
+                return Err(MixedTargetError::DestinationOutsidePartition { row: *row });
+            }
+            if let Some(row) = live_rows
+                .iter()
+                .find(|row| partition.live_rows.binary_search(row).is_err())
+            {
+                return Err(MixedTargetError::DestinationOutsidePartition { row: *row });
             }
 
             Ok((
@@ -167,9 +296,10 @@ impl MixedTargetAdmission {
                 compiled_span,
                 live_span,
                 compiled_slots.into_iter().collect(),
+                partition,
             ))
         })();
-        let (live_producer, compiled_span, live_span, compiled_slots) = match checked {
+        let (live_producer, compiled_span, live_span, compiled_slots, partition) = match checked {
             Ok(bound) => bound,
             Err(reason) => {
                 return Err(Box::new(MixedTargetFailure {
@@ -188,6 +318,7 @@ impl MixedTargetAdmission {
             compiled_span,
             live_span,
             compiled_slots,
+            partition: Arc::new(partition),
         })
     }
 
@@ -224,31 +355,149 @@ impl MixedTargetAdmission {
         &self.compiled_slots
     }
 
-    /// Move the checked values into the split stream constructor exactly once.
-    pub(crate) fn into_parts(
-        self,
-    ) -> (
-        Arc<CompiledPlan>,
-        AdmittedCompiledStream,
-        NoteSlot,
-        ProducerId,
-        Vec<NoteSlot>,
-    ) {
-        (
-            self.plan,
-            self.stream,
-            self.live_slot,
-            self.live_producer,
-            self.compiled_slots,
-        )
+    /// The local instance and row partition derived from this bound plan.
+    pub fn instance_partition(&self) -> &MixedInstancePartition {
+        &self.partition
     }
+
+    /// Move the checked values into the split stream constructor exactly once.
+    pub(crate) fn into_parts(self) -> MixedTargetParts {
+        MixedTargetParts {
+            plan: self.plan,
+            stream: self.stream,
+            live_slot: self.live_slot,
+            compiled_slots: self.compiled_slots,
+            partition: self.partition,
+        }
+    }
+}
+
+fn build_partition(
+    plan: &CompiledPlan,
+    compiled_producer: ProducerId,
+    live_producer: ProducerId,
+    compiled_span: Range,
+    live_span: Range,
+) -> Result<MixedInstancePartition, MixedTargetError> {
+    let roles: BTreeMap<_, _> = plan
+        .ops()
+        .iter()
+        .filter_map(|op| match op {
+            PlanOp::Node(step) => Some((step.node(), step.role())),
+            _ => None,
+        })
+        .collect();
+    let node_count = plan
+        .ops()
+        .iter()
+        .filter(|op| matches!(op, PlanOp::Node(_)))
+        .count();
+    if roles.len() != node_count {
+        return Err(MixedTargetError::InstancePartition);
+    }
+    let mut compiled_nodes = BTreeSet::new();
+    let mut live_nodes = BTreeSet::new();
+    let mut shared_sum_nodes = BTreeSet::new();
+    let mut global_nodes = BTreeSet::new();
+    let voices = usize::try_from(plan.voice_instances().get())
+        .map_err(|_| MixedTargetError::InstancePartition)?;
+    for (node, role) in &roles {
+        match role {
+            NodeRole::Local(index) => {
+                if index.as_usize() >= voices {
+                    return Err(MixedTargetError::InstancePartition);
+                }
+                let identity = u16::try_from(index.as_usize())
+                    .map_err(|_| MixedTargetError::InstancePartition)?;
+                match (
+                    compiled_span.contains(identity),
+                    live_span.contains(identity),
+                ) {
+                    (true, false) => {
+                        compiled_nodes.insert(*node);
+                    }
+                    (false, true) => {
+                        live_nodes.insert(*node);
+                    }
+                    _ => return Err(MixedTargetError::InstancePartition),
+                }
+            }
+            NodeRole::SharedSum => {
+                shared_sum_nodes.insert(*node);
+            }
+            NodeRole::Global => {
+                global_nodes.insert(*node);
+            }
+            NodeRole::Unclassified => return Err(MixedTargetError::InstancePartition),
+        }
+    }
+    let mut declared_sums = BTreeSet::new();
+    for first in plan.instance_groups() {
+        let shared = plan.sum_groups().contains(first);
+        for index in 0..voices {
+            let node = NodeSlot::new(
+                first
+                    .index()
+                    .checked_add(index)
+                    .ok_or(MixedTargetError::InstancePartition)?,
+            );
+            let expected = if shared {
+                NodeRole::SharedSum
+            } else {
+                NodeRole::Local(VoiceInstanceIndex::measured(index))
+            };
+            if roles.get(&node) != Some(&expected) {
+                return Err(MixedTargetError::InstancePartition);
+            }
+            if shared {
+                declared_sums.insert(node);
+            }
+        }
+    }
+    if shared_sum_nodes != declared_sums {
+        return Err(MixedTargetError::InstancePartition);
+    }
+    let mut compiled_rows = Vec::new();
+    let mut live_rows = Vec::new();
+    let mut shared_sum_rows = Vec::new();
+    let mut global_rows = Vec::new();
+    for (index, target) in plan.parameter_targets().iter().enumerate() {
+        let row = ParameterRow::new(plan.id(), index);
+        if compiled_nodes.contains(&target.node) {
+            compiled_rows.push(row);
+        } else if live_nodes.contains(&target.node) {
+            live_rows.push(row);
+        } else if shared_sum_nodes.contains(&target.node) {
+            shared_sum_rows.push(row);
+        } else if global_nodes.contains(&target.node) {
+            global_rows.push(row);
+        } else {
+            return Err(MixedTargetError::InstancePartition);
+        }
+    }
+    Ok(MixedInstancePartition {
+        plan: plan.id(),
+        compiled_producer,
+        live_producer,
+        compiled_span,
+        live_span,
+        compiled_nodes: compiled_nodes.into_iter().collect(),
+        live_nodes: live_nodes.into_iter().collect(),
+        shared_sum_nodes: shared_sum_nodes.into_iter().collect(),
+        global_nodes: global_nodes.into_iter().collect(),
+        compiled_rows,
+        live_rows,
+        shared_sum_rows,
+        global_rows,
+    })
 }
 
 fn expand_slot(
     plan: &CompiledPlan,
     slot: NoteSlot,
-    range: std::ops::Range<u32>,
+    range: Range,
     nodes: &mut BTreeSet<NodeSlot>,
+    rows: &mut BTreeSet<ParameterRow>,
 ) -> Result<(), MixedTargetError> {
     let invalid = || MixedTargetError::UnrepresentableTarget { slot };
     let target = plan.note_targets().get(slot.index()).ok_or_else(invalid)?;
@@ -260,8 +509,9 @@ fn expand_slot(
         slot,
         target.parameter,
         target.node,
-        range.clone(),
+        range,
         nodes,
+        rows,
     )?;
     let magnitudes = plan.note_magnitudes_of(slot);
     if magnitudes.len() != target.magnitudes.len() {
@@ -273,8 +523,9 @@ fn expand_slot(
             slot,
             magnitude.parameter,
             magnitude.node,
-            range.clone(),
+            range,
             nodes,
+            rows,
         )?;
     }
     Ok(())
@@ -285,8 +536,9 @@ fn expand_parameter(
     slot: NoteSlot,
     parameter: ParameterSlot,
     first_node: NodeSlot,
-    range: std::ops::Range<u32>,
+    range: Range,
     nodes: &mut BTreeSet<NodeSlot>,
+    rows: &mut BTreeSet<ParameterRow>,
 ) -> Result<(), MixedTargetError> {
     let invalid = || MixedTargetError::UnrepresentableTarget { slot };
     if parameter.plan() != plan.id() {
@@ -303,21 +555,20 @@ fn expand_parameter(
     if instances == 0 {
         return Err(invalid());
     }
-    for index in range {
-        let row = if instances <= 1 {
-            parameter.index()
-        } else {
-            let index = usize::try_from(index).map_err(|_| invalid())?;
-            if index >= instances {
-                return Err(invalid());
-            }
-            parameter.index().checked_add(index).ok_or_else(invalid)?
-        };
-        let actual = plan.parameter_targets().get(row).ok_or_else(invalid)?;
+    for index in range.indices() {
+        let identity = u16::try_from(index).map_err(|_| invalid())?;
+        let row = plan
+            .parameter_row_for_identity(parameter, identity)
+            .ok_or_else(invalid)?;
+        let actual = plan
+            .parameter_targets()
+            .get(row.index())
+            .ok_or_else(invalid)?;
         if actual.control != first.control || actual.instances != first.instances {
             return Err(invalid());
         }
         nodes.insert(actual.node);
+        rows.insert(row);
     }
     Ok(())
 }

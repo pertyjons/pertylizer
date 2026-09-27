@@ -14,8 +14,9 @@ use crate::ir::{GraphIr, IrNodeKind, IrObject, NodeId, PlanDeclarations, PortId}
 use crate::node::kernels::{MAX_INPUTS, PreparedNode};
 use crate::node::{self, NodeDescriptor, NoteMagnitude};
 use crate::plan::{
-    BufferSlot, CompiledPlan, NodeSlot, NodeStep, NoteAddress, NoteMagnitudeTarget, NoteSlot,
-    NoteTarget, ParameterAddress, ParameterSlot, ParameterTarget, PlanOp, issue_plan_id,
+    BufferSlot, CompiledPlan, NodeRole, NodeSlot, NodeStep, NoteAddress, NoteMagnitudeTarget,
+    NoteSlot, NoteTarget, ParameterAddress, ParameterSlot, ParameterTarget, PlanOp,
+    VoiceInstanceIndex, issue_plan_id,
 };
 use crate::profile::HostProfile;
 use crate::quantities::{
@@ -1542,6 +1543,7 @@ impl Lowering {
         prepared: crate::plan::PreparedSlot,
         inputs: [Option<BufferSlot>; MAX_INPUTS],
         layout: ChannelLayout,
+        role: NodeRole,
     ) -> (NodeSlot, BufferSlot) {
         let out = BufferSlot::new(self.widths.len());
         // ADR-0041 clause 2: the width is the layout's channel count times the quantum, and
@@ -1549,7 +1551,7 @@ impl Lowering {
         self.widths
             .push(layout.channels().saturating_mul(QUANTUM_FRAMES as usize));
         (
-            self.schedule_into(descriptor, prepared, inputs, layout, out),
+            self.schedule_into(descriptor, prepared, inputs, layout, out, role),
             out,
         )
     }
@@ -1564,6 +1566,7 @@ impl Lowering {
         layout: ChannelLayout,
         edge: crate::ir::EdgeId,
         conversion: crate::validate::Conversion,
+        role: NodeRole,
         warnings: &mut Vec<CompileWarning>,
     ) -> BufferSlot {
         let copy = node::copy_descriptor();
@@ -1573,6 +1576,7 @@ impl Lowering {
             prepared,
             crate::node::kernels::pair_inputs(Some(source), None),
             layout,
+            role,
         );
         self.inserted += 1;
         warnings.push(CompileWarning::ConversionInserted { edge, conversion });
@@ -1588,19 +1592,31 @@ impl Lowering {
         inputs: [Option<BufferSlot>; MAX_INPUTS],
         layout: ChannelLayout,
         out: BufferSlot,
+        role: NodeRole,
     ) -> NodeSlot {
         let node = NodeSlot::new(self.states);
         self.states += 1;
-        self.ops.push(PlanOp::Node(NodeStep::new(
-            descriptor.kernel,
-            node,
-            prepared,
-            out,
-            layout,
-            inputs,
-            descriptor.in_place_safe,
-        )));
+        self.ops.push(PlanOp::Node(
+            NodeStep::new(
+                descriptor.kernel,
+                node,
+                prepared,
+                out,
+                layout,
+                inputs,
+                descriptor.in_place_safe,
+            )
+            .with_role(role),
+        ));
         node
+    }
+}
+
+const fn instance_role(in_voice: bool, instance: usize) -> NodeRole {
+    if in_voice {
+        NodeRole::Local(VoiceInstanceIndex::measured(instance))
+    } else {
+        NodeRole::Global
     }
 }
 
@@ -1858,12 +1874,20 @@ fn lower(
                         _ => slots.get(from).copied(),
                     };
                     if let Some(source) = source {
-                        sources.push(match converted.get(edge) {
-                            Some(conversion) => {
-                                state.widen(source, port.layout(), *edge, *conversion, warnings)
-                            }
-                            None => source,
-                        });
+                        sources.push((
+                            instance,
+                            match converted.get(edge) {
+                                Some(conversion) => state.widen(
+                                    source,
+                                    port.layout(),
+                                    *edge,
+                                    *conversion,
+                                    instance_role(in_voice, instance),
+                                    warnings,
+                                ),
+                                None => source,
+                            },
+                        ));
                     }
                 }
                 let len = match frames.as_usize() {
@@ -1877,13 +1901,14 @@ fn lower(
                     }
                 };
                 let mut buffers = Vec::with_capacity(instances);
-                for source in sources {
+                for (instance, source) in sources {
                     let prepared = state.prepare(PreparedNode::Latency { frames: len });
                     let (slot, buffer) = state.schedule(
                         &node::latency_descriptor(),
                         prepared,
                         crate::node::kernels::pair_inputs(Some(source), None),
                         port.layout(),
+                        instance_role(in_voice, instance),
                     );
                     if in_voice && buffers.is_empty() {
                         instance_groups.push(slot);
@@ -1953,9 +1978,14 @@ fn lower(
                     // widened by a scheduled conversion, exactly as one reaching the output
                     // is, on the validator's record of the edge.
                     let buffer = match converted.get(edge) {
-                        Some(conversion) => {
-                            state.widen(buffer, port.layout(), *edge, *conversion, warnings)
-                        }
+                        Some(conversion) => state.widen(
+                            buffer,
+                            port.layout(),
+                            *edge,
+                            *conversion,
+                            instance_role(in_voice, instance),
+                            warnings,
+                        ),
                         None => buffer,
                     };
                     resolved.push(buffer);
@@ -1975,8 +2005,14 @@ fn lower(
         let mut first_node = None;
         let mut outs = Vec::with_capacity(instances);
         let mut sums: Vec<(BufferSlot, Vec<BufferSlot>)> = Vec::with_capacity(instances);
-        for (inputs, summed) in bound {
-            let (node_slot, out) = state.schedule(&descriptor, prepared_slot, inputs, out_layout);
+        for (instance, (inputs, summed)) in bound.into_iter().enumerate() {
+            let (node_slot, out) = state.schedule(
+                &descriptor,
+                prepared_slot,
+                inputs,
+                out_layout,
+                instance_role(in_voice, instance),
+            );
             let first = *first_node.get_or_insert(node_slot);
             // The contiguity the addressing relies on, held rather than assumed: a step
             // scheduled between two instances is a compiler defect, refused here.
@@ -1989,7 +2025,7 @@ fn lower(
         // `SOUND-INV-031`: each instance's own step seeded its output with the first cable;
         // every further cable is accumulated into that region, in identity order, by the
         // voice sum's own step. Linear, in float, unclamped.
-        for (out, summed) in sums {
+        for (instance, (out, summed)) in sums.into_iter().enumerate() {
             for source in summed {
                 let accumulate = node::accumulate_descriptor();
                 let accumulate_prepared = state.prepare(node::prepare_copy());
@@ -1999,6 +2035,7 @@ fn lower(
                     crate::node::kernels::pair_inputs(Some(source), Some(out)),
                     out_layout,
                     out,
+                    instance_role(in_voice, instance),
                 );
                 state.inserted += 1;
             }
@@ -2028,6 +2065,7 @@ fn lower(
                                 copy_prepared,
                                 crate::node::kernels::pair_inputs(Some(out), None),
                                 out_layout,
+                                NodeRole::SharedSum,
                             );
                             state.inserted += 1;
                             instance_groups.push(first_sum);
@@ -2043,6 +2081,7 @@ fn lower(
                                 crate::node::kernels::pair_inputs(Some(out), Some(region)),
                                 out_layout,
                                 region,
+                                NodeRole::SharedSum,
                             );
                             state.inserted += 1;
                             let _ = instance;
@@ -2389,7 +2428,14 @@ fn lower(
             continue;
         };
         if let Some(conversion) = converted.get(edge) {
-            source = state.widen(source, ChannelLayout::Stereo, *edge, *conversion, warnings);
+            source = state.widen(
+                source,
+                ChannelLayout::Stereo,
+                *edge,
+                *conversion,
+                NodeRole::Global,
+                warnings,
+            );
         }
         state.ops.push(PlanOp::FeedbackWrite { node, source });
     }
@@ -2653,6 +2699,7 @@ fn lower_output(
                 prepared,
                 crate::node::kernels::pair_inputs(Some(source), None),
                 layout,
+                NodeRole::Global,
             );
             state.inserted += 1;
             // Clause 9's third requirement. The schedule and the buffer count carry the
