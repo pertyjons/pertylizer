@@ -177,6 +177,10 @@ pub enum MixedStampPrepareError {
     /// The private restoration batch no longer has its admitted requested-time shape.
     #[error("mixed scoped restoration batch disagrees with the requested-time candidate")]
     InvalidRestoration,
+    /// The complete private list lost its nondecreasing stamped-time order.
+    /// The index names the combined restoration-plus-suffix list.
+    #[error("mixed event {event_index} precedes the previous stamped event")]
+    EventOrder { event_index: usize },
 }
 
 /// Why a private mixed schedule cannot be read at an effective render boundary.
@@ -197,7 +201,8 @@ pub enum MixedEffectiveTimeError {
         requested: SampleTime,
         effective: SampleTime,
     },
-    /// A placed event would leave the representable engine timeline.
+    /// A placed event would leave the representable engine timeline. Whole-candidate
+    /// preflight names the latest event; a checked individual read names that read.
     #[error("event {event_index} at {time} cannot be displaced by {shift}")]
     EventTimeUnrepresentable {
         event_index: usize,
@@ -1119,6 +1124,7 @@ impl MixedJoinedPrepared {
         let mut events = std::mem::take(&mut suffix.history.restoration);
         suffix.history.restoration_count = EventCount::NONE;
         events.extend(stamped.events);
+        check_mixed_event_order(&events)?;
         let event_count = EventCount::measured(
             u32::try_from(events.len())
                 .map_err(|_| MixedStampPrepareError::CountUnrepresentable)?,
@@ -1135,6 +1141,17 @@ impl MixedJoinedPrepared {
             minter,
         })
     }
+}
+
+fn check_mixed_event_order(events: &[TimedEvent]) -> Result<(), MixedStampPrepareError> {
+    for (index, pair) in events.windows(2).enumerate() {
+        if pair[1].envelope().time() < pair[0].envelope().time() {
+            return Err(MixedStampPrepareError::EventOrder {
+                event_index: index + 1,
+            });
+        }
+    }
+    Ok(())
 }
 
 impl MixedHistoryCandidate {
@@ -1234,7 +1251,9 @@ impl MixedStampedCandidate {
             }
         })?;
         let shift = FrameCount::new(frames);
-        for (event_index, event) in self.events.iter().enumerate() {
+        // Stamping checked nondecreasing times off-thread. The last event therefore
+        // bounds every shifted event, so the later audio offer needs one check.
+        if let Some((event_index, event)) = self.events.iter().enumerate().next_back() {
             let time = event.envelope().time();
             if time.checked_add(shift).is_err() {
                 return Err(MixedEffectiveTimeError::EventTimeUnrepresentable {

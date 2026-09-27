@@ -257,7 +257,9 @@ It retains the new outstanding set and initial sequence baseline, with scoped
 restoration before a suffix onset at the destination sample. It has no offer
 path. A private timing check now validates one possible effective quantum
 boundary and one displacement across the complete list, including refusal if
-only a later suffix event overflows engine time. An audio owner still must
+only a later suffix event overflows engine time. Stamping checks the list's time
+order off-thread, so effective-boundary preflight checks only its last event.
+An audio owner still must
 select the boundary, read the shifted list as its schedule, end old compiled
 occurrences before rendering it, suppress the old schedule, account for other
 same-quantum contributors, and settle shared/global influence, handoff and

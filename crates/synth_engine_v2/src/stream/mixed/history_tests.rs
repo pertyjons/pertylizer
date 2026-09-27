@@ -841,11 +841,13 @@ fn private_effective_timing_refuses_suffix_overflow_after_restoration_fits() {
             Ok(SampleTime::new(last_boundary))
         );
     }
-    let overflowing_index = stamped
-        .events
-        .iter()
-        .position(|event| event.envelope().time() > requested)
-        .expect("suffix has a later edge");
+    assert!(
+        stamped
+            .events
+            .windows(2)
+            .all(|pair| { pair[0].envelope().time() <= pair[1].envelope().time() })
+    );
+    let overflowing_index = stamped.events.len() - 1;
     assert!(overflowing_index > restoration_count);
     assert_eq!(
         stamped.effective_timing(SampleTime::new(last_boundary)),
@@ -856,6 +858,69 @@ fn private_effective_timing_refuses_suffix_overflow_after_restoration_fits() {
         })
     );
     assert_eq!(stamped.anchor().time(), requested);
+}
+
+#[test]
+fn private_event_order_check_refuses_a_reversed_combined_list() {
+    let prepared = bound(true);
+    let history = prepared
+        .prepare_history(SampleTime::new(64), PlanPosition::new(10))
+        .expect("prefix");
+    let suffix = prepared.prepare_suffix(history).expect("suffix");
+    let stamped = prepared.stamp_suffix(suffix).expect("ordered stamp");
+    let mut events = stamped.events.clone();
+    let last = events.len() - 1;
+    events.swap(0, last);
+    assert_eq!(
+        check_mixed_event_order(&events),
+        Err(MixedStampPrepareError::EventOrder { event_index: 1 })
+    );
+}
+
+#[test]
+fn private_effective_timing_accepts_latest_event_at_timeline_end() {
+    let prepared = bound_with_events(false, |note| {
+        vec![
+            PlanEvent::new(
+                PlanPosition::new(10),
+                CompiledPayload::NoteOn {
+                    slot: note,
+                    key: key(60),
+                    velocity: NoteVelocity::FULL,
+                },
+            ),
+            PlanEvent::new(
+                PlanPosition::new(73),
+                CompiledPayload::NoteOff {
+                    slot: note,
+                    key: key(60),
+                },
+            ),
+        ]
+    });
+    let last_boundary = u64::MAX - (u64::MAX % u64::from(crate::time::QUANTUM_FRAMES));
+    let requested = SampleTime::new(last_boundary - 128);
+    let history = prepared
+        .prepare_history(requested, PlanPosition::new(10))
+        .expect("prefix");
+    let suffix = prepared.prepare_suffix(history).expect("suffix");
+    let stamped = prepared.stamp_suffix(suffix).expect("private stamp");
+    let timing = stamped
+        .effective_timing(SampleTime::new(last_boundary))
+        .expect("latest event reaches the final frame exactly");
+    assert_eq!(timing.shift(), FrameCount::new(128));
+    let shifted = stamped
+        .effective_events(timing.effective())
+        .expect("checked view");
+    assert_eq!(
+        shifted
+            .get(shifted.len() - 1)
+            .expect("last read")
+            .expect("last event")
+            .envelope()
+            .time(),
+        SampleTime::new(u64::MAX)
+    );
 }
 
 #[test]
