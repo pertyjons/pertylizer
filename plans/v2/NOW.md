@@ -340,6 +340,15 @@ receipts and recorder publications. Same-key releases on one source redeem its
 onsets in FIFO order; the other source's same key stays separate. The fixture
 uses serial producers and has no atomic shared capacity charge or mixed-ingress
 offer, so the combined host acceptance gate remains open.
+An independent design read rejected a merger-only shared counter as sufficient
+mixed admission. A V2-local counterexample gives source A an onset at sample 150
+and source B one at 140: both raw owners accept, and the modeled shared credits
+remain available, but mixed ingress refuses B with `NonMonotoneStamp` after A's
+offer. Mixed offers need mapped-time ordering and an audio-side result path before
+a combined positive onset outcome can be promised. Holding a popped onset while
+waiting for tracker credit can also block its own release and frontier behind
+it. Source-local release reservation, audition release credit, terminal refusal
+custody and consumer-specific settlement remain required parts of the design.
 An off-thread check now places and stamps the bound stream against
 a disposable copy of only the compiled range. It publishes no events or
 reservations. Tests cover wrong-producer and wrong-capacity refusals, disjoint

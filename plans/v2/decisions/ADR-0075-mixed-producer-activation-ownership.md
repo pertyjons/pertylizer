@@ -1464,6 +1464,33 @@ repeated same-key onsets and FIFO releases on one source beside the other
 source's same key. This is an identity and payload handoff check for the
 example's existing ring and raw owner. It has no atomic shared capacity charge,
 concurrent producer proof, mixed-ingress offer or joined outcome.
+An independent design read rejected the narrower idea that a merger-thread
+shared counter alone could linearize combined mixed admission. The V2-local
+`merger_credit_alone_cannot_admit_out_of_order_mixed_ingress` test provides a
+falsifier: source A's onset at sample 150 and source B's onset at 140 both enter
+their raw owners with model credits available, yet direct mixed offers in
+source-service order refuse B as `NonMonotoneStamp`. The mixed offer runs on the
+audio half, whose monotone stamp and forward-horizon checks are separate from
+merger credit. A combined positive onset outcome therefore needs mapped-time
+mixed-offer order and an exact audio-side ingress result returned to the source
+ledger; the current private mixed owner has no such result channel.
+
+The same read found that holding a popped onset until tracker credit returns
+can deadlock when its release or required frontier is behind that onset in the
+source FIFO. Only a shortage resolved by draining the source ring can justify
+ordered retry; other shortages need an explicit terminal or
+per-occurrence refusal with custody and a same-key tombstone. The source ring
+must carry the onset identity redeemed by each release, including a release
+blocked behind an onset retry. A future shared charge must also reserve the
+audition pool for the protected release. When the onset was refused before raw
+admission, its matching release is ordinary to the raw owner and needs either
+ordinary-cell credit or an explicit rule to skip raw delivery. These are
+falsifiable prerequisites, not an accepted combined admission contract.
+Raw release admission converts its reserved cell to occupancy; the merger can
+observe recorder release publication only in a delivered receipt, and audition
+credit returns through settlement and collection. Mixed ingress currently
+returns only the immediate offer result on its audio half. A shared ledger must
+name each of these distinct events before any credit can be recycled.
 EVD-0024's component matrix remains
 insufficient for production capacity; ADR-0022's hardware timing and physical
 round-trip gates remain separate.

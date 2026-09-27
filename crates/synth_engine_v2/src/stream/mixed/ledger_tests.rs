@@ -1632,6 +1632,76 @@ fn modeled_ring_releases_settle_raw_credit_from_delivered_serial_receipts() {
 }
 
 #[test]
+fn merger_credit_alone_cannot_admit_out_of_order_mixed_ingress() {
+    let (prepared, candidate) = history_tests::one_shot_with_boundary_on(true);
+    let (_control, mut mixed) = prepared
+        .arm_one_shot(candidate, &history_tests::mixed_profile())
+        .unwrap();
+    let epoch = issue_epoch().unwrap();
+    let (mut first_raw, first_generation) = bridge_raw_input(epoch, 0);
+    let (mut second_raw, second_generation) = bridge_raw_input(epoch, 1);
+    let mut model = Model::new(limits(2), 4).with_raw_capacity(InputCapacity::new(8).unwrap());
+
+    let first_note = input(0x90, 60, 100);
+    let first_id = model.submit(ModelSource::First, first_note).unwrap();
+    let (served, first_key, first_input) = model.service_with_input(ModelSource::First, true, true);
+    assert_eq!(served, first_id);
+    let first_raw_id = first_raw
+        .offer_message(
+            first_generation,
+            InputTick::new(150),
+            SampleTime::new(150),
+            first_input,
+        )
+        .unwrap();
+    model.bind_raw_onset(first_id, first_raw_id).unwrap();
+    let Midi1Event::NoteOn { velocity, .. } = first_input.event() else {
+        panic!("first source must retain its onset");
+    };
+    let first_identity = mixed
+        .offer_test_note_on(SampleTime::new(150), first_key.note, velocity)
+        .unwrap();
+    model.bind_ingress_onset(first_id, first_identity);
+
+    assert_eq!(
+        model.onset_preflight(ModelSource::Second),
+        OnsetPreflight::Ready
+    );
+    let second_note = input(0x90, 60, 110);
+    let second_id = model.submit(ModelSource::Second, second_note).unwrap();
+    let (served, second_key, second_input) =
+        model.service_with_input(ModelSource::Second, true, true);
+    assert_eq!(served, second_id);
+    let second_raw_id = second_raw
+        .offer_message(
+            second_generation,
+            InputTick::new(140),
+            SampleTime::new(140),
+            second_input,
+        )
+        .unwrap();
+    model.bind_raw_onset(second_id, second_raw_id).unwrap();
+    let Midi1Event::NoteOn { velocity, .. } = second_input.event() else {
+        panic!("second source must retain its onset");
+    };
+    let refused = mixed.offer_test_note_on(SampleTime::new(140), second_key.note, velocity);
+    assert_eq!(
+        refused,
+        Err(IngressRefused::NonMonotoneStamp {
+            time: SampleTime::new(140),
+            last: SampleTime::new(150),
+        })
+    );
+    model.refuse_ingress_onset(second_id, refused.unwrap_err());
+    assert_eq!(
+        mixed.test_ingress.holds_outstanding(),
+        EventCount::measured(1)
+    );
+    assert_eq!(model.used.tracker, 2);
+    assert_eq!(model.used.ingress, 1);
+}
+
+#[test]
 fn mixed_hold_refusal_and_later_fault_leave_serial_capture_receipts_independent() {
     let (mut owner, generations) = bridge_serial_owner(256);
     let (prepared, candidate) = history_tests::one_shot_with_boundary_on(true);
