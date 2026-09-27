@@ -1412,6 +1412,17 @@ establish raw/recorder identity correlation; a cancelled release can name a
 raw onset without any recorder occurrence. This does not give the
 modeled source ring an actual raw receipt, a shared charge or a mixed-ingress
 outcome.
+The next two-source model probe drains its retained onset and release packets
+into an actual serial `InputCaptureSession`. It checks three distinct recorder
+occurrences, including repeated keys on one source, against delivered raw
+`InputReceipt.matched_onset` links. The fixture returns modeled tracker credit
+after checking that occurrence's raw release receipt and recorder pairing;
+the model method itself does not require a receipt. The model already returned
+ingress credit for its modeled refusal at source service, while result and
+ledger credits stay charged. The serial owner still receives direct offers
+from the modeled queue rather than a concrete source-ring handoff; there is no
+shared raw-capacity charge, actual mixed-ingress result or combined host
+outcome.
 EVD-0024's component matrix remains
 insufficient for production capacity; ADR-0022's hardware timing and physical
 round-trip gates remain separate.

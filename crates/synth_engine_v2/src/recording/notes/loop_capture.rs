@@ -5,7 +5,7 @@ mod finalize;
 mod hot;
 pub(crate) mod ordered;
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;
 
 use super::*;
 use crate::{

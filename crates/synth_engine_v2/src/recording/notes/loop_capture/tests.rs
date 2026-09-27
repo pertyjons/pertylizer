@@ -16,7 +16,7 @@ use crate::{
     tempo::Bpm,
 };
 
-fn limits(held: u32, passes: u32, bytes: u64) -> RecordingLimits {
+pub(crate) fn limits(held: u32, passes: u32, bytes: u64) -> RecordingLimits {
     RecordingLimits::new(
         HeldNoteCount::limit(held).unwrap(),
         EventCount::limit(32).unwrap(),
@@ -37,7 +37,7 @@ fn limits(held: u32, passes: u32, bytes: u64) -> RecordingLimits {
     )
     .unwrap()
 }
-fn stream(entry: u64, maximum: u64) -> CompiledLoopStream {
+pub(crate) fn stream(entry: u64, maximum: u64) -> CompiledLoopStream {
     let profile = HostProfile::harness(
         SampleRate::new(48_000.0).unwrap(),
         FrameCount::new(maximum),
@@ -77,7 +77,7 @@ fn stream(entry: u64, maximum: u64) -> CompiledLoopStream {
     )
     .unwrap()
 }
-fn input() -> LoopNoteArmInput {
+pub(crate) fn input() -> LoopNoteArmInput {
     LoopNoteArmInput {
         target: FixtureTargetId::new(1).unwrap(),
         expected_revision: FixtureRevision::new(4),

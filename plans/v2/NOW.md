@@ -295,6 +295,13 @@ tests show that cancelled raw receipts retain the admission-time link. These
 tests join identities for delivered pairs in the serial fixture but do not
 charge the modeled source ring or mixed ingress.
 The concrete host connection remains open.
+The two-source model now drains three queued onsets and their same-key
+releases into an actual serial input/capture owner. Delivered raw receipts
+must link each release to its modeled onset and the same recorder occurrence
+before the fixture calls the model's tracker-credit settlement for that onset.
+The model already returned ingress credit for its modeled refusal at source
+service. Result and ledger credits stay charged; the fixture has no actual
+mixed-ingress outcome, shared raw-capacity charge or concrete source-ring handoff.
 An off-thread check now places and stamps the bound stream against
 a disposable copy of only the compiled range. It publishes no events or
 reservations. Tests cover wrong-producer and wrong-capacity refusals, disjoint

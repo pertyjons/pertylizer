@@ -6,20 +6,28 @@ use crate::{
     host::{
         ConnectionGeneration, EndpointId,
         input::{
-            InputCapacity, InputLimits, InputRate, InputTick, InputTickSpan, SimulatedInputClock,
-            SimulatedNoteInput,
+            InputCapacity, InputCaptureSession, InputLimits, InputOutcome, InputRate, InputTick,
+            InputTickSpan, SimulatedInputClock, SimulatedNoteInput,
+        },
+        session::{
+            LoopRecordingSession, SessionCommand, SessionCommandCapacity, SessionLimits,
+            SessionSourceCapacity, SessionSourceLimits, SessionSourceOutcome,
         },
     },
     profile::{CaptureLimits, CaptureLimitsInput, RecordingLimits},
     quantities::{
-        CapturePassCount, CaptureResultCount, CaptureSourceCount, EventCount, HeldNoteCount,
-        KeyIdentity, PreparedBytes, ProjectionTickCount, SampleRate, TrackedInputNoteCount,
+        CapturePassCount, CaptureResultCount, CaptureSourceCount, ChannelLayout, EventCount,
+        HeldNoteCount, KeyIdentity, PreparedBytes, ProjectionTickCount, SampleRate,
+        TrackedInputNoteCount,
     },
+    recording::CaptureOutcome,
     recording::notes::{
         AuditionTrace, CaptureDisposition, CaptureMode, CaptureQuantization, CaptureStamp,
         ControllerSnapshot, FixtureRevision, FixtureTargetId, Midi1Event, Midi1Input,
         MusicalInterval, NoteArmContext, NoteArmInput, SimulatedNoteRecorder,
+        loop_capture::{LoopCaptureSession, tests as loop_test_support},
     },
+    render::AudioBlockMut,
     tempo::{Bpm, MusicalTick, TempoMap},
     time::{FrameCount, PlanPosition, SampleTime, StreamAnchor, StreamEpoch, issue_epoch},
 };
@@ -728,6 +736,15 @@ fn bridge_raw_input(
     epoch: StreamEpoch,
     source: usize,
 ) -> (SimulatedNoteInput, ConnectionGeneration) {
+    let (mut raw, generation) = bridge_ready_input(epoch, source);
+    raw.start(generation).unwrap();
+    (raw, generation)
+}
+
+fn bridge_ready_input(
+    epoch: StreamEpoch,
+    source: usize,
+) -> (SimulatedNoteInput, ConnectionGeneration) {
     let mut raw = SimulatedNoteInput::new(
         EndpointId::new(format!("bridge-{source}")).unwrap(),
         InputLimits {
@@ -748,7 +765,6 @@ fn bridge_raw_input(
         ),
     )
     .unwrap();
-    raw.start(generation).unwrap();
     (raw, generation)
 }
 
@@ -922,6 +938,177 @@ fn queued_two_source_releases_preserve_payload_and_recorder_pairing() {
         assert_eq!(owner.discontinuity(), None);
         assert!(owner.collect().is_none());
     }
+}
+
+#[test]
+fn modeled_ring_releases_settle_raw_credit_from_delivered_serial_receipts() {
+    let mut capture = LoopCaptureSession::prepare(
+        loop_test_support::stream(0, 2048),
+        loop_test_support::limits(3, 64, 1_048_576),
+        PreparedBytes::measured(8192),
+    )
+    .unwrap();
+    let epoch = capture.initial().epoch;
+    let mut inputs = [bridge_ready_input(epoch, 0), bridge_ready_input(epoch, 1)];
+    let generations = [inputs[0].1, inputs[1].1];
+    let sources = [
+        inputs[0]
+            .0
+            .bind_capture(generations[0], &mut capture, ControllerSnapshot::neutral())
+            .unwrap(),
+        inputs[1]
+            .0
+            .bind_capture(generations[1], &mut capture, ControllerSnapshot::neutral())
+            .unwrap(),
+    ];
+    let _ticket = capture.arm(loop_test_support::input(), &sources).unwrap();
+    let session = LoopRecordingSession::prepare(
+        capture,
+        SessionLimits {
+            commands: SessionCommandCapacity::new(4).unwrap(),
+            command_bytes: PreparedBytes::measured(16_384),
+        },
+        SessionSourceLimits {
+            actions: SessionSourceCapacity::new(32).unwrap(),
+            bytes: PreparedBytes::measured(32_768),
+        },
+    )
+    .unwrap();
+    let mut owner = InputCaptureSession::prepare(
+        session,
+        inputs.map(|(input, _)| input).into(),
+        PreparedBytes::measured(8192),
+    )
+    .unwrap();
+    for generation in generations {
+        owner.start_input(generation).unwrap();
+    }
+    let _play = owner.offer(SampleTime::ZERO, SessionCommand::Play).unwrap();
+    let _stop = owner
+        .offer(SampleTime::new(128), SessionCommand::Stop)
+        .unwrap();
+
+    let mut model = Model::new(limits(3), 4);
+    let onsets = [
+        (ModelSource::First, input(0x90, 60, 100), 10),
+        (ModelSource::Second, input(0x90, 60, 110), 11),
+        (ModelSource::First, input(0x90, 60, 120), 12),
+    ];
+    let ids = onsets.map(|(source, note, _)| model.submit(source, note).unwrap());
+    let mut admitted = Vec::new();
+    for (source, note, time) in onsets {
+        let (id, key, queued) = model.service_with_input(source, true, false);
+        assert_eq!(queued, note);
+        let generation = generations[source.index()];
+        let at = SampleTime::new(time);
+        let raw_id = owner
+            .offer_message(generation, InputTick::new(time), at, queued)
+            .unwrap();
+        admitted.push((id, key, raw_id));
+    }
+    let releases = [
+        (ModelSource::First, input(0x90, 60, 0), ids[0], 20),
+        (ModelSource::Second, input(0x90, 60, 0), ids[1], 21),
+        (ModelSource::First, input(0x80, 60, 0), ids[2], 22),
+    ];
+    for (source, release, expected, _) in releases {
+        assert_eq!(
+            model.offer_release(source, release),
+            Ok(ReleaseOffer::Queued(expected))
+        );
+    }
+    let mut routed = Vec::new();
+    for (source, release, expected, time) in releases {
+        let (route, key, queued) = model.service_release_with_input(source);
+        assert_eq!(route.id, expected);
+        assert!(route.raw);
+        assert!(!route.ingress);
+        assert_eq!(queued, release);
+        let generation = generations[source.index()];
+        let at = SampleTime::new(time);
+        let raw_id = owner
+            .offer_message(generation, InputTick::new(time), at, queued)
+            .unwrap();
+        routed.push((route.id, key, raw_id));
+    }
+    assert_eq!(
+        model.used,
+        Counts {
+            tracker: 3,
+            ingress: 0,
+            results: 3,
+            ledger: 3
+        }
+    );
+    for generation in generations {
+        let _frontier = owner
+            .advance_frontier(generation, InputTick::new(128))
+            .unwrap();
+    }
+    owner.pump().unwrap();
+    let mut audio = vec![0.0; 512];
+    assert_eq!(
+        crate::render_allocation::count_allocs(|| owner
+            .render(AudioBlockMut::new(&mut audio, 512, ChannelLayout::Mono).unwrap())
+            .unwrap()),
+        0
+    );
+    owner.pump().unwrap();
+    let receipts: Vec<_> = generations
+        .into_iter()
+        .flat_map(|generation| {
+            std::iter::from_fn(|| owner.collect_input(generation).unwrap()).collect::<Vec<_>>()
+        })
+        .collect();
+    assert_eq!(receipts.len(), 10);
+    owner.finalize().unwrap();
+    assert_eq!(
+        owner.result().unwrap().sealed_outcome(),
+        CaptureOutcome::Complete
+    );
+    assert_eq!(model.used.tracker, 3);
+    let published = |raw_id| {
+        let receipt = receipts
+            .iter()
+            .find(|receipt| receipt.id == raw_id)
+            .unwrap();
+        match &receipt.outcome {
+            InputOutcome::Delivered(SessionSourceOutcome::Published(record)) => {
+                (receipt.matched_onset, record.occurrence.unwrap())
+            }
+            _ => panic!("raw message must be delivered to the recorder"),
+        }
+    };
+    let mut recorded = Vec::new();
+    for (id, key, release_raw) in routed {
+        let (_, original_key, onset_raw) = admitted
+            .iter()
+            .find(|(candidate, _, _)| *candidate == id)
+            .unwrap();
+        assert_eq!(*original_key, key);
+        let (matched, recorded_release) = published(release_raw);
+        let (_, recorded_onset) = published(*onset_raw);
+        assert_eq!(matched, Some(*onset_raw));
+        assert_eq!(recorded_release, recorded_onset);
+        recorded.push(recorded_onset);
+        model.settle_raw_release(id);
+    }
+    assert_ne!(recorded[0], recorded[1]);
+    assert_ne!(recorded[0], recorded[2]);
+    assert_ne!(recorded[1], recorded[2]);
+    // This fixture settles tracker credit after checking each delivered raw
+    // release and recorder occurrence. The model already returned ingress
+    // credit for its refused ingress disposition at source service; no real
+    // mixed ingress or combined result is involved.
+    assert_eq!(
+        model.used,
+        Counts {
+            tracker: 0,
+            ingress: 0,
+            results: 3,
+            ledger: 3
+        }
+    );
 }
 
 #[test]
