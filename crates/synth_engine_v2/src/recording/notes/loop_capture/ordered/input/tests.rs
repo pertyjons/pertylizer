@@ -196,6 +196,17 @@ fn raw_admission_preserves_a_held_notes_release_and_frontier_cells() {
         .advance_frontier(generation, InputTick::new(10))
         .unwrap();
     assert_eq!(
+        full.preflight_observation(
+            generation,
+            InputObservation::Frontier {
+                tick: InputTick::new(11),
+            },
+        ),
+        Err(InputError::Full)
+    );
+    assert_eq!(full.state(), ConnectionState::Running);
+    assert_eq!(full.discontinuity(), None);
+    assert_eq!(
         full.advance_frontier(generation, InputTick::new(11)),
         Err(InputError::Full)
     );
@@ -233,6 +244,64 @@ fn raw_repeated_key_releases_redeem_the_oldest_accepted_onset() {
     assert_eq!(input.release_reservations, 0);
     assert!(input.held_onsets.iter().all(Option::is_none));
     assert_ne!(first, second);
+}
+
+#[test]
+fn raw_preflight_matches_immediate_offer_without_spending_credit_or_faulting() {
+    let (mut input, generation) = ready_with_cells(0, 6);
+    let note = Midi1Input::from_bytes([0x90, 60, 100]).unwrap();
+    let first = InputObservation::Message {
+        tick: InputTick::new(10),
+        arrival: SampleTime::new(10),
+        input: note,
+    };
+    assert_eq!(input.preflight_observation(generation, first), Ok(()));
+    assert_eq!(input.serial, 1);
+    assert_eq!(input.release_reservations, 0);
+    let _id = input
+        .offer_message(generation, InputTick::new(10), SampleTime::new(10), note)
+        .unwrap();
+
+    let second = InputObservation::Message {
+        tick: InputTick::new(11),
+        arrival: SampleTime::new(11),
+        input: note,
+    };
+    assert_eq!(
+        input.preflight_observation(generation, second),
+        Err(InputError::ProtectedCapacity)
+    );
+    assert_eq!(input.serial, 2);
+    assert_eq!(input.release_reservations, 1);
+    assert_eq!(input.state(), ConnectionState::Running);
+    assert_eq!(input.discontinuity(), None);
+    assert_eq!(input.slots.iter().flatten().count(), 2);
+
+    input.slots[0].as_mut().unwrap().outcome = Some(InputOutcome::Cancelled);
+    let _receipt = input.collect().unwrap();
+    assert_eq!(input.preflight_observation(generation, second), Ok(()));
+    let _id = input
+        .offer_message(generation, InputTick::new(11), SampleTime::new(11), note)
+        .unwrap();
+    assert_eq!(input.release_reservations, 2);
+
+    let old = InputObservation::Frontier {
+        tick: InputTick::new(9),
+    };
+    assert_eq!(
+        input.preflight_observation(generation, old),
+        Err(InputError::Order)
+    );
+    assert_eq!(input.state(), ConnectionState::Running);
+    assert_eq!(input.discontinuity(), None);
+    assert_eq!(
+        input.advance_frontier(generation, InputTick::new(9)),
+        Err(InputError::Order)
+    );
+    assert_eq!(
+        input.preflight_observation(generation, second),
+        Err(InputError::State)
+    );
 }
 #[test]
 fn failed_preparation_is_retained_and_retry_is_explicit() {

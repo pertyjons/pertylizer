@@ -11,6 +11,7 @@ use crate::{
 };
 use synth_core::MidiChannel;
 
+#[derive(Clone, Copy)]
 enum ProtectedClass {
     Onset {
         hold_index: usize,
@@ -22,6 +23,16 @@ enum ProtectedClass {
     },
     Ordinary,
     Frontier,
+}
+
+struct AdmitPlan {
+    class: ProtectedClass,
+    index: usize,
+    id: InputEventId,
+    observation: InputObservation,
+    nominal: SampleTime,
+    tick: InputTick,
+    arrival: Option<SampleTime>,
 }
 
 impl SimulatedNoteInput {
@@ -166,11 +177,34 @@ impl SimulatedNoteInput {
         }
         result
     }
+    /// Read-only local admission check. The answer is current only until this
+    /// input changes; it reserves no raw, source-ring or recorder credit.
+    pub fn preflight_observation(
+        &self,
+        generation: ConnectionGeneration,
+        observation: InputObservation,
+    ) -> Result<(), InputError> {
+        self.check(generation)?;
+        if self.state != ConnectionState::Running {
+            return Err(InputError::State);
+        }
+        self.plan(generation, observation).map(|_| ())
+    }
     fn admit(
         &mut self,
         generation: ConnectionGeneration,
         observation: InputObservation,
     ) -> Result<InputEventId, InputError> {
+        let plan = self.plan(generation, observation)?;
+        let id = plan.id;
+        self.apply(plan);
+        Ok(id)
+    }
+    fn plan(
+        &self,
+        generation: ConnectionGeneration,
+        observation: InputObservation,
+    ) -> Result<AdmitPlan, InputError> {
         let clock = self.clock.ok_or(InputError::State)?;
         let (tick, arrival) = match observation {
             InputObservation::Message { tick, arrival, .. } => (tick, Some(arrival)),
@@ -274,6 +308,26 @@ impl SimulatedNoteInput {
             .checked_add(1)
             .ok_or(InputError::IdentityExhausted)?;
         let id = InputEventId { generation, serial };
+        Ok(AdmitPlan {
+            class,
+            index,
+            id,
+            observation,
+            nominal,
+            tick,
+            arrival,
+        })
+    }
+    fn apply(&mut self, plan: AdmitPlan) {
+        let AdmitPlan {
+            class,
+            index,
+            id,
+            observation,
+            nominal,
+            tick,
+            arrival,
+        } = plan;
         self.slots[index] = Some(InputEntry {
             audition: crate::recording::notes::AuditionTrace::NotOffered,
             id,
@@ -297,14 +351,13 @@ impl SimulatedNoteInput {
             }
             ProtectedClass::Ordinary | ProtectedClass::Frontier => {}
         }
-        self.serial = serial;
+        self.serial = id.serial;
         self.last_tick = Some(tick);
         if let Some(arrival) = arrival {
             self.last_arrival = Some(arrival);
         } else {
             self.frontier = nominal;
         }
-        Ok(id)
     }
     pub(super) fn take_receipt(&mut self) -> Option<InputReceipt> {
         let clock = self.clock?;

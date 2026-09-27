@@ -278,6 +278,8 @@ reserves raw cells for matched releases and frontiers. Its terminal refusal
 still quiesces that source. The modeled source ring has no shared charge with
 these real raw cells, the recorder or mixed ingress, so this is a local safety
 gate rather than Phase 9 host acceptance.
+The raw owner has a read-only admission preflight using the same plan as its
+offer; it grants no reservation across a source-ring handoff.
 The concrete host connection remains open.
 An off-thread check now places and stamps the bound stream against
 a disposable copy of only the compiled range. It publishes no events or

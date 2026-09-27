@@ -837,6 +837,12 @@ exhaustion remains `Full`; a reservation shortage is `ProtectedCapacity`.
 Closing admission after either a complete or interrupted take clears the
 local release claims while the take retains its accepted prefix. This local
 owner does not supply the host's combined refusal disposition.
+The raw owner now also exposes a read-only `preflight_observation` that runs
+the same clock, order, capacity and identity plan as immediate admission. It
+does not quiesce the source on refusal or reserve credit. A collection may
+free a cell between the check and offer; another offer, frontier or lifecycle
+change can invalidate a ready result. The source-ring charge must still cover
+in-flight packets before this local check can support a host-wide claim.
 
 These local raw safety gates are not an accepted end-to-end release law:
 source-ring admission, refused-onset FIFO, audition credit, renderer-held cells
