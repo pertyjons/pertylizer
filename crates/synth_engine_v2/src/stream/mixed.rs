@@ -269,7 +269,7 @@ pub(crate) enum MixedOneShotRenderError {
     OutputShape,
     #[error("mixed one-shot audio owner is terminally faulted")]
     Faulted,
-    #[error("mixed one-shot renderer epoch or table changed")]
+    #[error("mixed one-shot renderer and capsule plan, epoch or table disagree")]
     Pairing,
     #[error("mixed one-shot renderer was already faulted")]
     RendererFaulted,
@@ -783,9 +783,6 @@ fn mixed_collection_pair(control: &MixedStreamControl, audio: &MixedOneShotAudio
         && control.partition.spans().0 == control.minter.span()
         && control.partition.live_producer() == rendered.minter.producer()
         && control.partition.spans().1 == rendered.minter.span()
-        && audio.capsule.plan == control.plan.id()
-        && audio.capsule.epoch == control.epoch
-        && audio.capsule.table == control.minter.id()
 }
 
 struct MixedTeardownParts {
@@ -908,7 +905,10 @@ impl MixedOneShotControl {
                     .outstanding
                     .iter()
                     .all(|identity| minter.resolve(*identity) == Resolution::Live)
-        }) && audio.in_force == capsule.sequence
+        }) && capsule.plan == self.control.plan.id()
+            && capsule.epoch == self.control.epoch
+            && capsule.table == self.control.minter.id()
+            && audio.in_force == capsule.sequence
             && capsule.supersedes == ActivationSequence::INITIAL
             && capsule.retired_anchor.is_some()
             && capsule

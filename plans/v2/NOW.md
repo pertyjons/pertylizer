@@ -323,7 +323,13 @@ can continue rendering and later tear down. Pending, faulted and defensively
 refused pairs return no runnable control. Teardown separates still-sounding
 compiled and live identities from compiled notes ended at the boundary and from
 uncharged or charged test-live reservations that never entered the renderer
-registry. The remaining fault-matrix cases are open.
+registry.
+The private preflight and collection checks now distinguish the original
+control/audio pair from capsule plan, epoch and table metadata. A capsule
+mismatch faults the callback or refuses promotion while still allowing the
+correct pair to tear down. Tests cover terminal preflight, a head fault,
+already-faulted renderer state, post-adoption promotion refusal and a fault
+after resumed rendering. The defensive second-arm seam remains open.
 Other same-quantum Session contributors, production live ingress,
 other payload fanout and host resource charges remain open.
 No production mixed offer or command refusal has been lifted.

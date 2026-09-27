@@ -491,6 +491,105 @@ fn private_one_shot_audio_refuses_wrong_shape_without_changing_the_fixed_boundar
 }
 
 #[test]
+fn private_one_shot_terminal_capsule_preflight_still_allows_original_pair_teardown() {
+    for corrupt in ["plan", "epoch", "table"] {
+        let (prepared, candidate) = one_shot_with_boundary_on(true);
+        let foreign = bound(false);
+        let (control, mut audio) = prepared
+            .arm_one_shot(candidate, &mixed_profile())
+            .expect("private arm");
+        match corrupt {
+            "plan" => audio.capsule.plan = foreign.owner.control.plan.id(),
+            "epoch" => audio.capsule.epoch = foreign.epoch(),
+            "table" => audio.capsule.table = foreign.table_id(),
+            _ => panic!("known field"),
+        }
+        let mut samples = [1.0_f32; 1];
+        let error = audio
+            .render_private(
+                AudioBlockMut::new(&mut samples, 1, ChannelLayout::Mono).expect("block"),
+            )
+            .expect_err("capsule mismatch");
+        assert_eq!(error, MixedOneShotRenderError::Pairing, "{corrupt}");
+        assert_eq!(samples, [0.0]);
+        assert!(!audio.report().adopted);
+        let MixedCollection::Ended(ended) = control.collect(audio).expect("original pair teardown")
+        else {
+            panic!("terminal owner must end");
+        };
+        assert_eq!(ended.end, MixedCollectionEnd::Faulted);
+        assert_eq!(ended.report.fault, Some(error));
+        assert!(ended.sounding.compiled().is_empty());
+    }
+}
+
+#[test]
+fn private_one_shot_already_faulted_renderer_refuses_before_publication() {
+    let (prepared, candidate) = one_shot_with_boundary_on(true);
+    let (control, mut audio) = prepared
+        .arm_one_shot(candidate, &mixed_profile())
+        .expect("private arm");
+    let mut scratch = [1.0_f32; 1];
+    let mut scratch_block =
+        AudioBlockMut::new(&mut scratch, 1, ChannelLayout::Mono).expect("scratch");
+    audio
+        .audio
+        .renderer
+        .terminal_mixed_fault(&mut scratch_block);
+    let mut samples = [1.0_f32; 1];
+    let error = audio
+        .render_private(AudioBlockMut::new(&mut samples, 1, ChannelLayout::Mono).expect("block"))
+        .expect_err("renderer already faulted");
+    assert_eq!(error, MixedOneShotRenderError::RendererFaulted);
+    assert_eq!(samples, [0.0]);
+    assert_eq!(audio.report().completed_quanta, QuantumCount::NONE);
+    let MixedCollection::Ended(ended) = control.collect(audio).expect("terminal teardown") else {
+        panic!("terminal owner must end");
+    };
+    assert_eq!(ended.end, MixedCollectionEnd::Faulted);
+    assert_eq!(ended.report.fault, Some(error));
+}
+
+#[test]
+fn private_one_shot_head_fault_silences_call_and_keeps_candidate_unadopted() {
+    let (prepared, candidate) = one_shot_with_boundary_on_at(true, SampleTime::new(65));
+    let (control, mut audio) = prepared
+        .arm_one_shot(candidate, &mixed_profile())
+        .expect("private arm");
+    let mut before = [0.0_f32; 128];
+    audio
+        .render_private(AudioBlockMut::new(&mut before, 128, ChannelLayout::Mono).expect("old"))
+        .expect("first old quantum");
+    assert_eq!(audio.audio.renderer.clock(), SampleTime::new(64));
+    assert_eq!(audio.timing.effective(), SampleTime::new(128));
+    let stale = audio.events[0];
+    audio.events.push(stale);
+    let mut samples = [1.0_f32; 65];
+    let error = audio
+        .render_private(
+            AudioBlockMut::new(&mut samples, 65, ChannelLayout::Mono).expect("crossing call"),
+        )
+        .expect_err("old event misses head clock");
+    assert_eq!(
+        error,
+        MixedOneShotRenderError::MissedEvent {
+            event: stale.envelope().time(),
+            clock: SampleTime::new(64),
+        }
+    );
+    assert!(samples.iter().all(|sample| *sample == 0.0));
+    assert!(!audio.report().adopted);
+    assert_eq!(audio.adoption_after_quanta, None);
+    assert_eq!(audio.report().completed_quanta, QuantumCount::measured(1));
+    let MixedCollection::Ended(ended) = control.collect(audio).expect("terminal teardown") else {
+        panic!("head fault must end");
+    };
+    assert_eq!(ended.end, MixedCollectionEnd::Faulted);
+    assert!(ended.boundary_ended.is_empty());
+    assert_eq!(ended.sounding.compiled().len(), 1);
+}
+
+#[test]
 fn private_one_shot_audio_boundary_fault_silences_complete_callback_and_stays_terminal() {
     let (prepared, candidate) = one_shot_with_boundary_on(true);
     let (_, mut audio) = prepared
@@ -947,6 +1046,36 @@ fn private_collection_returns_crossed_pending_pairs_unchanged() {
 }
 
 #[test]
+fn private_collection_uses_birth_pairing_even_when_capsule_names_other_owner() {
+    let (first, candidate_a) = one_shot_with_boundary_on(true);
+    let (second, candidate_b) = one_shot_with_boundary_on(false);
+    let (control_a, audio_a) = first
+        .arm_one_shot(candidate_a, &mixed_profile())
+        .expect("first");
+    let (control_b, mut audio_b) = second
+        .arm_one_shot(candidate_b, &mixed_profile())
+        .expect("second");
+    audio_b.capsule.plan = control_a.control.plan.id();
+    audio_b.capsule.epoch = control_a.control.epoch;
+    audio_b.capsule.table = control_a.control.minter.id();
+    let refused = control_a.collect(audio_b).expect_err("crossed birth pair");
+    assert_eq!(refused.reason, MixedCollectionError::CrossedPair);
+    let MixedCollectionRefusal {
+        control: control_a,
+        audio: audio_b,
+        ..
+    } = *refused;
+    assert!(matches!(
+        control_a.collect(audio_a),
+        Ok(MixedCollection::Ended(_))
+    ));
+    assert!(matches!(
+        control_b.collect(audio_b),
+        Ok(MixedCollection::Ended(_))
+    ));
+}
+
+#[test]
 fn private_collection_returns_crossed_adopted_pairs_unchanged() {
     let (first, candidate_a) = one_shot_with_boundary_on(true);
     let (second, candidate_b) = one_shot_with_boundary_on(false);
@@ -982,6 +1111,69 @@ fn private_collection_returns_crossed_adopted_pairs_unchanged() {
         let ended = control.teardown(*audio).expect("final teardown");
         assert_eq!(ended.end, MixedCollectionEnd::ResumedTeardown);
     }
+}
+
+#[test]
+fn private_collection_never_promotes_corrupted_adopted_capsule() {
+    for corrupt in ["plan", "epoch", "table"] {
+        let (prepared, candidate) = one_shot_with_boundary_on(true);
+        let foreign = bound(false);
+        let (control, mut audio) = prepared
+            .arm_one_shot(candidate, &mixed_profile())
+            .expect("private arm");
+        let mut samples = [0.0_f32; 129];
+        audio
+            .render_private(
+                AudioBlockMut::new(&mut samples, 129, ChannelLayout::Mono).expect("block"),
+            )
+            .expect("adopted render");
+        assert!(audio.report().adopted);
+        match corrupt {
+            "plan" => audio.capsule.plan = foreign.owner.control.plan.id(),
+            "epoch" => audio.capsule.epoch = foreign.epoch(),
+            "table" => audio.capsule.table = foreign.table_id(),
+            _ => panic!("known field"),
+        }
+        let MixedCollection::Ended(ended) = control.collect(audio).expect("correct pair") else {
+            panic!("corrupted capsule must not promote: {corrupt}");
+        };
+        assert_eq!(ended.end, MixedCollectionEnd::PromotionRefused, "{corrupt}");
+        assert!(!ended.report.faulted);
+        assert_eq!(ended.boundary_ended.len(), 1);
+        assert_eq!(ended.sounding.compiled().len(), 1);
+    }
+}
+
+#[test]
+fn private_resumed_terminal_pairing_fault_can_teardown_with_boundary_history() {
+    let (prepared, candidate) = one_shot_with_boundary_on(true);
+    let foreign = bound(false);
+    let (control, mut audio) = prepared
+        .arm_one_shot(candidate, &mixed_profile())
+        .expect("private arm");
+    let mut samples = [0.0_f32; 129];
+    audio
+        .render_private(AudioBlockMut::new(&mut samples, 129, ChannelLayout::Mono).expect("block"))
+        .expect("adopted render");
+    let MixedCollection::Resumed {
+        control, mut audio, ..
+    } = control.collect(audio).expect("healthy rejoin")
+    else {
+        panic!("healthy adopted pair must resume");
+    };
+    audio.capsule.table = foreign.table_id();
+    let mut later = [1.0_f32; 1];
+    let error = audio
+        .render_private(AudioBlockMut::new(&mut later, 1, ChannelLayout::Mono).expect("later"))
+        .expect_err("capsule table mismatch");
+    assert_eq!(error, MixedOneShotRenderError::Pairing);
+    assert_eq!(later, [0.0]);
+    let ended = control
+        .teardown(*audio)
+        .expect("original resumed pair teardown");
+    assert_eq!(ended.end, MixedCollectionEnd::ResumedTeardown);
+    assert_eq!(ended.report.fault, Some(error));
+    assert_eq!(ended.boundary_ended.len(), 1);
 }
 
 #[test]

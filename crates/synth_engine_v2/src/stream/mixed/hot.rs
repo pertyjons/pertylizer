@@ -131,7 +131,10 @@ impl MixedOneShotAudio {
         output: &mut AudioBlockMut<'_>,
     ) -> Result<(), MixedOneShotRenderError> {
         let renderer = &self.audio.renderer;
-        if renderer.epoch() != self.capsule.epoch || renderer.table_id() != self.capsule.table {
+        if renderer.plan().id() != self.capsule.plan
+            || renderer.epoch() != self.capsule.epoch
+            || renderer.table_id() != self.capsule.table
+        {
             return Err(MixedOneShotRenderError::Pairing);
         }
         if renderer.diagnostics().needs_reprepare() {

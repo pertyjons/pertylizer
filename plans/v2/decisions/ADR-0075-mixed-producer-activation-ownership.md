@@ -395,9 +395,9 @@ fixed boundary; a callback ending exactly at that boundary leaves the owner
 pending. A zero-frame call is a no-op. Output shape is checked before rendering;
 a mismatch returns untouched output and may be retried.
 Each nonempty callback, before or after adoption, preflights the renderer's
-epoch, table and fault state before any publication or boundary change. While
+plan, epoch, table and fault state before any publication or boundary change. While
 pending, an output-shape refusal keeps the fixed boundary. An internal
-epoch/table mismatch or already faulted renderer is terminal and silences the
+plan/epoch/table mismatch or already faulted renderer is terminal and silences the
 complete callback. A call served entirely from carry does not adopt. In a call
 crossing the boundary, the head publishes every old
 event strictly before it; the tail starts with adoption. A head fault silences the
@@ -440,8 +440,10 @@ control/audio pairing before consuming either half; a crossed pair is returned
 unchanged for correct rejoin. A healthy adopted rejoin atomically promotes the
 capsule's copied minter, new outstanding set, effective anchor and successor
 sequence, reclaims its old list and returned old anchor off-thread, then may
-resume the adopted stream. An unreachable defensive promotion refusal
-terminates both halves off-thread,
+resume the adopted stream. The original pairing check uses the birth-bound
+control and audio halves. Capsule plan, epoch and table are checked separately
+before promotion; a mismatch terminates the correctly paired owner. A defensive
+promotion refusal, unreachable from the checked private path, terminates both halves off-thread,
 classifies sounding notes as ended and returns no runnable control. A healthy
 pending owner that stops before its boundary is torn down off-thread with its
 capsule, initial list, control and initial outstanding set; the capsule's new
@@ -517,7 +519,7 @@ there, and a bound live-range note published through the same arbiter as `Live`
 and held across it. That seam grants no source receipt or production ingress.
 Fault tests must cover arm refusal and off-thread drop, wrong-call retry at the
 fixed boundary, carry-only output, head and boundary-step faults, failed first
-and later new quanta with the charge report, terminal epoch/table and
+and later new quanta with the charge report, terminal plan/epoch/table and
 already-faulted preflight, crossed-pair rejoin, crossed healthy-pending
 teardown, and terminal teardown. Collection tests must prove that a delayed
 boundary promotes the
