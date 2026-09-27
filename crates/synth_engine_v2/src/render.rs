@@ -86,13 +86,15 @@ pub fn release_group_writes(
 /// events bound how many sample-positioned changes that quantum can carry, and the two
 /// index tables are one entry per scheduled record plus a terminator.
 /// `writes_per_note` is the widest source operation, including [`release_group_writes`],
-/// parameter fanout and steal expansion.
+/// parameter fanout and steal expansion. `boundary_writes_per_note` is the note's own
+/// gate and magnitudes, which also bounds its gate and trigger writes at a mass release.
 #[must_use]
 pub fn timed_control_scratch_bytes(
     max_events_per_quantum: EventCount,
     scheduled_records: RecordCount,
     identity_indices: crate::quantities::HeldNoteCount,
     writes_per_note: crate::quantities::WritesPerNote,
+    boundary_writes_per_note: crate::quantities::WritesPerNote,
     modulated_sample_positioned_rows: u32,
     voice_instances: crate::quantities::VoiceCount,
 ) -> u64 {
@@ -105,17 +107,18 @@ pub fn timed_control_scratch_bytes(
     // note whose scope declares a pitch and a velocity destination, so the worst case is
     // every event in the quantum being the plan's widest note-on.
     //
-    // ADR-0050 clause 5's mass release lowers a gate per note it ends, and a gate reaches a
-    // kernel only as a sample-positioned control — so those changes land in this scratch
-    // beside the quantum's own. They are not events and are charged to no share, which is
-    // exactly why they need room here rather than there: an activation that ended more
-    // notes than a quantum admits events would otherwise have nowhere to put them. A
-    // release expands to no magnitudes, so it is not multiplied.
+    // ADR-0050 clause 5's mass release lowers a gate and every trigger destination of
+    // each ended note. These writes land beside the quantum's own event writes, but are
+    // charged to no event share. Reserve the entire adoption queue's worst-case width in
+    // this scratch too, or the queue can accept gates that the node runs then drop.
     // `SOUND-INV-027`: a modulated sample-positioned row receives its composed value as one
     // control at the quantum's first frame, every quantum, beside the quantum's own writes.
     let controls = u64::from(max_events_per_quantum.get())
         .saturating_mul(u64::from(writes_per_note.get()))
-        .saturating_add(u64::from(identity_indices.get()))
+        .saturating_add(
+            u64::from(identity_indices.get())
+                .saturating_mul(u64::from(boundary_writes_per_note.get())),
+        )
         .saturating_add(u64::from(modulated_sample_positioned_rows))
         .saturating_mul(size_of::<TimedControl>() as u64);
     // And the pre-pass's reset marks: one control and one flag per voice instance, which is
@@ -131,7 +134,7 @@ pub fn timed_control_scratch_bytes(
     // Since ADR-0026 a note's boundary release lowers its trigger destinations beside its
     // gate, so each ended note can owe up to a note's width of gate-downs rather than one.
     let adoption_gates = u64::from(identity_indices.get())
-        .saturating_mul(u64::from(writes_per_note.get()))
+        .saturating_mul(u64::from(boundary_writes_per_note.get()))
         .saturating_mul((size_of::<TimedControl>() + size_of::<usize>()) as u64);
     let index = u64::from(scheduled_records.get())
         .saturating_mul(2)
@@ -949,6 +952,9 @@ impl PreparedRenderer {
             .fanned_out(plan.sample_positioned_fan_out())
             .widest(plan.steal_expansion())
             .get() as usize;
+        // A mass release writes the gate and trigger destinations of each ended note.
+        // It does not expand a release group, fan a parameter across voices or steal.
+        let boundary_writes_per_note = plan.max_writes_per_note().get() as usize;
         // One index entry per scheduled record, from the table the renderer already keeps
         // one state per — so the two cannot be counted differently.
 
@@ -1023,7 +1029,7 @@ impl PreparedRenderer {
                 TimedControl::FILL;
                 events_per_quantum
                     .saturating_mul(writes_per_note)
-                    .saturating_add(identity_indices)
+                    .saturating_add(identity_indices.saturating_mul(boundary_writes_per_note))
                     .saturating_add(
                         plan.modulated_sample_positioned_rows() as usize
                     )
@@ -1032,9 +1038,9 @@ impl PreparedRenderer {
             // destination of its scope: bounded by a note's width, which the charge uses.
             adoption_gates: vec![
                 TimedControl::FILL;
-                identity_indices.saturating_mul(writes_per_note)
+                identity_indices.saturating_mul(boundary_writes_per_note)
             ],
-            adoption_gate_slots: vec![0; identity_indices.saturating_mul(writes_per_note)],
+            adoption_gate_slots: vec![0; identity_indices.saturating_mul(boundary_writes_per_note)],
             adoption_gate_len: 0,
             control_starts: vec![0; records.saturating_add(1)],
             control_fill: vec![0; records],
@@ -1223,6 +1229,13 @@ impl PreparedRenderer {
                     .saturating_add(self.control_fill.len())
                     * size_of::<u32>(),
             )
+    }
+
+    /// The final node-run scratch and its pending boundary-release queue, for the
+    /// storage invariant checked by the in-crate budget tests.
+    #[cfg(test)]
+    pub(crate) fn boundary_control_storage(&self) -> (usize, usize) {
+        (self.timed_controls.len(), self.adoption_gates.len())
     }
 
     /// The counters this stream has accumulated.

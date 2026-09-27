@@ -509,6 +509,7 @@ fn the_charges_derive_alike_from_the_ir_and_the_plan_and_cover_what_is_held() {
             synth_engine_v2::render::release_group_writes(ir.max_writes_per_note())
                 .fanned_out(ir.sample_positioned_fan_out())
                 .widest(ir.steal_expansion()),
+            ir.max_writes_per_note(),
             ir.modulated_sample_positioned_rows(),
             ir.voice_instances(),
         );

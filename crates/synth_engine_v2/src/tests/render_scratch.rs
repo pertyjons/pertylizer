@@ -75,6 +75,16 @@ fn check_one(simultaneous: u32, voice: bool) {
     {
         let (ir, plan) = plan_declaring(simultaneous, voice);
         let ranges = plan.note_producer_ranges().to_vec();
+        let event_width = crate::render::release_group_writes(plan.max_writes_per_note())
+            .fanned_out(plan.sample_positioned_fan_out())
+            .widest(plan.steal_expansion())
+            .get() as usize;
+        let event_capacity = plan
+            .max_events_per_quantum()
+            .as_usize()
+            .expect("capacity fits");
+        let boundary_width = plan.max_writes_per_note().get() as usize;
+        let modulated_rows = plan.modulated_sample_positioned_rows() as usize;
         // Admission charges from the IR and preparation allocates from the plan, so the two
         // figures are compared here as well: an IR bound below what the plan expands to
         // would size the scratch under what the render loop then fills.
@@ -101,10 +111,22 @@ fn check_one(simultaneous: u32, voice: bool) {
                 }),
             crate::render::release_group_writes(ir.max_writes_per_note())
                 .fanned_out(ir.sample_positioned_fan_out()),
+            ir.max_writes_per_note(),
             ir.modulated_sample_positioned_rows(),
             ir.voice_instances(),
         );
         let held = renderer.control_scratch_bytes();
+        let (node_run_capacity, boundary_queue_capacity) = renderer.boundary_control_storage();
+        assert!(
+            node_run_capacity
+                >= event_capacity * event_width + boundary_queue_capacity + modulated_rows,
+            "a full boundary-release queue and a full event quantum must fit together"
+        );
+        assert_eq!(
+            boundary_queue_capacity,
+            simultaneous as usize * boundary_width,
+            "boundary storage must scale with note width, not event fanout"
+        );
         assert!(
             charged >= held as u64,
             "a polyphony of {simultaneous} on a {} plan is charged {charged} bytes of control \

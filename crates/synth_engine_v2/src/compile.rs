@@ -664,17 +664,20 @@ fn build_rows(
         arena_samples,
         ir.state_records(inserted_records),
         &declared_note_ranges,
-        crate::render::release_group_writes(ir.max_writes_per_note())
-            .fanned_out(ir.sample_positioned_fan_out())
-            .widest(crate::quantities::WritesPerNote::at_least(
-                ir.steal_expansion()
-                    .get()
-                    .saturating_add(if ir.declarations().stealing.steals() {
-                        paths.map_or(0, crate::latency::PathLatencies::voice_groups)
-                    } else {
-                        0
-                    }),
-            )),
+        ScratchWriteWidths::new(
+            crate::render::release_group_writes(ir.max_writes_per_note())
+                .fanned_out(ir.sample_positioned_fan_out())
+                .widest(crate::quantities::WritesPerNote::at_least(
+                    ir.steal_expansion().get().saturating_add(
+                        if ir.declarations().stealing.steals() {
+                            paths.map_or(0, crate::latency::PathLatencies::voice_groups)
+                        } else {
+                            0
+                        },
+                    ),
+                )),
+            ir.max_writes_per_note(),
+        ),
         ir.modulated_sample_positioned_rows(),
         ir.voice_instances(),
     );
@@ -1301,6 +1304,23 @@ fn push_script_rows(rows: &mut Vec<ResourceRow>, ir: &GraphIr, profile: &HostPro
     ));
 }
 
+/// The distinct event and boundary-release widths charged to renderer scratch.
+#[derive(Debug, Clone, Copy)]
+#[must_use]
+pub(crate) struct ScratchWriteWidths {
+    event: crate::quantities::WritesPerNote,
+    boundary: crate::quantities::WritesPerNote,
+}
+
+impl ScratchWriteWidths {
+    pub(crate) const fn new(
+        event: crate::quantities::WritesPerNote,
+        boundary: crate::quantities::WritesPerNote,
+    ) -> Self {
+        Self { event, boundary }
+    }
+}
+
 /// The arena and the carries this plan needs, in bytes.
 ///
 /// The carries are the one part that computes exactly: ADR-0001 clause 5 sizes both
@@ -1312,7 +1332,7 @@ pub(crate) fn scratch_bytes(
     arena_samples: u64,
     scheduled_records: RecordCount,
     note_producer_ranges: &[crate::quantities::HeldNoteCount],
-    writes_per_note: crate::quantities::WritesPerNote,
+    widths: ScratchWriteWidths,
     modulated_sample_positioned_rows: u32,
     voice_instances: crate::quantities::VoiceCount,
 ) -> PreparedBytes {
@@ -1352,7 +1372,8 @@ pub(crate) fn scratch_bytes(
         profile.limits().events().max_events_per_quantum(),
         scheduled_records,
         crate::quantities::HeldNoteCount::measured(identity_indices),
-        writes_per_note,
+        widths.event,
+        widths.boundary,
         modulated_sample_positioned_rows,
         voice_instances,
     );

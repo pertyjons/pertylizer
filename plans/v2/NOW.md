@@ -260,6 +260,13 @@ boundary and one displacement across the complete list, including refusal if
 only a later suffix event overflows engine time. The audio-side selection and
 application of that displacement, producer-scoped boundary release, combined
 capacity charge, shared/global influence law, handoff and retirement remain open.
+The boundary-release design read also found that the renderer's final timed-control
+scratch reserved one write per ended identity while its pending queue reserved a
+gate plus trigger writes. The scratch and its admission charge now reserve the
+same full boundary queue beside a full event quantum. That queue uses the plan's
+widest gate-plus-magnitudes width, avoiding event-group and parameter-fanout costs
+on every held identity; storage invariants check both bounds. The mixed release
+path itself remains unimplemented.
 
 ### Selected work — ordered transport through live I/O
 
