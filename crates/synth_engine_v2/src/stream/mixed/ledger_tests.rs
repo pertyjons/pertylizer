@@ -350,6 +350,8 @@ impl RawShadow {
 /// outcomes; removing a source packet does not redeem its release reserve.
 struct Model {
     rings: [VecDeque<RingPacket>; 2],
+    merge_frontiers: [Option<SampleTime>; 2],
+    merge_last_submitted: [Option<SampleTime>; 2],
     release_reservations: [usize; 2],
     source_holds: Vec<SourceHold>,
     retry_pending: [Option<PendingRetry>; 2],
@@ -370,6 +372,8 @@ impl Model {
     fn new(limits: Counts, ring_limit: usize) -> Self {
         Self {
             rings: [VecDeque::new(), VecDeque::new()],
+            merge_frontiers: [None; 2],
+            merge_last_submitted: [None; 2],
             release_reservations: [0; 2],
             source_holds: Vec::new(),
             retry_pending: [None, None],
@@ -472,6 +476,16 @@ impl Model {
             panic!("the reduced submit operation accepts only note onsets");
         };
         let index = source.index();
+        if self.host_halted {
+            return Err(SubmitError::Halted(input));
+        }
+        if mapped_at.is_some_and(|at| {
+            self.merge_frontiers[index].is_some_and(|last| at <= last)
+                || self.merge_last_submitted[index].is_some_and(|last| at < last)
+        }) {
+            self.fault(source, input, TerminalReason::Order);
+            return Err(SubmitError::Order(input));
+        }
         let needs_retry = match self.onset_preflight(source) {
             OnsetPreflight::Halted => return Err(SubmitError::Halted(input)),
             OnsetPreflight::Order => {
@@ -487,6 +501,9 @@ impl Model {
         };
         let next = self.next + 1;
         self.next = next;
+        if mapped_at.is_some() {
+            self.merge_last_submitted[index] = mapped_at;
+        }
         self.used.tracker += 1;
         self.used.ingress += 1;
         self.used.results += 1;
@@ -604,6 +621,59 @@ impl Model {
         self.service_with_input(source, raw, ingress).0
     }
 
+    /// An empty source can rule out later stamped onsets and releases at or
+    /// before this time. Ordinary packets are outside this selector model.
+    /// This models a serviced frontier, not one still in its source ring.
+    fn advance_merge_frontier(&mut self, source: ModelSource, at: SampleTime) -> bool {
+        let index = source.index();
+        if self.host_halted
+            || !self.rings[index].is_empty()
+            || self.retry_pending[index].is_some()
+            || self.release_pending[index].is_some()
+            || self.merge_frontiers[index].is_some_and(|last| at <= last)
+            || self.merge_last_submitted[index].is_some_and(|last| at <= last)
+        {
+            return false;
+        }
+        self.merge_frontiers[index] = Some(at);
+        true
+    }
+
+    /// Choose only a stamped head whose earlier competitors are already known.
+    /// Source index fixes ties; an empty peer needs a serviced frontier.
+    fn next_merged_onset(&self) -> Option<ModelSource> {
+        if self.host_halted {
+            return None;
+        }
+        let head = |source: ModelSource| match self.rings[source.index()].front()? {
+            RingPacket::Onset(attempt) => attempt.mapped_at,
+            RingPacket::Ordinary | RingPacket::Release { .. } => None,
+        };
+        let candidates = [ModelSource::First, ModelSource::Second];
+        let candidate = candidates
+            .into_iter()
+            .filter_map(|source| head(source).map(|at| (at, source)))
+            .min_by_key(|(at, source)| (*at, source.index()))?;
+        let peer = candidates[1 - candidate.1.index()];
+        if head(peer).is_some_and(|at| at >= candidate.0)
+            || (self.rings[peer.index()].is_empty()
+                && self.merge_frontiers[peer.index()].is_some_and(|at| at >= candidate.0))
+        {
+            Some(candidate.1)
+        } else {
+            None
+        }
+    }
+
+    fn service_next_merged_onset(
+        &mut self,
+        raw: bool,
+        ingress: bool,
+    ) -> Option<(ModelSource, OccurrenceId)> {
+        let source = self.next_merged_onset()?;
+        Some((source, self.service(source, raw, ingress)))
+    }
+
     fn service_with_input(
         &mut self,
         source: ModelSource,
@@ -704,6 +774,13 @@ impl Model {
         if self.host_halted {
             return Err(ReleaseOfferError::Halted(input));
         }
+        if mapped_at.is_some_and(|at| {
+            self.merge_frontiers[index].is_some_and(|last| at <= last)
+                || self.merge_last_submitted[index].is_some_and(|last| at < last)
+        }) {
+            self.fault(source, input, TerminalReason::Order);
+            return Err(ReleaseOfferError::Order(input));
+        }
         if self.release_pending[index].is_some() {
             self.fault(source, input, TerminalReason::Order);
             return Err(ReleaseOfferError::Order(input));
@@ -719,12 +796,19 @@ impl Model {
                 input,
                 mapped_at,
             });
+            if mapped_at.is_some() {
+                self.merge_last_submitted[index] = mapped_at;
+            }
             return Err(ReleaseOfferError::Blocked(ReleaseRetryToken {
                 id: ReleaseAttemptId(next),
                 source,
             }));
         }
-        self.enqueue_release(source, input, mapped_at)
+        let result = self.enqueue_release(source, input, mapped_at);
+        if result.is_ok() && mapped_at.is_some() {
+            self.merge_last_submitted[index] = mapped_at;
+        }
+        result
     }
 
     fn retry_release(
@@ -2240,6 +2324,259 @@ fn merger_credit_alone_cannot_admit_out_of_order_mixed_ingress() {
 }
 
 #[test]
+fn serviced_source_frontier_orders_two_source_mixed_commands() {
+    let (prepared, candidate) = history_tests::one_shot_with_boundary_on(true);
+    let (mut control, mut mixed) = prepared
+        .arm_one_shot(candidate, &history_tests::mixed_profile())
+        .unwrap();
+    let mut model = Model::new(limits(2), 4);
+    let late = model
+        .submit_at(
+            ModelSource::First,
+            input(0x90, 60, 100),
+            Some(SampleTime::new(150)),
+        )
+        .unwrap();
+    assert_eq!(model.next_merged_onset(), None);
+    let early = model
+        .submit_at(
+            ModelSource::Second,
+            input(0x90, 62, 100),
+            Some(SampleTime::new(140)),
+        )
+        .unwrap();
+    assert_eq!(
+        model.service_next_merged_onset(false, true),
+        Some((ModelSource::Second, early))
+    );
+    let (early_command, early_request) = model.submit_ingress_onset(&mut control, early).unwrap();
+    assert_eq!(model.next_merged_onset(), None);
+    assert!(model.advance_merge_frontier(ModelSource::Second, SampleTime::new(151)));
+    assert_eq!(
+        model.service_next_merged_onset(false, true),
+        Some((ModelSource::First, late))
+    );
+    let (late_command, late_request) = model.submit_ingress_onset(&mut control, late).unwrap();
+    mixed.service_test_ingress_queue();
+    for (id, command, request) in [
+        (early, early_command, early_request),
+        (late, late_command, late_request),
+    ] {
+        let result = control.collect_ingress_result().unwrap();
+        assert_eq!((result.id, result.request), (command, request));
+        assert!(matches!(result.outcome, MixedIngressOutcome::Onset(Ok(_))));
+        model.apply_ingress_onset_result(id, result).unwrap();
+    }
+}
+
+#[test]
+fn merged_source_heads_require_frontiers_and_reject_late_packets() {
+    let mut model = Model::new(limits(3), 4);
+    let second = model
+        .submit_at(
+            ModelSource::Second,
+            input(0x90, 62, 100),
+            Some(SampleTime::new(150)),
+        )
+        .unwrap();
+    let first = model
+        .submit_at(
+            ModelSource::First,
+            input(0x90, 60, 100),
+            Some(SampleTime::new(150)),
+        )
+        .unwrap();
+    assert_eq!(model.next_merged_onset(), Some(ModelSource::First));
+    assert!(!model.advance_merge_frontier(ModelSource::First, SampleTime::new(151)));
+    assert_eq!(model.service(ModelSource::First, false, true), first);
+    assert_eq!(model.next_merged_onset(), None);
+    assert!(!model.advance_merge_frontier(ModelSource::First, SampleTime::new(150)));
+    assert!(model.advance_merge_frontier(ModelSource::First, SampleTime::new(151)));
+    assert_eq!(model.next_merged_onset(), Some(ModelSource::Second));
+    assert_eq!(model.service(ModelSource::Second, false, true), second);
+    assert!(!model.advance_merge_frontier(ModelSource::Second, SampleTime::new(150)));
+    assert!(model.advance_merge_frontier(ModelSource::Second, SampleTime::new(151)));
+    assert!(!model.advance_merge_frontier(ModelSource::Second, SampleTime::new(151)));
+    let original = input(0x90, 64, 100);
+    assert!(matches!(
+        model.submit_at(ModelSource::Second, original, Some(SampleTime::new(150))),
+        Err(SubmitError::Order(found)) if found == original
+    ));
+    assert_eq!(
+        model.terminal_fault,
+        Some((
+            ModelSource::Second,
+            TerminalFault {
+                original,
+                reason: TerminalReason::Order,
+            }
+        ))
+    );
+    let after_halt = input(0x90, 65, 100);
+    assert!(matches!(
+        model.submit_at(ModelSource::First, after_halt, Some(SampleTime::new(149))),
+        Err(SubmitError::Halted(found)) if found == after_halt
+    ));
+}
+
+#[test]
+fn merged_frontier_rejects_stale_release_and_halted_selector() {
+    let mut model = Model::new(limits(2), 4);
+    let held = model
+        .submit_at(
+            ModelSource::First,
+            input(0x90, 60, 100),
+            Some(SampleTime::new(160)),
+        )
+        .unwrap();
+    assert_eq!(model.service(ModelSource::First, false, true), held);
+    assert!(model.advance_merge_frontier(ModelSource::First, SampleTime::new(181)));
+    let waiting = model
+        .submit_at(
+            ModelSource::Second,
+            input(0x90, 62, 100),
+            Some(SampleTime::new(180)),
+        )
+        .unwrap();
+    assert_eq!(model.next_merged_onset(), Some(ModelSource::Second));
+    let original = input(0x80, 60, 0);
+    assert_eq!(
+        model.offer_release_at(ModelSource::First, original, Some(SampleTime::new(180))),
+        Err(ReleaseOfferError::Order(original))
+    );
+    assert_eq!(model.next_merged_onset(), None);
+    assert!(matches!(
+        model.rings[ModelSource::Second.index()].front(),
+        Some(RingPacket::Onset(attempt)) if attempt.id == waiting
+    ));
+
+    let mut model = Model::new(limits(1), 4);
+    let held = model
+        .submit_at(
+            ModelSource::First,
+            input(0x90, 60, 100),
+            Some(SampleTime::new(160)),
+        )
+        .unwrap();
+    assert_eq!(model.service(ModelSource::First, false, true), held);
+    assert_eq!(
+        model.offer_release_at(ModelSource::First, original, Some(SampleTime::new(155))),
+        Err(ReleaseOfferError::Order(original))
+    );
+}
+
+#[test]
+fn stale_release_fault_precedes_unmatched_or_retired_route() {
+    let original = input(0x80, 60, 0);
+    let mut unmatched = Model::new(limits(1), 3);
+    assert!(unmatched.advance_merge_frontier(ModelSource::First, SampleTime::new(120)));
+    assert_eq!(
+        unmatched.offer_release_at(ModelSource::First, original, Some(SampleTime::new(119))),
+        Err(ReleaseOfferError::Order(original))
+    );
+    assert_eq!(
+        unmatched.terminal_fault,
+        Some((
+            ModelSource::First,
+            TerminalFault {
+                original,
+                reason: TerminalReason::Order,
+            }
+        ))
+    );
+
+    let mut retired = Model::new(limits(2), 3);
+    retired
+        .submit_at(
+            ModelSource::First,
+            input(0x90, 65, 100),
+            Some(SampleTime::new(100)),
+        )
+        .unwrap();
+    let retry = match retired.submit_at(
+        ModelSource::First,
+        input(0x90, 60, 100),
+        Some(SampleTime::new(110)),
+    ) {
+        Err(SubmitError::Retry(token)) => token,
+        other => panic!("second onset must retain a retry, got {other:?}"),
+    };
+    retired.service(ModelSource::First, false, false);
+    let tombstone = retired.retire(retry).unwrap();
+    assert!(retired.advance_merge_frontier(ModelSource::First, SampleTime::new(120)));
+    let ledger_before = retired.used.ledger;
+    assert_eq!(
+        retired.offer_release_at(ModelSource::First, original, Some(SampleTime::new(119))),
+        Err(ReleaseOfferError::Order(original))
+    );
+    assert!(
+        retired
+            .source_holds
+            .iter()
+            .any(|hold| hold.id == tombstone.id && hold.retired)
+    );
+    assert_eq!(retired.used.ledger, ledger_before);
+}
+
+#[test]
+fn source_stamp_regression_faults_without_a_frontier() {
+    let mut onsets = Model::new(limits(3), 5);
+    onsets
+        .submit_at(
+            ModelSource::First,
+            input(0x90, 60, 100),
+            Some(SampleTime::new(100)),
+        )
+        .unwrap();
+    onsets
+        .submit_at(
+            ModelSource::First,
+            input(0x90, 62, 100),
+            Some(SampleTime::new(160)),
+        )
+        .unwrap();
+    let stale_onset = input(0x90, 64, 100);
+    assert_eq!(onsets.merge_frontiers[ModelSource::First.index()], None);
+    assert!(matches!(
+        onsets.submit_at(ModelSource::First, stale_onset, Some(SampleTime::new(150))),
+        Err(SubmitError::Order(original)) if original == stale_onset
+    ));
+    assert_eq!(onsets.rings[ModelSource::First.index()].len(), 2);
+
+    let mut release = Model::new(limits(2), 5);
+    let older = release
+        .submit_at(
+            ModelSource::First,
+            input(0x90, 60, 100),
+            Some(SampleTime::new(100)),
+        )
+        .unwrap();
+    release
+        .submit_at(
+            ModelSource::First,
+            input(0x90, 62, 100),
+            Some(SampleTime::new(160)),
+        )
+        .unwrap();
+    let stale_release = input(0x80, 60, 0);
+    assert_eq!(release.merge_frontiers[ModelSource::First.index()], None);
+    assert_eq!(
+        release.offer_release_at(
+            ModelSource::First,
+            stale_release,
+            Some(SampleTime::new(150))
+        ),
+        Err(ReleaseOfferError::Order(stale_release))
+    );
+    assert!(
+        release
+            .source_holds
+            .iter()
+            .any(|hold| hold.id == older && !hold.release_queued)
+    );
+}
+
+#[test]
 fn mixed_onset_result_after_source_release_keeps_exact_release_owner() {
     let (prepared, candidate) = history_tests::one_shot_with_boundary_on(true);
     let (mut control, mut audio) = prepared
@@ -2613,7 +2950,7 @@ fn refused_mixed_release_retains_original_and_halts_model_credit() {
     let (mut control, mut audio) = prepared
         .arm_one_shot(candidate, &history_tests::mixed_profile())
         .unwrap();
-    let mut model = Model::new(limits(1), 2);
+    let mut model = Model::new(limits(2), 4);
     let id = model
         .submit_at(
             ModelSource::First,
@@ -2631,9 +2968,27 @@ fn refused_mixed_release_retains_original_and_halts_model_credit() {
     );
     model.apply_ingress_onset_result(id, onset_result).unwrap();
 
+    let peer = model
+        .submit_at(
+            ModelSource::Second,
+            input(0x90, 62, 100),
+            Some(SampleTime::new(150)),
+        )
+        .unwrap();
+    assert_eq!(model.next_merged_onset(), None);
+    assert_eq!(model.service(ModelSource::Second, false, true), peer);
+    let (peer_command, peer_request) = model.submit_ingress_onset(&mut control, peer).unwrap();
+    audio.service_test_ingress_queue();
+    let peer_result = control.collect_ingress_result().unwrap();
+    assert_eq!(
+        (peer_result.id, peer_result.request),
+        (peer_command, peer_request)
+    );
+    model.apply_ingress_onset_result(peer, peer_result).unwrap();
+
     let original = input(0x80, 60, 0);
     assert_eq!(
-        model.offer_release_at(ModelSource::First, original, Some(SampleTime::new(130))),
+        model.offer_release_at(ModelSource::First, original, Some(SampleTime::new(145))),
         Ok(ReleaseOffer::Queued(id))
     );
     assert_eq!(model.service_release(ModelSource::First).id, id);
@@ -2642,7 +2997,7 @@ fn refused_mixed_release_retains_original_and_halts_model_credit() {
         request,
         MixedIngressRequest::Release {
             origin: MixedIngressOriginId(id.0),
-            at: SampleTime::new(130),
+            at: SampleTime::new(145),
             identity: match model.entry_mut(id).ingress_disposition {
                 IngressDisposition::Accepted(identity) => identity,
                 other => panic!("accepted identity required, got {other:?}"),
@@ -2653,8 +3008,8 @@ fn refused_mixed_release_retains_original_and_halts_model_credit() {
     let result = control.collect_ingress_result().unwrap();
     assert_eq!((result.id, result.request), (command, request));
     let reason = IngressRefused::NonMonotoneStamp {
-        time: SampleTime::new(130),
-        last: SampleTime::new(140),
+        time: SampleTime::new(145),
+        last: SampleTime::new(150),
     };
     assert_eq!(result.outcome, MixedIngressOutcome::Release(Err(reason)));
     model.apply_ingress_release_result(id, result).unwrap();
@@ -2676,8 +3031,8 @@ fn refused_mixed_release_retains_original_and_halts_model_credit() {
         model.settle_ingress_release(id),
         Err(IngressResultBindError::State)
     );
-    assert_eq!(model.used.ingress, 1);
-    assert_eq!(model.used.ledger, 1);
+    assert_eq!(model.used.ingress, 2);
+    assert_eq!(model.used.ledger, 2);
     assert!(matches!(
         model.submit(ModelSource::Second, input(0x90, 61, 100)),
         Err(SubmitError::Halted(_))
@@ -2690,7 +3045,7 @@ fn later_mixed_release_refusal_keeps_prior_terminal_fault_and_local_original() {
     let (mut control, mut audio) = prepared
         .arm_one_shot(candidate, &history_tests::mixed_profile())
         .unwrap();
-    let mut model = Model::new(limits(1), 2);
+    let mut model = Model::new(limits(2), 4);
     let id = model
         .submit_at(
             ModelSource::First,
@@ -2707,9 +3062,26 @@ fn later_mixed_release_refusal_keeps_prior_terminal_fault_and_local_original() {
         (onset_command, onset_request)
     );
     model.apply_ingress_onset_result(id, onset_result).unwrap();
+    let peer = model
+        .submit_at(
+            ModelSource::Second,
+            input(0x90, 62, 100),
+            Some(SampleTime::new(150)),
+        )
+        .unwrap();
+    assert_eq!(model.next_merged_onset(), None);
+    assert_eq!(model.service(ModelSource::Second, false, true), peer);
+    let (peer_command, peer_request) = model.submit_ingress_onset(&mut control, peer).unwrap();
+    audio.service_test_ingress_queue();
+    let peer_result = control.collect_ingress_result().unwrap();
+    assert_eq!(
+        (peer_result.id, peer_result.request),
+        (peer_command, peer_request)
+    );
+    model.apply_ingress_onset_result(peer, peer_result).unwrap();
     let original = input(0x80, 60, 0);
     assert_eq!(
-        model.offer_release_at(ModelSource::First, original, Some(SampleTime::new(130))),
+        model.offer_release_at(ModelSource::First, original, Some(SampleTime::new(145))),
         Ok(ReleaseOffer::Queued(id))
     );
     assert_eq!(model.service_release(ModelSource::First).id, id);
@@ -2725,8 +3097,8 @@ fn later_mixed_release_refusal_keeps_prior_terminal_fault_and_local_original() {
         (release_command, release_request)
     );
     let reason = IngressRefused::NonMonotoneStamp {
-        time: SampleTime::new(130),
-        last: SampleTime::new(140),
+        time: SampleTime::new(145),
+        last: SampleTime::new(150),
     };
     assert_eq!(result.outcome, MixedIngressOutcome::Release(Err(reason)));
     model.apply_ingress_release_result(id, result).unwrap();
@@ -2743,7 +3115,7 @@ fn later_mixed_release_refusal_keeps_prior_terminal_fault_and_local_original() {
     let entry = model.entry_mut(id);
     assert_eq!(
         entry.source_release,
-        Some((original, Some(SampleTime::new(130))))
+        Some((original, Some(SampleTime::new(145))))
     );
     assert_eq!(entry.ingress_release_result, Some(Err(reason)));
     assert_eq!(model.collect_result(id), Err(IngressResultBindError::State));
@@ -2751,8 +3123,8 @@ fn later_mixed_release_refusal_keeps_prior_terminal_fault_and_local_original() {
         model.settle_ingress_release(id),
         Err(IngressResultBindError::State)
     );
-    assert_eq!(model.used.ingress, 1);
-    assert_eq!(model.used.ledger, 1);
+    assert_eq!(model.used.ingress, 2);
+    assert_eq!(model.used.ledger, 2);
 }
 
 #[test]

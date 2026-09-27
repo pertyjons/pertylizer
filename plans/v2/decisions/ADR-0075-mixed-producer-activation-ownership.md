@@ -1517,6 +1517,30 @@ earlier primary fault remains. Both sources halt. A later onset refusal keeps
 its ingress credit charged. Ingress, result and ledger credit stay charged
 without stopped-owner proof; the model neither retries the refused release
 nor claims joined teardown redemption.
+A V2-local two-head merge selector refuses to choose an onset while an empty
+peer has no serviced frontier at or beyond the candidate time. Only the new
+positive ordering fixture uses its gated model service helper; other model
+fixtures use direct service to isolate individual laws or consumer behavior.
+The selector chooses the least stamped onset head and uses source order for
+equal stamps. A new fixture submits onset stamps 150 then 140 and sends them to
+the private mixed command ring in 140-before-150 order; both results accept.
+It does not repeat the earlier raw-bound counterexample. A source frontier
+must follow its last submitted onset or release stamp. An onset or release
+earlier than the source's last submitted stamp faults even without a frontier;
+one at or before a frontier also faults with its original. The release check
+precedes same-key matching: stale unmatched or retired releases fault, and a
+retired onset tombstone remains. These are laws for stamped modeled onset
+selection and source ordering. The model does not schedule ordinary packets or
+releases, obtain concrete frontiers from the example's source rings, bound wait
+time or prove positive combined admission.
+The release-refusal fixtures deliberately bypass the selector: they send the
+second source's 150 before the first source later offers its release at 145.
+The release is valid within that source, but the merge order is invalid. The
+audio-side `NonMonotoneStamp` and original-custody checks remain defense in
+depth. The selector would hold the peer onset while the first source lacks a
+frontier. Scheduling its release before that frontier remains open. A release
+earlier than any more recent submitted source onset or release stamp is
+rejected at source custody, even if it matches an older held onset.
 
 The same read found that holding a popped onset until tracker credit returns
 can deadlock when its release or required frontier is behind that onset in the
