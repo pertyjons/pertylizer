@@ -353,6 +353,125 @@ crossing release's unscoped exclusive write. The proposed counted exception
 above addresses that last hole for this bound shape; its amendment remains
 required before an offer.
 
+### Private one-shot audio rehearsal before an offer
+
+An internal, non-shipping rehearsal may move one sealed initial compiled list
+and one privately stamped candidate to a split audio owner. This permission
+does not lift the mixed offer, ingress, command or loop refusals and does not
+satisfy combined-host admission. No public API or production host may call it.
+The rehearsal tests one transition only; a successful arm forbids a second arm.
+An arm refusal returns the capsule and leaves the joined owner unarmed and
+off-thread for a new attempt or off-thread drop. It does not consume the one
+transition.
+
+The off-thread half retains the bound control and initial outstanding set. It
+consumes or drops the candidate's source history off-thread and moves a boxed,
+sendable capsule to the audio half. The capsule carries the plan, epoch, table,
+requested anchor, `INITIAL` baseline, successor sequence, omission counts,
+restoration prefix count, ordered stamped events, copied compiled minter and
+new outstanding set. The audio half receives the entire bound
+`MixedStreamAudio`, including its live range, instance partition and
+preallocated compiled ended-note buffer, and owns the initial event list. Arm
+runs off-thread while the renderer is stopped, with both halves available to
+check plan, epoch, table and `INITIAL`. A refusal returns the capsule on that
+thread; neither its box nor event vector is dropped in a callback. The arm
+fixes the first complete quantum at or after both the request and the next
+unrendered quantum (`PreparedRenderer::clock()`), even when earlier output
+remains in carry. It records the checked uniform displacement, effective anchor
+`(effective time, destination position)`, and whether the request preceded the
+arm clock. A timing or pairing refusal leaves the renderer and control minter
+unchanged.
+
+The armed audio owner remains pending until its fixed boundary. Each callback,
+before or after adoption, preflights the renderer's epoch and table, fault
+state, latched arbiter, output layout and maximum block before any publication
+or boundary change. A foreign arbiter or invalid output shape returns with the
+output untouched and may be retried with the correct call; while pending, the
+fixed boundary stays the same. An internal epoch/table mismatch or already
+faulted renderer is terminal
+and silences the complete callback. A call served entirely from carry does
+not adopt. In a call crossing the boundary, the head publishes every old event
+strictly before it; the tail starts with adoption. A head fault silences the
+whole callback and leaves the candidate unadopted. The boundary step's clock,
+partition, producer, pending-boundary, ended-storage, gate-storage and
+unbound-target refusals are terminal too, with the candidate unadopted.
+
+Adoption releases only the compiled partition and moves the renderer to the
+effective anchor. The capsule receives the old event list and returned **old**
+anchor; its requested-time anchor is never promoted when adoption is delayed.
+The new list starts with scoped restoration, followed by the compiled suffix.
+The first new quantum charges one release operation and the entire restoration
+prefix to Session, then the due suffix to Compiled. Successful render clears
+those debts. The adopted audio owner keeps the retired box while it continues
+rendering later callbacks; neither the box nor old vector is finally dropped
+on audio. No second arm is accepted. The control half cannot mint or prepare
+another schedule while the capsule is away.
+
+If any publication or render fails after adoption, including in a later
+quantum or callback, the owner is terminally faulted-adopted and silences the
+complete failing callback and subsequent output. It retains the retired box;
+no release or restoration debt is retried. Its report identifies the effective
+and old anchors, successor sequence, release operation, restoration and suffix
+charges that reached the arbiter, and completed render quanta. A render failure
+may already have changed DSP state. A terminal fault before adoption is
+faulted-unadopted and retains the pending box and initial list. At off-thread
+teardown, both terminal states classify sounding compiled and directly
+injected live notes as ended; they do not use the compiled ended-note buffer
+for live identities. An unadopted capsule's privately minted identities were
+never published or sounded and are discarded with its minter copy off-thread;
+they are not reported as ended renderer notes. Neither terminal state returns a
+runnable control or reuses the initial outstanding set.
+
+Only after audio rendering stops may off-thread rejoin inspect the box. Every
+rejoin or teardown, including healthy pending teardown, checks the original
+control/audio pairing before consuming either half; a crossed pair is returned
+unchanged for correct rejoin. A healthy adopted rejoin atomically promotes the
+capsule's copied minter, new outstanding set, effective anchor and successor
+sequence, reclaims its old list and returned old anchor off-thread, then may
+resume the adopted stream. An unreachable defensive promotion refusal
+terminates both halves off-thread,
+classifies sounding notes as ended and returns no runnable control. A healthy
+pending owner that stops before its boundary is torn down off-thread with its
+capsule, initial list, control and initial outstanding set; the capsule's new
+outstanding set is discarded as never published. Any sounding compiled or
+directly injected live notes are classified as ended there without putting live
+identities in compiled ended-note storage. It returns no runnable control and
+cannot resume or rearm. Terminal teardown likewise destroys both halves and
+both lists off-thread. The accepted candidate cannot be withdrawn while audio
+runs.
+
+Construction must prove ended-note span and gate/trigger queue bounds before
+arm. The private fault rules do not decide ADR-0073's future combined-host
+terminal scope. The payload, timed fanout, scratch and seed charges and the
+crossing-release amendments to ADR-0051 clause 5 and SOUND-INV-018 remain
+necessary before a production offer, alongside the other combined-host
+acceptance work in this ADR.
+
+The rehearsal's defensive second-arm seam fails if it changes owner state.
+Ordinary rehearsal checks fail if carry-only output adopts; old boundary-time
+events publish; preboundary events disappear; restoration spends Compiled
+credit; audio callbacks allocate, deallocate or finally drop the retired box;
+or a held live note's audio, row or ramp changes in either producer order.
+With the same admitted source prefix and arm clock,
+every compared callback must succeed and one-call, 64-frame, 256-frame and
+irregular partitions must render bit-identically with equal counts. Tests must
+place an old event immediately before and at the boundary, a destination onset
+there, and a bound live-range note published through the same arbiter as `Live`
+and held across it. That seam grants no source receipt or production ingress.
+Fault tests must cover arm refusal and off-thread drop, wrong-call retry at the
+fixed boundary, carry-only output, head and boundary-step faults, failed first
+and later new quanta with the charge report, terminal epoch/table and
+already-faulted preflight, crossed-pair rejoin, crossed healthy-pending
+teardown, and terminal teardown. Collection tests must prove that a delayed
+boundary promotes the
+effective anchor, copied minter, outstanding set and sequence together,
+reclaims the retired list off-thread, and tears down a still-pending owner
+without returning runnable control, with sounding compiled and live notes
+classified as ended, no live identity in
+compiled ended storage, and private unadopted identities discarded. A
+test-only promotion refusal must end the correctly paired owner off-thread.
+These are rehearsal checks, not the combined-host acceptance matrix.
+
 ### Protected note credit rehearsal still needs a law
 
 A note-on/key-release-only rehearsal is a possible next slice, but no credit
@@ -690,8 +809,11 @@ node rows also fails its supported case. Substituting a plan, compiled stream or
 live slot after binding falsifies that artifact. A refused binding that loses
 the caller's plan or stream also fails its custody rule. A later mixed ingress
 that accepts a cross-producer release group fails its producer binding. No mixed
-owner may accept Start, Stop, Panic, activation or loop commands until that command's
-scope, hold redemption and outcome law is explicitly amended and tested.
+owner, including the private rehearsal owner after rejoin, may accept Start,
+Stop, Panic, activation or loop commands until that command's scope, hold
+redemption and outcome law is explicitly amended and tested. The private
+one-shot transition above is an internal rehearsal step, not an accepted
+activation command or offer path.
 Compiled-only catch-up must not write or reseed any live-owned instance-local
 control slot, current ramp, next live write's ramp behavior or local
 modulation history. A shared upstream source or live parameter-lane target
