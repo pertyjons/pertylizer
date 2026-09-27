@@ -721,6 +721,63 @@ and unexamined source packets without requiring another callback. Pedal,
 mass release, bend, transport, reset, activation and loop still need their own
 credit and redemption laws; this paragraph grants no mixed-render permission.
 
+A V2-local source-ring model now tests a narrower candidate release reserve.
+Let `S` be one source ring's cell count, `q` its occupied cells and `R_s` its
+ring-custodied onsets whose matching releases have not entered that ring.
+Preserve `q + R_s <= S`. An onset acquires its ring cell and future release
+cell together: it requires `q + R_s <= S - 2` and changes `(q, R_s)` to
+`(q + 1, R_s + 1)`.
+An ordinary packet requires `q + R_s <= S - 1`, no pending source onset or
+release attempt, and no terminal halt. Once all earlier source attempts have
+entered the ring or retired, a release for the oldest unreleased
+source/channel/key occurrence that entered the ring changes `(q, R_s)` to
+`(q + 1, R_s - 1)` and preserves the sum. Since
+`R_s > 0` implies `q < S`, that release can enter the ring after ordinary
+packets fill every unreserved cell. A release arriving behind a pending onset
+retry stays in one source-local pending cell and returns `Blocked(token)`.
+The original input remains in that cell. A new onset offered while either
+pending cell owns source order gets terminal `Order(original)`. A new release
+gets `Order(original)` when the release cell is occupied; when only the onset
+retry is pending, it enters that cell and gets `Blocked(token)`. Subsequent
+fresh offers get `Halted(original)`. Matching retries after the halt receive
+`Halted(token)`; stale or foreign tokens receive `Stale(token)`. The pending
+onset cannot retire after the halt. Both pending originals remain held for
+joined teardown, which this model does not implement.
+Only the exact release token may retry after the earlier onset enters or
+retires. A stray pending release then gets a final `Unmatched(original)` and
+clears the pending cell. An immediately offered stray release instead returns
+`Unmatched(original)` as an offer error. If the blocked release matches an
+earlier ring-custodied onset, retiring the pending onset lets that release
+enter. Retirement keeps the pending attempt's
+source/channel/key tombstone and ledger cell. It returns the tracker, ingress
+and result credits. The matching release consumes that tombstone as
+`Retired(id)` without entering the ring or touching a later
+same-key onset. The model can continue after a retry retires; the concrete
+driver instead halts on retirement. A tombstone without a release remains held
+for joined teardown; the model does not yet implement that teardown or a
+host-visible final result. Ring service decreases `q`; it does not redeem
+`R_s`. A queued release redeems only its own reservation, and service cannot
+skip earlier packets.
+The model checks one and two held onsets, same-key FIFO, ordinary saturation,
+blocked release ownership, wrong-token rejection, a final stray release and
+retry whose missing ring headroom can be restored by draining `q`.
+If `R_s + 2 > S`, draining this ring cannot admit another onset, so this shortage
+cannot be an ordered retry. A test leaves `q = 0` and confirms `NoCredit`
+without taking shared credit. Shared-credit shortage and occurrence-ID
+exhaustion return the same uncharged `NoCredit`. None of these paths keeps a
+pre-ring tombstone or supplies a final producer outcome; a later release could
+consume a newer same-key onset. Release-attempt identity exhaustion likewise
+returns the original without a pending cell or terminal disposition.
+The ordinary-packet fixture checks capacity without issuing a refused source
+attempt; it has no ordinary-packet retry or terminal-result contract. The
+model's terminal `Order` also has no joined teardown for the pending onset,
+pending release, earlier charged attempts and held releases. Those source and
+teardown laws remain open for the combined host.
+Neither the local reservation nor the retirement tombstone grants a protected
+release claim for the host. The model also lacks raw and audition consumers,
+frontiers, cross-thread handoff and a combined outcome. The source-ring
+equation is a local prerequisite, not an accepted end-to-end host law.
+
 The concrete source ring is also the only path into raw capture. An audition
 packet refused before that ring cannot still be captured through the current
 path. This bridge configures 32 raw cells per source. The raw owner reserves

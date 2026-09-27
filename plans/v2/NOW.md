@@ -253,14 +253,21 @@ The next source-bridge rehearsal must be V2-local: the concrete Linux-example
 source rings cannot call those crate-private test-only offers. ADR-0075 now
 requires a modeled two-source ring, one shared charge and a same-key FIFO with
 separate raw-recorder and ingress dispositions before a combined receipt can
-be claimed. The first V2-local test model now exercises bounded onset
+be claimed. The first V2-local test model now exercises bounded source
 rings, one shared tracker/ingress/result/ledger charge, exact retry retirement,
-same-key accepted/refused FIFO, and direct dual-consumer release routing and
-settlement before credit reuse. It has fake consumers only: release traversal
-through source rings, raw occupancy, frontiers, capture reserve, real recorder
-and mixed renderer remain to be connected. It does not yet produce a combined
-consumer outcome or qualify protected-release service. The concrete host
-connection remains open.
+same-key accepted/refused FIFO, release reservations through the source FIFO,
+and dual-consumer settlement before credit reuse. A release behind an earlier
+onset retry retains its original input in a source-local cell; while that cell
+is occupied, a new onset or release offer causes a terminal `Order` result
+instead of passing it. Ordinary packets have only a preflight in this model;
+their refusal and teardown laws remain open.
+Retiring that retry retains a bounded same-key tombstone, so its later release
+cannot end a newer occurrence. Its consumers are still fake. Terminal handling
+for uncharged `NoCredit`, release-attempt identity exhaustion and terminal
+`Order` teardown remains open. Raw occupancy, frontiers, capture reserve, the
+real recorder and the mixed renderer remain to be connected. It does not yet
+produce a combined consumer outcome or qualify protected-release service.
+The concrete host connection remains open.
 An off-thread check now places and stamps the bound stream against
 a disposable copy of only the compiled range. It publishes no events or
 reservations. Tests cover wrong-producer and wrong-capacity refusals, disjoint
