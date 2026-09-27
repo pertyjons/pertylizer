@@ -561,6 +561,16 @@ audition fault carrying an already accepted raw input ID. A regression or
 future-arrival refusal and an accepted-ID audition fault request a host halt.
 Renderer-held capacity and the release-credit equation remain open.
 
+The concrete bridge's joined finish, on either recovery or ordered Stop,
+interrupts the live renderer before it transfers a packet previously refused
+by renderer admission and the queued suffix into that closed renderer. Those
+packets receive identified `Cancelled` outcomes, and reunion resolves retained
+raw capture annotations without another callback. If the closed renderer still
+rejects a packet, finish retains it and reunion refuses; command cancellation
+has not yet run on that recovery attempt. It does not invent an outcome for a
+broken identity or capacity invariant. This terminal path does not reserve a
+release lane.
+
 The future proof must carry a potential onset, its source/channel/key FIFO
 tombstone, tracker cell, identity, ingress hold, protected release path and
 result custody through every handoff. An onset refused after an upstream

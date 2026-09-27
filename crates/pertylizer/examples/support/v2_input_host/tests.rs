@@ -306,6 +306,115 @@ fn post_receipt_audition_fault_returns_accepted_id_without_retryable_input() {
 }
 
 #[test]
+fn joined_recovery_resolves_renderer_refusal_and_queued_suffix_without_callback() {
+    use synth_engine_v2::host::live::{AuditionOutcome, LiveInputError};
+
+    let (mut control, mut audio, generations) = fixture();
+    let profile = HostProfile::harness(
+        SampleRate::new(48000.0).unwrap(),
+        FrameCount::new(8192),
+        ChannelLayout::Mono,
+    )
+    .unwrap();
+    let clocks = [
+        prepare::simulated_clock(audio.core.acknowledged().epoch, 0).unwrap(),
+        prepare::simulated_clock(audio.core.acknowledged().epoch, 1).unwrap(),
+    ];
+    let (audition, audition_audio, _bytes) =
+        super::audition::AuditionControl::prepare(profile, generations, clocks).unwrap();
+    control.audition = Some(audition);
+    audio.audition = Some(audition_audio);
+    frontier(&mut control, generations, 256);
+    for (offset, key) in (60..66).enumerate() {
+        message(
+            &mut control,
+            generations[0],
+            280 + offset as u64,
+            [0x90, key, 100],
+        );
+    }
+    frontier(&mut control, generations, 512);
+    control.pump().unwrap();
+    audio
+        .audition
+        .as_mut()
+        .unwrap()
+        .hold_refused_after(4)
+        .unwrap();
+    let mut block = [0.0; 512];
+    let result = audio.render(AudioBlockMut::new(&mut block, 512, ChannelLayout::Mono).unwrap());
+    assert!(
+        matches!(result, Err(HostError::Audition(LiveInputError::Closed))),
+        "{result:?}"
+    );
+    assert!(control.halt_handle().is_requested());
+    control.recover(&mut audio, |_, _| {}).unwrap();
+    let audition = audio.audition.as_mut().unwrap();
+    assert_eq!(audition.outcomes().count(), 6);
+    audition.finish().unwrap();
+    assert_eq!(audition.outcomes().count(), 6);
+    for generation in generations {
+        while control.collect_input(generation).unwrap().is_some() {}
+    }
+    let mut outcomes = Vec::new();
+    let mut owner = match control.reunite(audio, |id, outcome| outcomes.push((id, outcome))) {
+        Ok(owner) => owner,
+        Err(_) => panic!("joined reunion retained an audition packet"),
+    };
+    outcomes.sort_by_key(|(id, _)| id.serial());
+    assert_eq!(outcomes.len(), 6);
+    for (index, (id, outcome)) in outcomes.into_iter().enumerate() {
+        assert_eq!(id.source(), generations[0]);
+        assert_eq!(id.serial(), index as u64 + 1);
+        assert_eq!(outcome, AuditionOutcome::Cancelled);
+    }
+    for generation in generations {
+        owner.acknowledge_input_quiescence(generation).unwrap();
+    }
+    owner.finalize().unwrap();
+}
+
+#[test]
+fn joined_recovery_keeps_a_renderer_identity_fault_in_custody() {
+    use synth_engine_v2::host::live::LiveInputError;
+
+    let (mut control, mut audio, generations) = fixture();
+    let profile = HostProfile::harness(
+        SampleRate::new(48000.0).unwrap(),
+        FrameCount::new(8192),
+        ChannelLayout::Mono,
+    )
+    .unwrap();
+    let clocks = [
+        prepare::simulated_clock(audio.core.acknowledged().epoch, 0).unwrap(),
+        prepare::simulated_clock(audio.core.acknowledged().epoch, 1).unwrap(),
+    ];
+    let (audition, audition_audio, _bytes) =
+        super::audition::AuditionControl::prepare(profile, generations, clocks).unwrap();
+    control.audition = Some(audition);
+    audio.audition = Some(audition_audio);
+    frontier(&mut control, generations, 256);
+    message(&mut control, generations[0], 280, [0x90, 60, 100]);
+    message(&mut control, generations[0], 281, [0x90, 62, 100]);
+    {
+        let audition = audio.audition.as_mut().unwrap();
+        audition.hold_refused_after(1).unwrap();
+        audition.duplicate_refused_id(1).unwrap();
+        assert!(matches!(audition.finish(), Err(LiveInputError::Identity)));
+        assert!(!audition.is_finished());
+    }
+    assert!(matches!(
+        control.recover(&mut audio, |_, _| {}),
+        Err(HostError::Audition(LiveInputError::Identity))
+    ));
+    assert!(!audio.audition.as_ref().unwrap().is_finished());
+    assert!(matches!(
+        control.reunite(audio, |_, _| {}),
+        Err(ReuniteError::Pending(_))
+    ));
+}
+
+#[test]
 fn reusable_host_accepts_transport_after_rendering_and_retains_input_outcomes() {
     let mut reference = None;
     for partitions in [&[512][..], &[64], &[256], &[1, 37, 128, 3]] {

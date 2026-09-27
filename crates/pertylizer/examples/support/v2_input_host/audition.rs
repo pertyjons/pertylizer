@@ -227,7 +227,7 @@ impl AuditionAudio {
     }
     fn drain(&mut self) -> Result<(), LiveInputError> {
         if self.refused.is_some() {
-            return Err(LiveInputError::Identity);
+            return Err(LiveInputError::Closed);
         }
         let prefix = self.queue.occupied_len();
         for _ in 0..prefix {
@@ -327,19 +327,51 @@ impl AuditionAudio {
         Ok(())
     }
     pub fn finish(&mut self) -> Result<(), LiveInputError> {
-        self.drain()?;
         self.renderer.recover_after_join();
+        if let Some(packet) = self.refused.take()
+            && let Err(error) = self.renderer.queue(packet.id, packet.at, packet.input)
+        {
+            self.refused = Some(packet);
+            return Err(error);
+        }
+        let prefix = self.queue.occupied_len();
+        for _ in 0..prefix {
+            let Some(packet) = self.queue.try_pop() else {
+                break;
+            };
+            if let Err(error) = self.renderer.queue(packet.id, packet.at, packet.input) {
+                self.refused = Some(packet);
+                return Err(error);
+            }
+        }
         self.finished = true;
         Ok(())
     }
-    pub const fn is_finished(&self) -> bool {
-        self.finished
+    pub fn is_finished(&self) -> bool {
+        self.finished && self.refused.is_none() && self.queue.is_empty()
     }
     pub fn outcomes(&self) -> impl Iterator<Item = (AuditionId, AuditionOutcome)> + '_ {
         self.renderer.outcomes()
     }
     pub fn clock(&self) -> SampleTime {
         self.renderer.clock()
+    }
+    #[cfg(test)]
+    /// Reproduce the owner locations after a renderer refusal without filling
+    /// its entire held-note table through the raw capture fixture.
+    pub(super) fn hold_refused_after(&mut self, accepted: usize) -> Result<(), LiveInputError> {
+        for _ in 0..accepted {
+            let packet = self.queue.try_pop().ok_or(LiveInputError::Identity)?;
+            self.renderer.queue(packet.id, packet.at, packet.input)?;
+        }
+        self.refused = Some(self.queue.try_pop().ok_or(LiveInputError::Identity)?);
+        Ok(())
+    }
+    #[cfg(test)]
+    pub(super) fn duplicate_refused_id(&mut self, serial: u64) -> Result<(), LiveInputError> {
+        let packet = self.refused.as_mut().ok_or(LiveInputError::Identity)?;
+        packet.id = AuditionId::new(packet.id.source(), serial)?;
+        Ok(())
     }
 }
 
