@@ -14,10 +14,14 @@ use crate::{
     identity::{
         CompiledRangeMinter, IdentityTable, LiveRangeMinter, NoteIdentity, ProducerId, TableId,
     },
-    plan::{CompiledPlan, NoteSlot},
-    render::{EventPayload, PreparedRenderer, TimedEvent},
-    schedule::{AdmittedCompiledStream, SchedulePrepareError},
-    time::{StreamAnchor, StreamEpoch, issue_epoch},
+    plan::{CompiledPlan, NoteSlot, PlanId},
+    quantities::{EventCount, HeldNoteCount, ParameterValue},
+    render::{EventEnvelope, EventPayload, PreparedRenderer, ScopedParameterRestore, TimedEvent},
+    schedule::{
+        AdmittedCompiledStream, Closed, CompiledPayload, OpenNote, OpenNotes, Opened,
+        SchedulePrepareError,
+    },
+    time::{PlanPosition, SampleTime, StreamAnchor, StreamEpoch, TimeSource, issue_epoch},
 };
 
 /// Why a bound mixed stream could not be prepared.
@@ -52,6 +56,72 @@ pub enum MixedInitialPrepareError {
         event_index: usize,
         identity: NoteIdentity,
     },
+}
+
+/// A refusal while reconstructing only the bound compiled history before a seek.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
+pub enum MixedHistoryPrepareError {
+    /// No complete quantum boundary can follow the requested sample time.
+    #[error("no quantum boundary follows requested time {at}")]
+    BoundaryUnrepresentable { at: SampleTime },
+    /// The checked plan and parameter partition no longer agree.
+    #[error("mixed restoration partition disagrees with the bound plan")]
+    Partition,
+    /// A compiled parameter or controller writer appeared despite target admission.
+    #[error("compiled history event {event_index} writes outside note targets")]
+    UnexpectedWriter { event_index: usize },
+    /// Defensive reconstruction check: the sealed prefix exceeded its admitted note range.
+    #[error("compiled history event {event_index} exceeds its admitted note range")]
+    ProducerCapacity { event_index: usize },
+    /// Defensive reconstruction check: a sealed prefix release has no matching note-on.
+    #[error("compiled history release {event_index} has no matching note-on")]
+    UnmatchedRelease { event_index: usize },
+    /// The destination-open snapshot exceeds the held-note count's range.
+    #[error("mixed history open-note count cannot be represented")]
+    OpenCountUnrepresentable,
+    /// The scoped restoration batch exceeds the event count's range.
+    #[error("mixed history restoration-event count cannot be represented")]
+    RestorationCountUnrepresentable,
+}
+
+/// One private, off-thread compiled prefix and scoped restoration batch.
+///
+/// It is bound to one prepared mixed owner and destination. Its event and note books do
+/// not escape through the public API; a future suffix builder must consume it and prove
+/// boundary release, capacity and effective-time displacement before any offer.
+#[must_use]
+pub struct MixedHistoryCandidate {
+    plan: PlanId,
+    epoch: StreamEpoch,
+    table: TableId,
+    requested: SampleTime,
+    position: PlanPosition,
+    prefix_end: usize,
+    // Consumed by the later suffix builder; deliberately private until release custody exists.
+    #[allow(dead_code)]
+    book: OpenNotes<()>,
+    #[allow(dead_code)]
+    open_at_destination: Vec<OpenNote<()>>,
+    open_count: HeldNoteCount,
+    #[allow(dead_code)]
+    restoration: Vec<TimedEvent>,
+    restoration_count: EventCount,
+    off_thread: PhantomData<Rc<()>>,
+}
+
+impl std::fmt::Debug for MixedHistoryCandidate {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("MixedHistoryCandidate")
+            .field("plan", &self.plan)
+            .field("epoch", &self.epoch)
+            .field("table", &self.table)
+            .field("requested", &self.requested)
+            .field("position", &self.position)
+            .field("prefix_end", &self.prefix_end)
+            .field("open_count", &self.open_count)
+            .field("restoration_count", &self.restoration_count)
+            .finish_non_exhaustive()
+    }
 }
 
 /// An off-thread joined mixed stream, before its one bound initial stamp.
@@ -437,6 +507,163 @@ impl MixedJoinedPrepared {
     pub fn outstanding_count(&self) -> usize {
         self.outstanding.len()
     }
+
+    /// Reconstruct a bound compiled prefix without minting, publishing or exposing events.
+    ///
+    /// The result is a private ingredient for a later mixed activation. Its scoped zero
+    /// gates are invalid without a producer-scoped release before the batch is rendered.
+    pub fn prepare_history(
+        &self,
+        requested: SampleTime,
+        position: PlanPosition,
+    ) -> Result<MixedHistoryCandidate, MixedHistoryPrepareError> {
+        if super::next_boundary(requested).is_none() {
+            return Err(MixedHistoryPrepareError::BoundaryUnrepresentable { at: requested });
+        }
+        let control = &self.owner.control;
+        let plan = &control.plan;
+        let stream = control.stream.events();
+        let prefix_end = stream.partition_point(|event| event.position() < position);
+        let span = control.minter.span().indices();
+        let capacity = span.end - span.start;
+        let mut book = OpenNotes::new(capacity, crate::ir::StealingPolicy::None);
+        let mut values = vec![None; plan.parameter_targets().len()];
+        let gates = super::gate_rows(plan);
+        for (event_index, event) in stream[..prefix_end].iter().copied().enumerate() {
+            match event.payload() {
+                CompiledPayload::NoteOn {
+                    slot,
+                    key,
+                    velocity,
+                } => {
+                    match book.open(event.position().as_u64(), slot, key, ()) {
+                        Opened::Admitted => {}
+                        Opened::Refused | Opened::Stole(_) => {
+                            return Err(MixedHistoryPrepareError::ProducerCapacity { event_index });
+                        }
+                    }
+                    super::write_gate(&mut values, &gates, slot, ParameterValue::ONE);
+                    super::write_magnitudes(&mut values, plan, slot, key, velocity);
+                }
+                CompiledPayload::NoteOff { slot, key } => {
+                    if !matches!(
+                        book.close(event.position().as_u64(), slot, key),
+                        Closed::Paired(_)
+                    ) {
+                        return Err(MixedHistoryPrepareError::UnmatchedRelease { event_index });
+                    }
+                    super::write_gate(&mut values, &gates, slot, ParameterValue::ZERO);
+                }
+                // An occurrence's expression and bend end at the boundary. The initial
+                // full stamp already checked their pairing with a note.
+                CompiledPayload::Expression { .. } | CompiledPayload::Bend { .. } => {}
+                CompiledPayload::Controller(_) | CompiledPayload::SetParameter { .. } => {
+                    return Err(MixedHistoryPrepareError::UnexpectedWriter { event_index });
+                }
+            }
+        }
+        let open_at_destination = book.entries();
+        let open_count = HeldNoteCount::measured(
+            u32::try_from(open_at_destination.len())
+                .map_err(|_| MixedHistoryPrepareError::OpenCountUnrepresentable)?,
+        );
+        for open in &open_at_destination {
+            super::write_gate(&mut values, &gates, open.slot, ParameterValue::ZERO);
+        }
+        let groups = control.partition.restoration_groups();
+        let mut restoration = Vec::with_capacity(groups.len());
+        for group in groups {
+            let slot = group.parameter();
+            let target = plan
+                .parameter_targets()
+                .get(slot.index())
+                .ok_or(MixedHistoryPrepareError::Partition)?;
+            if slot.plan() != plan.id() {
+                return Err(MixedHistoryPrepareError::Partition);
+            }
+            let value = if matches!(
+                plan.prepared_for_node(target.node),
+                Some(crate::node::kernels::PreparedNode::NoteSource)
+            ) {
+                target.base
+            } else {
+                values
+                    .get(slot.index())
+                    .copied()
+                    .flatten()
+                    .unwrap_or(target.base)
+            };
+            let scoped = if target.controller {
+                ScopedParameterRestore::controller_for(*group, value, None)
+            } else {
+                ScopedParameterRestore::override_for(*group, value)
+            };
+            restoration.push(TimedEvent::new(
+                EventEnvelope::new(control.epoch, requested, TimeSource::Compiled),
+                EventPayload::ScopedRestore(scoped),
+            ));
+        }
+        let restoration_count = EventCount::measured(
+            u32::try_from(restoration.len())
+                .map_err(|_| MixedHistoryPrepareError::RestorationCountUnrepresentable)?,
+        );
+        Ok(MixedHistoryCandidate {
+            plan: plan.id(),
+            epoch: control.epoch,
+            table: control.minter.id(),
+            requested,
+            position,
+            prefix_end,
+            book,
+            open_at_destination,
+            open_count,
+            restoration,
+            restoration_count,
+            off_thread: PhantomData,
+        })
+    }
+}
+
+impl MixedHistoryCandidate {
+    /// The immutable plan this prefix belongs to.
+    pub const fn plan_id(&self) -> PlanId {
+        self.plan
+    }
+
+    /// The stream epoch that stamped its private restoration events.
+    pub const fn epoch(&self) -> StreamEpoch {
+        self.epoch
+    }
+
+    /// The identity table whose compiled range the prefix book describes.
+    pub const fn table_id(&self) -> TableId {
+        self.table
+    }
+
+    /// The requested engine time; a later scheduler must apply its displacement.
+    pub const fn requested(&self) -> SampleTime {
+        self.requested
+    }
+
+    /// The destination in the bound compiled stream.
+    pub const fn position(&self) -> PlanPosition {
+        self.position
+    }
+
+    /// The first bound source event at or after the destination.
+    pub const fn prefix_end(&self) -> usize {
+        self.prefix_end
+    }
+
+    /// Events in the private scoped restoration batch.
+    pub const fn restoration_count(&self) -> EventCount {
+        self.restoration_count
+    }
+
+    /// Notes the boundary release must end, captured before suffix pairing can change the book.
+    pub const fn open_at_destination_count(&self) -> HeldNoteCount {
+        self.open_count
+    }
 }
 
 impl MixedStreamAudio {
@@ -465,3 +692,7 @@ impl MixedStreamAudio {
         self.note
     }
 }
+
+#[cfg(test)]
+#[path = "mixed/history_tests.rs"]
+mod history_tests;

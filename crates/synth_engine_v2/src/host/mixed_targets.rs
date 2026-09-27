@@ -14,8 +14,8 @@ use thiserror::Error;
 use crate::identity::{INDEX_SPACE, ProducerId, Range};
 use crate::ir::StealingPolicy;
 use crate::plan::{
-    CompiledPlan, NodeRole, NodeSlot, NoteSlot, ParameterInstanceSpan, ParameterRow, ParameterSlot,
-    PlanId, PlanOp, VoiceInstanceIndex,
+    CompiledPlan, ControlRate, NodeRole, NodeSlot, NoteSlot, ParameterInstanceSpan, ParameterRow,
+    ParameterSlot, PlanId, PlanOp, VoiceInstanceIndex,
 };
 use crate::schedule::{AdmittedCompiledStream, CompiledPayload};
 
@@ -60,6 +60,12 @@ pub enum MixedTargetError {
     DestinationOutsidePartition {
         /// The gate or magnitude destination that could not be owned.
         row: ParameterRow,
+    },
+    /// A sample-positioned controller needs a timed two-layer restore before binding.
+    #[error("sample-positioned controller group {slot:?} cannot be restored")]
+    SampleController {
+        /// The addressable controller group that cannot be restored yet.
+        slot: ParameterSlot,
     },
 }
 
@@ -516,6 +522,9 @@ fn build_partition(
             .ok_or(MixedTargetError::InstancePartition)?;
         if target.instances != plan.voice_instances() {
             continue;
+        }
+        if target.controller && matches!(target.rate, ControlRate::Sample) {
+            return Err(MixedTargetError::SampleController { slot: address.slot });
         }
         let span = ParameterInstanceSpan::checked(
             compiled_indices.start,

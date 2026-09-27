@@ -45,8 +45,8 @@ mod table_tests;
 mod live;
 mod mixed;
 pub use mixed::{
-    MixedInitialPrepareError, MixedJoinedPrepared, MixedJoinedStream, MixedStreamAudio,
-    MixedStreamControl, MixedStreamOpenError,
+    MixedHistoryCandidate, MixedHistoryPrepareError, MixedInitialPrepareError, MixedJoinedPrepared,
+    MixedJoinedStream, MixedStreamAudio, MixedStreamControl, MixedStreamOpenError,
 };
 
 use std::sync::Arc;
@@ -339,6 +339,39 @@ fn write_magnitudes(
             }
         }
     }
+}
+
+/// Prepared gate and trigger rows addressed by each playable note slot.
+/// Both exclusive and mixed history use this physical mapping off-thread.
+///
+/// ADR-0051 clause 3: a note edge and a `SetParameter` can address one physical
+/// `(node, control)`. A plan currently lowers one target per physical pair; a
+/// future aliasing node must define the last-write half before admission.
+fn gate_rows(plan: &CompiledPlan) -> Vec<Vec<usize>> {
+    let targets = plan.parameter_targets();
+    plan.note_targets()
+        .iter()
+        .enumerate()
+        .map(|(index, note)| {
+            let slot = crate::plan::NoteSlot::new(plan.id(), index);
+            // Closing a note must also lower every declared trigger destination.
+            let triggers: Vec<(NodeSlot, crate::node::kernels::ControlIndex)> = plan
+                .note_magnitudes_of(slot)
+                .iter()
+                .filter(|magnitude| magnitude.magnitude == crate::node::NoteMagnitude::Trigger)
+                .map(|magnitude| (magnitude.node, magnitude.control))
+                .collect();
+            targets
+                .iter()
+                .enumerate()
+                .filter(|(_, target)| {
+                    (target.node == note.node && target.control == note.control)
+                        || triggers.contains(&(target.node, target.control))
+                })
+                .map(|(index, _)| index)
+                .collect()
+        })
+        .collect()
 }
 
 /// Rewrite a stamping error's event index from the suffix back to the admitted stream.
@@ -788,7 +821,7 @@ impl StreamControl {
         // would otherwise disagree — one forced low, a later one restoring what it read —
         // and whichever published last would win.
         let mut controllers = vec![None; self.plan.parameter_targets().len()];
-        let gate_rows = self.gate_rows();
+        let gate_rows = gate_rows(&self.plan);
         // Note-ons still unpaired at the anchor, per note slot. Kept apart from
         // `before_anchor`, which the suffix decrements as it omits crossing releases: reusing
         // one counter for both erases the record that the note was open there, and the seek
@@ -1227,46 +1260,6 @@ impl StreamControl {
         drop(activation);
         self.live_candidates = self.live_candidates.saturating_sub(1);
         Ok(())
-    }
-
-    /// Which prepared rows each note slot's gate is, resolved by **physical** target.
-    ///
-    /// ADR-0051 clause 3. A note edge and a `SetParameter` can address one `(node, control)`,
-    /// and so can two prepared parameters. Matching on the physical pair rather than on a slot
-    /// is what keeps the **substitution** single-valued when they do — not the whole catch-up:
-    /// the last-write half writes each addressed value slot on its own, so two aliased slots
-    /// with different pre-destination writes would still disagree. A plan lowers one prepared
-    /// target per `(node, control)`, so that cannot arise today; ADR-0051 clause 3 carries the
-    /// same bound, and a node kind that ever aliases has to decide the last-write half.
-    fn gate_rows(&self) -> Vec<Vec<usize>> {
-        let targets = self.plan.parameter_targets();
-        self.plan
-            .note_targets()
-            .iter()
-            .enumerate()
-            .map(|(index, note)| {
-                // The gate's rows, and since ADR-0026 the rows of every trigger destination
-                // the note's scope declares: a gate-down that left a sampler's trigger held
-                // would leave it playing across the boundary the gate closed.
-                let slot = crate::plan::NoteSlot::new(self.plan.id(), index);
-                let triggers: Vec<(NodeSlot, crate::node::kernels::ControlIndex)> = self
-                    .plan
-                    .note_magnitudes_of(slot)
-                    .iter()
-                    .filter(|magnitude| magnitude.magnitude == crate::node::NoteMagnitude::Trigger)
-                    .map(|magnitude| (magnitude.node, magnitude.control))
-                    .collect();
-                targets
-                    .iter()
-                    .enumerate()
-                    .filter(|(_, target)| {
-                        (target.node == note.node && target.control == note.control)
-                            || triggers.contains(&(target.node, target.control))
-                    })
-                    .map(|(index, _)| index)
-                    .collect()
-            })
-            .collect()
     }
 
     /// ADR-0051 clause 1's batch: one row per addressable parameter, at the requested time.

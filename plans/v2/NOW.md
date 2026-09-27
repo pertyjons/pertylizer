@@ -240,9 +240,16 @@ sampler test now checks that a compiled trigger falls without restarting its
 playback or changing held live state, in both producer orders. The current
 lowering gives shared voice-sum steps no parameter rows, as the test fixture
 asserts; a future lowering with such rows still needs a preservation check.
-The joined mixed owner still exposes no render, ingress or activation path;
-a compiled history builder, combined capacity charge, shared/global influence
-law, handoff and retirement remain open.
+The joined mixed owner now reconstructs a private compiled prefix at a requested
+seek destination. Its non-cloneable off-thread candidate retains the pairing
+book, destination-open snapshot and one scoped restoration per compiled local
+parameter group. Tests cover strict prefix bounds, equal-position order,
+repeated keys, last note magnitude, prepared bases, zero gate and trigger,
+both producer orders and refusal without owner mutation. Binding also rejects
+a synthetic sample-positioned controller target before preparation. It exposes
+no event extraction, render, ingress or activation path. A suffix builder,
+producer-scoped boundary release, combined capacity charge, shared/global
+influence law, handoff and retirement remain open.
 
 ### Selected work — ordered transport through live I/O
 

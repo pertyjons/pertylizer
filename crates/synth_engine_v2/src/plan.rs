@@ -1258,6 +1258,33 @@ pub struct CompiledPlan {
 }
 
 impl CompiledPlan {
+    /// Build a synthetic future declaration for the mixed binding refusal test.
+    #[cfg(test)]
+    pub(crate) fn set_parameter_rate_for_test(
+        &mut self,
+        slot: ParameterSlot,
+        rate: ControlRate,
+    ) -> bool {
+        if slot.plan() != self.id {
+            return false;
+        }
+        let Some(first) = self.parameter_targets.get(slot.index()) else {
+            return false;
+        };
+        let Some(count) = first.instances.as_usize() else {
+            return false;
+        };
+        for target in self
+            .parameter_targets
+            .iter_mut()
+            .skip(slot.index())
+            .take(count)
+        {
+            target.rate = rate;
+        }
+        true
+    }
+
     /// Additional retained table capacity for an owning host. Compiler resource rows
     /// cover DSP payloads/scratch, not every Vec backing and the shared plan container.
     /// Some outer tables overlap those rows; charging both is deliberately conservative.

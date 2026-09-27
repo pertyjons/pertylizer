@@ -535,6 +535,50 @@ fn a_scoped_event_crossing_into_live_rows_is_refused_before_writing() {
 }
 
 #[test]
+fn a_scoped_event_with_the_wrong_payload_kind_is_refused_before_writing() {
+    let (binding, note) = binding(false);
+    let gate = binding.plan().note_targets()[note.index()].parameter;
+    let controller = binding
+        .plan()
+        .resolve_parameter(CONTROLLER, parameters::SOURCE_VALUE)
+        .expect("controller source value");
+    let (mut plain, mut mixed, _, epoch) = renderers(&binding, note);
+    let before_compiled = states(&mixed, binding.instance_partition().compiled_rows());
+    let bad_gate = TimedEvent::new(
+        EventEnvelope::new(epoch, SampleTime::ZERO, TimeSource::Compiled),
+        EventPayload::ScopedRestore(ScopedParameterRestore::controller_for(
+            group(&binding, gate),
+            ParameterValue::ONE,
+            None,
+        )),
+    );
+    let bad_controller = TimedEvent::new(
+        EventEnvelope::new(epoch, SampleTime::ZERO, TimeSource::Compiled),
+        EventPayload::ScopedRestore(ScopedParameterRestore::override_for(
+            group(&binding, controller),
+            value(0.75),
+        )),
+    );
+    assert_eq!(
+        render(&mut mixed, &[bad_gate, bad_controller]),
+        render(&mut plain, &[])
+    );
+    assert_eq!(mixed.diagnostics().foreign_slot_events(), 2);
+    assert_eq!(
+        states(&mixed, binding.instance_partition().compiled_rows()),
+        before_compiled
+    );
+    assert_eq!(
+        states(&mixed, binding.instance_partition().live_rows()),
+        states(&plain, binding.instance_partition().live_rows())
+    );
+    assert_eq!(
+        states(&mixed, binding.instance_partition().global_rows()),
+        states(&plain, binding.instance_partition().global_rows())
+    );
+}
+
+#[test]
 fn an_ordinary_renderer_has_no_scoped_restoration_authority() {
     let (binding, note) = binding(true);
     let frequency = binding
