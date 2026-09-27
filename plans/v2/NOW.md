@@ -208,6 +208,9 @@ queue custody. A terminal refusal retains its original and reason across the
 producer/inbox handoff; the raw owner keeps a separate quality fault when an
 earlier discontinuity already owns the primary reason. This establishes the
 producer order prerequisite but grants no capacity or protected-release credit.
+A full-ring retry now blocks a different observation value from taking queue
+custody first, with a terminal order fault if attempted. Equal-valued source
+occurrences still need an identity or retry-token rule for a protected ledger.
 An independent design read found that merger forwarding cannot recycle ingress
 hold or tracker credit: another source's earlier mapped-time onset can execute
 before that release. The two-source ingress regression now runs in the workspace
