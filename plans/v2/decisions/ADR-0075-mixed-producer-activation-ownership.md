@@ -236,6 +236,16 @@ live preservation and same-quantum capacity remain prerequisites to an offer.
 A destination-time note-on rendered silent or re-pitched by restoration
 falsifies this order.
 
+The private candidate now checks a proposed effective quantum boundary against
+every event in that single ordered list and returns one frame displacement for
+restoration and suffix. It refuses a boundary before the request, a non-quantum
+boundary, a signed difference outside `FrameDelta` and any displaced event beyond
+engine time. Accepting a boundary where restoration fits but a later suffix
+edge overflows would falsify this check. The list
+keeps its requested-time stamps; the future audio-side offer must select and
+check its actual boundary and apply the same displacement at every read. This
+private timing check grants no offer or combined capacity admission.
+
 Rehearsal falsifiers are a last note-on magnitude before a seek with compiled
 producer second, repeated-key prefix pairing, zero gates and triggers for
 destination-open notes, exact group count, immutable owner/minter custody,

@@ -45,9 +45,10 @@ mod table_tests;
 mod live;
 mod mixed;
 pub use mixed::{
-    MixedHistoryCandidate, MixedHistoryPrepareError, MixedInitialPrepareError, MixedJoinedPrepared,
-    MixedJoinedStream, MixedStampPrepareError, MixedStampedCandidate, MixedStreamAudio,
-    MixedStreamControl, MixedStreamOpenError, MixedSuffixCandidate, MixedSuffixPrepareError,
+    MixedEffectiveTimeError, MixedEffectiveTiming, MixedHistoryCandidate, MixedHistoryPrepareError,
+    MixedInitialPrepareError, MixedJoinedPrepared, MixedJoinedStream, MixedStampPrepareError,
+    MixedStampedCandidate, MixedStreamAudio, MixedStreamControl, MixedStreamOpenError,
+    MixedSuffixCandidate, MixedSuffixPrepareError,
 };
 
 use std::sync::Arc;

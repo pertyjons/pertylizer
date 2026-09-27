@@ -738,6 +738,40 @@ fn private_stamp_releases_only_its_copy_and_orders_restoration_before_destinatio
             } if on_key == key(72)
         ));
         assert_eq!(last.envelope().time(), SampleTime::new(64));
+        let timing = stamped
+            .effective_timing(SampleTime::new(128))
+            .expect("next boundary fits the complete private list");
+        assert_eq!(timing.effective(), SampleTime::new(128));
+        assert_eq!(timing.shift(), FrameCount::new(64));
+        assert!(stamped.events.iter().all(|event| {
+            event.envelope().time().checked_add(timing.shift()) == Ok(SampleTime::new(128))
+        }));
+        assert_eq!(stamped.events[0].envelope().time(), SampleTime::new(64));
+        assert_eq!(
+            stamped
+                .effective_timing(SampleTime::new(0))
+                .expect_err("earlier boundary"),
+            MixedEffectiveTimeError::BeforeRequested {
+                requested: SampleTime::new(64),
+                effective: SampleTime::ZERO,
+            }
+        );
+        assert_eq!(
+            stamped
+                .effective_timing(SampleTime::new(65))
+                .expect_err("incomplete quantum"),
+            MixedEffectiveTimeError::NotQuantumBoundary {
+                effective: SampleTime::new(65),
+            }
+        );
+        let last_boundary = u64::MAX - (u64::MAX % u64::from(crate::time::QUANTUM_FRAMES));
+        assert_eq!(
+            stamped.effective_timing(SampleTime::new(last_boundary)),
+            Err(MixedEffectiveTimeError::DisplacementUnrepresentable {
+                requested: SampleTime::new(64),
+                effective: SampleTime::new(last_boundary),
+            })
+        );
         assert!(
             stamped
                 .events
@@ -753,6 +787,64 @@ fn private_stamp_releases_only_its_copy_and_orders_restoration_before_destinatio
                 .contains(identity.index())
         }));
     }
+}
+
+#[test]
+fn private_effective_timing_refuses_suffix_overflow_after_restoration_fits() {
+    let prepared = bound_with_events(true, |note| {
+        vec![
+            PlanEvent::new(
+                PlanPosition::new(10),
+                CompiledPayload::NoteOn {
+                    slot: note,
+                    key: key(60),
+                    velocity: NoteVelocity::FULL,
+                },
+            ),
+            PlanEvent::new(
+                PlanPosition::new(200),
+                CompiledPayload::NoteOff {
+                    slot: note,
+                    key: key(60),
+                },
+            ),
+        ]
+    });
+    let last_boundary = u64::MAX - (u64::MAX % u64::from(crate::time::QUANTUM_FRAMES));
+    let requested = SampleTime::new(last_boundary - 128);
+    let history = prepared
+        .prepare_history(requested, PlanPosition::new(10))
+        .expect("prefix");
+    let suffix = prepared.prepare_suffix(history).expect("suffix");
+    let stamped = prepared.stamp_suffix(suffix).expect("private stamp");
+    let shift = FrameCount::new(128);
+    let restoration_count = stamped
+        .restoration_count()
+        .as_usize()
+        .expect("represented restoration count");
+    assert!(restoration_count > 0);
+    for event in &stamped.events[..restoration_count] {
+        assert!(matches!(event.payload(), EventPayload::ScopedRestore(_)));
+        assert_eq!(
+            event.envelope().time().checked_add(shift),
+            Ok(SampleTime::new(last_boundary))
+        );
+    }
+    let overflowing_index = stamped
+        .events
+        .iter()
+        .position(|event| event.envelope().time() > requested)
+        .expect("suffix has a later edge");
+    assert!(overflowing_index > restoration_count);
+    assert_eq!(
+        stamped.effective_timing(SampleTime::new(last_boundary)),
+        Err(MixedEffectiveTimeError::EventTimeUnrepresentable {
+            event_index: overflowing_index,
+            time: stamped.events[overflowing_index].envelope().time(),
+            shift,
+        })
+    );
+    assert_eq!(stamped.anchor().time(), requested);
 }
 
 #[test]

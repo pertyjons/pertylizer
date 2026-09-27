@@ -255,9 +255,11 @@ candidate now places that selection at the requested anchor, releases old
 compiled reservations in a compiled-range copy and stamps the suffix there.
 It retains the new outstanding set and initial sequence baseline, with scoped
 restoration before a suffix onset at the destination sample. It has no offer
-path. The producer-scoped boundary release, one effective-time displacement
-for restoration and suffix, combined capacity charge, shared/global influence
-law, handoff and retirement remain open.
+path. A private timing check now validates one possible effective quantum
+boundary and one displacement across the complete list, including refusal if
+only a later suffix event overflows engine time. The audio-side selection and
+application of that displacement, producer-scoped boundary release, combined
+capacity charge, shared/global influence law, handoff and retirement remain open.
 
 ### Selected work — ordered transport through live I/O
 

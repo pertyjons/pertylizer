@@ -22,7 +22,10 @@ use crate::{
         AdmittedCompiledStream, Closed, CompiledEvent, CompiledPayload, OpenNote, OpenNotes,
         Opened, SchedulePrepareError,
     },
-    time::{Located, PlanPosition, SampleTime, StreamAnchor, StreamEpoch, TimeSource, issue_epoch},
+    time::{
+        FrameCount, Located, PlanPosition, QuantumOffset, SampleTime, StreamAnchor, StreamEpoch,
+        TimeSource, issue_epoch,
+    },
     transport::ActivationSequence,
 };
 
@@ -176,6 +179,56 @@ pub enum MixedStampPrepareError {
     InvalidRestoration,
 }
 
+/// Why a private mixed schedule cannot be read at an effective render boundary.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
+pub enum MixedEffectiveTimeError {
+    /// An activation cannot take effect before its requested time.
+    #[error("effective time {effective} precedes requested time {requested}")]
+    BeforeRequested {
+        requested: SampleTime,
+        effective: SampleTime,
+    },
+    /// The audio owner adopts only at a complete quantum boundary.
+    #[error("effective time {effective} is not a quantum boundary")]
+    NotQuantumBoundary { effective: SampleTime },
+    /// The signed difference cannot represent this effective boundary.
+    #[error("displacement from {requested} to {effective} cannot be represented")]
+    DisplacementUnrepresentable {
+        requested: SampleTime,
+        effective: SampleTime,
+    },
+    /// A placed event would leave the representable engine timeline.
+    #[error("event {event_index} at {time} cannot be displaced by {shift}")]
+    EventTimeUnrepresentable {
+        event_index: usize,
+        time: SampleTime,
+        shift: FrameCount,
+    },
+}
+
+/// Checked timing for one possible effective boundary of a private mixed candidate.
+///
+/// The event list remains stamped at the requested time. A later scheduler can use this
+/// single shift at every read, including restoration, rather than rewriting the list.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[must_use]
+pub struct MixedEffectiveTiming {
+    effective: SampleTime,
+    shift: FrameCount,
+}
+
+impl MixedEffectiveTiming {
+    /// The complete quantum boundary at which the candidate would take effect.
+    pub const fn effective(self) -> SampleTime {
+        self.effective
+    }
+
+    /// One displacement for both restoration and suffix events.
+    pub const fn shift(self) -> FrameCount {
+        self.shift
+    }
+}
+
 /// One private, off-thread compiled prefix and scoped restoration batch.
 ///
 /// It is bound to one prepared mixed owner and destination. Its event and note books do
@@ -226,14 +279,13 @@ pub struct MixedSuffixCandidate {
 /// The restoration batch moves out of the retained suffix history into that list,
 /// leaving the history's restoration count at zero. The copied minter and
 /// outstanding set cannot be promoted through this API;
-/// boundary release, displacement and combined capacity remain unproved.
+/// boundary release, audio-side displacement and combined capacity remain unproved.
 #[must_use]
 pub struct MixedStampedCandidate {
     #[allow(dead_code)]
     suffix: MixedSuffixCandidate,
     anchor: StreamAnchor,
     supersedes: ActivationSequence,
-    #[allow(dead_code)]
     events: Vec<TimedEvent>,
     event_count: EventCount,
     restoration_count: EventCount,
@@ -1094,6 +1146,50 @@ impl MixedSuffixCandidate {
 }
 
 impl MixedStampedCandidate {
+    /// Check the uniform displacement for a possible adoption boundary.
+    ///
+    /// This is private preparation evidence, not capacity admission or an offer. The
+    /// eventual audio owner must select and validate its actual boundary again.
+    pub fn effective_timing(
+        &self,
+        effective: SampleTime,
+    ) -> Result<MixedEffectiveTiming, MixedEffectiveTimeError> {
+        let requested = self.anchor.time();
+        if effective < requested {
+            return Err(MixedEffectiveTimeError::BeforeRequested {
+                requested,
+                effective,
+            });
+        }
+        if effective.quantum_offset() != QuantumOffset::ZERO {
+            return Err(MixedEffectiveTimeError::NotQuantumBoundary { effective });
+        }
+        let displacement = effective.difference(requested).map_err(|_| {
+            MixedEffectiveTimeError::DisplacementUnrepresentable {
+                requested,
+                effective,
+            }
+        })?;
+        let frames = u64::try_from(displacement.as_i64()).map_err(|_| {
+            MixedEffectiveTimeError::DisplacementUnrepresentable {
+                requested,
+                effective,
+            }
+        })?;
+        let shift = FrameCount::new(frames);
+        for (event_index, event) in self.events.iter().enumerate() {
+            let time = event.envelope().time();
+            if time.checked_add(shift).is_err() {
+                return Err(MixedEffectiveTimeError::EventTimeUnrepresentable {
+                    event_index,
+                    time,
+                    shift,
+                });
+            }
+        }
+        Ok(MixedEffectiveTiming { effective, shift })
+    }
+
     /// The requested-time anchor used to place the private suffix.
     pub const fn anchor(&self) -> StreamAnchor {
         self.anchor
