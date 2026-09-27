@@ -1457,6 +1457,13 @@ preflight is a falsifier for this running-owner shadow accounting; raw owner
 faults are outside the model. The snapshot grants no future reservation,
 so concurrent source offers and the concrete source-ring handoff still need a
 shared atomic admission rule before this can qualify a combined host.
+The concrete example `SourceInbox` path now carries two serial producers'
+`SourceQueueId`s through actual raw admission. A fixture matches each returned
+`InputEventId` to its delivered raw receipt and recorder publication, including
+repeated same-key onsets and FIFO releases on one source beside the other
+source's same key. This is an identity and payload handoff check for the
+example's existing ring and raw owner. It has no atomic shared capacity charge,
+concurrent producer proof, mixed-ingress offer or joined outcome.
 EVD-0024's component matrix remains
 insufficient for production capacity; ADR-0022's hardware timing and physical
 round-trip gates remain separate.

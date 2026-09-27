@@ -331,8 +331,15 @@ onsets, releases, frontiers and receipts. At eight cells, both preflights refuse
 an onset when retained onsets or ordinary packets exhaust protected capacity;
 retiring a pending ring retry returns its modeled raw charge. This is a model
 of shared capacity for the tested running owners, not an atomic
-charge held by the concrete source ring or raw owner. A real handoff and joined
-host result remain open.
+charge held by the concrete source ring or raw owner. An atomic capacity
+handoff and joined host result remain open.
+The concrete example source inboxes now have a two-source receipt-link test.
+It retains each accepted `SourceQueueId` and the raw `InputEventId` returned
+when that packet leaves the ring, then matches the latter to delivered raw
+receipts and recorder publications. Same-key releases on one source redeem its
+onsets in FIFO order; the other source's same key stays separate. The fixture
+uses serial producers and has no atomic shared capacity charge or mixed-ingress
+offer, so the combined host acceptance gate remains open.
 An off-thread check now places and stamps the bound stream against
 a disposable copy of only the compiled range. It publishes no events or
 reservations. Tests cover wrong-producer and wrong-capacity refusals, disjoint

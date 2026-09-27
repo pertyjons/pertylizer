@@ -895,6 +895,173 @@ fn producer_retry_keeps_time_state_until_the_ring_accepts_the_original() {
 }
 
 #[test]
+fn concrete_two_source_queue_ids_join_delivered_raw_and_recorder_receipts() {
+    use super::source::{SourceInbox, SourceQueueId};
+    use synth_engine_v2::{
+        host::{input::InputOutcome, session::SessionSourceOutcome},
+        recording::notes::Midi1Event,
+    };
+
+    let (mut control, mut audio, generations) = fixture();
+    let epoch = audio.core.acknowledged().epoch;
+    let (mut first, mut first_inbox) = SourceInbox::prepare(
+        generations[0],
+        control.halt_handle(),
+        prepare::simulated_clock(epoch, 0).unwrap(),
+    );
+    let (mut second, mut second_inbox) = SourceInbox::prepare(
+        generations[1],
+        control.halt_handle(),
+        prepare::simulated_clock(epoch, 1).unwrap(),
+    );
+    let _play = control
+        .command(SampleTime::new(256), SessionCommand::Play)
+        .unwrap();
+    let first_observations = [
+        InputObservation::Frontier {
+            tick: InputTick::new(256),
+        },
+        InputObservation::Message {
+            tick: InputTick::new(280),
+            arrival: SampleTime::new(280),
+            input: Midi1Input::from_bytes([0x90, 60, 100]).unwrap(),
+        },
+        InputObservation::Message {
+            tick: InputTick::new(300),
+            arrival: SampleTime::new(300),
+            input: Midi1Input::from_bytes([0x90, 60, 120]).unwrap(),
+        },
+        InputObservation::Message {
+            tick: InputTick::new(360),
+            arrival: SampleTime::new(360),
+            input: Midi1Input::from_bytes([0x90, 60, 0]).unwrap(),
+        },
+        InputObservation::Message {
+            tick: InputTick::new(380),
+            arrival: SampleTime::new(380),
+            input: Midi1Input::from_bytes([0x80, 60, 0]).unwrap(),
+        },
+        InputObservation::Frontier {
+            tick: InputTick::new(768),
+        },
+    ];
+    let second_observations = [
+        InputObservation::Frontier {
+            tick: InputTick::new(512),
+        },
+        InputObservation::Message {
+            tick: InputTick::new(564),
+            arrival: SampleTime::new(282),
+            input: Midi1Input::from_bytes([0x90, 60, 110]).unwrap(),
+        },
+        InputObservation::Message {
+            tick: InputTick::new(724),
+            arrival: SampleTime::new(362),
+            input: Midi1Input::from_bytes([0x80, 60, 0]).unwrap(),
+        },
+        InputObservation::Frontier {
+            tick: InputTick::new(1536),
+        },
+    ];
+    let first_ids =
+        first_observations.map(|observation| first.submit_owned(observation).unwrap().parts().1);
+    let second_ids =
+        second_observations.map(|observation| second.submit_owned(observation).unwrap().parts().1);
+    let mut links = Vec::new();
+    for inbox in [&mut first_inbox, &mut second_inbox] {
+        inbox.service_attributed_identified(&mut control, |queue, report| {
+            assert!(report.attribution_error.is_none());
+            assert_eq!(
+                report.offer.audition_packet,
+                AuditionPacketCustody::NotQueued
+            );
+            links.push((queue.unwrap(), report.offer.result.unwrap()));
+        });
+    }
+    assert_eq!(links.len(), first_ids.len() + second_ids.len());
+    assert!(first_inbox.close(first).is_ok());
+    assert!(second_inbox.close(second).is_ok());
+    control.pump().unwrap();
+    let _pcm = render(&mut audio, 512, &[64]);
+    let _stop = control
+        .command(SampleTime::new(768), SessionCommand::Stop)
+        .unwrap();
+    let _pcm = render(&mut audio, 512, &[64]);
+    control.finish_after_join(&mut audio, |_, _| {}).unwrap();
+    let mut receipts = Vec::new();
+    for generation in generations {
+        while let Some(receipt) = control.collect_input(generation).unwrap() {
+            receipts.push(receipt);
+        }
+    }
+    let raw_for = |queue: SourceQueueId| {
+        links
+            .iter()
+            .find(|(candidate, _)| *candidate == queue)
+            .unwrap()
+            .1
+    };
+    for (queue, observation) in first_ids
+        .into_iter()
+        .zip(first_observations)
+        .chain(second_ids.into_iter().zip(second_observations))
+    {
+        let raw = raw_for(queue);
+        assert_eq!(raw.generation(), queue.generation());
+        let receipt = receipts.iter().find(|receipt| receipt.id == raw).unwrap();
+        assert_eq!(receipt.observation, observation);
+        assert!(matches!(
+            (observation, &receipt.outcome),
+            (
+                InputObservation::Message { .. },
+                InputOutcome::Delivered(SessionSourceOutcome::Published(_))
+            ) | (
+                InputObservation::Frontier { .. },
+                InputOutcome::Delivered(SessionSourceOutcome::Fenced)
+            )
+        ));
+    }
+    let first_onset = raw_for(first_ids[1]);
+    let second_onset = raw_for(first_ids[2]);
+    let foreign_onset = raw_for(second_ids[1]);
+    for (release, matched) in [
+        (first_ids[3], first_onset),
+        (first_ids[4], second_onset),
+        (second_ids[2], foreign_onset),
+    ] {
+        let receipt = receipts
+            .iter()
+            .find(|receipt| receipt.id == raw_for(release))
+            .unwrap();
+        assert_eq!(receipt.matched_onset, Some(matched));
+        assert!(matches!(
+            receipt.observation,
+            InputObservation::Message { input, .. }
+                if matches!(input.event(), Midi1Event::KeyRelease { .. })
+        ));
+    }
+    let mut occurrences = Vec::new();
+    for raw in [first_onset, second_onset, foreign_onset] {
+        let receipt = receipts.iter().find(|receipt| receipt.id == raw).unwrap();
+        let InputOutcome::Delivered(SessionSourceOutcome::Published(record)) = &receipt.outcome
+        else {
+            panic!("queued onset must publish to the recorder");
+        };
+        occurrences.push(record.occurrence.unwrap());
+    }
+    assert_ne!(occurrences[0], occurrences[1]);
+    assert_ne!(occurrences[0], occurrences[2]);
+    assert_ne!(occurrences[1], occurrences[2]);
+    let mut owner = reunited(control, audio);
+    owner.finalize().unwrap();
+    assert_eq!(
+        owner.result().unwrap().sealed_outcome(),
+        CaptureOutcome::Complete
+    );
+    assert_eq!(owner.result().unwrap().records().count(), 6);
+}
+
+#[test]
 fn source_queue_ids_distinguish_equal_observations_and_skip_full_retries() {
     use super::source::{SourceInbox, SourceSendError};
     let (mut control, audio, generations) = fixture();
