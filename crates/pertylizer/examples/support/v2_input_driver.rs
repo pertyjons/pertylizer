@@ -1,6 +1,6 @@
 //! ALSA callback custody for the concrete simulated-input fixture.
 use crate::input_host::{
-    self, HostOutcome, InputOfferError, LiveAudio,
+    self, HostOutcome, InputOfferError, InputOfferReport, LiveAudio,
     archive::RetainedRuns,
     managed::ManagedRun,
     prepare::PreparedAttempt,
@@ -395,29 +395,37 @@ fn settle_source_workers(
 
 fn service(managed: &mut ManagedRun, stopped: &mut bool) -> Result<(), Box<dyn std::error::Error>> {
     let mut input_fault = false;
-    managed.service_identified(
-        |source_id, result| {
-            if let Err(fault) = result {
-                if let Some(id) = source_id {
-                    eprintln!(
-                        "source_queue_generation={:?} source_queue_serial={}",
-                        id.generation(),
-                        id.serial()
+    managed.service_custody_identified(
+        |source_id, report| {
+            let InputOfferReport {
+                result,
+                audition_packet,
+            } = report;
+            match result {
+                Ok(id) => {
+                    println!(
+                        "source_queue_id={source_id:?} raw_input_id={id:?} audition_packet={audition_packet:?}"
                     );
                 }
-                match fault {
-                    InputOfferError::Refused(observation, reason) => {
-                        eprintln!("source_refusal={observation:?} reason={reason:?}");
-                    }
-                    InputOfferError::Accepted {
-                        id,
-                        error,
-                        settlement_error,
-                    } => {
-                        eprintln!("accepted_input_fault={id:?} error={error:?} settlement={settlement_error:?}");
+                Err(fault) => {
+                    input_fault = true;
+                    match fault {
+                        InputOfferError::Refused(observation, reason) => {
+                            eprintln!(
+                                "source_queue_id={source_id:?} audition_packet={audition_packet:?} source_refusal={observation:?} reason={reason:?}"
+                            );
+                        }
+                        InputOfferError::Accepted {
+                            id,
+                            error,
+                            settlement_error,
+                        } => {
+                            eprintln!(
+                                "source_queue_id={source_id:?} audition_packet={audition_packet:?} accepted_input_fault={id:?} error={error:?} settlement={settlement_error:?}"
+                            );
+                        }
                     }
                 }
-                input_fault = true;
             }
         },
         |id, outcome| {

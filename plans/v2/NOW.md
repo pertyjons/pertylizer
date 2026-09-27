@@ -216,6 +216,11 @@ source rings while producer workers retry to a bounded deadline. Successful
 queue pushes receive distinct IDs even for equal-valued observations. This
 establishes the source custody prerequisite, while the combined credit and same-key FIFO
 ledger remain open.
+The concrete bridge now reports whether raw admission also queued an audition
+packet. A failed audition commit has no packet despite its accepted raw ID;
+a later raw-trace attachment fault retains the queued packet. Source service
+and the Linux driver carry this distinction beside the source queue ID. It
+does not grant a protected release or a model receipt.
 An independent design read found that merger forwarding cannot recycle ingress
 hold or tracker credit: another source's earlier mapped-time onset can execute
 before that release. The two-source ingress regression now runs in the workspace

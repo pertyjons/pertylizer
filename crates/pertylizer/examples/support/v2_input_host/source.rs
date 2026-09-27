@@ -248,12 +248,27 @@ impl SourceInbox {
 
     /// A queue ID accompanies every popped observation, including raw refusals.
     /// A pre-ring failure has no queue ID.
+    #[cfg(test)]
     pub fn service_identified(
         &mut self,
         control: &mut LiveControl,
         mut receive: impl FnMut(Option<SourceQueueId>, InputOfferResult),
     ) {
-        self.record_failure(control, |result| receive(None, result));
+        self.service_custody_identified(control, |id, report| receive(id, report.result));
+    }
+
+    /// Preserve the raw result and exact audition-packet custody for each pop.
+    pub fn service_custody_identified(
+        &mut self,
+        control: &mut LiveControl,
+        mut receive: impl FnMut(Option<SourceQueueId>, InputOfferReport),
+    ) {
+        self.record_failure(control, |result| {
+            receive(
+                None,
+                InputOfferReport::new(result, AuditionPacketCustody::NotQueued),
+            );
+        });
         let prefix = self.queue.occupied_len();
         for _ in 0..prefix {
             let Some(packet) = self.queue.try_pop() else {
@@ -261,7 +276,7 @@ impl SourceInbox {
             };
             receive(
                 Some(packet.id),
-                control.offer(self.generation, packet.observation),
+                control.offer_with_custody(self.generation, packet.observation),
             );
         }
     }

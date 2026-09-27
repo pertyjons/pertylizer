@@ -377,11 +377,13 @@ fn post_receipt_audition_fault_returns_accepted_id_without_retryable_input() {
         arrival: SampleTime::new(280),
         input: Midi1Input::from_bytes([0x90, 60, 100]).unwrap(),
     };
+    let report = control.offer_with_custody(generations[0], observation);
+    assert_eq!(report.audition_packet, AuditionPacketCustody::NotQueued);
     let InputOfferError::Accepted {
         id,
         error,
         settlement_error,
-    } = control.offer(generations[0], observation).unwrap_err()
+    } = report.result.unwrap_err()
     else {
         panic!("core must retain the accepted input");
     };
@@ -390,6 +392,103 @@ fn post_receipt_audition_fault_returns_accepted_id_without_retryable_input() {
     assert_eq!(settlement_error, None);
     assert_eq!(control.audition.as_ref().unwrap().custody(), ([0; 2], 0, 0));
     assert!(control.halt_handle().is_requested());
+}
+
+#[test]
+fn audition_packet_custody_survives_a_fault_after_queue_commit() {
+    let (mut control, mut audio, generations) = fixture();
+    let profile = HostProfile::harness(
+        SampleRate::new(48000.0).unwrap(),
+        FrameCount::new(8192),
+        ChannelLayout::Mono,
+    )
+    .unwrap();
+    let clocks = [
+        prepare::simulated_clock(audio.core.acknowledged().epoch, 0).unwrap(),
+        prepare::simulated_clock(audio.core.acknowledged().epoch, 1).unwrap(),
+    ];
+    let (audition, audition_audio, _bytes) =
+        super::audition::AuditionControl::prepare(profile, generations, clocks).unwrap();
+    control.audition = Some(audition);
+    audio.audition = Some(audition_audio);
+    frontier(&mut control, generations, 256);
+
+    let first = InputObservation::Message {
+        tick: InputTick::new(280),
+        arrival: SampleTime::new(280),
+        input: Midi1Input::from_bytes([0x90, 60, 100]).unwrap(),
+    };
+    let report = control.offer_with_custody(generations[0], first);
+    let first_raw = report.result.unwrap();
+    let AuditionPacketCustody::Queued(first_audition) = report.audition_packet else {
+        panic!("successful handoff must own an audition packet");
+    };
+    assert_eq!(first_raw.generation(), first_audition.source());
+
+    control.fail_audition_attachment = true;
+    let second = InputObservation::Message {
+        tick: InputTick::new(281),
+        arrival: SampleTime::new(281),
+        input: Midi1Input::from_bytes([0x90, 61, 100]).unwrap(),
+    };
+    let report = control.offer_with_custody(generations[0], second);
+    let AuditionPacketCustody::Queued(second_audition) = report.audition_packet else {
+        panic!("attachment failure must retain the queued packet");
+    };
+    assert_eq!(second_audition.source(), generations[0]);
+    assert_eq!(second_audition.serial(), first_audition.serial() + 1);
+    assert!(matches!(
+        report.result,
+        Err(InputOfferError::Accepted {
+            error: InputError::ReceiptOwner,
+            settlement_error: None,
+            ..
+        })
+    ));
+    assert_eq!(control.audition.as_ref().unwrap().custody(), ([2, 0], 2, 2));
+    assert!(control.halt_handle().is_requested());
+}
+
+#[test]
+fn source_inbox_reports_audition_custody_with_its_queue_id() {
+    use super::source::SourceInbox;
+    let (mut control, mut audio, generations) = fixture();
+    let profile = HostProfile::harness(
+        SampleRate::new(48000.0).unwrap(),
+        FrameCount::new(8192),
+        ChannelLayout::Mono,
+    )
+    .unwrap();
+    let clocks = [
+        prepare::simulated_clock(audio.core.acknowledged().epoch, 0).unwrap(),
+        prepare::simulated_clock(audio.core.acknowledged().epoch, 1).unwrap(),
+    ];
+    let (audition, audition_audio, _bytes) =
+        super::audition::AuditionControl::prepare(profile, generations, clocks).unwrap();
+    control.audition = Some(audition);
+    audio.audition = Some(audition_audio);
+    frontier(&mut control, generations, 256);
+    let (mut producer, mut inbox) =
+        SourceInbox::prepare(generations[0], control.halt_handle(), clocks[0]);
+    let original = InputObservation::Message {
+        tick: InputTick::new(280),
+        arrival: SampleTime::new(280),
+        input: Midi1Input::from_bytes([0x90, 60, 100]).unwrap(),
+    };
+    let accepted = producer.submit_owned(original).unwrap();
+    let (_attempt, queue) = accepted.parts();
+    let mut reports = Vec::new();
+    inbox.service_custody_identified(&mut control, |id, report| reports.push((id, report)));
+    let [(id, report)] = reports.as_slice() else {
+        panic!("one source packet expected");
+    };
+    assert_eq!(*id, Some(queue));
+    assert!(report.result.is_ok());
+    assert!(matches!(
+        report.audition_packet,
+        AuditionPacketCustody::Queued(_)
+    ));
+    assert!(inbox.close(producer).is_ok());
 }
 
 #[test]

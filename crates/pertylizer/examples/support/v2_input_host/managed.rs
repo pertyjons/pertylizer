@@ -245,17 +245,33 @@ impl ManagedRun {
 
     /// The queue ID identifies an accepted source occurrence before raw admission.
     /// Pre-ring terminal refusals have no queue ID.
+    #[cfg(test)]
     pub fn service_identified(
         &mut self,
         mut input: impl FnMut(Option<SourceQueueId>, InputOfferResult),
+        command: impl FnMut(LoopTransferId, HostOutcome),
+        receipt: impl FnMut(InputReceipt),
+    ) -> Result<(), HostError> {
+        self.service_custody_identified(|id, report| input(id, report.result), command, receipt)
+    }
+
+    /// Keep audition queue custody separate from the raw input result.
+    pub fn service_custody_identified(
+        &mut self,
+        mut input: impl FnMut(Option<SourceQueueId>, InputOfferReport),
         mut command: impl FnMut(LoopTransferId, HostOutcome),
         mut receipt: impl FnMut(InputReceipt),
     ) -> Result<(), HostError> {
         for inbox in &mut self.inboxes {
-            inbox.record_failure(&mut self.control, |result| input(None, result));
+            inbox.record_failure(&mut self.control, |result| {
+                input(
+                    None,
+                    InputOfferReport::new(result, AuditionPacketCustody::NotQueued),
+                );
+            });
         }
         for inbox in &mut self.inboxes {
-            inbox.service_identified(&mut self.control, &mut input);
+            inbox.service_custody_identified(&mut self.control, &mut input);
         }
         while self.control.has_completions() {
             if let Some((id, outcome)) = self.control.collect()? {

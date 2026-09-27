@@ -13,6 +13,7 @@ use synth_engine_v2::{
             InputCaptureSession, InputError, InputEventId, InputObservation, InputReceipt,
             InputReuniteError,
         },
+        live::AuditionId,
         session::{
             LoopSessionError, SessionCommand,
             loop_transfer::{
@@ -69,6 +70,31 @@ pub enum InputOfferError {
 }
 
 pub type InputOfferResult = Result<InputEventId, InputOfferError>;
+
+/// Whether the accepted raw observation also owns a queued audition packet.
+/// A raw ID alone cannot distinguish a failed commit from a failed attachment.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[must_use]
+pub enum AuditionPacketCustody {
+    NotQueued,
+    Queued(AuditionId),
+}
+
+#[derive(Debug)]
+#[must_use]
+pub struct InputOfferReport {
+    pub result: InputOfferResult,
+    pub audition_packet: AuditionPacketCustody,
+}
+
+impl InputOfferReport {
+    fn new(result: InputOfferResult, audition_packet: AuditionPacketCustody) -> Self {
+        Self {
+            result,
+            audition_packet,
+        }
+    }
+}
 
 #[derive(Debug, Error)]
 pub enum HostError {
@@ -128,6 +154,8 @@ pub struct LiveControl {
     pending: Option<LoopTransferPacket>,
     failed_collection: Option<LoopTransferCompletion>,
     pending_input: Option<InputReceipt>,
+    #[cfg(test)]
+    fail_audition_attachment: bool,
     // Never let callback endpoint destruction free the ring allocation.
     _packets: Arc<HeapRb<LoopTransferPacket>>,
     _completions: Arc<HeapRb<LoopTransferCompletion>>,
@@ -167,6 +195,8 @@ impl LiveControl {
                 pending: None,
                 failed_collection: None,
                 pending_input: None,
+                #[cfg(test)]
+                fail_audition_attachment: false,
                 _packets: packets,
                 _completions: completions,
             },
@@ -209,52 +239,90 @@ impl LiveControl {
             .record_pre_ring_failure(generation, observation, reason)
     }
 
+    #[cfg(test)]
     pub fn offer(
         &mut self,
         generation: ConnectionGeneration,
         observation: InputObservation,
     ) -> InputOfferResult {
+        self.offer_with_custody(generation, observation).result
+    }
+
+    /// Retain audition packet custody alongside the raw admission result.
+    pub(super) fn offer_with_custody(
+        &mut self,
+        generation: ConnectionGeneration,
+        observation: InputObservation,
+    ) -> InputOfferReport {
         let prepared = match self.audition.as_ref() {
             Some(audition) => match audition.preflight(generation, observation) {
                 Ok(prepared) => prepared,
                 Err(error) => {
                     self.halt.request_invalid();
-                    return Err(InputOfferError::Refused(observation, error));
+                    return InputOfferReport::new(
+                        Err(InputOfferError::Refused(observation, error)),
+                        AuditionPacketCustody::NotQueued,
+                    );
                 }
             },
             None => None,
         };
-        let id = self
-            .core
-            .offer_observation(generation, observation)
-            .map_err(|(original, error)| InputOfferError::Refused(original, error))?;
+        let id = match self.core.offer_observation(generation, observation) {
+            Ok(id) => id,
+            Err((original, error)) => {
+                return InputOfferReport::new(
+                    Err(InputOfferError::Refused(original, error)),
+                    AuditionPacketCustody::NotQueued,
+                );
+            }
+        };
         let trace = match (self.audition.as_mut(), prepared) {
             (Some(audition), Some(prepared)) => match audition.commit(prepared) {
                 Ok(trace) => trace,
                 Err(error) => {
                     self.halt.request_invalid();
-                    return Err(InputOfferError::Accepted {
-                        id,
-                        error,
-                        settlement_error: None,
-                    });
+                    return InputOfferReport::new(
+                        Err(InputOfferError::Accepted {
+                            id,
+                            error,
+                            settlement_error: None,
+                        }),
+                        AuditionPacketCustody::NotQueued,
+                    );
                 }
             },
             _ => synth_engine_v2::recording::notes::AuditionTrace::NotOffered,
         };
-        if let Err(error) = self.core.set_audition(id, trace) {
+        let audition_packet = match trace {
+            synth_engine_v2::recording::notes::AuditionTrace::Pending(id) => {
+                AuditionPacketCustody::Queued(id)
+            }
+            _ => AuditionPacketCustody::NotQueued,
+        };
+        #[cfg(test)]
+        let attachment = if std::mem::take(&mut self.fail_audition_attachment) {
+            Err(InputError::ReceiptOwner)
+        } else {
+            self.core.set_audition(id, trace)
+        };
+        #[cfg(not(test))]
+        let attachment = self.core.set_audition(id, trace);
+        if let Err(error) = attachment {
             self.halt.request_invalid();
             let settlement_error = self
                 .audition
                 .as_mut()
                 .and_then(|audition| audition.settle(trace).err());
-            return Err(InputOfferError::Accepted {
-                id,
-                error,
-                settlement_error,
-            });
+            return InputOfferReport::new(
+                Err(InputOfferError::Accepted {
+                    id,
+                    error,
+                    settlement_error,
+                }),
+                audition_packet,
+            );
         }
-        Ok(id)
+        InputOfferReport::new(Ok(id), audition_packet)
     }
 
     /// The returned ID is accepted host custody even when its queue is full.

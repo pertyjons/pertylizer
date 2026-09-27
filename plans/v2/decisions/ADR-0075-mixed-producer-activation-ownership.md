@@ -631,6 +631,15 @@ The bridge distinguishes a refused original returned without a raw ID from an
 audition fault carrying an already accepted raw input ID. A regression or
 future-arrival refusal and an accepted-ID audition fault request a host halt.
 Renderer-held capacity and the release-credit equation remain open.
+The concrete bridge now also reports audition-packet custody separately from
+that raw result. `NotQueued` covers pre-ring and pre-raw refusals, frontiers,
+an absent audition owner and a failed audition commit after raw acceptance.
+`Queued(id)` begins only after the audition queue push succeeds and survives
+a later raw-trace attachment fault. Source-inbox service carries that stage
+beside its source queue ID. The Linux driver reports queued audition IDs.
+Neither stage says that the renderer executed the packet or that a protected
+release has credit.
+The terminal host policy remains; the source/channel/key FIFO ledger is unbuilt.
 
 The concrete bridge's joined finish, on either recovery or ordered Stop,
 interrupts the live renderer before it transfers a packet previously refused
