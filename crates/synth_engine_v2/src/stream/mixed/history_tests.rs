@@ -9,8 +9,8 @@ use crate::ir::{
 use crate::plan::{CompiledPlan, ControlRate, ParameterSlot};
 use crate::profile::HostProfile;
 use crate::quantities::{
-    Amplitude, ChannelLayout, EventCount, Frequency, KeyIdentity, NormalizedLevel, NoteVelocity,
-    SampleRate, Seconds,
+    Amplitude, Cents, ChannelLayout, EventCount, Frequency, KeyIdentity, NormalizedLevel,
+    NoteVelocity, SampleRate, Seconds,
 };
 use crate::sample::{
     PlayDirection, PlayMode, PlaybackRegion, PreparedSample, SampleFrame, SampleMap, SampleMapRef,
@@ -507,5 +507,151 @@ fn destination_open_sampler_trigger_is_part_of_zeroed_history() {
             .expect("sampler prefix");
         assert_eq!(candidate.open_at_destination_count().get(), 1);
         assert_eq!(restore(&candidate, trigger).value(), ParameterValue::ZERO);
+    }
+}
+
+#[test]
+fn suffix_pairs_repeated_keys_first_and_counts_only_crossing_obligations() {
+    for compiled_first in [true, false] {
+        let prepared = bound_with_events(compiled_first, |note| {
+            vec![
+                PlanEvent::new(
+                    PlanPosition::ZERO,
+                    CompiledPayload::NoteOn {
+                        slot: note,
+                        key: key(60),
+                        velocity: NoteVelocity::FULL,
+                    },
+                ),
+                PlanEvent::new(
+                    PlanPosition::new(10),
+                    CompiledPayload::NoteOn {
+                        slot: note,
+                        key: key(60),
+                        velocity: NoteVelocity::FULL,
+                    },
+                ),
+                PlanEvent::new(
+                    PlanPosition::new(15),
+                    CompiledPayload::Bend {
+                        slot: note,
+                        key: key(60),
+                        cents: Cents::new(50.0).expect("finite bend"),
+                    },
+                ),
+                PlanEvent::new(
+                    PlanPosition::new(20),
+                    CompiledPayload::NoteOff {
+                        slot: note,
+                        key: key(60),
+                    },
+                ),
+                PlanEvent::new(
+                    PlanPosition::new(25),
+                    CompiledPayload::Bend {
+                        slot: note,
+                        key: key(60),
+                        cents: Cents::new(25.0).expect("finite bend"),
+                    },
+                ),
+                PlanEvent::new(
+                    PlanPosition::new(26),
+                    CompiledPayload::Expression {
+                        slot: note,
+                        key: key(60),
+                        expression: crate::controller::NoteExpression::Pressure(
+                            NormalizedLevel::FULL,
+                        ),
+                    },
+                ),
+                PlanEvent::new(
+                    PlanPosition::new(30),
+                    CompiledPayload::NoteOff {
+                        slot: note,
+                        key: key(60),
+                    },
+                ),
+            ]
+        });
+        let table_before = prepared.table_id();
+        let outstanding_before = prepared.outstanding_count();
+        let history = prepared
+            .prepare_history(SampleTime::new(64), PlanPosition::new(10))
+            .expect("prefix note is open");
+        let destination_open = history.open_at_destination.clone();
+        let suffix = prepared.prepare_suffix(history).expect("bound suffix");
+        assert_eq!(suffix.included, vec![1, 2, 3]);
+        assert_eq!(suffix.included_event_count().get(), 3);
+        assert_eq!(suffix.omitted_expression_count().get(), 2);
+        assert_eq!(suffix.omitted_release_count().get(), 1);
+        assert_eq!(suffix.open_at_destination_count().get(), 1);
+        assert_eq!(suffix.history.open_at_destination, destination_open);
+        assert!(suffix.history.book.entries().is_empty());
+        assert_eq!(prepared.table_id(), table_before);
+        assert_eq!(prepared.outstanding_count(), outstanding_before);
+    }
+}
+
+#[test]
+fn a_suffix_candidate_cannot_be_used_by_another_prepared_owner() {
+    let prepared = bound(true);
+    let other = bound(true);
+    let history = prepared
+        .prepare_history(SampleTime::new(64), PlanPosition::new(20))
+        .expect("prefix");
+    assert_eq!(
+        other
+            .prepare_suffix(history)
+            .expect_err("foreign table and epoch"),
+        MixedSuffixPrepareError::ForeignCandidate
+    );
+    assert_eq!(other.outstanding_count(), 0);
+}
+
+#[test]
+fn crossing_release_is_absent_from_private_suffix_selection() {
+    for compiled_first in [true, false] {
+        let prepared = bound_with_events(compiled_first, |note| {
+            vec![
+                PlanEvent::new(
+                    PlanPosition::ZERO,
+                    CompiledPayload::NoteOn {
+                        slot: note,
+                        key: key(60),
+                        velocity: NoteVelocity::FULL,
+                    },
+                ),
+                PlanEvent::new(
+                    PlanPosition::new(10),
+                    CompiledPayload::NoteOn {
+                        slot: note,
+                        key: key(72),
+                        velocity: NoteVelocity::FULL,
+                    },
+                ),
+                PlanEvent::new(
+                    PlanPosition::new(20),
+                    CompiledPayload::NoteOff {
+                        slot: note,
+                        key: key(60),
+                    },
+                ),
+                PlanEvent::new(
+                    PlanPosition::new(30),
+                    CompiledPayload::NoteOff {
+                        slot: note,
+                        key: key(72),
+                    },
+                ),
+            ]
+        });
+        let history = prepared
+            .prepare_history(SampleTime::new(64), PlanPosition::new(10))
+            .expect("one prefix note");
+        let suffix = prepared.prepare_suffix(history).expect("bound suffix");
+        assert_eq!(suffix.included, vec![1, 3]);
+        assert_eq!(suffix.omitted_release_count().get(), 1);
+        assert_eq!(suffix.omitted_expression_count().get(), 0);
+        assert_eq!(suffix.open_at_destination_count().get(), 1);
     }
 }

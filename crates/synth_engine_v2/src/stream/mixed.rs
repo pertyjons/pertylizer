@@ -84,11 +84,38 @@ pub enum MixedHistoryPrepareError {
     RestorationCountUnrepresentable,
 }
 
+/// Why the bound compiled suffix could not be classified without publishing it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
+pub enum MixedSuffixPrepareError {
+    /// The candidate belongs to another bound plan, epoch or identity table.
+    #[error("mixed suffix candidate belongs to another prepared owner")]
+    ForeignCandidate,
+    /// Defensive check: its saved strict-prefix index disagrees with the bound stream.
+    #[error("mixed suffix prefix index disagrees with the bound stream")]
+    PrefixMismatch,
+    /// Defensive check: a compiled writer escaped target admission.
+    #[error("compiled suffix event {event_index} writes outside note targets")]
+    UnexpectedWriter { event_index: usize },
+    /// Defensive check: the no-stealing suffix exceeded the compiled range capacity.
+    #[error("compiled suffix event {event_index} exceeds its admitted note range")]
+    ProducerCapacity { event_index: usize },
+    /// Defensive check: neither the suffix nor the sealed prefix owns this release.
+    #[error("compiled suffix release {event_index} has no matching note-on")]
+    UnmatchedRelease { event_index: usize },
+    /// Defensive check: neither the suffix nor the sealed prefix owns this expression.
+    #[error("compiled suffix expression {event_index} has no matching note-on")]
+    UnmatchedExpression { event_index: usize },
+    /// One of the private suffix counts cannot fit its event-count type.
+    #[error("mixed suffix count cannot be represented")]
+    CountUnrepresentable,
+}
+
 /// One private, off-thread compiled prefix and scoped restoration batch.
 ///
 /// It is bound to one prepared mixed owner and destination. Its event and note books do
-/// not escape through the public API; a future suffix builder must consume it and prove
-/// boundary release, capacity and effective-time displacement before any offer.
+/// not escape through the public API. The suffix classifier consumes it; later
+/// placement and activation still must prove boundary release, capacity and
+/// effective-time displacement before any offer.
 #[must_use]
 pub struct MixedHistoryCandidate {
     plan: PlanId,
@@ -97,7 +124,8 @@ pub struct MixedHistoryCandidate {
     requested: SampleTime,
     position: PlanPosition,
     prefix_end: usize,
-    // Consumed by the later suffix builder; deliberately private until release custody exists.
+    // The suffix classifier closes crossing notes in this book. The separate snapshot
+    // below remains the authority for notes open at the destination.
     #[allow(dead_code)]
     book: OpenNotes<()>,
     #[allow(dead_code)]
@@ -107,6 +135,33 @@ pub struct MixedHistoryCandidate {
     restoration: Vec<TimedEvent>,
     restoration_count: EventCount,
     off_thread: PhantomData<Rc<()>>,
+}
+
+/// A private source-index selection and counted omissions over one bound mixed suffix.
+///
+/// It does not place, stamp, release, render or offer events. Its retained history
+/// book reflects crossing releases consumed during classification; its separate
+/// destination-open snapshot retains the original boundary set. The book,
+/// snapshot and source indices remain private to a later off-thread builder.
+#[must_use]
+pub struct MixedSuffixCandidate {
+    #[allow(dead_code)]
+    history: MixedHistoryCandidate,
+    #[allow(dead_code)]
+    included: Vec<usize>,
+    included_count: EventCount,
+    omitted_releases: EventCount,
+    omitted_expressions: EventCount,
+}
+
+impl std::fmt::Debug for MixedSuffixCandidate {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("MixedSuffixCandidate")
+            .field("included_count", &self.included_count)
+            .field("omitted_releases", &self.omitted_releases)
+            .field("omitted_expressions", &self.omitted_expressions)
+            .finish_non_exhaustive()
+    }
 }
 
 impl std::fmt::Debug for MixedHistoryCandidate {
@@ -622,6 +677,88 @@ impl MixedJoinedPrepared {
             off_thread: PhantomData,
         })
     }
+
+    /// Classify only the bound suffix's note contracts against a consumed prefix candidate.
+    ///
+    /// A release paired to the saved prefix is counted and omitted entirely. It is never
+    /// converted into the exclusive builder's whole-group `SetParameter` gate write.
+    /// On refusal the private candidate is discarded and this owner stays unchanged.
+    pub fn prepare_suffix(
+        &self,
+        mut candidate: MixedHistoryCandidate,
+    ) -> Result<MixedSuffixCandidate, MixedSuffixPrepareError> {
+        let control = &self.owner.control;
+        if candidate.plan != control.plan.id()
+            || candidate.epoch != control.epoch
+            || candidate.table != control.minter.id()
+        {
+            return Err(MixedSuffixPrepareError::ForeignCandidate);
+        }
+        let stream = control.stream.events();
+        if candidate.prefix_end
+            != stream.partition_point(|event| event.position() < candidate.position)
+        {
+            return Err(MixedSuffixPrepareError::PrefixMismatch);
+        }
+        let span = control.minter.span().indices();
+        let mut suffix = OpenNotes::new(span.end - span.start, crate::ir::StealingPolicy::None);
+        let mut included = Vec::with_capacity(stream.len() - candidate.prefix_end);
+        let mut omitted_releases = 0_usize;
+        let mut omitted_expressions = 0_usize;
+        for (event_index, event) in stream
+            .iter()
+            .copied()
+            .enumerate()
+            .skip(candidate.prefix_end)
+        {
+            let now = event.position().as_u64();
+            match event.payload() {
+                CompiledPayload::NoteOn { slot, key, .. } => {
+                    if !matches!(suffix.open(now, slot, key, ()), Opened::Admitted) {
+                        return Err(MixedSuffixPrepareError::ProducerCapacity { event_index });
+                    }
+                }
+                CompiledPayload::NoteOff { slot, key } => {
+                    if !matches!(suffix.close(now, slot, key), Closed::Paired(_)) {
+                        if matches!(candidate.book.close(now, slot, key), Closed::Paired(_)) {
+                            omitted_releases += 1;
+                            continue;
+                        }
+                        return Err(MixedSuffixPrepareError::UnmatchedRelease { event_index });
+                    }
+                }
+                CompiledPayload::Expression { slot, key, .. }
+                | CompiledPayload::Bend { slot, key, .. } => {
+                    if suffix.find(now, slot, key).is_none() {
+                        if candidate.book.find(now, slot, key).is_some() {
+                            omitted_expressions += 1;
+                            continue;
+                        }
+                        return Err(MixedSuffixPrepareError::UnmatchedExpression { event_index });
+                    }
+                }
+                CompiledPayload::Controller(_) | CompiledPayload::SetParameter { .. } => {
+                    return Err(MixedSuffixPrepareError::UnexpectedWriter { event_index });
+                }
+            }
+            included.push(event_index);
+        }
+        let counts = (
+            u32::try_from(included.len()),
+            u32::try_from(omitted_releases),
+            u32::try_from(omitted_expressions),
+        );
+        let (Ok(included_count), Ok(omitted_releases), Ok(omitted_expressions)) = counts else {
+            return Err(MixedSuffixPrepareError::CountUnrepresentable);
+        };
+        Ok(MixedSuffixCandidate {
+            history: candidate,
+            included,
+            included_count: EventCount::measured(included_count),
+            omitted_releases: EventCount::measured(omitted_releases),
+            omitted_expressions: EventCount::measured(omitted_expressions),
+        })
+    }
 }
 
 impl MixedHistoryCandidate {
@@ -663,6 +800,28 @@ impl MixedHistoryCandidate {
     /// Notes the boundary release must end, captured before suffix pairing can change the book.
     pub const fn open_at_destination_count(&self) -> HeldNoteCount {
         self.open_count
+    }
+}
+
+impl MixedSuffixCandidate {
+    /// Source events still eligible for later placement and stamping.
+    pub const fn included_event_count(&self) -> EventCount {
+        self.included_count
+    }
+
+    /// Crossing releases that must emit no parameter or trigger write at their old time.
+    pub const fn omitted_release_count(&self) -> EventCount {
+        self.omitted_releases
+    }
+
+    /// Bend or expression updates whose prefix occurrence ended at the boundary.
+    pub const fn omitted_expression_count(&self) -> EventCount {
+        self.omitted_expressions
+    }
+
+    /// The immutable boundary-open snapshot, retained separately from suffix pairing.
+    pub const fn open_at_destination_count(&self) -> HeldNoteCount {
+        self.history.open_count
     }
 }
 

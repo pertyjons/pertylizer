@@ -247,8 +247,13 @@ parameter group. Tests cover strict prefix bounds, equal-position order,
 repeated keys, last note magnitude, prepared bases, zero gate and trigger,
 both producer orders and refusal without owner mutation. Binding also rejects
 a synthetic sample-positioned controller target before preparation. It exposes
-no event extraction, render, ingress or activation path. A suffix builder,
-producer-scoped boundary release, combined capacity charge, shared/global
+no event extraction, render, ingress or activation path. A suffix builder now
+classifies the bound source indices and counts crossing releases and
+expressions without producing the exclusive whole-group gate write. Repeated
+keys pair suffix occurrences before prefix occurrences. This private selection
+still needs suffix placement and stamping and the same effective-time
+displacement for suffix and restoration batch. It has no offer path.
+A producer-scoped boundary release, combined capacity charge, shared/global
 influence law, handoff and retirement remain open.
 
 ### Selected work — ordered transport through live I/O
