@@ -6,8 +6,8 @@ use crate::{
     host::{
         ConnectionGeneration, EndpointId,
         input::{
-            InputCapacity, InputCaptureSession, InputLimits, InputOutcome, InputRate, InputTick,
-            InputTickSpan, SimulatedInputClock, SimulatedNoteInput,
+            InputCapacity, InputCaptureSession, InputEventId, InputLimits, InputOutcome, InputRate,
+            InputReceipt, InputTick, InputTickSpan, SimulatedInputClock, SimulatedNoteInput,
         },
         session::{
             LoopRecordingSession, SessionCommand, SessionCommandCapacity, SessionLimits,
@@ -212,8 +212,27 @@ struct Entry {
     key: Key,
     released: bool,
     raw_held: bool,
+    raw_onset: Option<InputEventId>,
     ingress_held: bool,
     result_held: bool,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum RawReceiptSettlementError {
+    Unreleased,
+    BoundToRealInput,
+    UnboundOnset,
+    WrongOnset,
+    WrongRelease,
+    Undelivered,
+    WrongOccurrence,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum RawOnsetBindError {
+    State,
+    Duplicate,
+    SourceGeneration,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -236,6 +255,7 @@ struct Model {
     host_halted: bool,
     terminal_fault: Option<(ModelSource, TerminalFault)>,
     entries: Vec<Entry>,
+    raw_binding: [Option<(ConnectionGeneration, u64)>; 2],
     next: u64,
     next_release: u64,
     used: Counts,
@@ -254,6 +274,7 @@ impl Model {
             host_halted: false,
             terminal_fault: None,
             entries: Vec::new(),
+            raw_binding: [None, None],
             next: 0,
             next_release: 0,
             used: Counts {
@@ -470,6 +491,7 @@ impl Model {
             key: attempt.key,
             released: false,
             raw_held: raw,
+            raw_onset: None,
             ingress_held: ingress,
             result_held: true,
         });
@@ -652,12 +674,103 @@ impl Model {
         }
     }
 
-    fn settle_raw_release(&mut self, id: OccurrenceId) {
+    fn redeem_raw_release(&mut self, id: OccurrenceId) {
         let entry = self.entry_mut(id);
         assert!(entry.released && entry.raw_held);
         entry.raw_held = false;
         self.used.tracker -= 1;
         self.reap(id);
+    }
+
+    fn settle_fake_raw_release(
+        &mut self,
+        id: OccurrenceId,
+    ) -> Result<(), RawReceiptSettlementError> {
+        let entry = self.entry_mut(id);
+        if entry.raw_onset.is_some() {
+            return Err(RawReceiptSettlementError::BoundToRealInput);
+        }
+        if !entry.released || !entry.raw_held {
+            return Err(RawReceiptSettlementError::Unreleased);
+        }
+        self.redeem_raw_release(id);
+        Ok(())
+    }
+
+    fn bind_raw_onset(
+        &mut self,
+        id: OccurrenceId,
+        raw_id: InputEventId,
+    ) -> Result<(), RawOnsetBindError> {
+        let entry = self
+            .entries
+            .iter()
+            .find(|entry| entry.id == id)
+            .ok_or(RawOnsetBindError::State)?;
+        if !entry.raw_held || entry.raw_onset.is_some() {
+            return Err(RawOnsetBindError::State);
+        }
+        if self
+            .entries
+            .iter()
+            .any(|entry| entry.raw_onset == Some(raw_id))
+        {
+            return Err(RawOnsetBindError::Duplicate);
+        }
+        let source = entry.key.source.index();
+        let generation = raw_id.generation();
+        let serial = raw_id.serial();
+        if let Some((bound_generation, last_serial)) = self.raw_binding[source] {
+            if generation != bound_generation {
+                return Err(RawOnsetBindError::SourceGeneration);
+            }
+            if serial <= last_serial {
+                return Err(RawOnsetBindError::Duplicate);
+            }
+        } else if self.raw_binding[1 - source]
+            .is_some_and(|(other_generation, _)| generation == other_generation)
+        {
+            return Err(RawOnsetBindError::SourceGeneration);
+        }
+        self.entry_mut(id).raw_onset = Some(raw_id);
+        self.raw_binding[source] = Some((generation, serial));
+        Ok(())
+    }
+
+    fn settle_delivered_raw_release(
+        &mut self,
+        id: OccurrenceId,
+        onset: &InputReceipt,
+        release: &InputReceipt,
+    ) -> Result<(), RawReceiptSettlementError> {
+        let entry = self.entry_mut(id);
+        if !entry.released || !entry.raw_held {
+            return Err(RawReceiptSettlementError::Unreleased);
+        }
+        let raw_onset = entry
+            .raw_onset
+            .ok_or(RawReceiptSettlementError::UnboundOnset)?;
+        if onset.id != raw_onset || onset.matched_onset.is_some() {
+            return Err(RawReceiptSettlementError::WrongOnset);
+        }
+        if release.matched_onset != Some(raw_onset)
+            || release.id.generation() != raw_onset.generation()
+            || release.id.serial() <= raw_onset.serial()
+        {
+            return Err(RawReceiptSettlementError::WrongRelease);
+        }
+        let occurrence = |receipt: &InputReceipt| match &receipt.outcome {
+            InputOutcome::Delivered(SessionSourceOutcome::Published(record)) => record.occurrence,
+            _ => None,
+        };
+        let onset_occurrence = occurrence(onset).ok_or(RawReceiptSettlementError::Undelivered)?;
+        let release_occurrence =
+            occurrence(release).ok_or(RawReceiptSettlementError::Undelivered)?;
+        if onset_occurrence != release_occurrence {
+            return Err(RawReceiptSettlementError::WrongOccurrence);
+        }
+        self.redeem_raw_release(id);
+        Ok(())
     }
 
     fn settle_ingress_release(&mut self, id: OccurrenceId) {
@@ -995,7 +1108,7 @@ fn modeled_ring_releases_settle_raw_credit_from_delivered_serial_receipts() {
         (ModelSource::First, input(0x90, 60, 120), 12),
     ];
     let ids = onsets.map(|(source, note, _)| model.submit(source, note).unwrap());
-    let mut admitted = Vec::new();
+    let mut admitted: Vec<(OccurrenceId, Key, InputEventId)> = Vec::new();
     for (source, note, time) in onsets {
         let (id, key, queued) = model.service_with_input(source, true, false);
         assert_eq!(queued, note);
@@ -1004,6 +1117,13 @@ fn modeled_ring_releases_settle_raw_credit_from_delivered_serial_receipts() {
         let raw_id = owner
             .offer_message(generation, InputTick::new(time), at, queued)
             .unwrap();
+        if id == ids[1] {
+            assert_eq!(
+                model.bind_raw_onset(id, admitted[0].2),
+                Err(RawOnsetBindError::Duplicate)
+            );
+        }
+        model.bind_raw_onset(id, raw_id).unwrap();
         admitted.push((id, key, raw_id));
     }
     let releases = [
@@ -1067,18 +1187,35 @@ fn modeled_ring_releases_settle_raw_credit_from_delivered_serial_receipts() {
         CaptureOutcome::Complete
     );
     assert_eq!(model.used.tracker, 3);
-    let published = |raw_id| {
-        let receipt = receipts
+    let receipt = |raw_id| {
+        receipts
             .iter()
             .find(|receipt| receipt.id == raw_id)
-            .unwrap();
-        match &receipt.outcome {
-            InputOutcome::Delivered(SessionSourceOutcome::Published(record)) => {
-                (receipt.matched_onset, record.occurrence.unwrap())
-            }
-            _ => panic!("raw message must be delivered to the recorder"),
-        }
+            .unwrap()
     };
+    assert_eq!(
+        model.settle_delivered_raw_release(ids[0], receipt(admitted[0].2), receipt(routed[1].2)),
+        Err(RawReceiptSettlementError::WrongRelease)
+    );
+    let original_release = receipt(routed[0].2);
+    let cancelled_release = InputReceipt {
+        audition: original_release.audition,
+        id: original_release.id,
+        matched_onset: original_release.matched_onset,
+        observation: original_release.observation,
+        clock: original_release.clock,
+        outcome: InputOutcome::Cancelled,
+    };
+    assert_eq!(
+        model.settle_delivered_raw_release(ids[0], receipt(admitted[0].2), &cancelled_release),
+        Err(RawReceiptSettlementError::Undelivered)
+    );
+    assert_eq!(
+        model.settle_fake_raw_release(ids[0]),
+        Err(RawReceiptSettlementError::BoundToRealInput)
+    );
+    assert_eq!(model.used.tracker, 3);
+    let foreign_release_raw = routed[1].2;
     let mut recorded = Vec::new();
     for (id, key, release_raw) in routed {
         let (_, original_key, onset_raw) = admitted
@@ -1086,20 +1223,25 @@ fn modeled_ring_releases_settle_raw_credit_from_delivered_serial_receipts() {
             .find(|(candidate, _, _)| *candidate == id)
             .unwrap();
         assert_eq!(*original_key, key);
-        let (matched, recorded_release) = published(release_raw);
-        let (_, recorded_onset) = published(*onset_raw);
-        assert_eq!(matched, Some(*onset_raw));
-        assert_eq!(recorded_release, recorded_onset);
-        recorded.push(recorded_onset);
-        model.settle_raw_release(id);
+        let onset_receipt = receipt(*onset_raw);
+        let release_receipt = receipt(release_raw);
+        assert_eq!(
+            model.settle_delivered_raw_release(id, onset_receipt, release_receipt),
+            Ok(())
+        );
+        let InputOutcome::Delivered(SessionSourceOutcome::Published(record)) =
+            &onset_receipt.outcome
+        else {
+            panic!("settled onset must have a recorder publication");
+        };
+        recorded.push(record.occurrence.unwrap());
     }
     assert_ne!(recorded[0], recorded[1]);
     assert_ne!(recorded[0], recorded[2]);
     assert_ne!(recorded[1], recorded[2]);
-    // This fixture settles tracker credit after checking each delivered raw
-    // release and recorder occurrence. The model already returned ingress
-    // credit for its refused ingress disposition at source service; no real
-    // mixed ingress or combined result is involved.
+    // The receipt-checked operation settles tracker credit. The model already
+    // returned ingress credit for its refused disposition at source service;
+    // no real mixed ingress or combined result is involved.
     assert_eq!(
         model.used,
         Counts {
@@ -1108,6 +1250,20 @@ fn modeled_ring_releases_settle_raw_credit_from_delivered_serial_receipts() {
             results: 3,
             ledger: 3
         }
+    );
+    model.collect_result(ids[0]);
+    assert!(model.entries.iter().all(|entry| entry.id != ids[0]));
+    let replay = model
+        .submit(ModelSource::First, input(0x90, 62, 100))
+        .unwrap();
+    assert_eq!(model.service(ModelSource::First, true, false), replay);
+    assert_eq!(
+        model.bind_raw_onset(replay, admitted[0].2),
+        Err(RawOnsetBindError::Duplicate)
+    );
+    assert_eq!(
+        model.bind_raw_onset(replay, foreign_release_raw),
+        Err(RawOnsetBindError::SourceGeneration)
     );
 }
 
@@ -1198,7 +1354,7 @@ fn partial_consumer_admission_keeps_each_release_path() {
             ingress: true
         })
     );
-    model.settle_raw_release(raw_only);
+    model.settle_fake_raw_release(raw_only).unwrap();
     model.settle_ingress_release(ingress_only);
     assert_eq!(model.used.tracker, 0);
     assert_eq!(model.used.ingress, 0);
@@ -1947,7 +2103,7 @@ fn cross_source_credit_waits_for_consumer_settlement_after_result_collection() {
         model.onset_preflight(ModelSource::Second),
         OnsetPreflight::NoCredit(NoCreditReason::Tracker)
     );
-    model.settle_raw_release(held);
+    model.settle_fake_raw_release(held).unwrap();
     assert_eq!(
         model.onset_preflight(ModelSource::Second),
         OnsetPreflight::NoCredit(NoCreditReason::Ingress)

@@ -296,9 +296,15 @@ tests join identities for delivered pairs in the serial fixture but do not
 charge the modeled source ring or mixed ingress.
 The concrete host connection remains open.
 The two-source model now drains three queued onsets and their same-key
-releases into an actual serial input/capture owner. Delivered raw receipts
-must link each release to its modeled onset and the same recorder occurrence
-before the fixture calls the model's tracker-credit settlement for that onset.
+releases into an actual serial input/capture owner. The fixture invokes the
+model's receipt-checked tracker settlement for each release. It binds raw
+onset IDs and requires both delivered receipts to link the release to its
+onset and one recorder occurrence before returning credit. Swapped or
+cancelled release receipts are refused without returning tracker
+credit. A fixed-generation, per-source serial watermark refuses replay of a
+raw onset ID even after its model entry is reaped; reconnect is outside this
+fixture. The separate fake-consumer settlement refuses entries bound to a raw
+onset ID.
 The model already returned ingress credit for its modeled refusal at source
 service. Result and ledger credits stay charged; the fixture has no actual
 mixed-ingress outcome, shared raw-capacity charge or concrete source-ring handoff.

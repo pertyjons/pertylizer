@@ -1415,12 +1415,18 @@ outcome.
 The next two-source model probe drains its retained onset and release packets
 into an actual serial `InputCaptureSession`. It checks three distinct recorder
 occurrences, including repeated keys on one source, against delivered raw
-`InputReceipt.matched_onset` links. The fixture returns modeled tracker credit
-after checking that occurrence's raw release receipt and recorder pairing;
-the model method itself does not require a receipt. The model already returned
-ingress credit for its modeled refusal at source service, while result and
-ledger credits stay charged. The serial owner still receives direct offers
-from the modeled queue rather than a concrete source-ring handoff; there is no
+`InputReceipt.matched_onset` links. The model binds each raw onset ID. Its
+delivered-settlement operation requires both delivered receipts to link the
+release to its onset and one recorder occurrence before returning tracker
+credit. A cross-source release swap or a cancelled release is refused with tracker
+credit still charged. Fixed-generation per-source serial watermarks refuse
+duplicate raw-onset binding even after the original entry is reaped; this
+fixture does not model reconnect. Its fake-consumer settlement cannot redeem
+an entry bound to a raw ID.
+The model already returned ingress credit for its modeled refusal at source
+service, while result and ledger credits stay charged. The serial owner still
+receives direct offers from the modeled queue rather than a concrete source-ring
+handoff; there is no
 shared raw-capacity charge, actual mixed-ingress result or combined host
 outcome.
 EVD-0024's component matrix remains
