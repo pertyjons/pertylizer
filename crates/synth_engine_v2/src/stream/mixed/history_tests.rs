@@ -12,12 +12,13 @@ use crate::quantities::{
     Amplitude, Cents, ChannelLayout, EventCount, Frequency, KeyIdentity, NormalizedLevel,
     NoteVelocity, SampleRate, Seconds,
 };
+use crate::render::{AudioBlockMut, NoteEdge, Renderer, TimedEvents};
 use crate::sample::{
     PlayDirection, PlayMode, PlaybackRegion, PreparedSample, SampleFrame, SampleMap, SampleMapRef,
     SampleRef, SampleZone,
 };
 use crate::schedule::PlanEvent;
-use crate::time::FrameCount;
+use crate::time::{FrameCount, TimeSource as TestOrigin};
 
 const SOURCE: NodeId = NodeId::new(1);
 const ENVELOPE: NodeId = NodeId::new(2);
@@ -191,6 +192,16 @@ fn restore(candidate: &MixedHistoryCandidate, slot: ParameterSlot) -> ScopedPara
             _ => None,
         })
         .expect("one scoped event for the group")
+}
+
+fn render_quantum(renderer: &mut PreparedRenderer, events: &[TimedEvent]) -> Vec<f32> {
+    let mut samples = vec![0.0_f32; crate::time::QUANTUM_FRAMES as usize];
+    let frames = samples.len();
+    let output = AudioBlockMut::new(&mut samples, frames, ChannelLayout::Mono).expect("mono block");
+    renderer
+        .render(output, TimedEvents::new(events))
+        .expect("admitted quantum");
+    samples
 }
 
 #[test]
@@ -845,6 +856,224 @@ fn private_effective_timing_refuses_suffix_overflow_after_restoration_fits() {
         })
     );
     assert_eq!(stamped.anchor().time(), requested);
+}
+
+#[test]
+fn private_effective_list_releases_old_compiled_notes_before_a_destination_on() {
+    for compiled_first in [true, false] {
+        let mut prepared = bound_with_events(compiled_first, |note| {
+            vec![
+                PlanEvent::new(
+                    PlanPosition::ZERO,
+                    CompiledPayload::NoteOn {
+                        slot: note,
+                        key: key(60),
+                        velocity: NoteVelocity::FULL,
+                    },
+                ),
+                PlanEvent::new(
+                    PlanPosition::new(128),
+                    CompiledPayload::NoteOn {
+                        slot: note,
+                        key: key(72),
+                        velocity: NoteVelocity::FULL,
+                    },
+                ),
+                PlanEvent::new(
+                    PlanPosition::new(256),
+                    CompiledPayload::NoteOff {
+                        slot: note,
+                        key: key(60),
+                    },
+                ),
+                PlanEvent::new(
+                    PlanPosition::new(320),
+                    CompiledPayload::NoteOff {
+                        slot: note,
+                        key: key(72),
+                    },
+                ),
+            ]
+        });
+        let note = prepared
+            .owner
+            .control
+            .plan
+            .resolve_note(ENVELOPE)
+            .expect("note");
+        let history = prepared
+            .prepare_history(SampleTime::new(64), PlanPosition::new(128))
+            .expect("old note is open at destination");
+        let suffix = prepared.prepare_suffix(history).expect("bound suffix");
+        assert_eq!(suffix.omitted_release_count().get(), 1);
+        let stamped = prepared.stamp_suffix(suffix).expect("private candidate");
+        let old_on = prepared.events[0];
+        let EventPayload::Note {
+            identity: old_identity,
+            edge: NoteEdge::On { .. },
+        } = old_on.payload()
+        else {
+            panic!("initial compiled onset");
+        };
+        let epoch = prepared.epoch();
+        let table = prepared.table_id();
+        let plan = std::sync::Arc::clone(&prepared.owner.control.plan);
+        let partition = std::sync::Arc::clone(&prepared.owner.control.partition);
+        let anchor = prepared.owner.control.anchor;
+        let mut live_only =
+            PreparedRenderer::prepare(std::sync::Arc::clone(&plan), anchor, epoch, table)
+                .expect("live renderer");
+        let mut compiled_only =
+            PreparedRenderer::prepare(std::sync::Arc::clone(&plan), anchor, epoch, table)
+                .expect("compiled renderer");
+        let mut released_only =
+            PreparedRenderer::prepare(plan, anchor, epoch, table).expect("released reference");
+        assert!(live_only.bind_mixed_partition(std::sync::Arc::clone(&partition)));
+        assert!(compiled_only.bind_mixed_partition(std::sync::Arc::clone(&partition)));
+        assert!(released_only.bind_mixed_partition(partition));
+        let audio = &mut prepared.owner.audio;
+        let live_identity = audio
+            .minter
+            .mint_keyed(note, key(48))
+            .expect("live range credit");
+        let live_on = TimedEvent::new(
+            EventEnvelope::new(epoch, SampleTime::ZERO, TestOrigin::Simulated),
+            EventPayload::Note {
+                identity: live_identity,
+                edge: NoteEdge::On {
+                    slot: note,
+                    key: key(48),
+                    velocity: NoteVelocity::FULL,
+                },
+            },
+        );
+        for renderer in [
+            &mut audio.renderer,
+            &mut live_only,
+            &mut compiled_only,
+            &mut released_only,
+        ] {
+            let _ = render_quantum(renderer, &[]);
+        }
+        let _ = render_quantum(&mut audio.renderer, &[old_on, live_on]);
+        let _ = render_quantum(&mut live_only, &[live_on]);
+        let _ = render_quantum(&mut compiled_only, &[old_on]);
+        let _ = render_quantum(&mut released_only, &[old_on]);
+        for renderer in [
+            &mut audio.renderer,
+            &mut live_only,
+            &mut compiled_only,
+            &mut released_only,
+        ] {
+            let _ = render_quantum(renderer, &[]);
+        }
+        let effective = audio.renderer.clock();
+        assert_eq!(effective, SampleTime::new(128));
+        let shifted = stamped
+            .effective_events(effective)
+            .expect("all candidate events fit the effective boundary");
+        assert_eq!(
+            shifted.len(),
+            stamped.event_count().as_usize().expect("event count")
+        );
+        let events = shifted
+            .iter()
+            .collect::<Result<Vec<_>, _>>()
+            .expect("checked events");
+        assert_eq!(shifted.get(0).expect("first read"), events.first().copied());
+        assert_eq!(shifted.get(events.len()).expect("end read"), None);
+        assert_eq!(stamped.events[0].envelope().time(), SampleTime::new(64));
+        let restoration_count = stamped
+            .restoration_count()
+            .as_usize()
+            .expect("restoration count");
+        assert!(events[..restoration_count].iter().all(|event| {
+            matches!(event.payload(), EventPayload::ScopedRestore(_))
+                && event.envelope().time() == effective
+        }));
+        let EventPayload::Note {
+            identity: new_identity,
+            edge: NoteEdge::On { key: new_key, .. },
+        } = events[restoration_count].payload()
+        else {
+            panic!("destination onset follows restoration");
+        };
+        assert_eq!(new_key, key(72));
+        assert_eq!(events[restoration_count].envelope().time(), effective);
+        assert_ne!(new_identity, old_identity);
+        assert_eq!(events.len(), restoration_count + 2);
+        assert_eq!(
+            events.last().map(|event| event.envelope().time()),
+            Some(SampleTime::new(320))
+        );
+        assert!(matches!(
+            events.last().map(TimedEvent::payload),
+            Some(EventPayload::Note {
+                identity,
+                edge: NoteEdge::Off,
+            }) if identity == new_identity
+        ));
+        let boundary_events: Vec<_> = events
+            .iter()
+            .copied()
+            .filter(|event| event.envelope().time() == effective)
+            .collect();
+        assert_eq!(boundary_events.len(), restoration_count + 1);
+        let mut ended = [None; 2];
+        let released = audio
+            .renderer
+            .release_mixed_compiled_boundary(audio.partition.compiled_producer(), &mut ended)
+            .expect("compiled-only boundary release");
+        assert_eq!(released.get(), 1);
+        assert_eq!(
+            ended[0].map(|entry| entry.index),
+            Some(old_identity.index())
+        );
+        let mut compiled_ended = [None; 2];
+        assert_eq!(
+            compiled_only
+                .release_mixed_compiled_boundary(
+                    audio.partition.compiled_producer(),
+                    &mut compiled_ended,
+                )
+                .expect("reference compiled release")
+                .get(),
+            1
+        );
+        let mut released_ended = [None; 2];
+        assert_eq!(
+            released_only
+                .release_mixed_compiled_boundary(
+                    audio.partition.compiled_producer(),
+                    &mut released_ended,
+                )
+                .expect("reference release without new onset")
+                .get(),
+            1
+        );
+        let actual = render_quantum(&mut audio.renderer, &boundary_events);
+        let live = render_quantum(&mut live_only, &[]);
+        let new = render_quantum(&mut compiled_only, &boundary_events);
+        let released = render_quantum(&mut released_only, &boundary_events[..restoration_count]);
+        assert!(live.iter().any(|sample| *sample != 0.0));
+        assert!(new.iter().any(|sample| *sample != 0.0));
+        assert!(released.iter().all(|sample| *sample == 0.0));
+        for (index, ((actual, live), new)) in actual.iter().zip(&live).zip(&new).enumerate() {
+            assert!(
+                (actual - (live + new)).abs() < 0.00001,
+                "boundary frame {index}: mixed {actual}, live {live}, new {new}"
+            );
+        }
+        let actual_next = render_quantum(&mut audio.renderer, &[]);
+        let live_next = render_quantum(&mut live_only, &[]);
+        let new_next = render_quantum(&mut compiled_only, &[]);
+        let released_next = render_quantum(&mut released_only, &[]);
+        assert!(released_next.iter().all(|sample| *sample == 0.0));
+        assert!(new_next.iter().any(|sample| *sample != 0.0));
+        for ((actual, live), new) in actual_next.iter().zip(&live_next).zip(&new_next) {
+            assert!((actual - (live + new)).abs() < 0.00001);
+        }
+    }
 }
 
 #[test]

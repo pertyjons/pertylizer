@@ -269,6 +269,18 @@ its live-only reference. Complete seed consumption by an actual mixed owner,
 effective-time selection, combined capacity, source custody and offer remain
 unproved.
 
+The private candidate now also exposes a checked effective-event view. It
+keeps the requested-time list intact and adds the same validated displacement
+when reading each scoped restoration or compiled suffix event. A renderer test
+uses this view at a later quantum boundary, releases the old sounding compiled
+occurrence before rendering the candidate, and renders restoration before the
+destination note-on. In both producer orders, mixed audio matches the sum of
+live-only and compiled-only references within 1e-5; the compiled voice has
+the same old oscillator history. A release-only reference is silent in the
+boundary and following quanta while the destination note remains audible.
+The test supplies a directly stamped live onset; it does not establish source
+custody, combined capacity or an audio-owned mixed activation offer.
+
 Rehearsal falsifiers are a last note-on magnitude before a seek with compiled
 producer second, repeated-key prefix pairing, zero gates and triggers for
 destination-open notes, exact group count, immutable owner/minter custody,

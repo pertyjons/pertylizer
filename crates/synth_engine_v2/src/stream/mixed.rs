@@ -229,6 +229,63 @@ impl MixedEffectiveTiming {
     }
 }
 
+/// Read one checked mixed candidate at an effective boundary without rewriting its stamps.
+/// Each read applies the same displacement to restoration and compiled suffix events.
+#[derive(Debug, Clone, Copy)]
+#[must_use]
+#[allow(dead_code)] // No mixed audio-side schedule reader is connected yet.
+pub(crate) struct MixedEffectiveEvents<'a> {
+    events: &'a [TimedEvent],
+    shift: FrameCount,
+}
+
+#[allow(dead_code)] // The private mixed activation reader is still under construction.
+impl MixedEffectiveEvents<'_> {
+    pub(crate) const fn len(&self) -> usize {
+        self.events.len()
+    }
+
+    fn shifted(
+        &self,
+        event_index: usize,
+        event: TimedEvent,
+    ) -> Result<TimedEvent, MixedEffectiveTimeError> {
+        let envelope = event.envelope();
+        let time = envelope.time().checked_add(self.shift).map_err(|_| {
+            MixedEffectiveTimeError::EventTimeUnrepresentable {
+                event_index,
+                time: envelope.time(),
+                shift: self.shift,
+            }
+        })?;
+        Ok(TimedEvent::new(
+            EventEnvelope::new(envelope.epoch(), time, envelope.source()),
+            event.payload(),
+        ))
+    }
+
+    pub(crate) fn get(
+        &self,
+        event_index: usize,
+    ) -> Result<Option<TimedEvent>, MixedEffectiveTimeError> {
+        self.events
+            .get(event_index)
+            .copied()
+            .map(|event| self.shifted(event_index, event))
+            .transpose()
+    }
+
+    pub(crate) fn iter(
+        &self,
+    ) -> impl ExactSizeIterator<Item = Result<TimedEvent, MixedEffectiveTimeError>> + '_ {
+        self.events
+            .iter()
+            .copied()
+            .enumerate()
+            .map(|(index, event)| self.shifted(index, event))
+    }
+}
+
 /// One private, off-thread compiled prefix and scoped restoration batch.
 ///
 /// It is bound to one prepared mixed owner and destination. Its event and note books do
@@ -1188,6 +1245,20 @@ impl MixedStampedCandidate {
             }
         }
         Ok(MixedEffectiveTiming { effective, shift })
+    }
+
+    /// Inspect the private list at one checked effective boundary. The source list and
+    /// its requested-time stamps stay intact, including on a timing refusal.
+    #[allow(dead_code)] // The mixed audio-side schedule reader is not connected yet.
+    pub(crate) fn effective_events(
+        &self,
+        effective: SampleTime,
+    ) -> Result<MixedEffectiveEvents<'_>, MixedEffectiveTimeError> {
+        let timing = self.effective_timing(effective)?;
+        Ok(MixedEffectiveEvents {
+            events: &self.events,
+            shift: timing.shift(),
+        })
     }
 
     /// The requested-time anchor used to place the private suffix.

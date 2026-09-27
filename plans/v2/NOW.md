@@ -281,6 +281,15 @@ to the live-only reference.
 The helper is not connected to mixed activation. That owner must publish the
 complete scoped restoration in the same boundary quantum to consume all
 compiled seed marks; the offer refusal remains.
+The private stamped candidate now has a checked, allocation-free effective-event
+view that applies one displacement on each read without rewriting requested-time
+stamps. A renderer rehearsal reads that actual candidate after a delayed boundary,
+releases the old compiled occurrence, and plays the destination note after scoped
+restoration. In both producer orders its audio matches the sum of separate
+live and compiled references with the same voice history. A release-only
+reference is silent in the boundary and following quanta while the new compiled
+note is audible. The live onset is still
+directly stamped in the test, and no combined host or offer is enabled.
 
 ### Selected work — ordered transport through live I/O
 
