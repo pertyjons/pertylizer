@@ -652,6 +652,56 @@ capacity asymmetry; a protected host must also falsify its shadow count against
 actual receipts and show that ordinary refusal does not call raw admission or
 quiesce the source.
 
+An end-to-end candidate that preclaims only source-ring, raw and audition
+credit is falsified by the recorder's shared tracker. The concrete bridge
+prepares eight tracked-input-note cells for both sources. A ninth held onset
+can pass those three checks, reach raw admission and then fail pairing with
+`TrackerFull`; a non-capture-eligible onset can fail earlier with
+`TrackerReserved` while a capture reserve remains. Both faults invalidate the
+recorder source. Protected onset admission must account for the tracker and
+its unspent capture reserve before the source producer reports acceptance,
+or define a terminal disposition that identifies the already accepted raw
+and renderer obligations. Both sources share this tracker, so separate
+per-source shadows cannot reserve its cells. The producer cannot inspect
+capture eligibility or the unspent reserve at send time; a future host must
+use one linearized shared charge with a proved worst-case reserve bound, or
+move the admission decision to an owner that can make the same guarantee.
+
+The audition pool is also shared by both sources. A future protected host
+using separate per-source checks against its 128-packet ceiling could
+simultaneously admit more than 128.
+Any shared charge must linearize the combined onset and release reservation,
+and redemption must not expose a temporarily lower total to another producer.
+
+`Retry` cannot stand for every credit shortage. With the initial raw frontier
+still uncollected, fourteen onset/release pairs without a later frontier
+occupy 29 of 32 raw cells. Retrying the next onset until raw receipts free
+cells blocks the frontier behind that onset in the same source FIFO; those
+receipts need that frontier. Similarly, if one source holds all eight tracker
+cells, retrying its ninth onset for tracker credit blocks its releases behind
+it in the same source FIFO. Those releases would free the tracker cells.
+Only a shortage resolved by draining the source ring may use ordered `Retry`.
+A pre-receipt onset refusal needs a final observable outcome and same-key
+FIFO tombstone, so its release cannot end an accepted onset. A protected
+release redeems only its own matched ledger reservation. A stray release
+cannot spend another key's credit. Ledger exhaustion must fail closed.
+Velocity-zero note-on must follow the same key-release classification as the
+renderer and recorder.
+
+Frontiers have a distinct liveness problem. At `h + R = N - 2`, one frontier
+may consume the remaining raw frontier cell; retrying a second frontier ahead
+of a protected release can then hold that release behind it. Coalescing is
+possible only while preserving every intervening message's order and the
+raw owner's strictly increasing frontier rule; no such mechanism exists yet.
+Another source withholding its merger frontier does not block an already
+reserved release from reaching audition. It does block raw receipts and
+audition settlement, so credits tied to those outcomes cannot be recycled.
+A credit-recycling liveness claim must state the other source's progress
+premise or a terminal timeout and test the cross-source stall explicitly.
+The raw-occupancy shadow also starts with one occupied cell: the initial
+frontier bypasses the source ring but remains in the raw owner until its
+receipt is collected.
+
 A source-side key ledger needs one FIFO for both receipted and refused
 onsets. If the first same-key onset is receipted, the second refused and two
 releases follow, a refused-only tombstone queue consumes the first release
