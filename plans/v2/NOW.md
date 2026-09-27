@@ -280,6 +280,13 @@ these real raw cells, the recorder or mixed ingress, so this is a local safety
 gate rather than Phase 9 host acceptance.
 The raw owner has a read-only admission preflight using the same plan as its
 offer; it grants no reservation across a source-ring handoff.
+A V2-local bridge probe now drains modeled onset and release packets from two
+sources and offers their retained payloads to actual raw-input owners and the
+note recorder. It checks source and payload custody, repeated-key recorder
+pairing, and retained raw input IDs. The raw owner and recorder are parallel
+test sinks. The probe has no real source-ring handoff, raw `InputReceipt`
+settlement, combined result or mixed ingress. Model raw, result and ledger
+credits stay held.
 The concrete host connection remains open.
 An off-thread check now places and stamps the bound stream against
 a disposable copy of only the compiled range. It publishes no events or

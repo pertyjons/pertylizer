@@ -1389,6 +1389,17 @@ so by themselves. At every stage, a positive combined outcome followed by
 attributed to a different occurrence, or an unclassified partially admitted
 note blocks acceptance. This staged fixture does not lift a production
 mixed-producer refusal.
+The first local raw/recorder probe now drains three modeled onsets across two
+sources, including two repeated-key onsets on one source, and their queued
+releases. It offers each dequeued payload to a real `SimulatedNoteInput` owner
+and independently to `SimulatedNoteRecorder`. It checks model source and
+payload custody, raw input ID ownership, and the recorder's repeated-key
+occurrence pairing. The model retains raw/tracker, result and ledger credit;
+none is returned merely because the release was forwarded. The probe does not
+join the raw owner to the recorder, collect raw `InputReceipt`s, exercise the
+concrete ring handoff, or test recorder tracker pressure or mixed ingress.
+Its observed pairing is a local prerequisite, not an end-to-end identity or
+positive combined-outcome claim.
 EVD-0024's component matrix remains
 insufficient for production capacity; ADR-0022's hardware timing and physical
 round-trip gates remain separate.

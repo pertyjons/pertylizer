@@ -1,10 +1,27 @@
-//! Reduced two-source custody model. It does not stand in for raw input or audio.
+//! Reduced two-source custody model with one local raw-input/recorder bridge probe.
 
 use std::collections::VecDeque;
 
 use crate::{
-    quantities::KeyIdentity,
-    recording::notes::{Midi1Event, Midi1Input},
+    host::{
+        ConnectionGeneration, EndpointId,
+        input::{
+            InputCapacity, InputLimits, InputRate, InputTick, InputTickSpan, SimulatedInputClock,
+            SimulatedNoteInput,
+        },
+    },
+    profile::{CaptureLimits, CaptureLimitsInput, RecordingLimits},
+    quantities::{
+        CapturePassCount, CaptureResultCount, CaptureSourceCount, EventCount, HeldNoteCount,
+        KeyIdentity, PreparedBytes, ProjectionTickCount, SampleRate, TrackedInputNoteCount,
+    },
+    recording::notes::{
+        AuditionTrace, CaptureDisposition, CaptureMode, CaptureQuantization, CaptureStamp,
+        ControllerSnapshot, FixtureRevision, FixtureTargetId, Midi1Event, Midi1Input,
+        MusicalInterval, NoteArmContext, NoteArmInput, SimulatedNoteRecorder,
+    },
+    tempo::{Bpm, MusicalTick, TempoMap},
+    time::{FrameCount, PlanPosition, SampleTime, StreamAnchor, StreamEpoch, issue_epoch},
 };
 use synth_core::MidiChannel;
 
@@ -43,7 +60,11 @@ struct Attempt {
 enum RingPacket {
     Onset(Attempt),
     Ordinary,
-    Release { id: OccurrenceId, key: Key },
+    Release {
+        id: OccurrenceId,
+        key: Key,
+        input: Midi1Input,
+    },
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -415,6 +436,15 @@ impl Model {
     }
 
     fn service(&mut self, source: ModelSource, raw: bool, ingress: bool) -> OccurrenceId {
+        self.service_with_input(source, raw, ingress).0
+    }
+
+    fn service_with_input(
+        &mut self,
+        source: ModelSource,
+        raw: bool,
+        ingress: bool,
+    ) -> (OccurrenceId, Key, Midi1Input) {
         let RingPacket::Onset(attempt) = self.rings[source.index()]
             .pop_front()
             .expect("queued source occurrence")
@@ -435,7 +465,7 @@ impl Model {
             ingress_held: ingress,
             result_held: true,
         });
-        attempt.id
+        (attempt.id, attempt.key, attempt.input)
     }
 
     fn can_offer_ordinary(&self, source: ModelSource) -> bool {
@@ -551,12 +581,24 @@ impl Model {
         assert!(self.rings[index].len() < self.ring_limit);
         hold.release_queued = true;
         self.release_reservations[index] -= 1;
-        self.rings[index].push_back(RingPacket::Release { id: hold.id, key });
+        self.rings[index].push_back(RingPacket::Release {
+            id: hold.id,
+            key,
+            input,
+        });
         Ok(ReleaseOffer::Queued(hold.id))
     }
 
     fn service_release(&mut self, source: ModelSource) -> ReleaseRoute {
-        let Some(RingPacket::Release { id, key }) = self.rings[source.index()].pop_front() else {
+        self.service_release_with_input(source).0
+    }
+
+    fn service_release_with_input(
+        &mut self,
+        source: ModelSource,
+    ) -> (ReleaseRoute, Key, Midi1Input) {
+        let Some(RingPacket::Release { id, key, input }) = self.rings[source.index()].pop_front()
+        else {
             panic!("release service cannot skip an earlier source packet");
         };
         let entry = self
@@ -578,7 +620,7 @@ impl Model {
             .expect("release retains its source hold");
         self.source_holds.remove(hold_index);
         self.reap(route.id);
-        route
+        (route, key, input)
     }
 
     fn release(&mut self, source: ModelSource, input: Midi1Input) -> Option<ReleaseRoute> {
@@ -657,6 +699,228 @@ fn limits(count: usize) -> Counts {
         ingress: count,
         results: count,
         ledger: count,
+    }
+}
+
+fn bridge_recorder_limits() -> RecordingLimits {
+    RecordingLimits::new(
+        HeldNoteCount::limit(4).unwrap(),
+        EventCount::limit(16).unwrap(),
+    )
+    .unwrap()
+    .with_capture(
+        CaptureLimits::new(CaptureLimitsInput {
+            max_tracked_input_notes: TrackedInputNoteCount::limit(6).unwrap(),
+            max_capture_sources: CaptureSourceCount::limit(2).unwrap(),
+            max_capture_passes: CapturePassCount::limit(4).unwrap(),
+            max_pending_capture_results: CaptureResultCount::limit(1).unwrap(),
+            max_capture_bytes: PreparedBytes::limit(1_048_576).unwrap(),
+            max_audio_capture_frames: FrameCount::new(1),
+            max_projection_ticks: ProjectionTickCount::limit(100).unwrap(),
+            capture_lateness_allowance: FrameCount::ZERO,
+        })
+        .unwrap(),
+    )
+    .unwrap()
+}
+
+fn bridge_raw_input(
+    epoch: StreamEpoch,
+    source: usize,
+) -> (SimulatedNoteInput, ConnectionGeneration) {
+    let mut raw = SimulatedNoteInput::new(
+        EndpointId::new(format!("bridge-{source}")).unwrap(),
+        InputLimits {
+            cells: InputCapacity::new(8).unwrap(),
+            bytes: PreparedBytes::measured(65_536),
+        },
+    )
+    .unwrap();
+    let generation = raw.begin().unwrap();
+    raw.prepare(
+        generation,
+        SimulatedInputClock::new(
+            epoch,
+            SampleTime::ZERO,
+            InputTick::new(0),
+            InputRate::new(FrameCount::new(1), InputTickSpan::new(1)).unwrap(),
+            InputTickSpan::new(0),
+        ),
+    )
+    .unwrap();
+    raw.start(generation).unwrap();
+    (raw, generation)
+}
+
+#[test]
+fn queued_two_source_releases_preserve_payload_and_recorder_pairing() {
+    let epoch = issue_epoch().unwrap();
+    let mut recorder =
+        SimulatedNoteRecorder::prepare_fixture(epoch, bridge_recorder_limits()).unwrap();
+    let recorder_sources = [
+        recorder
+            .bind_fixture_source(Some(ControllerSnapshot::neutral()))
+            .unwrap(),
+        recorder
+            .bind_fixture_source(Some(ControllerSnapshot::neutral()))
+            .unwrap(),
+    ];
+    let context = NoteArmContext::prepare(NoteArmInput {
+        target: FixtureTargetId::new(1).unwrap(),
+        expected_revision: FixtureRevision::new(0),
+        interval: MusicalInterval::new(MusicalTick::ZERO, MusicalTick::new(8)).unwrap(),
+        mode: CaptureMode::Overdub,
+        quantization: CaptureQuantization::Off,
+        epoch,
+        anchor: StreamAnchor::new(SampleTime::ZERO, PlanPosition::ZERO),
+        tempo: TempoMap::new(
+            Bpm::new(120.0).unwrap(),
+            &[],
+            SampleRate::new(48_000.0).unwrap(),
+        )
+        .unwrap(),
+    })
+    .unwrap();
+    let ticket = recorder.arm(context, &recorder_sources).unwrap();
+    for source in recorder_sources {
+        recorder
+            .fence(
+                source,
+                epoch,
+                SampleTime::ZERO,
+                recorder.source_sequence(source).unwrap(),
+            )
+            .unwrap();
+    }
+    recorder.start(ticket).unwrap();
+
+    let mut raw = [bridge_raw_input(epoch, 0), bridge_raw_input(epoch, 1)];
+    let mut model = Model::new(limits(3), 4);
+    let onsets = [
+        (ModelSource::First, input(0x90, 60, 100), 10),
+        (ModelSource::Second, input(0x90, 60, 110), 11),
+        (ModelSource::First, input(0x90, 60, 120), 12),
+    ];
+    let ids = onsets.map(|(source, note, _)| model.submit(source, note).unwrap());
+    let mut identities = Vec::new();
+    for ((source, onset, time), expected_id) in onsets.into_iter().zip(ids) {
+        let (id, key, queued) = model.service_with_input(source, true, false);
+        assert_eq!(id, expected_id);
+        assert_eq!(key.source, source);
+        assert_eq!(key.channel, queued.channel());
+        assert_eq!(
+            key.note,
+            match queued.event() {
+                Midi1Event::NoteOn { key, .. } => key,
+                _ => panic!("queued onset must remain an onset"),
+            }
+        );
+        assert_eq!(queued, onset);
+        let index = key.source.index();
+        let at = SampleTime::new(time);
+        let observation = crate::host::input::InputObservation::Message {
+            tick: InputTick::new(at.as_u64()),
+            arrival: at,
+            input: queued,
+        };
+        let (owner, generation) = &mut raw[index];
+        assert_eq!(
+            owner.preflight_observation(*generation, observation),
+            Ok(())
+        );
+        let raw_id = owner
+            .offer_message(*generation, InputTick::new(at.as_u64()), at, queued)
+            .unwrap();
+        assert_eq!(raw_id.generation(), *generation);
+        let receipt = recorder
+            .publish(
+                recorder_sources[index],
+                CaptureStamp::exact_fixture(epoch, at, at).unwrap(),
+                queued,
+                AuditionTrace::NotOffered,
+            )
+            .unwrap();
+        assert_eq!(receipt.capture, CaptureDisposition::Recorded);
+        let recorder_id = receipt.occurrence.unwrap();
+        assert_eq!(recorder_id.source(), recorder_sources[index]);
+        identities.push((id, key, raw_id, recorder_id));
+    }
+    let releases = [
+        (ModelSource::First, input(0x90, 60, 0), ids[0], 20),
+        (ModelSource::Second, input(0x90, 60, 0), ids[1], 21),
+        (ModelSource::First, input(0x80, 60, 0), ids[2], 22),
+    ];
+    for (source, release, id, _) in releases {
+        assert_eq!(
+            model.offer_release(source, release),
+            Ok(ReleaseOffer::Queued(id))
+        );
+    }
+    for (source, release, expected_id, time) in releases {
+        let (route, key, queued) = model.service_release_with_input(source);
+        assert_eq!(route.id, expected_id);
+        assert_eq!(key.source, source);
+        assert!(route.raw);
+        assert!(!route.ingress);
+        assert_eq!(queued, release);
+        let (model_id, original_key, raw_onset, recorder_onset) = identities
+            .iter()
+            .find(|(id, _, _, _)| *id == route.id)
+            .unwrap();
+        assert_eq!(*model_id, route.id);
+        assert_eq!(*original_key, key);
+        assert_eq!(key.channel, queued.channel());
+        assert_eq!(
+            key.note,
+            match queued.event() {
+                Midi1Event::KeyRelease { key, .. } => key,
+                _ => panic!("queued release must remain a release"),
+            }
+        );
+        let index = key.source.index();
+        let at = SampleTime::new(time);
+        let observation = crate::host::input::InputObservation::Message {
+            tick: InputTick::new(at.as_u64()),
+            arrival: at,
+            input: queued,
+        };
+        let (owner, generation) = &mut raw[index];
+        assert_eq!(raw_onset.generation(), *generation);
+        assert_eq!(
+            owner.preflight_observation(*generation, observation),
+            Ok(())
+        );
+        let raw_release = owner
+            .offer_message(*generation, InputTick::new(at.as_u64()), at, queued)
+            .unwrap();
+        assert_eq!(raw_release.generation(), raw_onset.generation());
+        assert!(raw_release.serial() > raw_onset.serial());
+        let receipt = recorder
+            .publish(
+                recorder_sources[index],
+                CaptureStamp::exact_fixture(epoch, at, at).unwrap(),
+                queued,
+                AuditionTrace::NotOffered,
+            )
+            .unwrap();
+        assert_eq!(receipt.capture, CaptureDisposition::Recorded);
+        assert_eq!(receipt.occurrence, Some(*recorder_onset));
+    }
+    // Pairing is observed in the recorder. The model's raw, result and ledger
+    // credits stay held until outcomes and raw input receipts can be joined.
+    assert_eq!(
+        model.used,
+        Counts {
+            tracker: 3,
+            ingress: 0,
+            results: 3,
+            ledger: 3,
+        }
+    );
+    for (owner, _) in &mut raw {
+        assert_eq!(owner.state(), crate::host::ConnectionState::Running);
+        assert_eq!(owner.discontinuity(), None);
+        assert!(owner.collect().is_none());
     }
 }
 
