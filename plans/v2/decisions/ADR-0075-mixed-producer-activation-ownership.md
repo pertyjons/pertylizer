@@ -128,6 +128,125 @@ must be remeasured before any mixed offer uses the payload. The compiled
 history walk, boundary ordering, release custody and loop restoration remain
 separate acceptance work.
 
+### Bound compiled history rehearsal
+
+The next off-thread artifact may derive restoration from only the compiled
+prefix of the `MixedJoinedPrepared` owner's fixed, admitted stream. It is a
+single-use, non-cloneable candidate bound to that owner's plan, epoch and table,
+the requested plan position and sample time, and the index where the prefix
+ends. It retains the note-pairing book for a later suffix builder and a separate
+snapshot of the notes open at the destination; advancing the book through the
+suffix must not change which gates the boundary restoration lowers. The request
+refuses when no quantum boundary can follow its sample time. The private events
+are stamped at the requested time; a later scheduler must shift them by the
+same effective-time displacement as the suffix. Preparing this artifact
+neither mints into the authoritative range nor exposes an event, render or
+activation offer API.
+
+Walk only events **strictly before** the destination in their admitted order;
+equal-position events inside that prefix keep their admitted order, and events
+at the destination belong to the suffix. Use the plan's no-stealing note
+capacity and slot/key pairing rule.
+The already sealed initial schedule has checked pairing and capacity for the
+whole stream, so a second refusal for those cases is defensive reconstruction,
+not an independently reachable public falsifier. Compiled parameter and
+controller writers remain excluded by target admission; encountering one here
+still refuses explicitly as another unreachable defensive check. Expression
+and bend history ends with its occurrence and does not become a parameter
+override. For each addressable group, retain the last note-on magnitude
+written before the destination, even when that particular note later ended
+and another note remains open. This is the existing exclusive last-write law,
+not a claim that the value belongs to the still-open note. Note-on and note-off
+update gate and trigger history in that same order;
+every gate or trigger with an open compiled note at the destination is forced
+to zero. A missing prefix write restores the prepared base, and a NoteSource
+restores its base because its occurrence has ended.
+
+History is keyed by the parameter group's address, and each emitted event
+reads that exact address. An implementation may use the group's first physical
+row as scratch, but that row can lie in the **live** partition when the live
+producer is first. Its use as a scratch key grants no authority to write it:
+the emitted `ScopedRestore` must carry the bound compiled span and the renderer
+must recheck it. The group's first `ParameterTarget::controller` flag decides
+the payload kind: a true flag uses
+`ScopedParameterRestore::controller_for(group, value, None)` so its controller
+layer clears with the override in one retarget; a false flag uses
+`override_for(group, value)` so sample-positioned gates and triggers take the
+timed-control path. The renderer refuses a mismatched kind, so building one
+must be a tested failure rather than a silently omitted restoration. The batch
+has exactly one event per admitted restoration group and omits shared-sum and
+global rows. A future sample-positioned target with `controller: true` must
+refuse binding until the renderer has a timed two-layer restore for it.
+
+This candidate is not an activation. Its zero gate and trigger values are
+invalid without a producer-scoped boundary release that ends compiled
+occurrences before the batch; otherwise a still-sounding compiled occurrence
+and the renderer's note registry disagree about what ended. A later release
+custody slice must prove the combined render has no new rising edge. Before an
+offer, measure the payload and per-event fanout and admit the batch, boundary
+release, live ingress, Stop and other same-quantum Session contributors
+together. A later suffix builder must distinguish a release paired in its own
+suffix from one whose note-on was in the prefix. **Proposed exception to
+ADR-0051 clause 5 and SOUND-INV-018 for this bound mixed note-only shape:**
+the latter loses both its note contract and its later physical gate event,
+but increments the omitted-release count. The producer-scoped boundary
+release and scoped zero restore lower the old occurrence's gate and trigger
+rows at the boundary. A suffix note-on can raise its own instance row,
+including an index recycled after that release. The old crossing release
+emits **no parameter write and no trigger off edge** at its old time; even a
+one-row write could lower the new occurrence after index reuse. In playthrough,
+`note_target` resolves a note-off to its own identity's one row because this
+binding refuses one-instance shared destinations. That is the audible
+comparison for two simultaneous occurrences on distinct instances, not a
+late write this exception retains. The exclusive bare `SetParameter` instead
+fans out to the whole group. This proposed mixed exception ends the old note
+at the boundary while no independent compiled `SetParameter` or `Controller`
+writer is admitted. The builder must never copy the exclusive path's
+whole-group `SetParameter` for that crossing release, which would lower live
+instances. This exception
+requires an explicit amendment of both contracts before a mixed offer uses
+it. If compiled parameter writers become admissible, the omission needs a
+new scoped gate-down and a revised capacity charge first. A suffix bend or
+expression whose note-on was in the prefix is also dropped and counted,
+as in the exclusive path; one paired with a suffix note remains in the suffix.
+
+Rehearsal falsifiers are a last note-on magnitude before a seek with compiled
+producer second, repeated-key prefix pairing, zero gates and triggers for
+destination-open notes, exact group count, immutable owner/minter custody,
+and no writes to live, global or shared rows. A group without a prefix write,
+or a NoteSource group, restored to anything but its prepared base fails. So
+does expression or bend history appearing as an override, or a group built
+with a payload kind that disagrees with `ParameterTarget::controller`. Accepting
+a request with no following quantum boundary, shifting the batch differently
+from the suffix, or changing the saved destination-open set while pairing the
+suffix also fails. An event exactly at the destination entering the prefix,
+or equal-position prefix events changing their admitted order, fails. So does
+a crossing release omitted without a counted outcome, one that emits any
+parameter or trigger write at its old time, or a crossing bend or expression
+left in the suffix without its prefix note. A prefix note A followed by a
+suffix note B on the same slot but another key must leave B sounding through
+A's crossing release. That release is counted exactly once as omitted. With
+a repeated key, a release or bend paired to the suffix note must remain in
+the suffix and must not be counted as omitted. After B reuses A's released
+index, A's crossing release
+must emit no write to that reused row, including no trigger off edge. A
+crossing bend or expression must increment only the omitted-expression count;
+a crossing release must increment only the omitted-release count. A value-only
+test of the private batch does not discharge the combined release or
+audible-edge falsifiers.
+
+An independent design consultation rejected a uniform scoped payload kind,
+a producer-owned interpretation of the first-row history key, unreachable
+public refusal tests, an ambiguous "last pitch" rule, and a value-only claim
+of no rising edge. The conditional payload, address-keyed scratch, defensive
+check labels, precise last-write rule and release prerequisite above resolve
+those findings. The independent uncommitted read also required an explicit
+controller-flag rule and mismatch falsifier, a strict prefix boundary, fuller
+falsifiers, consistent defensive-refusal labels, and treatment of the
+crossing release's unscoped exclusive write. The proposed counted exception
+above addresses that last hole for this bound shape; its amendment remains
+required before an offer.
+
 ### Protected note credit rehearsal still needs a law
 
 A note-on/key-release-only rehearsal is a possible next slice, but no credit
@@ -358,7 +477,7 @@ unstated assumption.
 Acceptance must explicitly amend ADR-0050 clauses 3, 5, 7, 8 and 9; ADR-0046
 clauses 3 and 6 and ADR-0047 clauses 3 and 7 for the split source receipt,
 audio acceptance and mixed-host release timing; ADR-0051
-clauses 4 and 6; ADR-0072's exclusive-owner mint and release limit;
+clauses 4, 5 and 6; ADR-0072's exclusive-owner mint and release limit;
 ADR-0073's Session-only Stop assumption and terminal credit-exhaustion policy
 for protected releases and, if changed, its inherited-bend failure and other
 credit-exhaustion policies;
