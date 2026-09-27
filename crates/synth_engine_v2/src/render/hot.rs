@@ -319,13 +319,13 @@ impl PreparedRenderer {
     }
 
     /// Preflight and end only the sounding compiled occurrences of a bound mixed renderer.
-    /// All target, span and queue checks happen before the registry is changed. A later
-    /// mixed adoption will own the preallocated `ended_notes` and call this once at its
-    /// effective boundary. It must publish complete scoped restoration in that boundary
-    /// quantum: seeding marks every compiled row, while the queued release writes only
-    /// gate and trigger rows. Leaving another mark for a later ordinary write would make
-    /// that write step instead of ramp. This helper alone grants no activation path.
-    #[allow(dead_code)] // The mixed adoption owner is not connected yet.
+    /// All target, span and queue checks happen before the registry is changed. The
+    /// bound mixed audio half owns the preallocated `ended_notes` passed by its private
+    /// adoption step. A mixed schedule must publish complete scoped restoration in
+    /// that boundary quantum: seeding marks every compiled row, while the queued
+    /// release writes only gate and trigger rows. A mark left for a later ordinary
+    /// write would make that write step instead of ramp. This helper alone grants
+    /// no activation path.
     pub(crate) fn release_mixed_compiled_boundary(
         &mut self,
         producer: crate::identity::ProducerId,
@@ -407,6 +407,33 @@ impl PreparedRenderer {
         );
         self.queue_ended_notes(ended_notes, released);
         Ok(released)
+    }
+
+    /// End the compiled partition and move the musical anchor as one boundary step.
+    /// The release preflight runs before either state change; after it succeeds, moving
+    /// the anchor cannot fail. The return gives the old anchor to the schedule owner,
+    /// which must retain it with the retired event list. The caller must publish the
+    /// complete scoped restoration in this quantum, before any destination suffix edge.
+    pub(crate) fn adopt_mixed_compiled_boundary(
+        &mut self,
+        producer: crate::identity::ProducerId,
+        effective: SampleTime,
+        position: PlanPosition,
+        ended_notes: &mut [Option<crate::identity::EndedNote>],
+    ) -> Result<crate::render::MixedBoundaryAdopted, crate::render::MixedBoundaryReleaseError> {
+        if effective != self.clock {
+            return Err(crate::render::MixedBoundaryReleaseError::ClockMismatch {
+                clock: self.clock,
+                offered: effective,
+            });
+        }
+        let retired_anchor = self.anchor;
+        let released = self.release_mixed_compiled_boundary(producer, ended_notes)?;
+        self.anchor = crate::time::StreamAnchor::new(effective, position);
+        Ok(crate::render::MixedBoundaryAdopted {
+            released,
+            retired_anchor,
+        })
     }
 
     /// How many quanta a call for `frames` frames will render.

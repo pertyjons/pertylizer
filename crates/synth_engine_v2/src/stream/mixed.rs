@@ -29,6 +29,8 @@ use crate::{
     transport::ActivationSequence,
 };
 
+mod hot;
+
 /// Why a bound mixed stream could not be prepared.
 #[derive(Debug, Error)]
 pub enum MixedStreamOpenError {
@@ -476,6 +478,7 @@ pub struct MixedStreamAudio {
     minter: LiveRangeMinter,
     note: NoteSlot,
     partition: Arc<MixedInstancePartition>,
+    compiled_ended: Vec<Option<crate::identity::EndedNote>>,
 }
 
 impl MixedStreamControl {
@@ -559,6 +562,7 @@ impl MixedStreamControl {
         }
         let parts = binding.into_parts();
         let audio_partition = Arc::clone(&parts.partition);
+        let compiled_ended = vec![None; compiled_span.indices().len()];
         Ok((
             Self {
                 epoch,
@@ -574,6 +578,7 @@ impl MixedStreamControl {
                 minter: live,
                 note: parts.live_slot,
                 partition: audio_partition,
+                compiled_ended,
             },
         ))
     }

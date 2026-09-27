@@ -937,7 +937,7 @@ fn private_effective_list_releases_old_compiled_notes_before_a_destination_on() 
                     },
                 ),
                 PlanEvent::new(
-                    PlanPosition::new(128),
+                    PlanPosition::new(256),
                     CompiledPayload::NoteOn {
                         slot: note,
                         key: key(72),
@@ -945,14 +945,14 @@ fn private_effective_list_releases_old_compiled_notes_before_a_destination_on() 
                     },
                 ),
                 PlanEvent::new(
-                    PlanPosition::new(256),
+                    PlanPosition::new(384),
                     CompiledPayload::NoteOff {
                         slot: note,
                         key: key(60),
                     },
                 ),
                 PlanEvent::new(
-                    PlanPosition::new(320),
+                    PlanPosition::new(448),
                     CompiledPayload::NoteOff {
                         slot: note,
                         key: key(72),
@@ -967,7 +967,7 @@ fn private_effective_list_releases_old_compiled_notes_before_a_destination_on() 
             .resolve_note(ENVELOPE)
             .expect("note");
         let history = prepared
-            .prepare_history(SampleTime::new(64), PlanPosition::new(128))
+            .prepare_history(SampleTime::new(64), PlanPosition::new(256))
             .expect("old note is open at destination");
         let suffix = prepared.prepare_suffix(history).expect("bound suffix");
         assert_eq!(suffix.omitted_release_count().get(), 1);
@@ -1084,14 +1084,45 @@ fn private_effective_list_releases_old_compiled_notes_before_a_destination_on() 
             .filter(|event| event.envelope().time() == effective)
             .collect();
         assert_eq!(boundary_events.len(), restoration_count + 1);
-        let mut ended = [None; 2];
-        let released = audio
-            .renderer
-            .release_mixed_compiled_boundary(audio.partition.compiled_producer(), &mut ended)
-            .expect("compiled-only boundary release");
-        assert_eq!(released.get(), 1);
+        let old_anchor = audio.renderer.anchor_for_test();
+        assert_ne!(
+            old_anchor.time_of(stamped.suffix.history.position),
+            Some(effective),
+            "the seek must change the musical mapping"
+        );
         assert_eq!(
-            ended[0].map(|entry| entry.index),
+            audio.adopt_compiled_boundary(SampleTime::new(64), stamped.suffix.history.position),
+            Err(crate::render::MixedBoundaryReleaseError::ClockMismatch {
+                clock: effective,
+                offered: SampleTime::new(64),
+            })
+        );
+        assert_eq!(audio.renderer.anchor_for_test(), old_anchor);
+        let ended_storage = std::mem::take(&mut audio.compiled_ended);
+        assert_eq!(
+            audio.adopt_compiled_boundary(effective, stamped.suffix.history.position),
+            Err(crate::render::MixedBoundaryReleaseError::EndedStorage)
+        );
+        assert_eq!(audio.renderer.anchor_for_test(), old_anchor);
+        audio.compiled_ended = ended_storage;
+        let mut adopted = None;
+        let allocations = crate::render_allocation::count_allocs(|| {
+            adopted = Some(
+                audio
+                    .adopt_compiled_boundary(effective, stamped.suffix.history.position)
+                    .expect("compiled-only boundary adoption"),
+            );
+        });
+        assert_eq!(allocations, 0);
+        let adopted = adopted.expect("boundary result");
+        assert_eq!(adopted.released().get(), 1);
+        assert_eq!(adopted.retired_anchor(), old_anchor);
+        assert_eq!(
+            audio.renderer.anchor_for_test(),
+            StreamAnchor::new(effective, stamped.suffix.history.position)
+        );
+        assert_eq!(
+            audio.compiled_ended[0].map(|entry| entry.index),
             Some(old_identity.index())
         );
         let mut compiled_ended = [None; 2];

@@ -285,6 +285,14 @@ to the live-only reference.
 The helper is not connected to mixed activation. That owner must publish the
 complete scoped restoration in the same boundary quantum to consume all
 compiled seed marks; the offer refusal remains.
+The bound mixed audio half now owns an ended-note buffer sized from its compiled
+span. A private boundary operation refuses a clock mismatch before changing
+state, then releases the compiled partition and moves the musical anchor
+together without allocation. Its result returns the old anchor for the future
+schedule owner to retain with the retired compiled list. The delayed-boundary
+renderer rehearsal changes the musical mapping and verifies the new anchor
+and retained live audio in both producer orders. Its buffer still needs a
+combined-host resource charge, and no mixed schedule calls the operation yet.
 The private stamped candidate now has a checked, allocation-free effective-event
 view that applies one displacement on each read without rewriting requested-time
 stamps. A renderer rehearsal reads that actual candidate after a delayed boundary,

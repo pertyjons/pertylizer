@@ -51,7 +51,9 @@ use std::path::{Path, PathBuf};
 /// `ordered/transfer/hot.rs` adds owning packet handoff around that same serial runtime.
 /// ADR-0069 adds synthetic input admission, clock arithmetic and callback delegation.
 /// ADR-0070 adds the borrowed terminal signal and split input/audio callback wrapper.
-const REGION: [&str; 41] = [
+/// The private mixed boundary operation joins when the bound audio half first moves
+/// its compiled anchor and release state together.
+const REGION: [&str; 42] = [
     "src/recording/notes/loop_capture/ordered/input/capture/transfer/hot.rs",
     "src/recording/notes/loop_capture/ordered/input/hot.rs",
     "src/recording/notes/loop_capture/ordered/input/clock.rs",
@@ -81,6 +83,7 @@ const REGION: [&str; 41] = [
     "src/ingress/offers.rs",
     "src/ingress/release.rs",
     "src/stream/live.rs",
+    "src/stream/mixed/hot.rs",
     "src/host/live/hot.rs",
     "src/host/live/parameter_hot.rs",
     "src/host/live/swap_hot.rs",

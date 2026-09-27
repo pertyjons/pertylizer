@@ -23,7 +23,6 @@ use crate::time::{FrameCount, QUANTUM_FRAMES, SampleTime, StreamAnchor, StreamEp
 
 /// Why a bound mixed renderer could not release its sounding compiled producer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
-#[allow(dead_code)] // The mixed adoption owner is not connected yet.
 pub(crate) enum MixedBoundaryReleaseError {
     #[error("renderer has no mixed instance partition")]
     Unbound,
@@ -34,12 +33,40 @@ pub(crate) enum MixedBoundaryReleaseError {
     },
     #[error("a previous boundary release is still queued")]
     PendingBoundary,
+    #[error("mixed boundary {offered} is not the renderer clock {clock}")]
+    ClockMismatch {
+        clock: SampleTime,
+        offered: SampleTime,
+    },
     #[error("the ended-note buffer is shorter than the compiled producer span")]
     EndedStorage,
     #[error("sounding note {note:?} has a destination outside compiled-owned rows")]
     UnboundTarget { note: crate::plan::NoteSlot },
     #[error("{needed} boundary controls exceed {available} prepared slots")]
     GateStorage { needed: usize, available: usize },
+}
+
+/// The compiled release and the mapping the boundary replaced.
+/// A future mixed schedule must keep the retired anchor with its old event list
+/// until that list can be reclaimed off the audio thread.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[must_use]
+pub(crate) struct MixedBoundaryAdopted {
+    released: crate::quantities::HeldNoteCount,
+    retired_anchor: StreamAnchor,
+}
+
+#[allow(dead_code)] // The mixed schedule owner will consume both fields when connected.
+impl MixedBoundaryAdopted {
+    /// Sounding compiled notes ended at the boundary.
+    pub(crate) const fn released(self) -> crate::quantities::HeldNoteCount {
+        self.released
+    }
+
+    /// The musical mapping that owned the old compiled event list.
+    pub(crate) const fn retired_anchor(self) -> StreamAnchor {
+        self.retired_anchor
+    }
 }
 
 /// How many bytes preparing a renderer will allocate for one call's event
@@ -1188,6 +1215,11 @@ impl PreparedRenderer {
     /// The render clock: input frames consumed so far.
     pub const fn clock(&self) -> SampleTime {
         self.clock
+    }
+
+    #[cfg(test)]
+    pub(crate) const fn anchor_for_test(&self) -> StreamAnchor {
+        self.anchor
     }
 
     /// How many rendered frames are waiting to be served.

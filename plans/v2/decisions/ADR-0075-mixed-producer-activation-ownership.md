@@ -271,6 +271,20 @@ its live-only reference. Complete seed consumption by an actual mixed owner,
 effective-time selection, combined capacity, source custody and offer remain
 unproved.
 
+The bound audio half now reserves ended-note storage for its compiled span
+off-thread. A private boundary operation requires the renderer clock to equal
+the selected effective quantum, then releases the compiled partition and moves
+the musical anchor as one step. It returns both the released count and the old
+anchor; a refusal leaves the anchor unchanged. The delayed-boundary rehearsal
+seeks to a different musical mapping and checks the moved and returned anchors,
+zero allocations in the boundary operation and mixed audio against the sum of
+live-only and compiled-only references in both producer orders. The future
+combined schedule owner must suppress old events at and after the boundary and
+retain the returned anchor with the old compiled list until off-thread
+reclamation. The combined host must charge this storage and publish the
+complete scoped restoration in the adoption quantum; no mixed schedule invokes
+the operation.
+
 The private candidate now also exposes a checked effective-event view. It
 keeps the requested-time list intact and adds the same validated displacement
 when reading each scoped restoration or compiled suffix event. A renderer test
