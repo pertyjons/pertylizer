@@ -612,13 +612,45 @@ credit and redemption laws; this paragraph grants no mixed-render permission.
 
 The concrete source ring is also the only path into raw capture. An audition
 packet refused before that ring cannot still be captured through the current
-path. Raw capture has 32 cells per source, reserves one for frontiers and
-invalidates the host when its ordinary cells fill. Its receipt collector is
-separate from audition result collection. A release reserved only in audition
-can therefore fail before reaching audio under raw-capture starvation; a new
-law must include capture credit or state the resulting terminal disposition.
+path. This bridge configures 32 raw cells per source. The raw owner reserves
+one cell for frontiers and invalidates the host when its ordinary cells fill.
+Its receipt collector is separate from audition result collection. A release
+reserved only in audition can therefore fail before reaching audio under
+raw-capture starvation; a new law must include capture credit or state the
+resulting terminal disposition.
 It must distinguish an audition source receipt from raw capture's
 `InputReceipt` and identify where each is settled.
+
+The raw-capture part of a protected-release rehearsal has a narrower candidate
+gate, requiring `N >= 5` to accept an onset after the initial frontier. Let
+`N` be the source's configured raw-cell count (`N = 32` in the concrete
+example host), `h` its occupied cells including the initial frontier
+and uncollected receipts, and `R` its outstanding release reservations. The
+current raw owner does not track `R`. Its capacity check permits any message,
+including `KeyRelease`, only when `h <= N - 2`; it permits a frontier only when
+`h <= N - 1`. A frontier at `h = N - 2` can therefore consume a supposed
+release reserve, while permitting a release at `h = N - 1` would consume the
+last frontier cell.
+
+A future host must track `h` across accepted raw admissions and collected
+receipts. While `R > 0`, it must preserve `h + R <= N - 1`. An onset's raw cell
+and its future release reservation must be preflighted as one charge before
+raw admission: `(h, R)` becomes `(h + 1, R + 1)`, requiring
+`h + R <= N - 4` beforehand and `h + R <= N - 2` afterward. No raw-accepted
+onset may be left without that reservation. With `R > 0`, an ordinary message
+must leave `h + R <= N - 2`, while a frontier may leave `h + R <= N - 1`.
+Redeeming one reservation changes `(h, R)` to `(h + 1, R - 1)` and preserves
+the sum, so it passes the raw capacity check. With `R = 0`, an ordinary
+non-onset message still follows the raw owner's `h <= N - 2` capacity check.
+Clock, ordering, identity and state checks can still refuse an observation
+before or after that capacity check and need their own disposition.
+
+These are candidate raw safety gates, not an accepted end-to-end release law:
+source-ring admission, refused-onset FIFO, audition credit, renderer-held cells
+and bounded service remain open. A test pins the raw owner's message/frontier
+capacity asymmetry; a protected host must also falsify its shadow count against
+actual receipts and show that ordinary refusal does not call raw admission or
+quiesce the source.
 
 A source-side key ledger needs one FIFO for both receipted and refused
 onsets. If the first same-key onset is receipted, the second refused and two
