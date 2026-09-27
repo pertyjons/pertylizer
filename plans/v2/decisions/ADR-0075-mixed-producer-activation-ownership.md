@@ -54,9 +54,10 @@ non-note target written by the live parameter lane also needs an explicit
 catch-up ownership or ordering law; a compiled catch-up must not silently
 overwrite its latest live value. The Session admission sum must cover the
 catch-up batch, live parameter lane, Stop group and any reset or other
-same-quantum Session contributor. The representation, share charge and
-renderer scratch must be remeasured; the old one-row-per-address count is not
-evidence for a scoped implementation.
+same-quantum Session contributor. One event per admitted address bounds only
+the scoped batch's event count. Payload bytes, timed-control fanout,
+scoped-restoration scratch, seed storage and the combined share charge still
+need measurement; the old address count does not qualify those resources.
 
 An initial target-binding prerequisite may validate exactly one compiled and
 one live note producer in one immutable plan, one bound live note slot and
@@ -122,11 +123,11 @@ live producer's partition must refuse before any write. The compiled rows
 must restore their gates and trigger destinations to zero without a new rising
 edge. A test-only smoothed compiled controller row must also take the restored
 controller and override together as a step; two successive retargets could
-consume the seed on the first and ramp on the second. The payload size,
-Session share, per-event timed fanout, renderer scratch and seed-scope storage
-must be remeasured before any mixed offer uses the payload. The compiled
-history walk, boundary ordering, release custody and loop restoration remain
-separate acceptance work.
+consume the seed on the first and ramp on the second. Payload size, the
+combined Session share charge, per-event timed fanout, scoped-restoration
+scratch and seed-scope storage must be remeasured before any mixed offer uses
+the payload. The compiled history walk, boundary ordering, release custody and
+loop restoration remain separate acceptance work.
 
 ### Bound compiled history rehearsal
 
@@ -280,6 +281,25 @@ the same old oscillator history. A release-only reference is silent in the
 boundary and following quanta while the destination note remains audible.
 The test supplies a directly stamped live onset; it does not establish source
 custody, combined capacity or an audio-owned mixed activation offer.
+
+The private candidate's event-count terms follow from existing admission for
+this note-only shape. Plan admission refuses when the full addressable catch-up
+count plus one boundary mass release exceeds the Session share. The mixed
+restoration groups are a subset of those addresses. The suffix selects from one
+`AdmittedCompiledStream`, whose sliding-window admission covers every anchor
+phase; deleting events and applying one uniform time shift cannot increase its
+per-quantum maximum. The profile's six-share relation covers these two event-count
+contributions together. This private bound is false if restoration emits more
+events than admitted addresses, the shifted suffix exceeds the compiled share
+in any quantum, or the boundary release needs more than its one Session charge.
+It does not measure payload bytes, timed-control fanout, scoped-restoration
+scratch or seed storage. It also does not admit a combined host: an old compiled
+schedule publishing at or after the effective boundary would double-spend the
+Compiled share, and another same-quantum Session contributor could exceed its share
+beside restoration and release. The future owner must suppress the old schedule
+at the selected boundary and account for every other contributor before
+offering activation. An offer lacking either guarantee fails that later
+combined-host admission, not the private event-count bound.
 
 Rehearsal falsifiers are a last note-on magnitude before a seek with compiled
 producer second, repeated-key prefix pairing, zero gates and triggers for

@@ -170,7 +170,8 @@ impl MixedInstancePartition {
     }
 
     /// Every addressable group whose compiled rows need scoped restoration.
-    /// Each group appears once; event payload and Session-share costs still need measurement.
+    /// Each group appears once. Plan admission bounds this batch's event count;
+    /// payload, timed fanout and the combined Session charge still need measurement.
     pub fn restoration_groups(&self) -> &[MixedRestorationGroup] {
         &self.restoration_groups
     }

@@ -257,9 +257,11 @@ It retains the new outstanding set and initial sequence baseline, with scoped
 restoration before a suffix onset at the destination sample. It has no offer
 path. A private timing check now validates one possible effective quantum
 boundary and one displacement across the complete list, including refusal if
-only a later suffix event overflows engine time. The audio-side selection and
-application of that displacement, producer-scoped boundary release, combined
-capacity charge, shared/global influence law, handoff and retirement remain open.
+only a later suffix event overflows engine time. An audio owner still must
+select the boundary, read the shifted list as its schedule, end old compiled
+occurrences before rendering it, suppress the old schedule, account for other
+same-quantum contributors, and settle shared/global influence, handoff and
+retirement.
 The boundary-release design read also found that the renderer's final timed-control
 scratch reserved one write per ended identity while its pending queue reserved a
 gate plus trigger writes. The scratch and its admission charge now reserve the
@@ -288,8 +290,16 @@ releases the old compiled occurrence, and plays the destination note after scope
 restoration. In both producer orders its audio matches the sum of separate
 live and compiled references with the same voice history. A release-only
 reference is silent in the boundary and following quanta while the new compiled
-note is audible. The live onset is still
-directly stamped in the test, and no combined host or offer is enabled.
+note is audible. The live onset is still directly stamped in the test, and no
+combined host or offer is enabled.
+The existing plan gate already charges the full addressable catch-up batch plus
+one boundary release to Session. The mixed scoped batch is a subset of those
+addresses, and its compiled suffix is a shifted subset of the stream admitted
+against the compiled share. A separate scan of the private event counts would
+repeat those bounds. Payload size, timed-control fanout, scoped-restoration
+scratch, seed storage and the combined Session charge remain open. A combined
+host must suppress the old compiled schedule at the effective boundary and
+account for every other simultaneous contributor before it can offer activation.
 
 ### Selected work — ordered transport through live I/O
 
