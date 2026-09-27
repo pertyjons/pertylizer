@@ -708,10 +708,13 @@ hold or tracker credit when that merger forwards a release. Those consumers
 apply events in mapped-time order across sources, which can differ from
 source-ring service order. In an ingress-only fixture using the example live
 graph, four source-A onsets can occupy its four ingress holds at time 10.
-Source A then forwards one release at time 100. If the merger frees a shadow
-ingress hold at forwarding, it can give source B a positive onset receipt at
-time 50, although the renderer still holds all four note identities at 50
-and refuses B's onset.
+After rendering those onsets, let `C` be the next quantum's clock. Source A
+queues one release at `C + 20`, then source B queues an onset at `C + 10`. If
+the merger frees a shadow ingress hold when it forwards A's release, it can
+give B a positive model onset receipt, although the renderer still holds all
+four note identities at `C + 10` and refuses B's onset. The ingress-only
+fixture proves this consumer ordering and refusal; it has no merger credit
+ledger or positive model receipt. A combined-host rehearsal must test those.
 The renderer's 128 held-occurrence cells are a separate resource; this example
 saturates the plan's four ingress holds, not that table. A credit can become
 reusable only after its particular consumer has processed the release, or

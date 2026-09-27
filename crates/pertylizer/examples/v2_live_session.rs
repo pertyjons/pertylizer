@@ -193,6 +193,85 @@ fn main() -> Result<(), Error> {
 mod tests {
     use super::*;
     #[test]
+    fn a_later_source_release_does_not_free_an_earlier_onset_hold() {
+        use synth_engine_v2::{
+            host::live::AuditionOutcome,
+            ingress::{ExhaustedResource, IngressRefused},
+        };
+
+        let source = |name: &str| {
+            SimulatedNoteInput::new(
+                EndpointId::new(name.into()).unwrap(),
+                InputLimits {
+                    cells: InputCapacity::new(4).unwrap(),
+                    bytes: PreparedBytes::measured(65536),
+                },
+            )
+            .unwrap()
+            .begin()
+            .unwrap()
+        };
+        let [first, second] = [source("hold-a"), source("hold-b")];
+        let profile = HostProfile::harness(
+            SampleRate::new(48000.0).unwrap(),
+            FrameCount::new(256),
+            ChannelLayout::Mono,
+        )
+        .unwrap();
+        let mut live = SwappingLiveStream::prepare(
+            &graph().unwrap(),
+            profile,
+            ENVELOPE,
+            &[first, second],
+            &[],
+            EventCount::measured(16),
+            PreparedBytes::measured(8_000_000),
+        )
+        .unwrap();
+        for (index, key) in (60..64).enumerate() {
+            live.queue(
+                AuditionId::new(first, u64::try_from(index + 1).unwrap()).unwrap(),
+                SampleTime::new(10),
+                Midi1Input::from_bytes([0x90, key, 100]).unwrap(),
+            )
+            .unwrap();
+        }
+        let mut samples = [0.0; 256];
+        live.render(AudioBlockMut::new(&mut samples, 256, ChannelLayout::Mono).unwrap())
+            .unwrap();
+        assert_eq!(live.active().holds(), EventCount::measured(4));
+
+        let clock = live.active().clock();
+        let release = AuditionId::new(first, 5).unwrap();
+        let earlier_onset = AuditionId::new(second, 1).unwrap();
+        // Queue the release first; the renderer must still stage the earlier onset first.
+        live.queue(
+            release,
+            clock.checked_add(FrameCount::new(20)).unwrap(),
+            Midi1Input::from_bytes([0x80, 60, 0]).unwrap(),
+        )
+        .unwrap();
+        live.queue(
+            earlier_onset,
+            clock.checked_add(FrameCount::new(10)).unwrap(),
+            Midi1Input::from_bytes([0x90, 64, 100]).unwrap(),
+        )
+        .unwrap();
+        live.render(AudioBlockMut::new(&mut samples, 256, ChannelLayout::Mono).unwrap())
+            .unwrap();
+        assert!(matches!(
+            live.take_outcome(earlier_onset),
+            Some(AuditionOutcome::Refused(IngressRefused::Dropped {
+                resource: ExhaustedResource::Hold
+            }))
+        ));
+        assert!(matches!(
+            live.take_outcome(release),
+            Some(AuditionOutcome::Executed { .. })
+        ));
+        assert_eq!(live.active().holds(), EventCount::measured(3));
+    }
+    #[test]
     fn complete_simulated_session_retains_original_pcm_through_running_swap() {
         let (samples, _) = exercise(256).unwrap();
         assert_eq!(samples, 256 * 192);

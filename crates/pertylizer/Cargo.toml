@@ -16,6 +16,10 @@ test = true
 name = "v2_cpal_output"
 test = true
 
+[[example]]
+name = "v2_live_session"
+test = true
+
 [lints]
 workspace = true
 
