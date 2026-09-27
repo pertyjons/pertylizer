@@ -492,7 +492,9 @@ impl LiveNotes {
         let range = self.ranges.get(usize::from(producer.as_u16()))?;
         let first = range.start as usize;
         let last = first.checked_add(range.len as usize)?;
-        if ended.len() < last.saturating_sub(first) {
+        if ended.len() < last.saturating_sub(first)
+            || last > usize::from(u16::MAX).saturating_add(1)
+        {
             return None;
         }
         let mut count = 0_u32;
@@ -501,9 +503,17 @@ impl LiveNotes {
                 continue;
             };
             let out = ended.get_mut(count as usize)?;
+            // The checked span ends inside the u16 identity index space.
+            #[allow(clippy::cast_possible_truncation)]
+            let index = index as u16;
             *out = Some(super::EndedNote {
+                identity: super::NoteIdentity {
+                    table: self.id,
+                    index,
+                    generation: live.generation,
+                },
                 note: live.note,
-                index: u16::try_from(index).unwrap_or(u16::MAX),
+                index,
             });
             count = count.saturating_add(1);
         }
@@ -551,7 +561,9 @@ impl LiveNotes {
                 (start, start.saturating_add(range.len as usize))
             }
         };
-        if ended.len() < last.saturating_sub(first) {
+        if ended.len() < last.saturating_sub(first)
+            || last > usize::from(u16::MAX).saturating_add(1)
+        {
             return HeldNoteCount::NONE;
         }
         let mut count = 0_u32;
@@ -563,9 +575,17 @@ impl LiveNotes {
                 continue;
             };
             if let Some(out) = ended.get_mut(count as usize) {
+                // The checked span ends inside the u16 identity index space.
+                #[allow(clippy::cast_possible_truncation)]
+                let index = index as u16;
                 *out = Some(super::EndedNote {
+                    identity: super::NoteIdentity {
+                        table: self.id,
+                        index,
+                        generation: live.generation,
+                    },
                     note: live.note,
-                    index: u16::try_from(index).unwrap_or(u16::MAX),
+                    index,
                 });
             }
             count = count.saturating_add(1);

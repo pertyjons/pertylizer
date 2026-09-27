@@ -740,6 +740,383 @@ fn private_one_shot_audio_preserves_held_live_output_after_compiled_release() {
 }
 
 #[test]
+fn private_mixed_sounding_snapshot_separates_unpublished_and_boundary_released_identities() {
+    for compiled_first in [true, false] {
+        let prepared = bound_with_compiled_note_held_at_boundary(compiled_first);
+        let EventPayload::Note {
+            identity: compiled,
+            edge: NoteEdge::On { .. },
+        } = prepared.events[0].payload()
+        else {
+            panic!("initial compiled onset");
+        };
+        let history = prepared
+            .prepare_history(SampleTime::new(64), PlanPosition::new(256))
+            .expect("history");
+        let suffix = prepared.prepare_suffix(history).expect("suffix");
+        let candidate = prepared.stamp_suffix(suffix).expect("stamp");
+        let (_, mut audio) = prepared
+            .arm_one_shot(candidate, &mixed_profile())
+            .expect("private arm");
+        let live = audio
+            .arm_test_live_on(SampleTime::ZERO, key(48), NoteVelocity::FULL)
+            .expect("mint test-live identity");
+        let before = audio
+            .audio
+            .renderer
+            .snapshot_mixed_sounding()
+            .expect("bound registry");
+        assert!(before.compiled().is_empty());
+        assert!(before.live().is_empty(), "minting is not sounding");
+
+        let mut old_output = [0.0_f32; 128];
+        let block = AudioBlockMut::new(&mut old_output, 128, ChannelLayout::Mono).expect("old");
+        audio.render_private(block).expect("old quantum");
+        let sounding = audio
+            .audio
+            .renderer
+            .snapshot_mixed_sounding()
+            .expect("stopped old quantum");
+        assert_eq!(
+            sounding
+                .compiled()
+                .iter()
+                .map(|note| note.identity)
+                .collect::<Vec<_>>(),
+            vec![compiled]
+        );
+        assert_eq!(
+            sounding
+                .live()
+                .iter()
+                .map(|note| note.identity)
+                .collect::<Vec<_>>(),
+            vec![live]
+        );
+
+        let mut boundary_output = [0.0_f32; 1];
+        let block =
+            AudioBlockMut::new(&mut boundary_output, 1, ChannelLayout::Mono).expect("boundary");
+        audio.render_private(block).expect("adopted quantum");
+        let after = audio
+            .audio
+            .renderer
+            .snapshot_mixed_sounding()
+            .expect("stopped adopted quantum");
+        assert!(after.compiled().is_empty());
+        assert_eq!(
+            after
+                .live()
+                .iter()
+                .map(|note| note.identity)
+                .collect::<Vec<_>>(),
+            vec![live]
+        );
+        assert_eq!(audio.report().released_compiled, HeldNoteCount::measured(1));
+        assert_eq!(
+            audio.audio.compiled_ended[0].map(|note| note.identity),
+            Some(compiled),
+            "boundary-ended identity remains separate from current sounding notes"
+        );
+    }
+}
+
+#[test]
+fn private_pending_collection_discards_unpublished_reservations() {
+    for compiled_first in [true, false] {
+        let (prepared, candidate) = one_shot_with_boundary_on(compiled_first);
+        let (control, mut audio) = prepared
+            .arm_one_shot(candidate, &mixed_profile())
+            .expect("private arm");
+        let unpublished = audio
+            .arm_test_live_on(SampleTime::ZERO, key(48), NoteVelocity::FULL)
+            .expect("test-live reservation");
+        let MixedCollection::Ended(ended) = control.collect(audio).expect("pending teardown")
+        else {
+            panic!("pending owner must not resume");
+        };
+        assert_eq!(ended.end, MixedCollectionEnd::Pending);
+        assert!(ended.sounding.compiled().is_empty());
+        assert!(ended.sounding.live().is_empty());
+        assert!(ended.boundary_ended.is_empty());
+        assert_eq!(ended.unpublished_live, Some(unpublished));
+    }
+}
+
+#[test]
+fn private_teardown_keeps_charged_but_unregistered_live_distinct() {
+    let (prepared, candidate) = one_shot_with_boundary_on(true);
+    let (control, mut audio) = prepared
+        .arm_one_shot(candidate, &mixed_profile())
+        .expect("private arm");
+    let live = audio
+        .arm_test_live_on(SampleTime::ZERO, key(48), NoteVelocity::FULL)
+        .expect("test-live reservation");
+    // Model a renderer refusal after the arbiter accepted the Live charge but
+    // before the registry admitted the note.
+    audio.test_live_spent = true;
+    audio.fault = Some(MixedOneShotRenderError::RendererFaulted);
+    let MixedCollection::Ended(ended) = control.collect(audio).expect("terminal teardown") else {
+        panic!("faulted owner must end");
+    };
+    assert_eq!(ended.end, MixedCollectionEnd::Faulted);
+    assert_eq!(ended.unpublished_live, None);
+    assert_eq!(ended.charged_unregistered_live, Some(live));
+}
+
+#[test]
+fn private_pending_collection_classifies_sounding_compiled_and_live_separately() {
+    for compiled_first in [true, false] {
+        let prepared = bound_with_compiled_note_held_at_boundary(compiled_first);
+        let EventPayload::Note {
+            identity: compiled, ..
+        } = prepared.events[0].payload()
+        else {
+            panic!("compiled onset");
+        };
+        let history = prepared
+            .prepare_history(SampleTime::new(64), PlanPosition::new(256))
+            .expect("history");
+        let suffix = prepared.prepare_suffix(history).expect("suffix");
+        let candidate = prepared.stamp_suffix(suffix).expect("stamp");
+        let (control, mut audio) = prepared
+            .arm_one_shot(candidate, &mixed_profile())
+            .expect("arm");
+        let live = audio
+            .arm_test_live_on(SampleTime::ZERO, key(48), NoteVelocity::FULL)
+            .expect("live onset");
+        let mut samples = [0.0_f32; 128];
+        audio
+            .render_private(
+                AudioBlockMut::new(&mut samples, 128, ChannelLayout::Mono).expect("old"),
+            )
+            .expect("before boundary");
+        let MixedCollection::Ended(ended) = control.collect(audio).expect("pending teardown")
+        else {
+            panic!("pending owner must end");
+        };
+        assert_eq!(ended.end, MixedCollectionEnd::Pending);
+        assert_eq!(
+            ended
+                .sounding
+                .compiled()
+                .iter()
+                .map(|note| note.identity)
+                .collect::<Vec<_>>(),
+            vec![compiled]
+        );
+        assert_eq!(
+            ended
+                .sounding
+                .live()
+                .iter()
+                .map(|note| note.identity)
+                .collect::<Vec<_>>(),
+            vec![live]
+        );
+        assert!(ended.boundary_ended.is_empty());
+        assert_eq!(ended.unpublished_live, None);
+    }
+}
+
+#[test]
+fn private_collection_returns_crossed_pending_pairs_unchanged() {
+    let (first, candidate_a) = one_shot_with_boundary_on(true);
+    let (second, candidate_b) = one_shot_with_boundary_on(false);
+    let (control_a, audio_a) = first
+        .arm_one_shot(candidate_a, &mixed_profile())
+        .expect("first");
+    let (control_b, audio_b) = second
+        .arm_one_shot(candidate_b, &mixed_profile())
+        .expect("second");
+    let refused = control_a.collect(audio_b).expect_err("crossed pair");
+    assert_eq!(refused.reason, MixedCollectionError::CrossedPair);
+    let MixedCollectionRefusal {
+        control: control_a,
+        audio: audio_b,
+        ..
+    } = *refused;
+    assert!(matches!(
+        control_a.collect(audio_a),
+        Ok(MixedCollection::Ended(_))
+    ));
+    assert!(matches!(
+        control_b.collect(audio_b),
+        Ok(MixedCollection::Ended(_))
+    ));
+}
+
+#[test]
+fn private_collection_returns_crossed_adopted_pairs_unchanged() {
+    let (first, candidate_a) = one_shot_with_boundary_on(true);
+    let (second, candidate_b) = one_shot_with_boundary_on(false);
+    let (control_a, mut audio_a) = first
+        .arm_one_shot(candidate_a, &mixed_profile())
+        .expect("first");
+    let (control_b, mut audio_b) = second
+        .arm_one_shot(candidate_b, &mixed_profile())
+        .expect("second");
+    for audio in [&mut audio_a, &mut audio_b] {
+        let mut samples = [0.0_f32; 129];
+        audio
+            .render_private(
+                AudioBlockMut::new(&mut samples, 129, ChannelLayout::Mono).expect("block"),
+            )
+            .expect("adopt");
+        assert!(audio.report().adopted);
+    }
+    let refused = control_a
+        .collect(audio_b)
+        .expect_err("crossed adopted pair");
+    assert_eq!(refused.reason, MixedCollectionError::CrossedPair);
+    let MixedCollectionRefusal {
+        control: control_a,
+        audio: audio_b,
+        ..
+    } = *refused;
+    for result in [control_a.collect(audio_a), control_b.collect(audio_b)] {
+        let MixedCollection::Resumed { control, audio, .. } = result.expect("correct rejoin")
+        else {
+            panic!("healthy adopted pair must resume");
+        };
+        let ended = control.teardown(*audio).expect("final teardown");
+        assert_eq!(ended.end, MixedCollectionEnd::ResumedTeardown);
+    }
+}
+
+#[test]
+fn private_adopted_collection_promotes_one_authority_and_reclaims_retired_list() {
+    for compiled_first in [true, false] {
+        let (prepared, candidate) =
+            one_shot_with_boundary_on_at(compiled_first, SampleTime::new(65));
+        let EventPayload::Note {
+            identity: original, ..
+        } = prepared.events[0].payload()
+        else {
+            panic!("initial compiled onset");
+        };
+        let successor = candidate.outstanding[0];
+        let (control, mut audio) = prepared
+            .arm_one_shot(candidate, &mixed_profile())
+            .expect("private arm");
+        let mut before = [0.0_f32; 192];
+        audio
+            .render_private(AudioBlockMut::new(&mut before, 192, ChannelLayout::Mono).expect("old"))
+            .expect("old quanta");
+        assert!(!audio.report().adopted);
+        let mut boundary = [0.0_f32; 1];
+        audio
+            .render_private(
+                AudioBlockMut::new(&mut boundary, 1, ChannelLayout::Mono).expect("boundary"),
+            )
+            .expect("adopted quantum");
+        assert!(audio.report().boundary_quantum_completed);
+        let MixedCollection::Resumed {
+            control,
+            mut audio,
+            retired,
+        } = control.collect(audio).expect("adopted rejoin")
+        else {
+            panic!("healthy adopted owner must resume");
+        };
+        assert_eq!(
+            control.control.anchor,
+            StreamAnchor::new(SampleTime::new(128), PlanPosition::new(10))
+        );
+        assert_eq!(
+            control.sequence,
+            ActivationSequence::INITIAL.next().expect("successor")
+        );
+        assert_eq!(control.outstanding, vec![successor]);
+        assert_eq!(control.control.minter.resolve(successor), Resolution::Live);
+        assert!(audio.capsule.minter.is_none());
+        assert!(audio.capsule.events.is_empty());
+        assert_eq!(retired.event_count, 1);
+        assert_eq!(retired.unconsumed_from, 1);
+        assert_eq!(
+            retired.anchor,
+            StreamAnchor::new(SampleTime::ZERO, PlanPosition::ZERO)
+        );
+        let mut later = [0.0_f32; 64];
+        audio
+            .render_private(AudioBlockMut::new(&mut later, 64, ChannelLayout::Mono).expect("later"))
+            .expect("resumed rendering");
+        let ended = control.teardown(*audio).expect("resumed teardown");
+        assert_eq!(ended.end, MixedCollectionEnd::ResumedTeardown);
+        assert_eq!(
+            ended
+                .sounding
+                .compiled()
+                .iter()
+                .map(|note| note.identity)
+                .collect::<Vec<_>>(),
+            vec![successor]
+        );
+        assert_eq!(
+            ended
+                .boundary_ended
+                .iter()
+                .map(|note| note.identity)
+                .collect::<Vec<_>>(),
+            vec![original]
+        );
+    }
+}
+
+#[test]
+fn private_promotion_refusal_and_terminal_fault_end_the_correct_pair() {
+    let (prepared, candidate) = one_shot_with_boundary_on(true);
+    let (control, mut audio) = prepared
+        .arm_one_shot(candidate, &mixed_profile())
+        .expect("arm");
+    let mut samples = [0.0_f32; 129];
+    audio
+        .render_private(AudioBlockMut::new(&mut samples, 129, ChannelLayout::Mono).expect("block"))
+        .expect("adopt");
+    audio.capsule.outstanding_count = HeldNoteCount::NONE;
+    let MixedCollection::Ended(ended) = control.collect(audio).expect("defensive collection")
+    else {
+        panic!("corrupt promotion must terminate");
+    };
+    assert_eq!(ended.end, MixedCollectionEnd::PromotionRefused);
+
+    let (prepared, candidate) = one_shot_with_boundary_on(true);
+    let EventPayload::Note { identity: old, .. } = prepared.events[0].payload() else {
+        panic!("compiled onset");
+    };
+    let restoration = candidate.restoration_count;
+    let session = restoration
+        .checked_add(EventCount::measured(1))
+        .expect("release credit");
+    let (control, mut audio) = prepared
+        .arm_one_shot(candidate, &profile_with_session_share(session))
+        .expect("arm");
+    audio.capsule.restoration_count = session;
+    let mut samples = [0.0_f32; 129];
+    assert!(
+        audio
+            .render_private(
+                AudioBlockMut::new(&mut samples, 129, ChannelLayout::Mono).expect("block")
+            )
+            .is_err()
+    );
+    let MixedCollection::Ended(ended) = control.collect(audio).expect("terminal teardown") else {
+        panic!("faulted owner must terminate");
+    };
+    assert_eq!(ended.end, MixedCollectionEnd::Faulted);
+    assert!(!ended.report.boundary_quantum_completed);
+    assert!(ended.sounding.compiled().is_empty());
+    assert_eq!(
+        ended
+            .boundary_ended
+            .iter()
+            .map(|note| note.identity)
+            .collect::<Vec<_>>(),
+        vec![old]
+    );
+}
+
+#[test]
 fn prefix_restores_last_magnitude_and_zero_gate_in_both_producer_orders() {
     for compiled_first in [true, false] {
         let prepared = bound(compiled_first);
@@ -1389,7 +1766,10 @@ fn private_audio_capsule_is_sendable_without_moving_control_or_source_history() 
             (capsule.omitted_releases, capsule.omitted_expressions),
             omitted
         );
-        assert_eq!(capsule.minter.live(), outstanding_count.get());
+        assert_eq!(
+            capsule.minter.as_ref().map(CompiledRangeMinter::live),
+            Some(outstanding_count.get())
+        );
         assert_eq!(
             prepared.owner.control.minter.resolve(old),
             Resolution::Live,
@@ -1460,8 +1840,8 @@ fn private_one_shot_arm_fixes_boundary_and_splits_identity_custody() {
             audio.capsule.outstanding_count.as_usize().unwrap()
         );
         assert_eq!(
-            audio.capsule.minter.live(),
-            audio.capsule.outstanding_count.get()
+            audio.capsule.minter.as_ref().map(CompiledRangeMinter::live),
+            Some(audio.capsule.outstanding_count.get())
         );
         assert_eq!(audio.capsule.restoration_count, restoration_count);
         assert_eq!(

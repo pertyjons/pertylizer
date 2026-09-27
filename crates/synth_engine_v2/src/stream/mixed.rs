@@ -19,7 +19,10 @@ use crate::{
     profile::HostProfile,
     publish::PublicationArbiter,
     quantities::{EventCount, HeldNoteCount, ParameterValue, QuantumCount, VoiceCount},
-    render::{EventEnvelope, EventPayload, PreparedRenderer, ScopedParameterRestore, TimedEvent},
+    render::{
+        EventEnvelope, EventPayload, MixedSoundingSnapshot, MixedSoundingSnapshotError,
+        PreparedRenderer, ScopedParameterRestore, TimedEvent,
+    },
     schedule::{
         AdmittedCompiledStream, Closed, CompiledEvent, CompiledPayload, OpenNote, OpenNotes,
         Opened, SchedulePrepareError,
@@ -308,6 +311,8 @@ pub(crate) struct MixedOneShotRenderReport {
     pub(crate) restoration_charged: EventCount,
     pub(crate) suffix_charged: EventCount,
     pub(crate) completed_quanta: QuantumCount,
+    /// Whether the quantum that selected the compiled release completed rendering.
+    pub(crate) boundary_quantum_completed: bool,
 }
 
 #[cfg(test)]
@@ -448,9 +453,9 @@ pub struct MixedSuffixCandidate {
 ///
 /// Its ordered events contain scoped restoration before any equal-time suffix edge.
 /// The restoration batch moves out of the retained suffix history into that list,
-/// leaving the history's restoration count at zero. The copied minter and
-/// outstanding set cannot be promoted through this API;
-/// boundary release, audio-side displacement and combined capacity remain unproved.
+/// leaving the history's restoration count at zero. Promotion is possible only
+/// after a private arm, successful boundary render and off-thread collection;
+/// the combined host still has no offer path.
 #[must_use]
 pub struct MixedStampedCandidate {
     #[allow(dead_code)]
@@ -469,10 +474,10 @@ pub struct MixedStampedCandidate {
 
 /// Sendable, boxed custody for one private audio-side mixed transition.
 ///
-/// Source-selection history stays off-thread. The audio owner must
-/// return this box and its retired event list and anchor there for final drop.
+/// Source-selection history stays off-thread. Collection drops the retired
+/// event list off-thread; the box remains with audio until final teardown.
 #[must_use]
-#[allow(dead_code)] // Off-thread collection of the retired capsule is next.
+#[allow(dead_code)] // Private collection has no production host caller.
 pub(crate) struct MixedAudioCandidate {
     plan: PlanId,
     epoch: StreamEpoch,
@@ -485,11 +490,16 @@ pub(crate) struct MixedAudioCandidate {
     omitted_releases: EventCount,
     omitted_expressions: EventCount,
     events: Vec<TimedEvent>,
+    /// The candidate's admitted list size, retained as historical metadata
+    /// after the list moves to audio at the boundary.
     event_count: EventCount,
     restoration_count: EventCount,
     outstanding: Vec<NoteIdentity>,
+    /// The candidate's admitted obligation count, retained after promotion
+    /// moves the actual outstanding vector to control.
     outstanding_count: HeldNoteCount,
-    minter: CompiledRangeMinter,
+    /// Present until off-thread promotion. The callback never reads it.
+    minter: Option<CompiledRangeMinter>,
 }
 
 impl std::fmt::Debug for MixedAudioCandidate {
@@ -623,6 +633,87 @@ pub(crate) struct MixedOneShotControl {
     off_thread: PhantomData<Rc<()>>,
 }
 
+/// The sole compiled authority after a private adopted owner has rejoined.
+#[derive(Debug)]
+#[must_use]
+#[allow(dead_code)] // Private collection has no production host caller.
+pub(crate) struct MixedResumedControl {
+    control: MixedStreamControl,
+    outstanding: Vec<NoteIdentity>,
+    sequence: ActivationSequence,
+    off_thread: PhantomData<Rc<()>>,
+}
+
+/// Old compiled list metadata, copied before its vector is dropped off-thread.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[must_use]
+#[allow(dead_code)]
+pub(crate) struct MixedRetiredList {
+    anchor: StreamAnchor,
+    unconsumed_from: usize,
+    event_count: usize,
+}
+
+/// Why a correctly paired private owner stopped without a resumable control.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(dead_code)]
+pub(crate) enum MixedCollectionEnd {
+    Pending,
+    Faulted,
+    PromotionRefused,
+    ResumedTeardown,
+}
+
+/// Final stopped-state classification. Boundary-ended and still-sounding notes
+/// remain separate, as do uncharged and charged test-live reservations that
+/// never entered the renderer registry.
+#[derive(Debug)]
+#[must_use]
+#[allow(dead_code)]
+pub(crate) struct MixedOneShotTeardown {
+    end: MixedCollectionEnd,
+    report: MixedOneShotRenderReport,
+    sounding: MixedSoundingSnapshot,
+    boundary_ended: Vec<crate::identity::EndedNote>,
+    unpublished_live: Option<NoteIdentity>,
+    charged_unregistered_live: Option<NoteIdentity>,
+}
+
+#[derive(Debug)]
+#[must_use]
+#[allow(dead_code)]
+pub(crate) enum MixedCollection {
+    Resumed {
+        control: MixedResumedControl,
+        audio: Box<MixedOneShotAudio>,
+        retired: MixedRetiredList,
+    },
+    Ended(MixedOneShotTeardown),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
+#[allow(dead_code)]
+pub(crate) enum MixedCollectionError {
+    #[error("mixed control and audio halves were crossed")]
+    CrossedPair,
+    #[error(transparent)]
+    Snapshot(#[from] MixedSoundingSnapshotError),
+    #[error("mixed boundary-ended storage lost its recorded prefix")]
+    EndedPrefix,
+    #[error("mixed audio half has not completed compiled authority promotion")]
+    UnpromotedAudio,
+}
+
+/// Every refusal returns both stopped halves before consuming either one.
+#[derive(Debug)]
+#[must_use]
+#[allow(dead_code)]
+pub(crate) struct MixedCollectionRefusal<C> {
+    reason: MixedCollectionError,
+    control: C,
+    audio: MixedOneShotAudio,
+}
+
 /// One bound audio half, its old list and a single fixed-boundary capsule.
 /// Only a private closed-schedule rehearsal can render; no host offer path exists.
 #[derive(Debug)]
@@ -645,6 +736,7 @@ pub(crate) struct MixedOneShotAudio {
     restoration_charged: EventCount,
     suffix_charged: EventCount,
     completed_quanta: QuantumCount,
+    adoption_after_quanta: Option<QuantumCount>,
     render_started: bool,
     #[cfg(test)]
     test_live: Option<TimedEvent>,
@@ -678,6 +770,272 @@ pub struct MixedStreamAudio {
     note: NoteSlot,
     partition: Arc<MixedInstancePartition>,
     compiled_ended: Vec<Option<crate::identity::EndedNote>>,
+}
+
+fn mixed_collection_pair(control: &MixedStreamControl, audio: &MixedOneShotAudio) -> bool {
+    let rendered = &audio.audio;
+    Arc::ptr_eq(&control.partition, &rendered.partition)
+        && rendered.renderer.plan().id() == control.plan.id()
+        && rendered.renderer.epoch() == control.epoch
+        && rendered.renderer.table_id() == control.minter.id()
+        && rendered.minter.id() == control.minter.id()
+        && control.partition.compiled_producer() == control.minter.producer()
+        && control.partition.spans().0 == control.minter.span()
+        && control.partition.live_producer() == rendered.minter.producer()
+        && control.partition.spans().1 == rendered.minter.span()
+        && audio.capsule.plan == control.plan.id()
+        && audio.capsule.epoch == control.epoch
+        && audio.capsule.table == control.minter.id()
+}
+
+struct MixedTeardownParts {
+    sounding: MixedSoundingSnapshot,
+    boundary_ended: Vec<crate::identity::EndedNote>,
+    unpublished_live: Option<NoteIdentity>,
+    charged_unregistered_live: Option<NoteIdentity>,
+}
+
+fn mixed_teardown_parts(
+    audio: &MixedOneShotAudio,
+) -> Result<MixedTeardownParts, MixedCollectionError> {
+    let sounding = audio.audio.renderer.snapshot_mixed_sounding()?;
+    let released = audio
+        .released_compiled
+        .as_usize()
+        .ok_or(MixedCollectionError::EndedPrefix)?;
+    let prefix = audio
+        .audio
+        .compiled_ended
+        .get(..released)
+        .ok_or(MixedCollectionError::EndedPrefix)?;
+    let boundary_ended = prefix
+        .iter()
+        .copied()
+        .collect::<Option<Vec<_>>>()
+        .ok_or(MixedCollectionError::EndedPrefix)?;
+    #[cfg(test)]
+    let unregistered_live = audio.test_live.and_then(|event| match event.payload() {
+        EventPayload::Note { identity, .. }
+            if !sounding.live().iter().any(|note| note.identity == identity) =>
+        {
+            Some(identity)
+        }
+        _ => None,
+    });
+    #[cfg(test)]
+    let (unpublished_live, charged_unregistered_live) = if audio.test_live_spent {
+        (None, unregistered_live)
+    } else {
+        (unregistered_live, None)
+    };
+    #[cfg(not(test))]
+    let (unpublished_live, charged_unregistered_live) = (None, None);
+    Ok(MixedTeardownParts {
+        sounding,
+        boundary_ended,
+        unpublished_live,
+        charged_unregistered_live,
+    })
+}
+
+fn mixed_finish_teardown(
+    audio: MixedOneShotAudio,
+    end: MixedCollectionEnd,
+    parts: MixedTeardownParts,
+) -> MixedOneShotTeardown {
+    let report = audio.report();
+    // Both event lists, the capsule and renderer are finally dropped here, off-thread.
+    drop(audio);
+    MixedOneShotTeardown {
+        end,
+        report,
+        sounding: parts.sounding,
+        boundary_ended: parts.boundary_ended,
+        unpublished_live: parts.unpublished_live,
+        charged_unregistered_live: parts.charged_unregistered_live,
+    }
+}
+
+#[allow(dead_code)] // Private off-thread collection has no production host caller.
+impl MixedOneShotControl {
+    /// Rejoin a stopped adopted pair or tear down a pending or terminal pair.
+    /// A crossed pair and a classification refusal return both halves untouched.
+    pub(crate) fn collect(
+        mut self,
+        mut audio: MixedOneShotAudio,
+    ) -> Result<MixedCollection, Box<MixedCollectionRefusal<Self>>> {
+        if !mixed_collection_pair(&self.control, &audio) {
+            return Err(Box::new(MixedCollectionRefusal {
+                reason: MixedCollectionError::CrossedPair,
+                control: self,
+                audio,
+            }));
+        }
+        if !audio.adopted
+            || audio.fault.is_some()
+            || audio.audio.renderer.diagnostics().needs_reprepare()
+        {
+            let end =
+                if audio.fault.is_some() || audio.audio.renderer.diagnostics().needs_reprepare() {
+                    MixedCollectionEnd::Faulted
+                } else {
+                    MixedCollectionEnd::Pending
+                };
+            let parts = match mixed_teardown_parts(&audio) {
+                Ok(parts) => parts,
+                Err(reason) => {
+                    return Err(Box::new(MixedCollectionRefusal {
+                        reason,
+                        control: self,
+                        audio,
+                    }));
+                }
+            };
+            drop(self);
+            return Ok(MixedCollection::Ended(mixed_finish_teardown(
+                audio, end, parts,
+            )));
+        }
+        let capsule = &audio.capsule;
+        let minter = capsule.minter.as_ref();
+        let promotable = minter.is_some_and(|minter| {
+            minter.id() == self.control.minter.id()
+                && minter.producer() == self.control.minter.producer()
+                && minter.span() == self.control.minter.span()
+                && minter.live() == capsule.outstanding_count.get()
+                && capsule.outstanding_count.as_usize() == Some(capsule.outstanding.len())
+                && capsule
+                    .outstanding
+                    .iter()
+                    .all(|identity| minter.resolve(*identity) == Resolution::Live)
+        }) && audio.in_force == capsule.sequence
+            && capsule.supersedes == ActivationSequence::INITIAL
+            && capsule.retired_anchor.is_some()
+            && capsule
+                .retired_next
+                .is_some_and(|next| next <= capsule.events.len())
+            && audio.audio.renderer.mixed_anchor() == audio.effective_anchor;
+        if !promotable {
+            let parts = match mixed_teardown_parts(&audio) {
+                Ok(parts) => parts,
+                Err(reason) => {
+                    return Err(Box::new(MixedCollectionRefusal {
+                        reason,
+                        control: self,
+                        audio,
+                    }));
+                }
+            };
+            drop(self);
+            return Ok(MixedCollection::Ended(mixed_finish_teardown(
+                audio,
+                MixedCollectionEnd::PromotionRefused,
+                parts,
+            )));
+        }
+        // The checks above prove these fields exist. Keep a defensive terminal
+        // branch so a future change cannot guess an old anchor or cursor.
+        let (Some(retired_anchor), Some(retired_next)) =
+            (audio.capsule.retired_anchor, audio.capsule.retired_next)
+        else {
+            let parts = match mixed_teardown_parts(&audio) {
+                Ok(parts) => parts,
+                Err(reason) => {
+                    return Err(Box::new(MixedCollectionRefusal {
+                        reason,
+                        control: self,
+                        audio,
+                    }));
+                }
+            };
+            drop(self);
+            return Ok(MixedCollection::Ended(mixed_finish_teardown(
+                audio,
+                MixedCollectionEnd::PromotionRefused,
+                parts,
+            )));
+        };
+        let Some(promoted_minter) = audio.capsule.minter.take() else {
+            let parts = match mixed_teardown_parts(&audio) {
+                Ok(parts) => parts,
+                Err(reason) => {
+                    return Err(Box::new(MixedCollectionRefusal {
+                        reason,
+                        control: self,
+                        audio,
+                    }));
+                }
+            };
+            drop(self);
+            return Ok(MixedCollection::Ended(mixed_finish_teardown(
+                audio,
+                MixedCollectionEnd::PromotionRefused,
+                parts,
+            )));
+        };
+        let old_minter = std::mem::replace(&mut self.control.minter, promoted_minter);
+        drop(old_minter);
+        self.control.anchor = audio.effective_anchor;
+        let outstanding = std::mem::take(&mut audio.capsule.outstanding);
+        let retired = MixedRetiredList {
+            anchor: retired_anchor,
+            unconsumed_from: retired_next,
+            event_count: audio.capsule.events.len(),
+        };
+        audio.capsule.retired_next = None;
+        drop(std::mem::take(&mut audio.capsule.events));
+        drop(self.outstanding);
+        Ok(MixedCollection::Resumed {
+            control: MixedResumedControl {
+                control: self.control,
+                outstanding,
+                sequence: audio.in_force,
+                off_thread: PhantomData,
+            },
+            audio: Box::new(audio),
+            retired,
+        })
+    }
+}
+
+#[allow(dead_code)] // Private resumed stream has no production host caller.
+impl MixedResumedControl {
+    /// Final teardown after a resumed adopted stream stops rendering.
+    pub(crate) fn teardown(
+        self,
+        audio: MixedOneShotAudio,
+    ) -> Result<MixedOneShotTeardown, Box<MixedCollectionRefusal<Self>>> {
+        if !mixed_collection_pair(&self.control, &audio) {
+            return Err(Box::new(MixedCollectionRefusal {
+                reason: MixedCollectionError::CrossedPair,
+                control: self,
+                audio,
+            }));
+        }
+        if audio.capsule.minter.is_some() {
+            return Err(Box::new(MixedCollectionRefusal {
+                reason: MixedCollectionError::UnpromotedAudio,
+                control: self,
+                audio,
+            }));
+        }
+        let parts = match mixed_teardown_parts(&audio) {
+            Ok(parts) => parts,
+            Err(reason) => {
+                return Err(Box::new(MixedCollectionRefusal {
+                    reason,
+                    control: self,
+                    audio,
+                }));
+            }
+        };
+        drop(self);
+        Ok(mixed_finish_teardown(
+            audio,
+            MixedCollectionEnd::ResumedTeardown,
+            parts,
+        ))
+    }
 }
 
 impl MixedStreamControl {
@@ -1100,6 +1458,7 @@ impl MixedJoinedPrepared {
                 restoration_charged: EventCount::NONE,
                 suffix_charged: EventCount::NONE,
                 completed_quanta: QuantumCount::NONE,
+                adoption_after_quanta: None,
                 render_started: false,
                 #[cfg(test)]
                 test_live: None,
@@ -1742,7 +2101,7 @@ impl MixedStampedCandidate {
             restoration_count,
             outstanding,
             outstanding_count,
-            minter,
+            minter: Some(minter),
         }))
     }
 

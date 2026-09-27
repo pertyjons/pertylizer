@@ -533,6 +533,7 @@ fn the_registry_scopes_a_mass_release_to_one_producer_and_names_what_it_ended() 
     // voice instance its gate-down belongs to (`P06-S001`); A's range starts at zero.
     let ended_note = |index: u16| {
         Some(crate::identity::EndedNote {
+            identity: mine[usize::from(index)],
             note: slot(usize::from(index)),
             index,
         })
@@ -554,6 +555,34 @@ fn the_registry_scopes_a_mass_release_to_one_producer_and_names_what_it_ended() 
             "an occurrence the mass release took resolves through nothing afterwards"
         );
     }
+}
+
+#[test]
+fn mixed_registry_preview_and_release_keep_the_sounding_generation() {
+    let mut minter = IdentityTable::new(held(2), &[held(1), held(1)]).expect("two ranges");
+    let mut registry =
+        LiveNotes::for_ranges(minter.id(), &[held(1), held(1)]).expect("matching registry");
+    let first = minter.mint(A, node()).expect("first occurrence");
+    registry.admit(first, slot(0), crate::quantities::KeyIdentity::LOWEST);
+    assert_eq!(registry.release(first), Some(slot(0)));
+    assert_eq!(minter.release(first), Resolution::Live);
+    let second = minter.mint(A, node()).expect("reused index");
+    assert_eq!(first.index(), second.index());
+    assert_ne!(first, second);
+    registry.admit(second, slot(0), crate::quantities::KeyIdentity::LOWEST);
+
+    let mut preview = [None; 1];
+    assert_eq!(
+        registry.preview_producer(A, &mut preview),
+        Some(HeldNoteCount::measured(1))
+    );
+    assert_eq!(preview[0].map(|note| note.identity), Some(second));
+    assert_eq!(
+        registry.release_all(ReleaseScope::Producer(A), &mut preview),
+        HeldNoteCount::measured(1)
+    );
+    assert_eq!(preview[0].map(|note| note.identity), Some(second));
+    assert_eq!(registry.note_of(first), None);
 }
 
 #[test]

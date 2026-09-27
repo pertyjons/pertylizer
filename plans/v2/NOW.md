@@ -292,7 +292,8 @@ together without allocation. Its result returns the old anchor for the future
 schedule owner to retain with the retired compiled list. The delayed-boundary
 renderer rehearsal changes the musical mapping and verifies the new anchor
 and retained live audio in both producer orders. Its buffer still needs a
-combined-host resource charge, and no mixed schedule calls the operation yet.
+combined-host resource charge; the private one-shot callback now calls this
+operation at its fixed boundary.
 The privately stamped candidate can now shed its non-sendable source history
 off-thread into a boxed, sendable audio capsule. A joined prepared owner can arm
 one stamped candidate while stopped: it checks plan, epoch, table and initial
@@ -313,7 +314,16 @@ producer orders; one sounding compiled note is released at the boundary and
 live audio from that quantum onward equals a live-only reference. Faults silence
 the complete callback and retain the capsule, with the terminal cause, boundary
 release and restoration charges, cumulative suffix charges, and completed
-quanta reported. The full fault matrix and off-thread retirement remain open.
+quanta reported.
+Stopped private owners now collect off-thread. Collection checks the original
+control/audio pair before consuming either half. A healthy adopted pair promotes
+the copied compiled minter, outstanding identities, effective anchor and successor
+sequence together, then drops the retired event list off-thread; its audio half
+can continue rendering and later tear down. Pending, faulted and defensively
+refused pairs return no runnable control. Teardown separates still-sounding
+compiled and live identities from compiled notes ended at the boundary and from
+uncharged or charged test-live reservations that never entered the renderer
+registry. The remaining fault-matrix cases are open.
 Other same-quantum Session contributors, production live ingress,
 other payload fanout and host resource charges remain open.
 No production mixed offer or command refusal has been lifted.

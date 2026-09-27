@@ -81,6 +81,9 @@ impl MixedOneShotAudio {
             restoration_charged: self.restoration_charged,
             suffix_charged: self.suffix_charged,
             completed_quanta: self.completed_quanta,
+            boundary_quantum_completed: self
+                .adoption_after_quanta
+                .is_some_and(|at| self.completed_quanta > at),
         }
     }
 
@@ -170,6 +173,7 @@ impl MixedOneShotAudio {
             self.next = 0;
             self.in_force = self.capsule.sequence;
             self.adopted = true;
+            self.adoption_after_quanta = Some(self.completed_quanta);
         }
 
         let mut publication = self.arbiter.open(clock, usize::from(opens_quantum))?;

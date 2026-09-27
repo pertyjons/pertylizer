@@ -75,6 +75,45 @@ pub(crate) struct MixedBoundaryAdopted {
     retired_anchor: StreamAnchor,
 }
 
+/// A stopped mixed renderer's sounding occurrences, by producer range.
+/// Minted reservations that never reached the renderer are absent.
+#[derive(Debug)]
+#[must_use]
+#[allow(dead_code)] // The private mixed teardown has no production caller yet.
+pub(crate) struct MixedSoundingSnapshot {
+    compiled: Vec<crate::identity::EndedNote>,
+    live: Vec<crate::identity::EndedNote>,
+}
+
+#[allow(dead_code)] // Private snapshot accessors are exercised by mixed tests.
+impl MixedSoundingSnapshot {
+    pub(crate) fn compiled(&self) -> &[crate::identity::EndedNote] {
+        &self.compiled
+    }
+
+    pub(crate) fn live(&self) -> &[crate::identity::EndedNote] {
+        &self.live
+    }
+}
+
+/// Defensive refusal while collecting sounding identities off the audio thread.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+#[allow(dead_code)] // The private mixed teardown has no production caller yet.
+pub(crate) enum MixedSoundingSnapshotError {
+    #[error("renderer has no matching mixed registry partition")]
+    Partition,
+    #[error("mixed sounding preview refused producer {producer}")]
+    Preview {
+        producer: crate::identity::ProducerId,
+    },
+    #[error("mixed sounding preview count is not indexable")]
+    Count,
+    #[error("mixed sounding preview omitted an identity for producer {producer}")]
+    Missing {
+        producer: crate::identity::ProducerId,
+    },
+}
+
 #[allow(dead_code)] // The private mixed callback has no production caller yet.
 impl MixedBoundaryAdopted {
     /// Sounding compiled notes ended at the boundary.
@@ -1137,6 +1176,48 @@ impl PreparedRenderer {
         true
     }
 
+    /// Snapshot the stopped registry by producer for off-thread mixed teardown.
+    /// This reads sounding generations, not the minters' future reservations, and
+    /// never uses the compiled-only boundary release buffer for live identities.
+    #[allow(dead_code)] // The private mixed teardown has no production caller yet.
+    pub(crate) fn snapshot_mixed_sounding(
+        &self,
+    ) -> Result<MixedSoundingSnapshot, MixedSoundingSnapshotError> {
+        use MixedSoundingSnapshotError as Refused;
+
+        let partition = self.mixed_partition.as_ref().ok_or(Refused::Partition)?;
+        let (compiled_span, live_span) = partition.spans();
+        let compiled = partition.compiled_producer();
+        let live = partition.live_producer();
+        if partition.plan_id() != self.plan.id()
+            || self.live_notes.producer_range(compiled) != Some(compiled_span)
+            || self.live_notes.producer_range(live) != Some(live_span)
+        {
+            return Err(Refused::Partition);
+        }
+        let snapshot = |producer, span: crate::identity::Range| {
+            let mut scratch = vec![None; span.indices().len()];
+            let count = self
+                .live_notes
+                .preview_producer(producer, &mut scratch)
+                .ok_or(Refused::Preview { producer })?
+                .as_usize()
+                .ok_or(Refused::Count)?;
+            if count > scratch.len() {
+                return Err(Refused::Count);
+            }
+            scratch
+                .into_iter()
+                .take(count)
+                .map(|note| note.ok_or(Refused::Missing { producer }))
+                .collect::<Result<Vec<_>, _>>()
+        };
+        Ok(MixedSoundingSnapshot {
+            compiled: snapshot(compiled, compiled_span)?,
+            live: snapshot(live, live_span)?,
+        })
+    }
+
     /// Prove stopped mixed boundary storage against the registry's own producer range.
     /// This checks the release queue and storage sized for one full external quantum.
     /// The combined boundary event count and its fanout remain separate proof obligations
@@ -1325,6 +1406,11 @@ impl PreparedRenderer {
     /// The render clock: input frames consumed so far.
     pub const fn clock(&self) -> SampleTime {
         self.clock
+    }
+
+    /// The stopped renderer's current musical anchor for mixed owner promotion.
+    pub(crate) const fn mixed_anchor(&self) -> StreamAnchor {
+        self.anchor
     }
 
     #[cfg(test)]

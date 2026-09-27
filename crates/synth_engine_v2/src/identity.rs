@@ -359,11 +359,13 @@ impl Range {
     }
 }
 
-/// One note a mass release ended: the node it played and the partition index it held,
-/// which is the voice instance its gate-down belongs to (`P06-S001`).
+/// One sounding occurrence a mass release ended: its identity, played node and
+/// partition index. The index is the voice instance its gate-down belongs to
+/// (`P06-S001`); the identity retains the generation for off-thread retirement.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[must_use]
 pub struct EndedNote {
+    pub(crate) identity: NoteIdentity,
     pub(crate) note: crate::plan::NoteSlot,
     pub(crate) index: u16,
 }
