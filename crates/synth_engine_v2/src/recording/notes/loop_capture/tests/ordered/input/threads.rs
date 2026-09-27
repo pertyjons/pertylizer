@@ -744,7 +744,7 @@ fn source_stall_does_not_hold_ordered_stop_and_delayed_note_retains_its_refusal(
 
 #[test]
 fn late_quality_from_second_input_survives_prior_faults_before_reunion() {
-    for path in 0..7 {
+    for path in 0..9 {
         let (mut control, audio, _halt, generations) = split(8, 32);
         for (port, generation) in generations.into_iter().enumerate() {
             let _id = control
@@ -766,28 +766,50 @@ fn late_quality_from_second_input_survives_prior_faults_before_reunion() {
             4 | 6 => InputError::IdentityExhausted,
             _ => InputError::Order,
         };
-        if path == 3 || path == 4 {
+        if path == 7 {
+            control
+                .record_post_source_ring_failure(generations[1], original, InputError::Full)
+                .unwrap();
+        } else if path == 3 || path == 4 {
             control
                 .record_pre_ring_failure(generations[1], original, pre_ring_reason)
                 .unwrap();
-        } else if matches!(path, 1 | 5 | 6) {
+        } else if matches!(path, 1 | 5 | 6 | 8) {
             let peer_future = observation(0, 200, 199, [0x90, 61, 100]);
             control
                 .record_pre_ring_failure(generations[0], peer_future, InputError::Future)
                 .unwrap();
-            assert!(control.next_packet().unwrap().is_none());
-            assert_eq!(
+            if path != 8 {
+                assert!(control.next_packet().unwrap().is_none());
+                assert_eq!(
+                    control
+                        .input(generations[1])
+                        .unwrap()
+                        .discontinuity()
+                        .unwrap()
+                        .reason,
+                    InputError::PeerInterrupted
+                );
+            }
+            if path == 8 {
                 control
-                    .input(generations[1])
-                    .unwrap()
-                    .discontinuity()
-                    .unwrap()
-                    .reason,
-                InputError::PeerInterrupted
-            );
-            control
-                .record_pre_ring_failure(generations[1], original, pre_ring_reason)
-                .unwrap();
+                    .record_post_source_ring_failure(generations[1], original, InputError::Full)
+                    .unwrap();
+                assert_eq!(
+                    control
+                        .input(generations[1])
+                        .unwrap()
+                        .discontinuity()
+                        .unwrap()
+                        .reason,
+                    InputError::PeerInterrupted,
+                    "the post-ring recorder must observe a prior peer halt itself"
+                );
+            } else {
+                control
+                    .record_pre_ring_failure(generations[1], original, pre_ring_reason)
+                    .unwrap();
+            }
         } else if path == 2 {
             let earlier_fault = InputObservation::Frontier { tick: tick(1, 0) };
             assert_eq!(
@@ -810,8 +832,10 @@ fn late_quality_from_second_input_survives_prior_faults_before_reunion() {
             let second = owner.input(generations[1]).unwrap();
             assert_eq!(
                 second.discontinuity().unwrap().reason,
-                if matches!(path, 1 | 5 | 6) {
+                if matches!(path, 1 | 5 | 6 | 8) {
                     InputError::PeerInterrupted
+                } else if path == 7 {
+                    InputError::Full
                 } else if path == 3 {
                     InputError::SourceQueueFull
                 } else if path == 4 {
@@ -820,10 +844,12 @@ fn late_quality_from_second_input_survives_prior_faults_before_reunion() {
                     InputError::Order
                 }
             );
-            assert_eq!(
-                second.pre_ring_failure().unwrap().observation,
-                Some(original)
-            );
+            let source_fault = if matches!(path, 7 | 8) {
+                second.post_source_ring_failure()
+            } else {
+                second.pre_ring_failure()
+            };
+            assert_eq!(source_fault.unwrap().observation, Some(original));
         }
         for generation in generations {
             owner.acknowledge_input_quiescence(generation).unwrap();
@@ -1039,6 +1065,76 @@ fn terminal_source_queue_full_requires_a_mappable_original() {
         .unwrap();
     assert_eq!(retained.reason, InputError::SourceQueueFull);
     assert_eq!(retained.observation, Some(original));
+}
+
+#[test]
+fn post_source_ring_failure_keeps_its_own_original_and_rejects_duplicate_reports() {
+    let (mut control, _audio, _halt, generation) = uncertain_split();
+    let unmappable = InputObservation::Message {
+        tick: InputTick::new(200),
+        arrival: SampleTime::new(200),
+        input: Midi1Input::from_bytes([0x90, 60, 100]).unwrap(),
+    };
+    assert_eq!(
+        control.record_post_source_ring_failure(generation, unmappable, InputError::Full),
+        Err(InputError::State)
+    );
+    let frontier = InputObservation::Frontier {
+        tick: InputTick::new(105),
+    };
+    assert_eq!(
+        control.record_post_source_ring_failure(generation, frontier, InputError::Full),
+        Err(InputError::State)
+    );
+    let future = InputObservation::Message {
+        tick: InputTick::new(105),
+        arrival: SampleTime::new(9),
+        input: Midi1Input::from_bytes([0x90, 60, 100]).unwrap(),
+    };
+    assert_eq!(
+        control.record_post_source_ring_failure(generation, future, InputError::Full),
+        Err(InputError::State)
+    );
+    let original = InputObservation::Message {
+        tick: InputTick::new(105),
+        arrival: SampleTime::new(10),
+        input: Midi1Input::from_bytes([0x90, 60, 100]).unwrap(),
+    };
+    assert_eq!(
+        control.record_post_source_ring_failure(generation, original, InputError::Stale),
+        Err(InputError::State)
+    );
+    assert!(
+        control
+            .input(generation)
+            .unwrap()
+            .post_source_ring_failure()
+            .is_none()
+    );
+    control
+        .record_post_source_ring_failure(generation, original, InputError::IdentityExhausted)
+        .unwrap();
+    assert_eq!(
+        control.record_post_source_ring_failure(
+            generation,
+            original,
+            InputError::IdentityExhausted
+        ),
+        Err(InputError::State)
+    );
+    control
+        .record_pre_ring_failure(generation, original, InputError::IdentityExhausted)
+        .unwrap();
+    let input = control.input(generation).unwrap();
+    assert_eq!(
+        input.post_source_ring_failure(),
+        input.pre_ring_failure(),
+        "equal-value faults at distinct custody stages must both be retained"
+    );
+    assert_eq!(
+        input.discontinuity().unwrap().reason,
+        InputError::IdentityExhausted
+    );
 }
 
 #[test]

@@ -258,15 +258,31 @@ impl SourceInbox {
     }
 
     /// Preserve the raw result and exact audition-packet custody for each pop.
+    #[cfg(test)]
     pub fn service_custody_identified(
         &mut self,
         control: &mut LiveControl,
         mut receive: impl FnMut(Option<SourceQueueId>, InputOfferReport),
     ) {
+        self.service_attributed_identified(control, |id, report| {
+            assert!(
+                report.attribution_error.is_none(),
+                "test-only projection cannot discard a source attribution failure"
+            );
+            receive(id, report.offer);
+        });
+    }
+
+    /// A source-queued fault retains both preflight and attribution outcomes.
+    pub fn service_attributed_identified(
+        &mut self,
+        control: &mut LiveControl,
+        mut receive: impl FnMut(Option<SourceQueueId>, SourceOfferReport),
+    ) {
         self.record_failure(control, |result| {
             receive(
                 None,
-                InputOfferReport::new(result, AuditionPacketCustody::NotQueued),
+                SourceOfferReport::new(result, AuditionPacketCustody::NotQueued, None),
             );
         });
         let prefix = self.queue.occupied_len();
@@ -276,7 +292,7 @@ impl SourceInbox {
             };
             receive(
                 Some(packet.id),
-                control.offer_with_custody(self.generation, packet.observation),
+                control.offer_source_queued(self.generation, packet.id, packet.observation),
             );
         }
     }

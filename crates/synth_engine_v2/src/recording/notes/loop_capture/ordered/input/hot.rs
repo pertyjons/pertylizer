@@ -1,7 +1,7 @@
 //! Fixed-storage synthetic input callback operations.
 use super::{
     InputDiscontinuity, InputEntry, InputError, InputEventId, InputObservation, InputOutcome,
-    InputReceipt, InputTick, SimulatedNoteInput,
+    InputReceipt, InputTick, SimulatedNoteInput, SourceFaultStage,
 };
 use crate::{
     host::{ConnectionGeneration, ConnectionState},
@@ -54,7 +54,31 @@ impl SimulatedNoteInput {
         }
         self.pre_ring_failure = Some(fault);
         self.pre_ring_attributed = false;
+        let first = self.discontinuity.is_none();
         self.fail(reason, Some(observation));
+        if first {
+            self.discontinuity_source_stage = Some(SourceFaultStage::BeforeSourceRing);
+        }
+        Ok(())
+    }
+    pub(super) fn record_post_source_ring_failure(
+        &mut self,
+        reason: InputError,
+        observation: InputObservation,
+    ) -> Result<(), InputError> {
+        if self.post_source_ring_failure.is_some() {
+            return Err(InputError::State);
+        }
+        self.post_source_ring_failure = Some(InputDiscontinuity {
+            reason,
+            observation: Some(observation),
+        });
+        self.post_source_ring_attributed = false;
+        let first = self.discontinuity.is_none();
+        self.fail(reason, Some(observation));
+        if first {
+            self.discontinuity_source_stage = Some(SourceFaultStage::AfterSourceRing);
+        }
         Ok(())
     }
     pub fn device_lost(&mut self, generation: ConnectionGeneration) -> Result<(), InputError> {

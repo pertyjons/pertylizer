@@ -1,6 +1,6 @@
 //! ALSA callback custody for the concrete simulated-input fixture.
 use crate::input_host::{
-    self, HostOutcome, InputOfferError, InputOfferReport, LiveAudio,
+    self, HostOutcome, InputOfferError, InputOfferReport, LiveAudio, SourceOfferReport,
     archive::RetainedRuns,
     managed::ManagedRun,
     prepare::PreparedAttempt,
@@ -395,16 +395,21 @@ fn settle_source_workers(
 
 fn service(managed: &mut ManagedRun, stopped: &mut bool) -> Result<(), Box<dyn std::error::Error>> {
     let mut input_fault = false;
-    managed.service_custody_identified(
+    managed.service_attributed_identified(
         |source_id, report| {
+            let SourceOfferReport {
+                offer,
+                attribution_error,
+            } = report;
             let InputOfferReport {
                 result,
                 audition_packet,
-            } = report;
+            } = offer;
+            input_fault |= attribution_error.is_some();
             match result {
                 Ok(id) => {
                     println!(
-                        "source_queue_id={source_id:?} raw_input_id={id:?} audition_packet={audition_packet:?}"
+                        "source_queue_id={source_id:?} raw_input_id={id:?} audition_packet={audition_packet:?} attribution_error={attribution_error:?}"
                     );
                 }
                 Err(fault) => {
@@ -412,7 +417,7 @@ fn service(managed: &mut ManagedRun, stopped: &mut bool) -> Result<(), Box<dyn s
                     match fault {
                         InputOfferError::Refused(observation, reason) => {
                             eprintln!(
-                                "source_queue_id={source_id:?} audition_packet={audition_packet:?} source_refusal={observation:?} reason={reason:?}"
+                                "source_queue_id={source_id:?} audition_packet={audition_packet:?} source_refusal={observation:?} reason={reason:?} attribution_error={attribution_error:?}"
                             );
                         }
                         InputOfferError::Accepted {
@@ -421,7 +426,7 @@ fn service(managed: &mut ManagedRun, stopped: &mut bool) -> Result<(), Box<dyn s
                             settlement_error,
                         } => {
                             eprintln!(
-                                "source_queue_id={source_id:?} audition_packet={audition_packet:?} accepted_input_fault={id:?} error={error:?} settlement={settlement_error:?}"
+                                "source_queue_id={source_id:?} audition_packet={audition_packet:?} accepted_input_fault={id:?} error={error:?} settlement={settlement_error:?} attribution_error={attribution_error:?}"
                             );
                         }
                     }

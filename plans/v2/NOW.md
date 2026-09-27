@@ -221,6 +221,14 @@ packet. A failed audition commit has no packet despite its accepted raw ID;
 a later raw-trace attachment fault retains the queued packet. Source service
 and the Linux driver carry this distinction beside the source queue ID. It
 does not grant a protected release or a model receipt.
+Audition preflight `Full` and `IdentityExhausted` after source queue custody
+now retain a separate pre-raw terminal fault with the original in Core V2.
+An earlier producer fault and a prior peer interruption keep their own
+records, and the host reports any attribution error beside the original
+preflight reason. Later queued packets after the halt return identified
+`State` refusals. The ledger and combined credit remain open.
+Raw input admission `Full` and `IdentityExhausted` keep their prior quality
+policy; this addition covers audition preflight refusals.
 An independent design read found that merger forwarding cannot recycle ingress
 hold or tracker credit: another source's earlier mapped-time onset can execute
 before that release. The two-source ingress regression now runs in the workspace

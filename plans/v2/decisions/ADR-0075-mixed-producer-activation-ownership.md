@@ -640,6 +640,34 @@ beside its source queue ID. The Linux driver reports queued audition IDs.
 Neither stage says that the renderer executed the packet or that a protected
 release has credit.
 The terminal host policy remains; the source/channel/key FIFO ledger is unbuilt.
+The source producer validates clock mapping, arrival, and local order before
+publishing to its ring. The inbox forwards that ring in FIFO order with the
+same prepared clock as raw input. When a source-queued message is refused by
+audition preflight for `Full` or `IdentityExhausted`, the host records a
+distinct post-source-ring, pre-raw terminal fault with the original observation.
+The raw owner validates the mapped time and arrival and retains this fault
+separately from a producer's pre-source-ring fault and its first-wins primary
+discontinuity. It attributes exact late quality at reunion. Recording the
+post-ring fault first synchronizes any requested halt, so an input already
+interrupted by that halt keeps `PeerInterrupted` as primary. A second post-ring
+report refuses even when its observation has equal bytes. Equal values at
+different custody stages can belong to different source attempts; each is
+evaluated for refused-input quality.
+Subsequent packets observed after halt retain their own source queue IDs and
+return `State` without claiming another fault.
+The source report and Linux driver keep the audition preflight reason and any
+fault-recording error in separate fields. A stale audition source binding is
+checked before audition capacity; it is a host configuration refusal and does
+not claim this source-fault cell. A producer publishes its pre-source-ring
+failure before requesting a halt. The pre-ring recorder retains the original
+without synchronizing the halt. The first recorded discontinuity remains
+primary: it may be the producer's reason, a prior input fault, or
+`PeerInterrupted` if the halt was already synchronized. Reunion evaluates the
+pre-ring fault for quality separately when it is not primary. Raw admission
+`Full` and `IdentityExhausted` keep their existing quality policy. The new
+exact late attribution applies to audition preflight refusals. This retains
+terminal attribution without granting shared admission credit or a nonterminal
+refused-onset tombstone.
 
 The concrete bridge's joined finish, on either recovery or ordered Stop,
 interrupts the live renderer before it transfers a packet previously refused

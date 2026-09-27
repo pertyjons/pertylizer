@@ -1,7 +1,7 @@
 //! Exclusive callback delegation and fixed-storage loss handling.
 use super::super::{
     InputDiscontinuity, InputError, InputEventId, InputObservation, InputReceipt, InputTick,
-    SimulatedInputClock,
+    SimulatedInputClock, SourceFaultStage,
 };
 use super::{InputCaptureError, InputCaptureSession, LoopRecordingSession};
 use crate::{
@@ -22,15 +22,15 @@ fn attribute_input_fault(
     clock: Option<SimulatedInputClock>,
     source: Option<ConnectionGeneration>,
     fault: InputDiscontinuity,
-    pre_ring: bool,
+    pre_raw: bool,
 ) -> Result<(), InputCaptureError> {
     // Exact late observations use their actual stamp. Uncertain observations
     // contribute conservative bounds and never acquire a fabricated exact time.
     if (fault.reason == InputError::Order
-        || (pre_ring
+        || (pre_raw
             && matches!(
                 fault.reason,
-                InputError::SourceQueueFull | InputError::IdentityExhausted
+                InputError::SourceQueueFull | InputError::IdentityExhausted | InputError::Full
             )))
         && let Some(InputObservation::Message { tick, arrival, .. }) = fault.observation
         && let Some(clock) = clock
@@ -129,7 +129,7 @@ impl InputCaptureSession {
                         input.clock,
                         input.binding,
                         fault,
-                        input.pre_ring_failure == Some(fault),
+                        input.discontinuity_source_stage.is_some(),
                     )?;
                     input.discontinuity_attributed = true;
                 }
@@ -143,7 +143,8 @@ impl InputCaptureSession {
             }
             if let Some(fault) = input.pre_ring_failure {
                 if !input.pre_ring_attributed {
-                    if primary != Some(fault) {
+                    if input.discontinuity_source_stage != Some(SourceFaultStage::BeforeSourceRing)
+                    {
                         attribute_input_fault(
                             &mut self.session,
                             input.clock,
@@ -153,6 +154,23 @@ impl InputCaptureSession {
                         )?;
                     }
                     input.pre_ring_attributed = true;
+                }
+                if reason.is_none() {
+                    reason = Some(CaptureStopReason::SourceInvalid);
+                }
+            }
+            if let Some(fault) = input.post_source_ring_failure {
+                if !input.post_source_ring_attributed {
+                    if input.discontinuity_source_stage != Some(SourceFaultStage::AfterSourceRing) {
+                        attribute_input_fault(
+                            &mut self.session,
+                            input.clock,
+                            input.binding,
+                            fault,
+                            true,
+                        )?;
+                    }
+                    input.post_source_ring_attributed = true;
                 }
                 if reason.is_none() {
                     reason = Some(CaptureStopReason::SourceInvalid);

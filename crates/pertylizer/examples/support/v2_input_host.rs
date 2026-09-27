@@ -96,6 +96,35 @@ impl InputOfferReport {
     }
 }
 
+/// A source-queued result keeps the original refusal and any failure to
+/// attribute that refusal to the raw capture owner as separate diagnostics.
+#[derive(Debug)]
+#[must_use]
+pub struct SourceOfferReport {
+    pub offer: InputOfferReport,
+    pub attribution_error: Option<InputError>,
+}
+
+impl SourceOfferReport {
+    fn new(
+        result: InputOfferResult,
+        audition_packet: AuditionPacketCustody,
+        attribution_error: Option<InputError>,
+    ) -> Self {
+        Self {
+            offer: InputOfferReport::new(result, audition_packet),
+            attribution_error,
+        }
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum SourceOfferOrigin {
+    #[cfg(test)]
+    Direct,
+    Queued,
+}
+
 #[derive(Debug, Error)]
 pub enum HostError {
     #[error("input producers or their queued observations have not been closed")]
@@ -248,20 +277,65 @@ impl LiveControl {
         self.offer_with_custody(generation, observation).result
     }
 
-    /// Retain audition packet custody alongside the raw admission result.
+    #[cfg(test)]
     pub(super) fn offer_with_custody(
         &mut self,
         generation: ConnectionGeneration,
         observation: InputObservation,
     ) -> InputOfferReport {
+        self.offer_inner(generation, observation, SourceOfferOrigin::Direct)
+            .offer
+    }
+
+    /// Only a source inbox with a checked queue ID can claim this boundary.
+    pub(super) fn offer_source_queued(
+        &mut self,
+        generation: ConnectionGeneration,
+        queue: source::SourceQueueId,
+        observation: InputObservation,
+    ) -> SourceOfferReport {
+        if queue.generation() != generation {
+            self.halt.request_invalid();
+            return SourceOfferReport::new(
+                Err(InputOfferError::Refused(observation, InputError::State)),
+                AuditionPacketCustody::NotQueued,
+                None,
+            );
+        }
+        self.offer_inner(generation, observation, SourceOfferOrigin::Queued)
+    }
+
+    fn offer_inner(
+        &mut self,
+        generation: ConnectionGeneration,
+        observation: InputObservation,
+        origin: SourceOfferOrigin,
+    ) -> SourceOfferReport {
+        if origin == SourceOfferOrigin::Queued && self.halt.is_requested() {
+            let result = self
+                .core
+                .offer_observation(generation, observation)
+                .map_err(|(original, error)| InputOfferError::Refused(original, error));
+            return SourceOfferReport::new(result, AuditionPacketCustody::NotQueued, None);
+        }
         let prepared = match self.audition.as_ref() {
             Some(audition) => match audition.preflight(generation, observation) {
                 Ok(prepared) => prepared,
                 Err(error) => {
+                    let attribution_error = if origin == SourceOfferOrigin::Queued
+                        && matches!(error, InputError::Full | InputError::IdentityExhausted)
+                    {
+                        self.core
+                            .record_post_source_ring_failure(generation, observation, error)
+                            .err()
+                    } else {
+                        None
+                    };
                     self.halt.request_invalid();
-                    return InputOfferReport::new(
+                    return SourceOfferReport::new(
                         Err(InputOfferError::Refused(observation, error)),
                         AuditionPacketCustody::NotQueued,
+                        attribution_error,
                     );
                 }
             },
@@ -270,9 +344,10 @@ impl LiveControl {
         let id = match self.core.offer_observation(generation, observation) {
             Ok(id) => id,
             Err((original, error)) => {
-                return InputOfferReport::new(
+                return SourceOfferReport::new(
                     Err(InputOfferError::Refused(original, error)),
                     AuditionPacketCustody::NotQueued,
+                    None,
                 );
             }
         };
@@ -281,13 +356,14 @@ impl LiveControl {
                 Ok(trace) => trace,
                 Err(error) => {
                     self.halt.request_invalid();
-                    return InputOfferReport::new(
+                    return SourceOfferReport::new(
                         Err(InputOfferError::Accepted {
                             id,
                             error,
                             settlement_error: None,
                         }),
                         AuditionPacketCustody::NotQueued,
+                        None,
                     );
                 }
             },
@@ -313,16 +389,17 @@ impl LiveControl {
                 .audition
                 .as_mut()
                 .and_then(|audition| audition.settle(trace).err());
-            return InputOfferReport::new(
+            return SourceOfferReport::new(
                 Err(InputOfferError::Accepted {
                     id,
                     error,
                     settlement_error,
                 }),
                 audition_packet,
+                None,
             );
         }
-        InputOfferReport::new(Ok(id), audition_packet)
+        SourceOfferReport::new(Ok(id), audition_packet, None)
     }
 
     /// The returned ID is accepted host custody even when its queue is full.

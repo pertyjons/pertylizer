@@ -232,6 +232,18 @@ impl ManagedRun {
         self.control.core.input(generation)?.discontinuity()
     }
 
+    #[cfg(test)]
+    pub(crate) fn post_source_ring_failure(
+        &self,
+        port: usize,
+    ) -> Option<synth_engine_v2::host::input::InputDiscontinuity> {
+        let generation = *self.generations.get(port)?;
+        self.control
+            .core
+            .input(generation)?
+            .post_source_ring_failure()
+    }
+
     /// Admission and execution have distinct identified outcomes. Both are reported.
     #[cfg(test)]
     pub fn service(
@@ -256,9 +268,30 @@ impl ManagedRun {
     }
 
     /// Keep audition queue custody separate from the raw input result.
+    #[cfg(test)]
     pub fn service_custody_identified(
         &mut self,
         mut input: impl FnMut(Option<SourceQueueId>, InputOfferReport),
+        command: impl FnMut(LoopTransferId, HostOutcome),
+        receipt: impl FnMut(InputReceipt),
+    ) -> Result<(), HostError> {
+        self.service_attributed_identified(
+            |id, report| {
+                assert!(
+                    report.attribution_error.is_none(),
+                    "test-only projection cannot discard a source attribution failure"
+                );
+                input(id, report.offer);
+            },
+            command,
+            receipt,
+        )
+    }
+
+    /// Source queue custody and any pre-raw attribution error travel together.
+    pub fn service_attributed_identified(
+        &mut self,
+        mut input: impl FnMut(Option<SourceQueueId>, SourceOfferReport),
         mut command: impl FnMut(LoopTransferId, HostOutcome),
         mut receipt: impl FnMut(InputReceipt),
     ) -> Result<(), HostError> {
@@ -266,12 +299,12 @@ impl ManagedRun {
             inbox.record_failure(&mut self.control, |result| {
                 input(
                     None,
-                    InputOfferReport::new(result, AuditionPacketCustody::NotQueued),
+                    SourceOfferReport::new(result, AuditionPacketCustody::NotQueued, None),
                 );
             });
         }
         for inbox in &mut self.inboxes {
-            inbox.service_custody_identified(&mut self.control, &mut input);
+            inbox.service_attributed_identified(&mut self.control, &mut input);
         }
         while self.control.has_completions() {
             if let Some((id, outcome)) = self.control.collect()? {

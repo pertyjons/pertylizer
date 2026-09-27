@@ -154,6 +154,38 @@ impl InputCaptureControl {
         Ok(())
     }
 
+    /// Retain a terminal audition preflight refusal for a source-queued message
+    /// that never acquired a raw input ID. This is separate from pre-source-ring
+    /// failures because a later full-ring retirement can have its own original.
+    pub fn record_post_source_ring_failure(
+        &mut self,
+        generation: ConnectionGeneration,
+        observation: InputObservation,
+        reason: InputError,
+    ) -> Result<(), InputError> {
+        let port = self.port(generation)?;
+        self.synchronize_halt();
+        let input = &mut self.inputs[port];
+        if !matches!(
+            input.state(),
+            ConnectionState::Running | ConnectionState::Quiescing
+        ) || !matches!(reason, InputError::Full | InputError::IdentityExhausted)
+        {
+            return Err(InputError::State);
+        }
+        let InputObservation::Message { tick, arrival, .. } = observation else {
+            return Err(InputError::State);
+        };
+        let clock = input.clock().ok_or(InputError::State)?;
+        let nominal = clock.map(tick).map_err(|_| InputError::State)?;
+        if arrival < nominal {
+            return Err(InputError::State);
+        }
+        input.record_post_source_ring_failure(reason, observation)?;
+        self.halt.request_invalid();
+        Ok(())
+    }
+
     /// Attach a retained live-audition token before this observation is forwarded.
     pub fn set_audition(
         &mut self,

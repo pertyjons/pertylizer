@@ -2423,22 +2423,37 @@ fn audition_credit_exhaustion_retains_results_and_refused_release_without_a_fina
         arrival: at,
         input: Midi1Input::from_bytes([0x80, 60, 0]).unwrap(),
     };
-    first.send(release).unwrap();
-    let mut refused = None;
-    run.service(
-        |result| {
-            if let Err(value) = result {
-                refused = Some(value);
-            }
-        },
+    let release_id = first.send_identified(release).unwrap();
+    let later = InputObservation::Frontier {
+        tick: InputTick::new(at.as_u64() + 64),
+    };
+    let later_id = first.send_identified(later).unwrap();
+    let mut refused = Vec::new();
+    run.service_attributed_identified(
+        |source_id, report| refused.push((source_id, report)),
         |_, _| {},
         |_| {},
     )
     .unwrap();
+    let [(first_id, first_report), (second_id, second_report)] = refused.as_slice() else {
+        panic!("two queued observations must each receive a disposition");
+    };
+    assert_eq!(*first_id, Some(release_id));
+    assert_eq!(first_report.attribution_error, None);
     assert_eq!(
-        refused,
-        Some(InputOfferError::Refused(release, InputError::Full))
+        first_report.offer.result,
+        Err(InputOfferError::Refused(release, InputError::Full))
     );
+    assert_eq!(*second_id, Some(later_id));
+    assert_eq!(second_report.attribution_error, None);
+    assert_eq!(
+        second_report.offer.result,
+        Err(InputOfferError::Refused(later, InputError::State))
+    );
+    let fault = run.post_source_ring_failure(0).unwrap();
+    assert_eq!(fault.reason, InputError::Full);
+    assert_eq!(fault.observation, Some(release));
+    assert_eq!(run.source_discontinuity(0), Some(fault));
     assert!(run.halt_handle().is_requested());
     assert!(run.close_source(first).is_ok());
     assert!(run.close_source(second).is_ok());

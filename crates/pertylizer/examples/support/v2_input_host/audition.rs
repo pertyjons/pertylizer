@@ -159,14 +159,14 @@ impl AuditionControl {
         let InputObservation::Message { tick, input, .. } = observation else {
             return Ok(None);
         };
-        if self.outstanding >= self.queue.capacity().get() {
-            return Err(InputError::Full);
-        }
         let port = self
             .sources
             .iter()
             .position(|generation| *generation == source)
             .ok_or(InputError::Stale)?;
+        if self.outstanding >= self.queue.capacity().get() {
+            return Err(InputError::Full);
+        }
         let serial = self.serials[port]
             .checked_add(1)
             .ok_or(InputError::IdentityExhausted)?;

@@ -28,6 +28,12 @@ enum InputDelivery {
     Transfer(super::transfer::LoopTransferId),
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum SourceFaultStage {
+    BeforeSourceRing,
+    AfterSourceRing,
+}
+
 struct InputEntry {
     audition: crate::recording::notes::AuditionTrace,
     id: InputEventId,
@@ -52,9 +58,12 @@ pub struct SimulatedNoteInput {
     last_arrival: Option<SampleTime>,
     frontier: SampleTime,
     discontinuity: Option<InputDiscontinuity>,
+    discontinuity_source_stage: Option<SourceFaultStage>,
     pre_ring_failure: Option<InputDiscontinuity>,
+    post_source_ring_failure: Option<InputDiscontinuity>,
     discontinuity_attributed: bool,
     pre_ring_attributed: bool,
+    post_source_ring_attributed: bool,
     quiescent: bool,
     bytes: PreparedBytes,
 }
@@ -91,9 +100,12 @@ impl SimulatedNoteInput {
             last_arrival: None,
             frontier: SampleTime::ZERO,
             discontinuity: None,
+            discontinuity_source_stage: None,
             pre_ring_failure: None,
+            post_source_ring_failure: None,
             discontinuity_attributed: false,
             pre_ring_attributed: false,
+            post_source_ring_attributed: false,
             quiescent: true,
             bytes: required,
         })
@@ -123,6 +135,9 @@ impl SimulatedNoteInput {
     pub const fn pre_ring_failure(&self) -> Option<InputDiscontinuity> {
         self.pre_ring_failure
     }
+    pub const fn post_source_ring_failure(&self) -> Option<InputDiscontinuity> {
+        self.post_source_ring_failure
+    }
     pub const fn bytes(&self) -> PreparedBytes {
         self.bytes
     }
@@ -148,9 +163,12 @@ impl SimulatedNoteInput {
         self.last_arrival = None;
         self.frontier = SampleTime::ZERO;
         self.discontinuity = None;
+        self.discontinuity_source_stage = None;
         self.pre_ring_failure = None;
+        self.post_source_ring_failure = None;
         self.discontinuity_attributed = false;
         self.pre_ring_attributed = false;
+        self.post_source_ring_attributed = false;
         Ok(generation)
     }
     pub fn prepare(
