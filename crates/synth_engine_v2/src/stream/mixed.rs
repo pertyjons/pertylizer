@@ -2367,3 +2367,6 @@ impl MixedStreamAudio {
 #[cfg(test)]
 #[path = "mixed/history_tests.rs"]
 mod history_tests;
+#[cfg(all(test, feature = "simulated-ingress"))]
+#[path = "mixed/ledger_tests.rs"]
+mod ledger_tests;

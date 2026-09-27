@@ -253,8 +253,14 @@ The next source-bridge rehearsal must be V2-local: the concrete Linux-example
 source rings cannot call those crate-private test-only offers. ADR-0075 now
 requires a modeled two-source ring, one shared charge and a same-key FIFO with
 separate raw-recorder and ingress dispositions before a combined receipt can
-be claimed. The model, concrete host connection and protected-release service
-are still open.
+be claimed. The first V2-local test model now exercises bounded onset
+rings, one shared tracker/ingress/result/ledger charge, exact retry retirement,
+same-key accepted/refused FIFO, and direct dual-consumer release routing and
+settlement before credit reuse. It has fake consumers only: release traversal
+through source rings, raw occupancy, frontiers, capture reserve, real recorder
+and mixed renderer remain to be connected. It does not yet produce a combined
+consumer outcome or qualify protected-release service. The concrete host
+connection remains open.
 An off-thread check now places and stamps the bound stream against
 a disposable copy of only the compiled range. It publishes no events or
 reservations. Tests cover wrong-producer and wrong-capacity refusals, disjoint
