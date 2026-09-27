@@ -86,6 +86,12 @@ enum RingPacket {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum MergedHeadKind {
+    Onset,
+    Release,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum NoCreditReason {
     SourceReserve,
     RawCapture,
@@ -639,29 +645,39 @@ impl Model {
         true
     }
 
-    /// Choose only a stamped head whose earlier competitors are already known.
-    /// Source index fixes ties; an empty peer needs a serviced frontier.
-    fn next_merged_onset(&self) -> Option<ModelSource> {
+    /// Choose a stamped head only when no peer can still produce an earlier
+    /// packet. Source index fixes ties; an empty peer needs a serviced frontier.
+    fn next_merged_stamped(&self) -> Option<(ModelSource, MergedHeadKind)> {
         if self.host_halted {
             return None;
         }
         let head = |source: ModelSource| match self.rings[source.index()].front()? {
-            RingPacket::Onset(attempt) => attempt.mapped_at,
-            RingPacket::Ordinary | RingPacket::Release { .. } => None,
+            RingPacket::Onset(attempt) => attempt.mapped_at.map(|at| (at, MergedHeadKind::Onset)),
+            RingPacket::Release { mapped_at, .. } => {
+                mapped_at.map(|at| (at, MergedHeadKind::Release))
+            }
+            RingPacket::Ordinary => None,
         };
         let candidates = [ModelSource::First, ModelSource::Second];
         let candidate = candidates
             .into_iter()
-            .filter_map(|source| head(source).map(|at| (at, source)))
-            .min_by_key(|(at, source)| (*at, source.index()))?;
+            .filter_map(|source| head(source).map(|(at, kind)| (at, source, kind)))
+            .min_by_key(|(at, source, _)| (*at, source.index()))?;
         let peer = candidates[1 - candidate.1.index()];
-        if head(peer).is_some_and(|at| at >= candidate.0)
+        if head(peer).is_some_and(|(at, _)| at >= candidate.0)
             || (self.rings[peer.index()].is_empty()
                 && self.merge_frontiers[peer.index()].is_some_and(|at| at >= candidate.0))
         {
-            Some(candidate.1)
+            Some((candidate.1, candidate.2))
         } else {
             None
+        }
+    }
+
+    fn next_merged_onset(&self) -> Option<ModelSource> {
+        match self.next_merged_stamped() {
+            Some((source, MergedHeadKind::Onset)) => Some(source),
+            Some((_, MergedHeadKind::Release)) | None => None,
         }
     }
 
@@ -672,6 +688,13 @@ impl Model {
     ) -> Option<(ModelSource, OccurrenceId)> {
         let source = self.next_merged_onset()?;
         Some((source, self.service(source, raw, ingress)))
+    }
+
+    fn service_next_merged_release(&mut self) -> Option<(ModelSource, ReleaseRoute)> {
+        let (source, MergedHeadKind::Release) = self.next_merged_stamped()? else {
+            return None;
+        };
+        Some((source, self.service_release(source)))
     }
 
     fn service_with_input(
@@ -2367,6 +2390,245 @@ fn serviced_source_frontier_orders_two_source_mixed_commands() {
         assert!(matches!(result.outcome, MixedIngressOutcome::Onset(Ok(_))));
         model.apply_ingress_onset_result(id, result).unwrap();
     }
+}
+
+#[test]
+fn merged_release_precedes_later_peer_onset_and_keeps_its_identity() {
+    let (prepared, candidate) = history_tests::one_shot_with_boundary_on(true);
+    let (mut control, mut mixed) = prepared
+        .arm_one_shot(candidate, &history_tests::mixed_profile())
+        .unwrap();
+    let mut model = Model::new(limits(2), 4);
+    let first = model
+        .submit_at(
+            ModelSource::First,
+            input(0x90, 60, 100),
+            Some(SampleTime::new(140)),
+        )
+        .unwrap();
+    let second = model
+        .submit_at(
+            ModelSource::Second,
+            input(0x90, 62, 100),
+            Some(SampleTime::new(150)),
+        )
+        .unwrap();
+    assert_eq!(
+        model.offer_release_at(
+            ModelSource::First,
+            input(0x80, 60, 0),
+            Some(SampleTime::new(145)),
+        ),
+        Ok(ReleaseOffer::Queued(first))
+    );
+
+    assert_eq!(
+        model.next_merged_stamped(),
+        Some((ModelSource::First, MergedHeadKind::Onset))
+    );
+    assert_eq!(
+        model.service_next_merged_onset(false, true),
+        Some((ModelSource::First, first))
+    );
+    let (first_command, first_request) = model.submit_ingress_onset(&mut control, first).unwrap();
+    mixed.service_test_ingress_queue();
+    let first_result = control.collect_ingress_result().unwrap();
+    assert_eq!(
+        (first_result.id, first_result.request),
+        (first_command, first_request)
+    );
+    let MixedIngressOutcome::Onset(Ok(first_identity)) = first_result.outcome else {
+        panic!("first source must keep its accepted mixed identity");
+    };
+    model
+        .apply_ingress_onset_result(first, first_result)
+        .unwrap();
+
+    assert_eq!(
+        model.next_merged_stamped(),
+        Some((ModelSource::First, MergedHeadKind::Release))
+    );
+    assert_eq!(model.next_merged_onset(), None);
+    assert_eq!(
+        model
+            .service_next_merged_release()
+            .map(|(source, route)| (source, route.id)),
+        Some((ModelSource::First, first))
+    );
+    let (release_command, release_request) =
+        model.submit_ingress_release(&mut control, first).unwrap();
+    assert!(matches!(
+        release_request,
+        MixedIngressRequest::Release { identity, at, .. }
+            if identity == first_identity && at == SampleTime::new(145)
+    ));
+    assert_eq!(model.next_merged_stamped(), None);
+    assert!(model.advance_merge_frontier(ModelSource::First, SampleTime::new(149)));
+    assert_eq!(model.next_merged_stamped(), None);
+    assert!(model.advance_merge_frontier(ModelSource::First, SampleTime::new(150)));
+    assert_eq!(
+        model.next_merged_stamped(),
+        Some((ModelSource::Second, MergedHeadKind::Onset))
+    );
+    assert_eq!(
+        model.service_next_merged_onset(false, true),
+        Some((ModelSource::Second, second))
+    );
+    let (second_command, second_request) =
+        model.submit_ingress_onset(&mut control, second).unwrap();
+
+    mixed.service_test_ingress_queue();
+    let release_result = control.collect_ingress_result().unwrap();
+    assert_eq!(
+        (release_result.id, release_result.request),
+        (release_command, release_request)
+    );
+    assert_eq!(release_result.outcome, MixedIngressOutcome::Release(Ok(())));
+    model
+        .apply_ingress_release_result(first, release_result)
+        .unwrap();
+    model.settle_ingress_release(first).unwrap();
+    let second_result = control.collect_ingress_result().unwrap();
+    assert_eq!(
+        (second_result.id, second_result.request),
+        (second_command, second_request)
+    );
+    assert!(matches!(
+        second_result.outcome,
+        MixedIngressOutcome::Onset(Ok(_))
+    ));
+    model
+        .apply_ingress_onset_result(second, second_result)
+        .unwrap();
+}
+
+#[test]
+fn merged_release_waits_for_earlier_peer_and_ties_use_source_order() {
+    let mut model = Model::new(limits(2), 4);
+    let first = model
+        .submit_at(
+            ModelSource::First,
+            input(0x90, 60, 100),
+            Some(SampleTime::new(140)),
+        )
+        .unwrap();
+    let second = model
+        .submit_at(
+            ModelSource::Second,
+            input(0x90, 62, 100),
+            Some(SampleTime::new(150)),
+        )
+        .unwrap();
+    assert_eq!(
+        model.offer_release_at(
+            ModelSource::First,
+            input(0x80, 60, 0),
+            Some(SampleTime::new(160)),
+        ),
+        Ok(ReleaseOffer::Queued(first))
+    );
+    assert_eq!(
+        model.service_next_merged_onset(false, true),
+        Some((ModelSource::First, first))
+    );
+    assert_eq!(
+        model.next_merged_stamped(),
+        Some((ModelSource::Second, MergedHeadKind::Onset))
+    );
+    assert!(model.service_next_merged_release().is_none());
+    assert_eq!(
+        model.service_next_merged_onset(false, true),
+        Some((ModelSource::Second, second))
+    );
+    assert_eq!(model.next_merged_stamped(), None);
+    assert!(model.advance_merge_frontier(ModelSource::Second, SampleTime::new(160)));
+    assert_eq!(
+        model
+            .service_next_merged_release()
+            .map(|(source, route)| (source, route.id)),
+        Some((ModelSource::First, first))
+    );
+
+    let mut tied = Model::new(limits(2), 4);
+    let first = tied
+        .submit_at(
+            ModelSource::First,
+            input(0x90, 60, 100),
+            Some(SampleTime::new(140)),
+        )
+        .unwrap();
+    tied.submit_at(
+        ModelSource::Second,
+        input(0x90, 62, 100),
+        Some(SampleTime::new(150)),
+    )
+    .unwrap();
+    assert_eq!(
+        tied.offer_release_at(
+            ModelSource::First,
+            input(0x80, 60, 0),
+            Some(SampleTime::new(150)),
+        ),
+        Ok(ReleaseOffer::Queued(first))
+    );
+    assert_eq!(
+        tied.service_next_merged_onset(false, true),
+        Some((ModelSource::First, first))
+    );
+    assert_eq!(
+        tied.next_merged_stamped(),
+        Some((ModelSource::First, MergedHeadKind::Release))
+    );
+    assert_eq!(
+        tied.service_next_merged_release()
+            .map(|(source, route)| (source, route.id)),
+        Some((ModelSource::First, first))
+    );
+
+    let mut reversed = Model::new(limits(2), 4);
+    let second = reversed
+        .submit_at(
+            ModelSource::Second,
+            input(0x90, 62, 100),
+            Some(SampleTime::new(140)),
+        )
+        .unwrap();
+    let first = reversed
+        .submit_at(
+            ModelSource::First,
+            input(0x90, 60, 100),
+            Some(SampleTime::new(150)),
+        )
+        .unwrap();
+    assert_eq!(
+        reversed.offer_release_at(
+            ModelSource::Second,
+            input(0x80, 62, 0),
+            Some(SampleTime::new(150)),
+        ),
+        Ok(ReleaseOffer::Queued(second))
+    );
+    assert_eq!(
+        reversed.service_next_merged_onset(false, true),
+        Some((ModelSource::Second, second))
+    );
+    assert_eq!(
+        reversed.next_merged_stamped(),
+        Some((ModelSource::First, MergedHeadKind::Onset))
+    );
+    assert!(reversed.service_next_merged_release().is_none());
+    assert_eq!(
+        reversed.service_next_merged_onset(false, true),
+        Some((ModelSource::First, first))
+    );
+    assert_eq!(reversed.next_merged_stamped(), None);
+    assert!(reversed.advance_merge_frontier(ModelSource::First, SampleTime::new(151)));
+    assert_eq!(
+        reversed
+            .service_next_merged_release()
+            .map(|(source, route)| (source, route.id)),
+        Some((ModelSource::Second, second))
+    );
 }
 
 #[test]

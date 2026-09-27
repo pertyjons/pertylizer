@@ -401,28 +401,34 @@ ingress credit charged. Ingress, result and ledger credit are not redeemed
 after halt without stopped-owner proof; retry and joined teardown remain open.
 This fixture still uses modeled source rings and has no joined receipt or
 production source-to-audio command contract.
-A V2-local merge selector chooses the earliest stamped onset at the two modeled
-source heads. Only the new positive ordering fixture uses its gated service
-helper; other model fixtures use direct service to isolate individual laws or
-consumer behavior. An empty peer needs a serviced frontier at or beyond the
-candidate time. A frontier must follow that source's last submitted onset or
-release stamp. A new fixture submits onset stamps 150 then 140 and sends them
-to the private mixed command ring in 140, 150 order; both results accept. It
+A V2-local merge selector chooses the earliest stamped onset or release at the
+two modeled source heads. Only the positive ordering fixtures use its gated
+service helper; other model fixtures use direct service to isolate individual
+laws or consumer behavior. An empty peer needs a serviced frontier at or
+beyond the candidate time. A frontier must follow that source's last submitted
+onset or release stamp. A fixture submits onset stamps 150 then 140 and sends
+them to the private mixed command ring in 140, 150 order; both results accept. It
 does not repeat the earlier raw-bound counterexample. Equal-time heads use
 source order. A stamped onset or release before the last submitted source
 stamp faults even without a frontier. A stamped onset or release at or before
 a frontier also faults with its original. Source-time validation precedes
 release matching, so stale unmatched and retired releases fault without
 consuming a tombstone.
-The selector handles stamped onset heads only. It has no concrete source-ring
-frontier handoff, ordinary or release scheduling, bounded wait policy, callback
-service or combined host outcome.
+Another fixture queues source A's onset at 140 and release at 145 beside source
+B's onset at 150. The selector services both A packets first; the fixture
+submits their mixed commands in time order. B remains held at A's serviced
+frontier 149 and proceeds when that frontier reaches B's time at 150. A's
+release keeps its accepted mixed identity. A separate selector test holds a
+later release behind the peer onset and uses source order for both release/onset
+tie directions. Concrete source-ring frontier handoff, ordinary scheduling,
+bounded wait policy, callback service and combined host outcome remain open.
 The mixed release-refusal fixtures deliberately bypass the selector: they send
 the second source's 150 before the first source later offers its release at
 145. That release is valid within its source, while the merge order is invalid.
 The audio-side `NonMonotoneStamp` and original-custody checks remain defense in
 depth. The selector would hold the peer onset while the first source lacks a
-frontier. Scheduling its release before that frontier remains open.
+frontier. The new model fixture schedules A's release before that frontier;
+the concrete source-ring and callback path remain open.
 An off-thread check now places and stamps the bound stream against
 a disposable copy of only the compiled range. It publishes no events or
 reservations. Tests cover wrong-producer and wrong-capacity refusals, disjoint
