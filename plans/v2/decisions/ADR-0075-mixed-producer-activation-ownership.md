@@ -656,11 +656,14 @@ evaluated for refused-input quality.
 Subsequent packets observed after halt retain their own source queue IDs and
 return `State` without claiming another fault.
 The source report and Linux driver keep the audition preflight reason and any
-fault-recording error in separate fields. A stale audition source binding is
-checked before audition capacity; it is a host configuration refusal and does
-not claim this source-fault cell. A producer publishes its pre-source-ring
-failure before requesting a halt. The pre-ring recorder retains the original
-without synchronizing the halt. The first recorded discontinuity remains
+fault-recording error in separate fields. If registration of a producer's
+pre-source-ring fault fails, the report likewise retains the producer's
+original and reason with the raw-owner error separately and no source queue ID.
+A stale audition source binding is checked before audition capacity. It is a
+host configuration refusal and does not claim this source-fault cell. A producer
+publishes its pre-source-ring failure before requesting a halt. The pre-ring
+recorder retains the original without synchronizing the halt. The first
+recorded discontinuity remains
 primary: it may be the producer's reason, a prior input fault, or
 `PeerInterrupted` if the halt was already synchronized. Reunion evaluates the
 pre-ring fault for quality separately when it is not primary. Raw admission

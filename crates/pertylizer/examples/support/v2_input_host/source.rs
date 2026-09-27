@@ -216,7 +216,7 @@ impl SourceInbox {
     pub fn record_failure(
         &mut self,
         control: &mut LiveControl,
-        mut receive: impl FnMut(InputOfferResult),
+        mut receive: impl FnMut(SourceOfferReport),
     ) {
         if !self.failure_resolved
             && let Some(failure) = self.failure.get().copied()
@@ -228,7 +228,14 @@ impl SourceInbox {
             ) {
                 Ok(()) => self.failure_resolved = true,
                 Err(error) => {
-                    receive(Err(InputOfferError::Refused(failure.observation, error)));
+                    receive(SourceOfferReport::new(
+                        Err(InputOfferError::Refused(
+                            failure.observation,
+                            failure.reason,
+                        )),
+                        AuditionPacketCustody::NotQueued,
+                        Some(error),
+                    ));
                     self.failure_resolved = true;
                 }
             }
@@ -273,18 +280,13 @@ impl SourceInbox {
         });
     }
 
-    /// A source-queued fault retains both preflight and attribution outcomes.
+    /// Source results retain the original refusal and any attribution error.
     pub fn service_attributed_identified(
         &mut self,
         control: &mut LiveControl,
         mut receive: impl FnMut(Option<SourceQueueId>, SourceOfferReport),
     ) {
-        self.record_failure(control, |result| {
-            receive(
-                None,
-                SourceOfferReport::new(result, AuditionPacketCustody::NotQueued, None),
-            );
-        });
+        self.record_failure(control, |report| receive(None, report));
         let prefix = self.queue.occupied_len();
         for _ in 0..prefix {
             let Some(packet) = self.queue.try_pop() else {

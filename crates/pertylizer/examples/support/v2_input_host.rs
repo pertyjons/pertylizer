@@ -96,8 +96,8 @@ impl InputOfferReport {
     }
 }
 
-/// A source-queued result keeps the original refusal and any failure to
-/// attribute that refusal to the raw capture owner as separate diagnostics.
+/// A source result keeps the original refusal and any failure to attribute
+/// that refusal to the raw capture owner as separate diagnostics.
 #[derive(Debug)]
 #[must_use]
 pub struct SourceOfferReport {

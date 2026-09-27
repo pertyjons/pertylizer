@@ -981,6 +981,42 @@ fn source_queue_identity_exhaustion_is_a_terminal_pre_ring_fault() {
 }
 
 #[test]
+fn pre_ring_attribution_error_preserves_the_producer_reason() {
+    use super::source::{SourceInbox, SourceSendError};
+    let (mut control, audio, _) = fixture();
+    let (_, _, foreign_generations) = fixture();
+    let clock = prepare::simulated_clock(audio.core.acknowledged().epoch, 0).unwrap();
+    let (mut producer, mut inbox) =
+        SourceInbox::prepare(foreign_generations[0], control.halt_handle(), clock);
+    let original = InputObservation::Message {
+        tick: InputTick::new(1),
+        arrival: SampleTime::ZERO,
+        input: Midi1Input::from_bytes([0x90, 60, 100]).unwrap(),
+    };
+    assert_eq!(
+        producer.send_identified(original),
+        Err(SourceSendError::Invalid(original, InputError::Future))
+    );
+    let mut reports = Vec::new();
+    inbox.service_attributed_identified(&mut control, |id, report| reports.push((id, report)));
+    inbox.service_attributed_identified(&mut control, |id, report| reports.push((id, report)));
+    let [(id, report)] = reports.as_slice() else {
+        panic!("failed attribution must have one report");
+    };
+    assert_eq!(*id, None);
+    assert_eq!(report.attribution_error, Some(InputError::Stale));
+    assert_eq!(
+        report.offer.result,
+        Err(InputOfferError::Refused(original, InputError::Future))
+    );
+    assert_eq!(
+        report.offer.audition_packet,
+        AuditionPacketCustody::NotQueued
+    );
+    assert!(inbox.close(producer).is_ok());
+}
+
+#[test]
 fn owned_retry_preserves_attempt_and_mints_queue_id_only_after_push() {
     use super::source::{SourceInbox, SourceOwnedSendError};
     let (mut control, audio, generations) = fixture();
@@ -1632,18 +1668,21 @@ fn producer_rejects_unmappable_clock_before_ring_custody() {
     assert!(control.halt_handle().is_requested());
     assert!(inbox.is_empty());
     let mut results = Vec::new();
-    inbox.service_identified(&mut control, |id, result| {
-        assert!(id.is_none());
-        results.push(result);
+    inbox.service_attributed_identified(&mut control, |id, report| {
+        results.push((id, report));
     });
-    inbox.service_identified(&mut control, |id, result| {
-        assert!(id.is_none());
-        results.push(result);
+    inbox.service_attributed_identified(&mut control, |id, report| {
+        results.push((id, report));
     });
-    assert!(matches!(
-        results.as_slice(),
-        [Err(InputOfferError::Refused(original, InputError::State))] if *original == ambiguous
-    ));
+    let [(id, report)] = results.as_slice() else {
+        panic!("the terminal source failure must be reported once");
+    };
+    assert_eq!(*id, None);
+    assert_eq!(report.attribution_error, Some(InputError::State));
+    assert_eq!(
+        report.offer.result,
+        Err(InputOfferError::Refused(ambiguous, InputError::Uncertain))
+    );
     assert!(inbox.close(producer).is_ok());
 }
 

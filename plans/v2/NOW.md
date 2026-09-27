@@ -229,6 +229,8 @@ preflight reason. Later queued packets after the halt return identified
 `State` refusals. The ledger and combined credit remain open.
 Raw input admission `Full` and `IdentityExhausted` keep their prior quality
 policy; this addition covers audition preflight refusals.
+Failed registration of a producer's pre-source-ring fault now reports the
+producer's original reason and the Core V2 attribution error separately.
 An independent design read found that merger forwarding cannot recycle ingress
 hold or tracker credit: another source's earlier mapped-time onset can execute
 before that release. The two-source ingress regression now runs in the workspace

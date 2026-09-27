@@ -296,12 +296,7 @@ impl ManagedRun {
         mut receipt: impl FnMut(InputReceipt),
     ) -> Result<(), HostError> {
         for inbox in &mut self.inboxes {
-            inbox.record_failure(&mut self.control, |result| {
-                input(
-                    None,
-                    SourceOfferReport::new(result, AuditionPacketCustody::NotQueued, None),
-                );
-            });
+            inbox.record_failure(&mut self.control, |report| input(None, report));
         }
         for inbox in &mut self.inboxes {
             inbox.service_attributed_identified(&mut self.control, &mut input);
