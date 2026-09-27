@@ -677,6 +677,11 @@ impl<T> std::fmt::Debug for OpaqueQueue<T> {
 struct MixedIngressCommandId(u64);
 
 #[cfg(all(test, feature = "simulated-ingress"))]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[must_use]
+struct MixedIngressOriginId(u64);
+
+#[cfg(all(test, feature = "simulated-ingress"))]
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd)]
 #[must_use]
 struct MixedIngressQueueCount(usize);
@@ -700,11 +705,13 @@ impl MixedIngressQueueCount {
 #[must_use]
 enum MixedIngressRequest {
     Onset {
+        origin: MixedIngressOriginId,
         at: SampleTime,
         key: crate::quantities::KeyIdentity,
         velocity: crate::quantities::NoteVelocity,
     },
     Release {
+        origin: MixedIngressOriginId,
         at: SampleTime,
         identity: NoteIdentity,
     },
@@ -930,10 +937,10 @@ impl MixedOneShotAudio {
         }
         while let Some(command) = self.ingress_commands.0.try_pop() {
             let outcome = match command.request {
-                MixedIngressRequest::Onset { at, key, velocity } => {
-                    MixedIngressOutcome::Onset(self.offer_test_note_on(at, key, velocity))
-                }
-                MixedIngressRequest::Release { at, identity } => {
+                MixedIngressRequest::Onset {
+                    at, key, velocity, ..
+                } => MixedIngressOutcome::Onset(self.offer_test_note_on(at, key, velocity)),
+                MixedIngressRequest::Release { at, identity, .. } => {
                     MixedIngressOutcome::Release(self.offer_test_note_off(at, identity))
                 }
             };

@@ -1484,9 +1484,39 @@ in audio service; separate tests falsify lost original requests when the
 control-side result reservation is exhausted, silent teardown, and acceptance
 of the out-of-order timestamp.
 The ring depth follows the registered ingress queue, but these private test
-rings have no production byte-budget charge. There is still no source identity
-in the command, mapped-time ordering across source rings, callback service,
-combined raw/recorder outcome, or production mixed ingress entitlement.
+rings have no production byte-budget charge. The request's opaque origin ID
+is modeled source-occurrence correlation, not a concrete source-ring identity
+or custody contract. There is still no mapped-time ordering across source
+rings, callback service, combined raw/recorder outcome, or production mixed
+ingress entitlement.
+The V2-local two-source model builds each onset request from its retained
+source input, supplied mapped stamp and model-issued occurrence ID. One model
+operation submits that request and stores the returned command ID beside the
+occurrence, so an unrelated ID/request pair cannot be claimed later. Result
+application rejects a swapped command, changed request, release-shaped
+outcome and replay without changing a pending entry. The first result binds
+its live identity; the earlier stamped second onset records its actual
+`NonMonotoneStamp` refusal. Equal-valued onsets from different sources keep
+distinct origins and results. A source release may precede the onset result:
+the model retains its release input and mapped stamp, later submits a release
+using that accepted identity, and settles credit only after the matching
+audio result succeeds. A late onset refusal reaps the released entry after
+the other credits are gone. The earlier two-source hold/fault fixture now
+uses this command/result path for onsets and releases while retaining its
+post-fault credits until a joined redemption rule exists. This proves model
+ledger association around private rings. A concrete source-ring handoff and
+combined receipt remain open.
+A stamped onset refuses an unstamped release before source-ring custody. The
+source hold keeps its stamp even after a blocked ring retry retires to a
+tombstone. A release waiting in a source-local pending cell receives an exact
+`MissingStamp` retry result; that cell is cleared and the primary terminal
+fault owns the original. An audio-side release refusal retains the source
+original and reason. It owns the primary terminal model fault if first;
+otherwise its entry retains the secondary refusal while the
+earlier primary fault remains. Both sources halt. A later onset refusal keeps
+its ingress credit charged. Ingress, result and ledger credit stay charged
+without stopped-owner proof; the model neither retries the refused release
+nor claims joined teardown redemption.
 
 The same read found that holding a popped onset until tracker credit returns
 can deadlock when its release or required frontier is behind that onset in the

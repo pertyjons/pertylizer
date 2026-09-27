@@ -482,6 +482,7 @@ fn private_mixed_channel_reports_conflict_with_direct_test_live_ownership() {
         .arm_test_live_on(SampleTime::ZERO, key(48), NoteVelocity::FULL)
         .expect("direct test live owner");
     let request = MixedIngressRequest::Onset {
+        origin: MixedIngressOriginId(1),
         at: SampleTime::ZERO,
         key: key(49),
         velocity: NoteVelocity::FULL,

@@ -3,8 +3,9 @@
 use std::collections::VecDeque;
 
 use super::{
-    EventPayload, MixedCollection, MixedCollectionEnd, MixedIngressOutcome, MixedIngressRequest,
-    MixedIngressSubmitError, MixedOneShotRenderError, history_tests,
+    EventPayload, MixedCollection, MixedCollectionEnd, MixedIngressCommandId, MixedIngressOriginId,
+    MixedIngressOutcome, MixedIngressRequest, MixedIngressResult, MixedIngressSubmitError,
+    MixedOneShotControl, MixedOneShotRenderError, history_tests,
 };
 use crate::identity::NoteIdentity;
 use crate::ingress::{ExhaustedResource, IngressRefused};
@@ -70,6 +71,7 @@ struct Attempt {
     id: OccurrenceId,
     key: Key,
     input: Midi1Input,
+    mapped_at: Option<SampleTime>,
 }
 
 enum RingPacket {
@@ -79,6 +81,7 @@ enum RingPacket {
         id: OccurrenceId,
         key: Key,
         input: Midi1Input,
+        mapped_at: Option<SampleTime>,
     },
 }
 
@@ -98,6 +101,8 @@ enum TerminalReason {
     NoCredit(NoCreditReason),
     Order,
     ReleaseIdentity,
+    MissingReleaseStamp,
+    IngressRelease(IngressRefused),
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -110,8 +115,11 @@ impl TerminalReason {
     const fn origin(self) -> CauseOrigin {
         match self {
             Self::NoCredit(NoCreditReason::SourceReserve | NoCreditReason::RawCapture)
-            | Self::Order => CauseOrigin::SourceLocal,
-            Self::NoCredit(_) | Self::ReleaseIdentity => CauseOrigin::SharedState,
+            | Self::Order
+            | Self::MissingReleaseStamp => CauseOrigin::SourceLocal,
+            Self::NoCredit(_) | Self::ReleaseIdentity | Self::IngressRelease(_) => {
+                CauseOrigin::SharedState
+            }
         }
     }
 }
@@ -134,6 +142,7 @@ enum OnsetPreflight {
 struct SourceHold {
     id: OccurrenceId,
     key: Key,
+    mapped_at: Option<SampleTime>,
     release_queued: bool,
     retired: bool,
 }
@@ -165,11 +174,13 @@ enum ReleaseRetryError {
     Stale(ReleaseRetryToken),
     Blocked(ReleaseRetryToken),
     Halted(ReleaseRetryToken),
+    MissingStamp(ReleaseRetryToken),
 }
 
 struct PendingRelease {
     id: ReleaseAttemptId,
     input: Midi1Input,
+    mapped_at: Option<SampleTime>,
 }
 
 struct PendingRetry {
@@ -200,6 +211,7 @@ enum ReleaseOfferError {
     Halted(Midi1Input),
     Unmatched(Midi1Input),
     IdentityExhausted(Midi1Input),
+    MissingStamp(Midi1Input),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -219,13 +231,35 @@ struct ReleaseRoute {
 struct Entry {
     id: OccurrenceId,
     key: Key,
+    input: Midi1Input,
+    mapped_at: Option<SampleTime>,
+    source_release: Option<(Midi1Input, Option<SampleTime>)>,
     released: bool,
     raw_held: bool,
     raw_onset: Option<InputEventId>,
     raw_release: Option<InputEventId>,
     ingress_held: bool,
     ingress_disposition: IngressDisposition,
+    ingress_command: Option<(MixedIngressCommandId, MixedIngressRequest)>,
+    ingress_release_command: Option<(MixedIngressCommandId, MixedIngressRequest)>,
+    ingress_release_result: Option<Result<(), IngressRefused>>,
     result_held: bool,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum IngressResultBindError {
+    State,
+    WrongCommand,
+    WrongRequest,
+    WrongOutcome,
+    DuplicateIdentity,
+}
+
+#[derive(Debug, PartialEq)]
+enum IngressReleaseSubmitError {
+    State,
+    TerminalRefused(IngressRefused),
+    Submit(MixedIngressSubmitError),
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -425,6 +459,15 @@ impl Model {
         source: ModelSource,
         input: Midi1Input,
     ) -> Result<OccurrenceId, SubmitError> {
+        self.submit_at(source, input, None)
+    }
+
+    fn submit_at(
+        &mut self,
+        source: ModelSource,
+        input: Midi1Input,
+        mapped_at: Option<SampleTime>,
+    ) -> Result<OccurrenceId, SubmitError> {
         let Midi1Event::NoteOn { key, .. } = input.event() else {
             panic!("the reduced submit operation accepts only note onsets");
         };
@@ -460,6 +503,7 @@ impl Model {
                 note: key,
             },
             input,
+            mapped_at,
         };
         if needs_retry {
             let token = RetryToken {
@@ -476,6 +520,7 @@ impl Model {
         self.source_holds.push(SourceHold {
             id,
             key: attempt.key,
+            mapped_at: attempt.mapped_at,
             release_queued: false,
             retired: false,
         });
@@ -505,6 +550,7 @@ impl Model {
         self.source_holds.push(SourceHold {
             id,
             key: pending.attempt.key,
+            mapped_at: pending.attempt.mapped_at,
             release_queued: false,
             retired: false,
         });
@@ -537,6 +583,7 @@ impl Model {
         self.source_holds.push(SourceHold {
             id: pending.attempt.id,
             key: pending.attempt.key,
+            mapped_at: pending.attempt.mapped_at,
             release_queued: false,
             retired: true,
         });
@@ -563,6 +610,7 @@ impl Model {
         raw: bool,
         ingress: bool,
     ) -> (OccurrenceId, Key, Midi1Input) {
+        assert!(!self.host_halted, "halted source service needs teardown");
         let RingPacket::Onset(attempt) = self.rings[source.index()]
             .pop_front()
             .expect("queued source occurrence")
@@ -582,6 +630,9 @@ impl Model {
         self.entries.push(Entry {
             id: attempt.id,
             key: attempt.key,
+            input: attempt.input,
+            mapped_at: attempt.mapped_at,
+            source_release: None,
             released: false,
             raw_held: raw,
             raw_onset: None,
@@ -592,6 +643,9 @@ impl Model {
             } else {
                 IngressDisposition::FakeRefused
             },
+            ingress_command: None,
+            ingress_release_command: None,
+            ingress_release_result: None,
             result_held: true,
         });
         (attempt.id, attempt.key, attempt.input)
@@ -618,6 +672,7 @@ impl Model {
     }
 
     fn service_ordinary(&mut self, source: ModelSource) {
+        assert!(!self.host_halted, "halted source service needs teardown");
         assert!(matches!(
             self.rings[source.index()].pop_front(),
             Some(RingPacket::Ordinary)
@@ -634,6 +689,15 @@ impl Model {
         &mut self,
         source: ModelSource,
         input: Midi1Input,
+    ) -> Result<ReleaseOffer, ReleaseOfferError> {
+        self.offer_release_at(source, input, None)
+    }
+
+    fn offer_release_at(
+        &mut self,
+        source: ModelSource,
+        input: Midi1Input,
+        mapped_at: Option<SampleTime>,
     ) -> Result<ReleaseOffer, ReleaseOfferError> {
         assert!(matches!(input.event(), Midi1Event::KeyRelease { .. }));
         let index = source.index();
@@ -653,13 +717,14 @@ impl Model {
             self.release_pending[index] = Some(PendingRelease {
                 id: ReleaseAttemptId(next),
                 input,
+                mapped_at,
             });
             return Err(ReleaseOfferError::Blocked(ReleaseRetryToken {
                 id: ReleaseAttemptId(next),
                 source,
             }));
         }
-        self.enqueue_release(source, input)
+        self.enqueue_release(source, input, mapped_at)
     }
 
     fn retry_release(
@@ -679,13 +744,17 @@ impl Model {
         if self.retry_pending[index].is_some() {
             return Err(ReleaseRetryError::Blocked(token));
         }
-        let input = self.release_pending[index]
+        let pending = self.release_pending[index]
             .as_ref()
-            .expect("matching pending release")
-            .input;
-        let outcome = match self.enqueue_release(token.source, input) {
+            .expect("matching pending release");
+        let (input, mapped_at) = (pending.input, pending.mapped_at);
+        let outcome = match self.enqueue_release(token.source, input, mapped_at) {
             Ok(outcome) => outcome,
             Err(ReleaseOfferError::Unmatched(original)) => ReleaseOffer::Unmatched(original),
+            Err(ReleaseOfferError::MissingStamp(_)) => {
+                self.release_pending[index] = None;
+                return Err(ReleaseRetryError::MissingStamp(token));
+            }
             Err(_) => return Err(ReleaseRetryError::Blocked(token)),
         };
         self.release_pending[index] = None;
@@ -696,6 +765,7 @@ impl Model {
         &mut self,
         source: ModelSource,
         input: Midi1Input,
+        mapped_at: Option<SampleTime>,
     ) -> Result<ReleaseOffer, ReleaseOfferError> {
         let Midi1Event::KeyRelease { key, .. } = input.event() else {
             panic!("the reduced release operation accepts only key releases");
@@ -711,6 +781,10 @@ impl Model {
             .iter()
             .position(|hold| hold.key == key && !hold.release_queued)
             .ok_or(ReleaseOfferError::Unmatched(input))?;
+        if self.source_holds[hold_index].mapped_at.is_some() && mapped_at.is_none() {
+            self.fault(source, input, TerminalReason::MissingReleaseStamp);
+            return Err(ReleaseOfferError::MissingStamp(input));
+        }
         let hold = &mut self.source_holds[hold_index];
         if hold.retired {
             let id = hold.id;
@@ -726,6 +800,7 @@ impl Model {
             id: hold.id,
             key,
             input,
+            mapped_at,
         });
         Ok(ReleaseOffer::Queued(hold.id))
     }
@@ -738,7 +813,13 @@ impl Model {
         &mut self,
         source: ModelSource,
     ) -> (ReleaseRoute, Key, Midi1Input) {
-        let Some(RingPacket::Release { id, key, input }) = self.rings[source.index()].pop_front()
+        assert!(!self.host_halted, "halted source service needs teardown");
+        let Some(RingPacket::Release {
+            id,
+            key,
+            input,
+            mapped_at,
+        }) = self.rings[source.index()].pop_front()
         else {
             panic!("release service cannot skip an earlier source packet");
         };
@@ -749,6 +830,7 @@ impl Model {
             .expect("queued onset precedes its release");
         assert_eq!(entry.id, id, "release must preserve same-key FIFO");
         entry.released = true;
+        entry.source_release = Some((input, mapped_at));
         let route = ReleaseRoute {
             id: entry.id,
             raw: entry.raw_held,
@@ -778,7 +860,8 @@ impl Model {
                 ReleaseOfferError::Blocked(_)
                 | ReleaseOfferError::Order(_)
                 | ReleaseOfferError::Halted(_)
-                | ReleaseOfferError::IdentityExhausted(_),
+                | ReleaseOfferError::IdentityExhausted(_)
+                | ReleaseOfferError::MissingStamp(_),
             ) => {
                 panic!("direct release helper cannot skip pending source custody")
             }
@@ -939,43 +1022,200 @@ impl Model {
         Ok(())
     }
 
-    fn settle_ingress_release(&mut self, id: OccurrenceId) {
+    fn settle_ingress_release(&mut self, id: OccurrenceId) -> Result<(), IngressResultBindError> {
+        if self.host_halted {
+            return Err(IngressResultBindError::State);
+        }
+        let Some(entry) = self.entries.iter_mut().find(|entry| entry.id == id) else {
+            return Err(IngressResultBindError::State);
+        };
+        if !entry.released
+            || !entry.ingress_held
+            || entry.ingress_command.is_some()
+            || entry.ingress_release_command.is_some()
+            || !matches!(entry.ingress_disposition, IngressDisposition::Accepted(_))
+            || entry.ingress_release_result != Some(Ok(()))
+        {
+            return Err(IngressResultBindError::State);
+        }
+        entry.ingress_held = false;
+        self.used.ingress -= 1;
+        self.reap(id);
+        Ok(())
+    }
+
+    fn settle_fake_ingress_release(&mut self, id: OccurrenceId) {
+        assert!(!self.host_halted);
         let entry = self.entry_mut(id);
-        assert!(entry.released && entry.ingress_held);
+        assert!(
+            entry.released
+                && entry.ingress_held
+                && entry.ingress_disposition == IngressDisposition::Pending
+                && entry.mapped_at.is_none()
+                && entry.ingress_command.is_none()
+                && entry.ingress_release_command.is_none()
+        );
         entry.ingress_held = false;
         self.used.ingress -= 1;
         self.reap(id);
     }
 
-    fn bind_ingress_onset(&mut self, id: OccurrenceId, identity: NoteIdentity) {
-        assert!(
-            self.entries
-                .iter()
-                .all(|entry| entry.ingress_disposition != IngressDisposition::Accepted(identity))
-        );
-        let entry = self.entry_mut(id);
-        assert!(entry.ingress_held && entry.ingress_disposition == IngressDisposition::Pending);
-        entry.ingress_disposition = IngressDisposition::Accepted(identity);
-    }
-
-    fn refuse_ingress_onset(&mut self, id: OccurrenceId, reason: IngressRefused) {
-        let entry = self.entry_mut(id);
+    fn submit_ingress_onset(
+        &mut self,
+        control: &mut MixedOneShotControl,
+        occurrence: OccurrenceId,
+    ) -> Result<(MixedIngressCommandId, MixedIngressRequest), MixedIngressSubmitError> {
+        let entry = self.entry_mut(occurrence);
         assert!(
             entry.ingress_held
                 && entry.ingress_disposition == IngressDisposition::Pending
-                && !entry.released
+                && entry.ingress_command.is_none()
         );
-        entry.ingress_held = false;
-        entry.ingress_disposition = IngressDisposition::Refused(reason);
-        self.used.ingress -= 1;
+        let Midi1Event::NoteOn { key, velocity } = entry.input.event() else {
+            panic!("source onset entry must retain an onset");
+        };
+        let at = entry
+            .mapped_at
+            .expect("source onset must retain mapped time");
+        let request = MixedIngressRequest::Onset {
+            origin: MixedIngressOriginId(entry.id.0),
+            at,
+            key,
+            velocity,
+        };
+        let command = control.submit_ingress(request)?;
+        entry.ingress_command = Some((command, request));
+        Ok((command, request))
     }
 
-    fn collect_result(&mut self, id: OccurrenceId) {
+    fn apply_ingress_onset_result(
+        &mut self,
+        occurrence: OccurrenceId,
+        result: MixedIngressResult,
+    ) -> Result<(), IngressResultBindError> {
+        let Some(index) = self.entries.iter().position(|entry| entry.id == occurrence) else {
+            return Err(IngressResultBindError::State);
+        };
+        let entry = &self.entries[index];
+        let Some((command, request)) = entry.ingress_command else {
+            return Err(IngressResultBindError::State);
+        };
+        if !entry.ingress_held || entry.ingress_disposition != IngressDisposition::Pending {
+            return Err(IngressResultBindError::State);
+        }
+        if result.id != command {
+            return Err(IngressResultBindError::WrongCommand);
+        }
+        if result.request != request {
+            return Err(IngressResultBindError::WrongRequest);
+        }
+        let MixedIngressOutcome::Onset(outcome) = result.outcome else {
+            return Err(IngressResultBindError::WrongOutcome);
+        };
+        if let Ok(identity) = outcome
+            && self
+                .entries
+                .iter()
+                .any(|entry| entry.ingress_disposition == IngressDisposition::Accepted(identity))
+        {
+            return Err(IngressResultBindError::DuplicateIdentity);
+        }
+        let entry = &mut self.entries[index];
+        entry.ingress_command = None;
+        match outcome {
+            Ok(identity) => entry.ingress_disposition = IngressDisposition::Accepted(identity),
+            Err(reason) => {
+                entry.ingress_disposition = IngressDisposition::Refused(reason);
+                if !self.host_halted {
+                    entry.ingress_held = false;
+                    self.used.ingress -= 1;
+                    self.reap(occurrence);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn submit_ingress_release(
+        &mut self,
+        control: &mut MixedOneShotControl,
+        occurrence: OccurrenceId,
+    ) -> Result<(MixedIngressCommandId, MixedIngressRequest), IngressReleaseSubmitError> {
+        let Some(entry) = self.entries.iter_mut().find(|entry| entry.id == occurrence) else {
+            return Err(IngressReleaseSubmitError::State);
+        };
+        if let Some(Err(reason)) = entry.ingress_release_result {
+            return Err(IngressReleaseSubmitError::TerminalRefused(reason));
+        }
+        if self.host_halted {
+            return Err(IngressReleaseSubmitError::State);
+        }
+        let IngressDisposition::Accepted(identity) = entry.ingress_disposition else {
+            return Err(IngressReleaseSubmitError::State);
+        };
+        if !entry.released
+            || !entry.ingress_held
+            || entry.ingress_command.is_some()
+            || entry.ingress_release_command.is_some()
+            || entry.ingress_release_result.is_some()
+        {
+            return Err(IngressReleaseSubmitError::State);
+        }
+        let Some((_, Some(at))) = entry.source_release else {
+            return Err(IngressReleaseSubmitError::State);
+        };
+        let request = MixedIngressRequest::Release {
+            origin: MixedIngressOriginId(entry.id.0),
+            at,
+            identity,
+        };
+        let command = control
+            .submit_ingress(request)
+            .map_err(IngressReleaseSubmitError::Submit)?;
+        entry.ingress_release_command = Some((command, request));
+        Ok((command, request))
+    }
+
+    fn apply_ingress_release_result(
+        &mut self,
+        occurrence: OccurrenceId,
+        result: MixedIngressResult,
+    ) -> Result<(), IngressResultBindError> {
+        let Some(entry) = self.entries.iter_mut().find(|entry| entry.id == occurrence) else {
+            return Err(IngressResultBindError::State);
+        };
+        let Some((command, request)) = entry.ingress_release_command else {
+            return Err(IngressResultBindError::State);
+        };
+        if result.id != command {
+            return Err(IngressResultBindError::WrongCommand);
+        }
+        if result.request != request {
+            return Err(IngressResultBindError::WrongRequest);
+        }
+        let MixedIngressOutcome::Release(outcome) = result.outcome else {
+            return Err(IngressResultBindError::WrongOutcome);
+        };
+        entry.ingress_release_command = None;
+        entry.ingress_release_result = Some(outcome);
+        if let Err(reason) = outcome {
+            let source = entry.key.source;
+            let original = entry.source_release.expect("owned release input").0;
+            self.fault(source, original, TerminalReason::IngressRelease(reason));
+        }
+        Ok(())
+    }
+
+    fn collect_result(&mut self, id: OccurrenceId) -> Result<(), IngressResultBindError> {
+        if self.host_halted {
+            return Err(IngressResultBindError::State);
+        }
         let entry = self.entry_mut(id);
         assert!(entry.result_held);
         entry.result_held = false;
         self.used.results -= 1;
         self.reap(id);
+        Ok(())
     }
 
     fn entry_mut(&mut self, id: OccurrenceId) -> &mut Entry {
@@ -986,6 +1226,9 @@ impl Model {
     }
 
     fn reap(&mut self, id: OccurrenceId) {
+        if self.host_halted {
+            return;
+        }
         if let Some(index) = self.entries.iter().position(|entry| {
             entry.id == id
                 && entry.released
@@ -1616,7 +1859,7 @@ fn modeled_ring_releases_settle_raw_credit_from_delivered_serial_receipts() {
             ledger: 3
         }
     );
-    model.collect_result(ids[0]);
+    model.collect_result(ids[0]).unwrap();
     assert!(model.entries.iter().all(|entry| entry.id != ids[0]));
     let replay = model
         .submit(ModelSource::First, input(0x90, 62, 100))
@@ -1639,11 +1882,13 @@ fn mixed_audio_queue_returns_exact_ingress_results_without_audio_service_allocat
         .arm_one_shot(candidate, &history_tests::mixed_profile())
         .unwrap();
     let first = MixedIngressRequest::Onset {
+        origin: MixedIngressOriginId(1),
         at: SampleTime::new(140),
         key: KeyIdentity::new(60).unwrap(),
         velocity: NoteVelocity::FULL,
     };
     let second = MixedIngressRequest::Onset {
+        origin: MixedIngressOriginId(2),
         at: SampleTime::new(150),
         key: KeyIdentity::new(60).unwrap(),
         velocity: NoteVelocity::FULL,
@@ -1677,10 +1922,12 @@ fn mixed_audio_queue_returns_exact_ingress_results_without_audio_service_allocat
     assert!(control.collect_ingress_result().is_none());
 
     let first_release = MixedIngressRequest::Release {
+        origin: MixedIngressOriginId(1),
         at: SampleTime::new(160),
         identity: first_identity,
     };
     let second_release = MixedIngressRequest::Release {
+        origin: MixedIngressOriginId(2),
         at: SampleTime::new(170),
         identity: second_identity,
     };
@@ -1722,6 +1969,7 @@ fn mixed_ingress_result_reservation_returns_full_request_until_collected() {
         .arm_one_shot(candidate, &history_tests::mixed_profile())
         .unwrap();
     let request = MixedIngressRequest::Onset {
+        origin: MixedIngressOriginId(1),
         at: SampleTime::new(140),
         key: KeyIdentity::new(60).unwrap(),
         velocity: NoteVelocity::FULL,
@@ -1761,6 +2009,7 @@ fn mixed_ingress_command_id_exhaustion_retains_original_request() {
         .arm_one_shot(candidate, &history_tests::mixed_profile())
         .unwrap();
     let request = MixedIngressRequest::Onset {
+        origin: MixedIngressOriginId(1),
         at: SampleTime::new(140),
         key: KeyIdentity::new(60).unwrap(),
         velocity: NoteVelocity::FULL,
@@ -1789,11 +2038,13 @@ fn mixed_ingress_result_channel_returns_non_monotone_refusal_with_original() {
         .arm_one_shot(candidate, &history_tests::mixed_profile())
         .unwrap();
     let later = MixedIngressRequest::Onset {
+        origin: MixedIngressOriginId(1),
         at: SampleTime::new(150),
         key: KeyIdentity::new(60).unwrap(),
         velocity: NoteVelocity::FULL,
     };
     let earlier = MixedIngressRequest::Onset {
+        origin: MixedIngressOriginId(2),
         at: SampleTime::new(140),
         key: KeyIdentity::new(60).unwrap(),
         velocity: NoteVelocity::FULL,
@@ -1822,6 +2073,7 @@ fn mixed_collection_retains_unresolved_ingress_command_and_result_owners() {
         .arm_one_shot(candidate, &history_tests::mixed_profile())
         .unwrap();
     let request = MixedIngressRequest::Onset {
+        origin: MixedIngressOriginId(1),
         at: SampleTime::new(140),
         key: KeyIdentity::new(60).unwrap(),
         velocity: NoteVelocity::FULL,
@@ -1856,7 +2108,7 @@ fn mixed_collection_retains_unresolved_ingress_command_and_result_owners() {
 #[test]
 fn merger_credit_alone_cannot_admit_out_of_order_mixed_ingress() {
     let (prepared, candidate) = history_tests::one_shot_with_boundary_on(true);
-    let (_control, mut mixed) = prepared
+    let (mut control, mut mixed) = prepared
         .arm_one_shot(candidate, &history_tests::mixed_profile())
         .unwrap();
     let epoch = issue_epoch().unwrap();
@@ -1865,8 +2117,11 @@ fn merger_credit_alone_cannot_admit_out_of_order_mixed_ingress() {
     let mut model = Model::new(limits(2), 4).with_raw_capacity(InputCapacity::new(8).unwrap());
 
     let first_note = input(0x90, 60, 100);
-    let first_id = model.submit(ModelSource::First, first_note).unwrap();
-    let (served, first_key, first_input) = model.service_with_input(ModelSource::First, true, true);
+    let first_id = model
+        .submit_at(ModelSource::First, first_note, Some(SampleTime::new(150)))
+        .unwrap();
+    let (served, _first_key, first_input) =
+        model.service_with_input(ModelSource::First, true, true);
     assert_eq!(served, first_id);
     let first_raw_id = first_raw
         .offer_message(
@@ -1877,21 +2132,18 @@ fn merger_credit_alone_cannot_admit_out_of_order_mixed_ingress() {
         )
         .unwrap();
     model.bind_raw_onset(first_id, first_raw_id).unwrap();
-    let Midi1Event::NoteOn { velocity, .. } = first_input.event() else {
-        panic!("first source must retain its onset");
-    };
-    let first_identity = mixed
-        .offer_test_note_on(SampleTime::new(150), first_key.note, velocity)
-        .unwrap();
-    model.bind_ingress_onset(first_id, first_identity);
+    let (first_command, first_request) =
+        model.submit_ingress_onset(&mut control, first_id).unwrap();
 
     assert_eq!(
         model.onset_preflight(ModelSource::Second),
         OnsetPreflight::Ready
     );
     let second_note = input(0x90, 60, 110);
-    let second_id = model.submit(ModelSource::Second, second_note).unwrap();
-    let (served, second_key, second_input) =
+    let second_id = model
+        .submit_at(ModelSource::Second, second_note, Some(SampleTime::new(140)))
+        .unwrap();
+    let (served, _second_key, second_input) =
         model.service_with_input(ModelSource::Second, true, true);
     assert_eq!(served, second_id);
     let second_raw_id = second_raw
@@ -1903,18 +2155,82 @@ fn merger_credit_alone_cannot_admit_out_of_order_mixed_ingress() {
         )
         .unwrap();
     model.bind_raw_onset(second_id, second_raw_id).unwrap();
-    let Midi1Event::NoteOn { velocity, .. } = second_input.event() else {
-        panic!("second source must retain its onset");
-    };
-    let refused = mixed.offer_test_note_on(SampleTime::new(140), second_key.note, velocity);
+    let (second_command, second_request) =
+        model.submit_ingress_onset(&mut control, second_id).unwrap();
+    mixed.service_test_ingress_queue();
+    let first_result = control.collect_ingress_result().unwrap();
+    let second_result = control.collect_ingress_result().unwrap();
     assert_eq!(
-        refused,
-        Err(IngressRefused::NonMonotoneStamp {
+        (first_result.id, first_result.request),
+        (first_command, first_request)
+    );
+    assert_eq!(
+        (second_result.id, second_result.request),
+        (second_command, second_request)
+    );
+    assert_eq!(
+        model.apply_ingress_onset_result(second_id, first_result),
+        Err(IngressResultBindError::WrongCommand)
+    );
+    assert_eq!(
+        model.apply_ingress_onset_result(
+            first_id,
+            MixedIngressResult {
+                request: second_request,
+                ..first_result
+            }
+        ),
+        Err(IngressResultBindError::WrongRequest)
+    );
+    assert_eq!(
+        model.apply_ingress_onset_result(
+            first_id,
+            MixedIngressResult {
+                outcome: MixedIngressOutcome::Release(Ok(())),
+                ..first_result
+            }
+        ),
+        Err(IngressResultBindError::WrongOutcome)
+    );
+    assert_eq!(
+        model.entry_mut(second_id).ingress_disposition,
+        IngressDisposition::Pending
+    );
+    assert_eq!(
+        model.entry_mut(first_id).ingress_disposition,
+        IngressDisposition::Pending
+    );
+    model
+        .apply_ingress_onset_result(first_id, first_result)
+        .unwrap();
+    let MixedIngressOutcome::Onset(Ok(first_identity)) = first_result.outcome else {
+        panic!("first source must keep its accepted mixed identity");
+    };
+    assert_eq!(
+        model.entry_mut(first_id).ingress_disposition,
+        IngressDisposition::Accepted(first_identity)
+    );
+    assert_eq!(
+        model.apply_ingress_onset_result(first_id, first_result),
+        Err(IngressResultBindError::State)
+    );
+    assert_eq!(
+        second_result.outcome,
+        MixedIngressOutcome::Onset(Err(IngressRefused::NonMonotoneStamp {
+            time: SampleTime::new(140),
+            last: SampleTime::new(150),
+        }))
+    );
+    model
+        .apply_ingress_onset_result(second_id, second_result)
+        .unwrap();
+    assert_eq!(
+        model.entry_mut(second_id).ingress_disposition,
+        IngressDisposition::Refused(IngressRefused::NonMonotoneStamp {
             time: SampleTime::new(140),
             last: SampleTime::new(150),
         })
     );
-    model.refuse_ingress_onset(second_id, refused.unwrap_err());
     assert_eq!(
         mixed.test_ingress.holds_outstanding(),
         EventCount::measured(1)
@@ -1924,10 +2240,592 @@ fn merger_credit_alone_cannot_admit_out_of_order_mixed_ingress() {
 }
 
 #[test]
+fn mixed_onset_result_after_source_release_keeps_exact_release_owner() {
+    let (prepared, candidate) = history_tests::one_shot_with_boundary_on(true);
+    let (mut control, mut audio) = prepared
+        .arm_one_shot(candidate, &history_tests::mixed_profile())
+        .unwrap();
+    let mut model = Model::new(limits(1), 2);
+    let id = model
+        .submit_at(
+            ModelSource::First,
+            input(0x90, 60, 100),
+            Some(SampleTime::new(140)),
+        )
+        .unwrap();
+    assert_eq!(model.service(ModelSource::First, false, true), id);
+    let (command, request) = model.submit_ingress_onset(&mut control, id).unwrap();
+    assert_eq!(
+        model.offer_release_at(
+            ModelSource::First,
+            input(0x80, 60, 0),
+            Some(SampleTime::new(150)),
+        ),
+        Ok(ReleaseOffer::Queued(id))
+    );
+    assert_eq!(
+        model.service_release(ModelSource::First),
+        ReleaseRoute {
+            id,
+            raw: false,
+            ingress: true,
+        }
+    );
+    assert_eq!(
+        model.settle_ingress_release(id),
+        Err(IngressResultBindError::State)
+    );
+    audio.service_test_ingress_queue();
+    let result = control.collect_ingress_result().unwrap();
+    assert_eq!((result.id, result.request), (command, request));
+    model.apply_ingress_onset_result(id, result).unwrap();
+    assert!(matches!(
+        model.entry_mut(id).ingress_disposition,
+        IngressDisposition::Accepted(_)
+    ));
+    let (release_command, release) = model.submit_ingress_release(&mut control, id).unwrap();
+    assert_eq!(
+        model.settle_ingress_release(id),
+        Err(IngressResultBindError::State)
+    );
+    audio.service_test_ingress_queue();
+    let release_result = control.collect_ingress_result().unwrap();
+    assert_eq!(
+        release_result,
+        MixedIngressResult {
+            id: release_command,
+            request: release,
+            outcome: MixedIngressOutcome::Release(Ok(())),
+        }
+    );
+    assert_eq!(
+        model.apply_ingress_release_result(
+            id,
+            MixedIngressResult {
+                id: command,
+                ..release_result
+            }
+        ),
+        Err(IngressResultBindError::WrongCommand)
+    );
+    assert_eq!(
+        model.apply_ingress_release_result(
+            id,
+            MixedIngressResult {
+                request,
+                ..release_result
+            }
+        ),
+        Err(IngressResultBindError::WrongRequest)
+    );
+    assert_eq!(
+        model.settle_ingress_release(id),
+        Err(IngressResultBindError::State)
+    );
+    model
+        .apply_ingress_release_result(id, release_result)
+        .unwrap();
+    model.settle_ingress_release(id).unwrap();
+    model.collect_result(id).unwrap();
+    assert_eq!(model.used, limits(0));
+    assert!(model.entries.is_empty());
+    assert_eq!(
+        model.apply_ingress_release_result(id, release_result),
+        Err(IngressResultBindError::State)
+    );
+    assert_eq!(
+        model.settle_ingress_release(id),
+        Err(IngressResultBindError::State)
+    );
+}
+
+#[test]
+fn mixed_refusal_after_source_release_reaps_settled_entry() {
+    let (prepared, candidate) = history_tests::one_shot_with_boundary_on(true);
+    let (mut control, mut audio) = prepared
+        .arm_one_shot(candidate, &history_tests::mixed_profile())
+        .unwrap();
+    let first = MixedIngressRequest::Onset {
+        origin: MixedIngressOriginId(999),
+        at: SampleTime::new(150),
+        key: KeyIdentity::new(60).unwrap(),
+        velocity: NoteVelocity::FULL,
+    };
+    let first_command = control.submit_ingress(first).unwrap();
+    audio.service_test_ingress_queue();
+    let first_result = control.collect_ingress_result().unwrap();
+    assert_eq!(
+        (first_result.id, first_result.request),
+        (first_command, first)
+    );
+    assert!(matches!(
+        first_result.outcome,
+        MixedIngressOutcome::Onset(Ok(_))
+    ));
+
+    let mut model = Model::new(limits(1), 2);
+    let id = model
+        .submit_at(
+            ModelSource::Second,
+            input(0x90, 60, 110),
+            Some(SampleTime::new(140)),
+        )
+        .unwrap();
+    assert_eq!(model.service(ModelSource::Second, false, true), id);
+    let (command, request) = model.submit_ingress_onset(&mut control, id).unwrap();
+    assert_eq!(
+        model.offer_release_at(
+            ModelSource::Second,
+            input(0x80, 60, 0),
+            Some(SampleTime::new(160)),
+        ),
+        Ok(ReleaseOffer::Queued(id))
+    );
+    assert_eq!(
+        model.service_release(ModelSource::Second),
+        ReleaseRoute {
+            id,
+            raw: false,
+            ingress: true,
+        }
+    );
+    model.collect_result(id).unwrap();
+    assert_eq!(model.used.ingress, 1);
+    assert_eq!(model.used.ledger, 1);
+    audio.service_test_ingress_queue();
+    let result = control.collect_ingress_result().unwrap();
+    assert_eq!((result.id, result.request), (command, request));
+    assert_eq!(
+        result.outcome,
+        MixedIngressOutcome::Onset(Err(IngressRefused::NonMonotoneStamp {
+            time: SampleTime::new(140),
+            last: SampleTime::new(150),
+        }))
+    );
+    model.apply_ingress_onset_result(id, result).unwrap();
+    assert_eq!(model.used, limits(0));
+    assert!(model.entries.is_empty());
+}
+
+#[test]
+fn mixed_onset_refusal_after_halt_retains_ingress_credit() {
+    let (prepared, candidate) = history_tests::one_shot_with_boundary_on(true);
+    let (mut control, mut audio) = prepared
+        .arm_one_shot(candidate, &history_tests::mixed_profile())
+        .unwrap();
+    let first = MixedIngressRequest::Onset {
+        origin: MixedIngressOriginId(999),
+        at: SampleTime::new(150),
+        key: KeyIdentity::new(60).unwrap(),
+        velocity: NoteVelocity::FULL,
+    };
+    let first_command = control.submit_ingress(first).unwrap();
+    audio.service_test_ingress_queue();
+    let first_result = control.collect_ingress_result().unwrap();
+    assert_eq!(
+        (first_result.id, first_result.request),
+        (first_command, first)
+    );
+    assert!(matches!(
+        first_result.outcome,
+        MixedIngressOutcome::Onset(Ok(_))
+    ));
+
+    let mut model = Model::new(limits(1), 2);
+    let id = model
+        .submit_at(
+            ModelSource::Second,
+            input(0x90, 60, 110),
+            Some(SampleTime::new(140)),
+        )
+        .unwrap();
+    assert_eq!(model.service(ModelSource::Second, false, true), id);
+    let (command, request) = model.submit_ingress_onset(&mut control, id).unwrap();
+    let prior = input(0x91, 61, 100);
+    model.fault(ModelSource::First, prior, TerminalReason::Order);
+    audio.service_test_ingress_queue();
+    let result = control.collect_ingress_result().unwrap();
+    assert_eq!((result.id, result.request), (command, request));
+    let reason = IngressRefused::NonMonotoneStamp {
+        time: SampleTime::new(140),
+        last: SampleTime::new(150),
+    };
+    assert_eq!(result.outcome, MixedIngressOutcome::Onset(Err(reason)));
+    model.apply_ingress_onset_result(id, result).unwrap();
+    assert_eq!(
+        model.entry_mut(id).ingress_disposition,
+        IngressDisposition::Refused(reason)
+    );
+    assert_eq!(model.used.ingress, 1);
+    assert_eq!(model.used.results, 1);
+    assert_eq!(model.used.ledger, 1);
+    assert_eq!(model.collect_result(id), Err(IngressResultBindError::State));
+    assert_eq!(
+        model.terminal_fault,
+        Some((
+            ModelSource::First,
+            TerminalFault {
+                original: prior,
+                reason: TerminalReason::Order,
+            }
+        ))
+    );
+}
+
+#[test]
+fn stamped_onset_refuses_unstamped_release_before_source_queue_custody() {
+    let mut model = Model::new(limits(1), 2);
+    let id = model
+        .submit_at(
+            ModelSource::First,
+            input(0x90, 60, 100),
+            Some(SampleTime::new(140)),
+        )
+        .unwrap();
+    assert_eq!(model.service(ModelSource::First, false, true), id);
+    let original = input(0x80, 60, 0);
+    assert_eq!(
+        model.offer_release(ModelSource::First, original),
+        Err(ReleaseOfferError::MissingStamp(original))
+    );
+    assert_eq!(
+        model.terminal_fault,
+        Some((
+            ModelSource::First,
+            TerminalFault {
+                original,
+                reason: TerminalReason::MissingReleaseStamp,
+            },
+        ))
+    );
+    assert!(model.rings[ModelSource::First.index()].is_empty());
+    assert!(!model.source_holds[0].release_queued);
+    assert_eq!(model.used.ingress, 1);
+    assert_eq!(
+        model.offer_release_at(ModelSource::First, original, Some(SampleTime::new(150))),
+        Err(ReleaseOfferError::Halted(original))
+    );
+}
+
+#[test]
+fn retired_stamped_onset_refuses_unstamped_release_without_spending_tombstone() {
+    let mut model = Model::new(limits(2), 3);
+    model
+        .submit(ModelSource::First, input(0x90, 60, 100))
+        .unwrap();
+    let retry = match model.submit_at(
+        ModelSource::First,
+        input(0x90, 61, 100),
+        Some(SampleTime::new(150)),
+    ) {
+        Err(SubmitError::Retry(token)) => token,
+        other => panic!("stamped onset must wait behind first ring packet: {other:?}"),
+    };
+    let retired = model.retire(retry).unwrap();
+    let original = input(0x80, 61, 0);
+    assert_eq!(
+        model.offer_release(ModelSource::First, original),
+        Err(ReleaseOfferError::MissingStamp(original))
+    );
+    assert!(model.source_holds.iter().any(|hold| hold.id == retired.id));
+    assert_eq!(model.used.ledger, 2);
+    assert_eq!(
+        model.terminal_fault,
+        Some((
+            ModelSource::First,
+            TerminalFault {
+                original,
+                reason: TerminalReason::MissingReleaseStamp,
+            },
+        ))
+    );
+}
+
+#[test]
+fn blocked_unstamped_release_faults_after_stamped_onset_retirement() {
+    let mut model = Model::new(limits(2), 3);
+    model
+        .submit(ModelSource::First, input(0x90, 60, 100))
+        .unwrap();
+    let retry = match model.submit_at(
+        ModelSource::First,
+        input(0x90, 61, 100),
+        Some(SampleTime::new(150)),
+    ) {
+        Err(SubmitError::Retry(token)) => token,
+        other => panic!("stamped onset must wait behind first ring packet: {other:?}"),
+    };
+    let original = input(0x80, 61, 0);
+    let release_token = match model.offer_release(ModelSource::First, original) {
+        Err(ReleaseOfferError::Blocked(token)) => token,
+        other => panic!("release must wait behind stamped onset retry: {other:?}"),
+    };
+    let retired = model.retire(retry).unwrap();
+    let expected_token = ReleaseRetryToken {
+        id: release_token.id,
+        source: release_token.source,
+    };
+    assert_eq!(
+        model.retry_release(release_token),
+        Err(ReleaseRetryError::MissingStamp(expected_token))
+    );
+    assert!(model.source_holds.iter().any(|hold| hold.id == retired.id));
+    assert!(model.release_pending[ModelSource::First.index()].is_none());
+    assert_eq!(
+        model.terminal_fault,
+        Some((
+            ModelSource::First,
+            TerminalFault {
+                original,
+                reason: TerminalReason::MissingReleaseStamp,
+            },
+        ))
+    );
+}
+
+#[test]
+fn terminal_halt_keeps_ledger_cell_when_raw_credit_settles_later() {
+    let mut model = Model::new(limits(1), 2);
+    let id = model
+        .submit(ModelSource::First, input(0x90, 60, 100))
+        .unwrap();
+    assert_eq!(model.service(ModelSource::First, true, false), id);
+    model.collect_result(id).unwrap();
+    assert_eq!(
+        model.offer_release(ModelSource::First, input(0x80, 60, 0)),
+        Ok(ReleaseOffer::Queued(id))
+    );
+    assert_eq!(model.service_release(ModelSource::First).id, id);
+    model.fault(
+        ModelSource::Second,
+        input(0x91, 61, 100),
+        TerminalReason::Order,
+    );
+    model.settle_fake_raw_release(id).unwrap();
+    assert_eq!(model.used.tracker, 0);
+    assert_eq!(model.used.ledger, 1);
+    assert_eq!(model.entries.len(), 1);
+}
+
+#[test]
+fn refused_mixed_release_retains_original_and_halts_model_credit() {
+    let (prepared, candidate) = history_tests::one_shot_with_boundary_on(true);
+    let (mut control, mut audio) = prepared
+        .arm_one_shot(candidate, &history_tests::mixed_profile())
+        .unwrap();
+    let mut model = Model::new(limits(1), 2);
+    let id = model
+        .submit_at(
+            ModelSource::First,
+            input(0x90, 60, 100),
+            Some(SampleTime::new(140)),
+        )
+        .unwrap();
+    assert_eq!(model.service(ModelSource::First, false, true), id);
+    let (onset_command, onset_request) = model.submit_ingress_onset(&mut control, id).unwrap();
+    audio.service_test_ingress_queue();
+    let onset_result = control.collect_ingress_result().unwrap();
+    assert_eq!(
+        (onset_result.id, onset_result.request),
+        (onset_command, onset_request)
+    );
+    model.apply_ingress_onset_result(id, onset_result).unwrap();
+
+    let original = input(0x80, 60, 0);
+    assert_eq!(
+        model.offer_release_at(ModelSource::First, original, Some(SampleTime::new(130))),
+        Ok(ReleaseOffer::Queued(id))
+    );
+    assert_eq!(model.service_release(ModelSource::First).id, id);
+    let (command, request) = model.submit_ingress_release(&mut control, id).unwrap();
+    assert_eq!(
+        request,
+        MixedIngressRequest::Release {
+            origin: MixedIngressOriginId(id.0),
+            at: SampleTime::new(130),
+            identity: match model.entry_mut(id).ingress_disposition {
+                IngressDisposition::Accepted(identity) => identity,
+                other => panic!("accepted identity required, got {other:?}"),
+            },
+        }
+    );
+    audio.service_test_ingress_queue();
+    let result = control.collect_ingress_result().unwrap();
+    assert_eq!((result.id, result.request), (command, request));
+    let reason = IngressRefused::NonMonotoneStamp {
+        time: SampleTime::new(130),
+        last: SampleTime::new(140),
+    };
+    assert_eq!(result.outcome, MixedIngressOutcome::Release(Err(reason)));
+    model.apply_ingress_release_result(id, result).unwrap();
+    assert_eq!(
+        model.terminal_fault,
+        Some((
+            ModelSource::First,
+            TerminalFault {
+                original,
+                reason: TerminalReason::IngressRelease(reason),
+            },
+        ))
+    );
+    assert_eq!(
+        model.submit_ingress_release(&mut control, id),
+        Err(IngressReleaseSubmitError::TerminalRefused(reason))
+    );
+    assert_eq!(
+        model.settle_ingress_release(id),
+        Err(IngressResultBindError::State)
+    );
+    assert_eq!(model.used.ingress, 1);
+    assert_eq!(model.used.ledger, 1);
+    assert!(matches!(
+        model.submit(ModelSource::Second, input(0x90, 61, 100)),
+        Err(SubmitError::Halted(_))
+    ));
+}
+
+#[test]
+fn later_mixed_release_refusal_keeps_prior_terminal_fault_and_local_original() {
+    let (prepared, candidate) = history_tests::one_shot_with_boundary_on(true);
+    let (mut control, mut audio) = prepared
+        .arm_one_shot(candidate, &history_tests::mixed_profile())
+        .unwrap();
+    let mut model = Model::new(limits(1), 2);
+    let id = model
+        .submit_at(
+            ModelSource::First,
+            input(0x90, 60, 100),
+            Some(SampleTime::new(140)),
+        )
+        .unwrap();
+    assert_eq!(model.service(ModelSource::First, false, true), id);
+    let (onset_command, onset_request) = model.submit_ingress_onset(&mut control, id).unwrap();
+    audio.service_test_ingress_queue();
+    let onset_result = control.collect_ingress_result().unwrap();
+    assert_eq!(
+        (onset_result.id, onset_result.request),
+        (onset_command, onset_request)
+    );
+    model.apply_ingress_onset_result(id, onset_result).unwrap();
+    let original = input(0x80, 60, 0);
+    assert_eq!(
+        model.offer_release_at(ModelSource::First, original, Some(SampleTime::new(130))),
+        Ok(ReleaseOffer::Queued(id))
+    );
+    assert_eq!(model.service_release(ModelSource::First).id, id);
+    let (release_command, release_request) =
+        model.submit_ingress_release(&mut control, id).unwrap();
+
+    let earlier_fault = input(0x91, 61, 100);
+    model.fault(ModelSource::Second, earlier_fault, TerminalReason::Order);
+    audio.service_test_ingress_queue();
+    let result = control.collect_ingress_result().unwrap();
+    assert_eq!(
+        (result.id, result.request),
+        (release_command, release_request)
+    );
+    let reason = IngressRefused::NonMonotoneStamp {
+        time: SampleTime::new(130),
+        last: SampleTime::new(140),
+    };
+    assert_eq!(result.outcome, MixedIngressOutcome::Release(Err(reason)));
+    model.apply_ingress_release_result(id, result).unwrap();
+    assert_eq!(
+        model.terminal_fault,
+        Some((
+            ModelSource::Second,
+            TerminalFault {
+                original: earlier_fault,
+                reason: TerminalReason::Order,
+            }
+        ))
+    );
+    let entry = model.entry_mut(id);
+    assert_eq!(
+        entry.source_release,
+        Some((original, Some(SampleTime::new(130))))
+    );
+    assert_eq!(entry.ingress_release_result, Some(Err(reason)));
+    assert_eq!(model.collect_result(id), Err(IngressResultBindError::State));
+    assert_eq!(
+        model.settle_ingress_release(id),
+        Err(IngressResultBindError::State)
+    );
+    assert_eq!(model.used.ingress, 1);
+    assert_eq!(model.used.ledger, 1);
+}
+
+#[test]
+fn equal_source_payloads_keep_distinct_mixed_origins_and_results() {
+    let (prepared, candidate) = history_tests::one_shot_with_boundary_on(true);
+    let (mut control, mut audio) = prepared
+        .arm_one_shot(candidate, &history_tests::mixed_profile())
+        .unwrap();
+    let mut model = Model::new(limits(2), 4);
+    let note = input(0x90, 60, 100);
+    let at = Some(SampleTime::new(140));
+    let first = model.submit_at(ModelSource::First, note, at).unwrap();
+    let second = model.submit_at(ModelSource::Second, note, at).unwrap();
+    assert_eq!(model.service(ModelSource::First, false, true), first);
+    assert_eq!(model.service(ModelSource::Second, false, true), second);
+    let (first_command, first_request) = model.submit_ingress_onset(&mut control, first).unwrap();
+    let (second_command, second_request) =
+        model.submit_ingress_onset(&mut control, second).unwrap();
+    let MixedIngressRequest::Onset {
+        origin: first_origin,
+        at: first_at,
+        key: first_key,
+        velocity: first_velocity,
+    } = first_request
+    else {
+        panic!("first source must submit an onset");
+    };
+    let MixedIngressRequest::Onset {
+        origin: second_origin,
+        at: second_at,
+        key: second_key,
+        velocity: second_velocity,
+    } = second_request
+    else {
+        panic!("second source must submit an onset");
+    };
+    assert_eq!(
+        (first_at, first_key, first_velocity),
+        (second_at, second_key, second_velocity)
+    );
+    assert_eq!(first_origin, MixedIngressOriginId(first.0));
+    assert_eq!(second_origin, MixedIngressOriginId(second.0));
+    assert_ne!(first_origin, second_origin);
+    assert_ne!(first_command, second_command);
+    audio.service_test_ingress_queue();
+    let first_result = control.collect_ingress_result().unwrap();
+    let second_result = control.collect_ingress_result().unwrap();
+    assert_eq!(
+        model.apply_ingress_onset_result(second, first_result),
+        Err(IngressResultBindError::WrongCommand)
+    );
+    model
+        .apply_ingress_onset_result(first, first_result)
+        .unwrap();
+    model
+        .apply_ingress_onset_result(second, second_result)
+        .unwrap();
+    let IngressDisposition::Accepted(first_identity) = model.entry_mut(first).ingress_disposition
+    else {
+        panic!("first equal-valued onset must be accepted");
+    };
+    let IngressDisposition::Accepted(second_identity) = model.entry_mut(second).ingress_disposition
+    else {
+        panic!("second equal-valued onset must be accepted");
+    };
+    assert_ne!(first_identity, second_identity);
+}
+
+#[test]
 fn mixed_hold_refusal_and_later_fault_leave_serial_capture_receipts_independent() {
     let (mut owner, generations) = bridge_serial_owner(256);
     let (prepared, candidate) = history_tests::one_shot_with_boundary_on(true);
-    let (control, mut mixed) = prepared
+    let (mut control, mut mixed) = prepared
         .arm_one_shot(candidate, &history_tests::mixed_profile())
         .unwrap();
     let mut model = Model::new(limits(3), 4).with_raw_capacity(InputCapacity::new(8).unwrap());
@@ -1936,7 +2834,11 @@ fn mixed_hold_refusal_and_later_fault_leave_serial_capture_receipts_independent(
         (ModelSource::Second, input(0x90, 60, 110), 141),
         (ModelSource::First, input(0x90, 60, 120), 142),
     ];
-    let ids = onsets.map(|(source, note, _)| model.submit(source, note).unwrap());
+    let ids = onsets.map(|(source, note, time)| {
+        model
+            .submit_at(source, note, Some(SampleTime::new(time)))
+            .unwrap()
+    });
     let mut admitted = Vec::new();
     for (source, note, time) in onsets {
         let (id, key, queued) = model.service_with_input(source, true, true);
@@ -1952,27 +2854,21 @@ fn mixed_hold_refusal_and_later_fault_leave_serial_capture_receipts_independent(
             .unwrap();
         model.bind_raw_onset(id, raw_id).unwrap();
         admitted.push((id, key, raw_id));
-        let Midi1Event::NoteOn {
-            key: live_key,
-            velocity,
-        } = queued.event()
-        else {
-            panic!("modeled onset must remain a note onset");
-        };
-        assert_eq!(live_key, key.note);
         assert_eq!(queued.channel(), key.channel);
-        match mixed.offer_test_note_on(at, live_key, velocity) {
-            Ok(identity) => {
+        let (command, request) = model.submit_ingress_onset(&mut control, id).unwrap();
+        mixed.service_test_ingress_queue();
+        let result = control.collect_ingress_result().unwrap();
+        assert_eq!((result.id, result.request), (command, request));
+        match result.outcome {
+            MixedIngressOutcome::Onset(Ok(_)) => {
                 assert_ne!(id, ids[2], "third onset must hit the mixed hold limit");
-                model.bind_ingress_onset(id, identity);
             }
-            Err(
-                reason @ IngressRefused::Dropped {
-                    resource: ExhaustedResource::Hold,
-                },
-            ) if id == ids[2] => model.refuse_ingress_onset(id, reason),
+            MixedIngressOutcome::Onset(Err(IngressRefused::Dropped {
+                resource: ExhaustedResource::Hold,
+            })) if id == ids[2] => {}
             other => panic!("unexpected mixed onset disposition: {other:?}"),
         }
+        model.apply_ingress_onset_result(id, result).unwrap();
     }
     assert_raw_pressure(&model, &owner, generations);
     assert_eq!(mixed.test_ingress.counters().dropped_hold(), 1);
@@ -1996,9 +2892,9 @@ fn mixed_hold_refusal_and_later_fault_leave_serial_capture_receipts_independent(
         (ModelSource::Second, input(0x80, 60, 0), ids[1], 151),
         (ModelSource::First, input(0x80, 60, 0), ids[2], 152),
     ];
-    for (source, release, id, _) in releases {
+    for (source, release, id, time) in releases {
         assert_eq!(
-            model.offer_release(source, release),
+            model.offer_release_at(source, release, Some(SampleTime::new(time))),
             Ok(ReleaseOffer::Queued(id))
         );
     }
@@ -2024,12 +2920,16 @@ fn mixed_hold_refusal_and_later_fault_leave_serial_capture_receipts_independent(
             .unwrap();
         model.admit_raw_release(route.id, raw_id);
         if route.ingress {
-            let IngressDisposition::Accepted(identity) =
-                model.entry_mut(route.id).ingress_disposition
-            else {
-                panic!("accepted mixed onset lost its identity");
-            };
-            mixed.offer_test_note_off(at, identity).unwrap();
+            let (command, request) = model
+                .submit_ingress_release(&mut control, route.id)
+                .unwrap();
+            mixed.service_test_ingress_queue();
+            let result = control.collect_ingress_result().unwrap();
+            assert_eq!((result.id, result.request), (command, request));
+            assert_eq!(result.outcome, MixedIngressOutcome::Release(Ok(())));
+            model
+                .apply_ingress_release_result(route.id, result)
+                .unwrap();
         }
         routed.push((route.id, key, raw_id));
     }
@@ -2249,7 +3149,7 @@ fn partial_consumer_admission_keeps_each_release_path() {
         })
     );
     model.settle_fake_raw_release(raw_only).unwrap();
-    model.settle_ingress_release(ingress_only);
+    model.settle_fake_ingress_release(ingress_only);
     assert_eq!(model.used.tracker, 0);
     assert_eq!(model.used.ingress, 0);
 }
@@ -2921,7 +3821,7 @@ fn blocked_same_key_release_routes_earlier_ring_onset_before_retired_retry() {
         Ok(ReleaseOffer::Queued(earlier))
     );
     assert_eq!(model.service(ModelSource::First, false, false), earlier);
-    model.collect_result(earlier);
+    model.collect_result(earlier).unwrap();
     assert_eq!(model.service_release(ModelSource::First).id, earlier);
     assert_eq!(model.used.ledger, 1);
     assert_eq!(
@@ -2975,7 +3875,7 @@ fn cross_source_credit_waits_for_consumer_settlement_after_result_collection() {
         .submit(ModelSource::First, input(0x90, 67, 100))
         .expect("first queue custody");
     model.service(ModelSource::First, true, true);
-    model.collect_result(held);
+    model.collect_result(held).unwrap();
     assert_eq!(
         model.used,
         Counts {
@@ -3002,7 +3902,7 @@ fn cross_source_credit_waits_for_consumer_settlement_after_result_collection() {
         model.onset_preflight(ModelSource::Second),
         OnsetPreflight::NoCredit(NoCreditReason::Ingress)
     );
-    model.settle_ingress_release(held);
+    model.settle_fake_ingress_release(held);
     assert_eq!(
         model.onset_preflight(ModelSource::Second),
         OnsetPreflight::Ready
@@ -3025,7 +3925,7 @@ fn refused_onset_keeps_ledger_cell_after_result_collection() {
         model.onset_preflight(ModelSource::Second),
         OnsetPreflight::NoCredit(NoCreditReason::Results)
     );
-    model.collect_result(refused);
+    model.collect_result(refused).unwrap();
     assert_eq!(
         model.used,
         Counts {

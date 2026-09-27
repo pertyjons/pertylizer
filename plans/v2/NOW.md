@@ -357,11 +357,40 @@ or refusal with the original request. A reserved result slot remains charged
 until collection, and owner collection refuses while a command or result is
 outstanding. Tests cover two onsets and releases across threads without
 audio-service allocation, exhausted control-side result reservation, the
-out-of-order timestamp refusal and pending teardown. This private path has no
-source association, mapped-time merger, automatic callback service or
-combined raw/recorder receipt. Its test-only ring storage is bounded by
+out-of-order timestamp refusal and pending teardown. The private request now
+carries an opaque source-occurrence correlation ID, but has no concrete source
+handoff, mapped-time merger, automatic callback service or combined
+raw/recorder receipt. Its test-only ring storage is bounded by
 ingress depth but has no production host-profile byte charge; production
 admission still needs one.
+The two-source model now builds each onset request from the retained source
+input, its supplied mapped stamp and its model-issued occurrence ID. One
+model operation submits that request to mixed control and stores the returned
+command ID beside the occurrence; there is no separate ID claim. Result
+application rejects a swapped command, changed request, wrong result kind or
+replay without changing a pending entry. The counterexample binds the first
+live identity and records the second source's `NonMonotoneStamp` refusal.
+Equal-valued onsets on two sources keep distinct origins and results. A source
+release that precedes its onset result retains the later accepted identity
+long enough for the model to submit a mixed release from its retained source
+input and stamp. It keeps release credit until that command's matching
+success result. It reaps a late onset refusal after the source release and
+other result credit are gone. The older two-source hold/fault fixture now
+consumes this same command/result path for its onsets and releases; it still
+retains credits after the injected fault because the joined fault-redemption
+rule remains open.
+A stamped onset refuses an unstamped release before source-ring custody,
+including after its ring retry retires to a source tombstone. A release held
+in a source-local pending cell behind that retry gets an exact `MissingStamp`
+retry result; the pending cell is cleared and the primary terminal fault owns
+the original. A refused mixed release records its source original and audio
+reason: it becomes the primary terminal model fault if none exists, or stays
+on its entry beside the earlier
+primary fault. Both source offers halt. A later onset refusal keeps its
+ingress credit charged. Ingress, result and ledger credit are not redeemed
+after halt without stopped-owner proof; retry and joined teardown remain open.
+This fixture still uses modeled source rings and has no joined receipt or
+production source-to-audio command contract.
 An off-thread check now places and stamps the bound stream against
 a disposable copy of only the compiled range. It publishes no events or
 reservations. Tests cover wrong-producer and wrong-capacity refusals, disjoint
