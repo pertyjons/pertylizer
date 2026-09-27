@@ -18,11 +18,36 @@ pub enum SourceSendError {
     Invalid(InputObservation, InputError),
 }
 
+/// Custody identity for one observation accepted into a concrete source ring.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[must_use]
+pub struct SourceQueueId {
+    generation: ConnectionGeneration,
+    serial: u64,
+}
+
+impl SourceQueueId {
+    pub fn generation(self) -> ConnectionGeneration {
+        self.generation
+    }
+
+    pub fn serial(self) -> u64 {
+        self.serial
+    }
+}
+
+#[derive(Clone, Copy)]
+struct SourcePacket {
+    id: SourceQueueId,
+    observation: InputObservation,
+}
+
 #[must_use]
 pub struct SourceProducer {
     halt: InputCaptureHalt,
-    queue: HeapProd<InputObservation>,
+    queue: HeapProd<SourcePacket>,
     generation: ConnectionGeneration,
+    serial: u64,
     time: Box<SourceTime>,
     failure: Arc<OnceLock<SourceFailure>>,
     retry: Option<InputObservation>,
@@ -41,7 +66,7 @@ struct SourceTime {
 #[must_use]
 pub struct SourceInbox {
     generation: ConnectionGeneration,
-    queue: HeapCons<InputObservation>,
+    queue: HeapCons<SourcePacket>,
     closed: bool,
     failure: Arc<OnceLock<SourceFailure>>,
     failure_resolved: bool,
@@ -60,6 +85,7 @@ impl SourceInbox {
                 halt,
                 queue: writer,
                 generation,
+                serial: 0,
                 time: Box::new(SourceTime {
                     clock,
                     last_tick: None,
@@ -86,8 +112,8 @@ impl SourceInbox {
                 + size_of::<SourceProducer>()
                 + size_of::<SourceTime>()
                 + size_of::<OnceLock<SourceFailure>>()
-                + size_of::<HeapRb<InputObservation>>()
-                + SOURCE_CELLS * size_of::<InputObservation>()
+                + size_of::<HeapRb<SourcePacket>>()
+                + SOURCE_CELLS * size_of::<SourcePacket>()
                 + 256) as u64,
         )
     }
@@ -117,18 +143,32 @@ impl SourceInbox {
 
     /// A fixed prefix, including refusals after closure. A refusal returns the
     /// original; an accepted ID with a fault must never be retried.
+    #[cfg(test)]
     pub fn service(
         &mut self,
         control: &mut LiveControl,
         mut receive: impl FnMut(InputOfferResult),
     ) {
-        self.record_failure(control, &mut receive);
+        self.service_identified(control, |_, result| receive(result));
+    }
+
+    /// A queue ID accompanies every popped observation, including raw refusals.
+    /// A pre-ring failure has no queue ID.
+    pub fn service_identified(
+        &mut self,
+        control: &mut LiveControl,
+        mut receive: impl FnMut(Option<SourceQueueId>, InputOfferResult),
+    ) {
+        self.record_failure(control, |result| receive(None, result));
         let prefix = self.queue.occupied_len();
         for _ in 0..prefix {
-            let Some(observation) = self.queue.try_pop() else {
+            let Some(packet) = self.queue.try_pop() else {
                 break;
             };
-            receive(control.offer(self.generation, observation));
+            receive(
+                Some(packet.id),
+                control.offer(self.generation, packet.observation),
+            );
         }
     }
     /// Only an empty queue AFTER the producer joins permits source acknowledgement.
@@ -193,6 +233,14 @@ impl SourceProducer {
     /// otherwise valid value before that retry is a terminal order fault.
     /// Halt ends publication and returns the original for an explicit report.
     pub fn send(&mut self, observation: InputObservation) -> Result<(), SourceSendError> {
+        self.send_identified(observation).map(|_| ())
+    }
+
+    /// Mint the queue identity only when the ring accepts this occurrence.
+    pub fn send_identified(
+        &mut self,
+        observation: InputObservation,
+    ) -> Result<SourceQueueId, SourceSendError> {
         if self.halt.is_requested() {
             return Err(SourceSendError::Halted(observation));
         }
@@ -202,10 +250,18 @@ impl SourceProducer {
         if self.retry.is_some_and(|pending| pending != observation) {
             return Err(self.invalid(observation, InputError::Order));
         }
-        if let Err(original) = self.queue.try_push(observation) {
-            self.retry = Some(original);
-            return Err(SourceSendError::Retry(original));
+        let Some(serial) = self.serial.checked_add(1) else {
+            return Err(self.invalid(observation, InputError::IdentityExhausted));
+        };
+        let id = SourceQueueId {
+            generation: self.generation,
+            serial,
+        };
+        if let Err(original) = self.queue.try_push(SourcePacket { id, observation }) {
+            self.retry = Some(original.observation);
+            return Err(SourceSendError::Retry(original.observation));
         }
+        self.serial = serial;
         self.retry = None;
         self.time.last_tick = Some(tick);
         if let Some(arrival) = arrival {
@@ -213,6 +269,11 @@ impl SourceProducer {
         } else {
             self.time.frontier = nominal;
         }
-        Ok(())
+        Ok(id)
+    }
+
+    #[cfg(test)]
+    pub(super) fn set_serial_for_test(&mut self, serial: u64) {
+        self.serial = serial;
     }
 }

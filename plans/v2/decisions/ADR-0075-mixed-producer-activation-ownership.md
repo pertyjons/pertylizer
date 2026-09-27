@@ -575,10 +575,18 @@ before queue custody. An observation with its own invalid time keeps that
 specific reason.
 The caller still owns the original returned by the earlier `Retry`; the Linux
 driver stops and reports it rather than attempting a later send.
-Equal-valued occurrences are indistinguishable at this boundary because no
-source occurrence ID exists before raw admission. A future protected-release
-ledger still needs an occurrence or retry-token law; this value check does not
-claim that ledger.
+The source ring now assigns a typed generation and checked serial to each
+successful push, including equal-valued occurrences. The inbox reports that
+queue ID with each popped result, including raw refusals; a rejected
+pre-ring original has no queue ID. A full-ring retry leaves the serial
+unspent, and serial exhaustion is a terminal pre-ring failure recorded by
+the raw owner. The concrete falsifier queues two equal-valued onsets and
+requires distinct ordered IDs, then fills the ring and requires its retried
+original to receive the next ID only after a successful push. Another test
+requires a raw refusal to retain its queue ID. This identity establishes
+custody after source-ring acceptance. Equal-valued attempts before that
+acceptance remain indistinguishable because the retry guard compares values;
+a future protected-release ledger still needs an owned retry-token law.
 Raw input repeats its own admission checks. The bridge commits an audition
 packet only after raw admission. A pre-ring regression or future-arrival
 refusal leaves raw and audition admission, serials and credit unchanged for

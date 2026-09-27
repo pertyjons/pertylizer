@@ -308,9 +308,16 @@ fn send_wave_with(
 
 fn service(managed: &mut ManagedRun, stopped: &mut bool) -> Result<(), Box<dyn std::error::Error>> {
     let mut input_fault = false;
-    managed.service(
-        |result| {
+    managed.service_identified(
+        |source_id, result| {
             if let Err(fault) = result {
+                if let Some(id) = source_id {
+                    eprintln!(
+                        "source_queue_generation={:?} source_queue_serial={}",
+                        id.generation(),
+                        id.serial()
+                    );
+                }
                 match fault {
                     InputOfferError::Refused(observation, reason) => {
                         eprintln!("source_refusal={observation:?} reason={reason:?}");

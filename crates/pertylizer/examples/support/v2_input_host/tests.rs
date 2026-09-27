@@ -741,15 +741,17 @@ fn producer_queue_full_and_joined_shutdown_return_every_original_observation() {
     };
     assert_eq!(joined.send(halted), Err(SourceSendError::Halted(halted)));
     let mut refusals = Vec::new();
-    inbox.service(&mut control, |outcome| {
+    inbox.service_identified(&mut control, |id, outcome| {
         let InputOfferError::Refused(original, _) = outcome.unwrap_err() else {
             panic!("expected an unaccepted observation");
         };
-        refusals.push(original)
+        refusals.push((id.unwrap(), original))
     });
     assert_eq!(refusals.len(), 16);
     assert!(inbox.is_empty());
-    for (index, observation) in refusals.into_iter().enumerate() {
+    for (index, (id, observation)) in refusals.into_iter().enumerate() {
+        assert_eq!(id.generation(), generations[0]);
+        assert_eq!(id.serial(), index as u64 + 1);
         assert_eq!(
             observation,
             InputObservation::Frontier {
@@ -791,6 +793,92 @@ fn producer_retry_keeps_time_state_until_the_ring_accepts_the_original() {
         assert_eq!(result.unwrap().serial(), accepted + 1);
     });
     assert_eq!(accepted, 17);
+}
+
+#[test]
+fn source_queue_ids_distinguish_equal_observations_and_skip_full_retries() {
+    use super::source::{SourceInbox, SourceSendError};
+    let (mut control, audio, generations) = fixture();
+    let clock = prepare::simulated_clock(audio.core.acknowledged().epoch, 0).unwrap();
+    let (mut producer, mut inbox) =
+        SourceInbox::prepare(generations[0], control.halt_handle(), clock);
+    let onset = InputObservation::Message {
+        tick: InputTick::new(10),
+        arrival: SampleTime::new(10),
+        input: Midi1Input::from_bytes([0x90, 60, 100]).unwrap(),
+    };
+    let first = producer.send_identified(onset).unwrap();
+    let second = producer.send_identified(onset).unwrap();
+    assert_eq!(first.generation(), generations[0]);
+    assert_eq!(first.serial(), 1);
+    assert_eq!(second.serial(), 2);
+    assert_ne!(first, second);
+    for at in 11..=24 {
+        producer
+            .send(InputObservation::Frontier {
+                tick: InputTick::new(at),
+            })
+            .unwrap();
+    }
+    let pending = InputObservation::Frontier {
+        tick: InputTick::new(25),
+    };
+    assert_eq!(
+        producer.send_identified(pending),
+        Err(SourceSendError::Retry(pending))
+    );
+    let mut delivered = Vec::new();
+    inbox.service_identified(&mut control, |id, result| {
+        delivered.push((id.unwrap(), result));
+    });
+    assert_eq!(delivered.len(), 16);
+    assert_eq!(delivered[0].0, first);
+    assert_eq!(delivered[1].0, second);
+    for (index, (id, result)) in delivered.iter().enumerate() {
+        assert_eq!(id.serial(), index as u64 + 1);
+        assert!(result.is_ok());
+    }
+    let retried = producer.send_identified(pending).unwrap();
+    assert_eq!(retried.serial(), 17);
+    let mut retried_results = 0;
+    inbox.service_identified(&mut control, |id, result| {
+        assert_eq!(id, Some(retried));
+        assert!(result.is_ok());
+        retried_results += 1;
+    });
+    assert_eq!(retried_results, 1);
+}
+
+#[test]
+fn source_queue_identity_exhaustion_is_a_terminal_pre_ring_fault() {
+    use super::source::{SourceInbox, SourceSendError};
+    let (mut control, audio, generations) = fixture();
+    let clock = prepare::simulated_clock(audio.core.acknowledged().epoch, 0).unwrap();
+    let (mut producer, mut inbox) =
+        SourceInbox::prepare(generations[0], control.halt_handle(), clock);
+    producer.set_serial_for_test(u64::MAX);
+    let original = InputObservation::Frontier {
+        tick: InputTick::new(1),
+    };
+    assert_eq!(
+        producer.send_identified(original),
+        Err(SourceSendError::Invalid(
+            original,
+            InputError::IdentityExhausted
+        ))
+    );
+    assert!(inbox.is_empty());
+    let mut callbacks = 0;
+    inbox.service_identified(&mut control, |_, _| callbacks += 1);
+    assert_eq!(callbacks, 0);
+    let fault = control
+        .core
+        .input(generations[0])
+        .unwrap()
+        .pre_ring_failure()
+        .unwrap();
+    assert_eq!(fault.reason, InputError::IdentityExhausted);
+    assert_eq!(fault.observation, Some(original));
 }
 
 #[test]
@@ -999,8 +1087,14 @@ fn producer_rejects_unmappable_clock_before_ring_custody() {
     assert!(control.halt_handle().is_requested());
     assert!(inbox.is_empty());
     let mut results = Vec::new();
-    inbox.service(&mut control, |result| results.push(result));
-    inbox.service(&mut control, |result| results.push(result));
+    inbox.service_identified(&mut control, |id, result| {
+        assert!(id.is_none());
+        results.push(result);
+    });
+    inbox.service_identified(&mut control, |id, result| {
+        assert!(id.is_none());
+        results.push(result);
+    });
     assert!(matches!(
         results.as_slice(),
         [Err(InputOfferError::Refused(original, InputError::State))] if *original == ambiguous

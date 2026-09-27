@@ -106,9 +106,11 @@ impl InputCaptureControl {
         result.map_err(|error| (observation, error))
     }
 
-    /// Validate and retain a producer's terminal time refusal whose original never
+    /// Validate and retain a producer's terminal refusal whose original never
     /// entered the source ring. Reunion attributes accepted late or uncertain claims;
-    /// source order is an attestation when the queued prefix has not reached raw input.
+    /// source order and source queue-ID exhaustion are attestations when the queued
+    /// prefix has not reached raw input. The pre-ring slot distinguishes source
+    /// serial exhaustion from raw input-ID exhaustion.
     pub fn record_pre_ring_failure(
         &mut self,
         generation: ConnectionGeneration,
@@ -134,7 +136,7 @@ impl InputCaptureControl {
             InputError::Future => {
                 matches!((mapping, arrival), (Ok(nominal), Some(at)) if at < nominal)
             }
-            InputError::Order => mapping.is_ok(),
+            InputError::Order | InputError::IdentityExhausted => mapping.is_ok(),
             _ => false,
         };
         if !valid_reason {

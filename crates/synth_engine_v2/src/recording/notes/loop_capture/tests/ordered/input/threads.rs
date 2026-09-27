@@ -931,6 +931,39 @@ fn pre_ring_failure_validates_mapping_and_records_one_original() {
 }
 
 #[test]
+fn pre_ring_queue_identity_exhaustion_requires_a_mappable_observation() {
+    let (mut control, _audio, _halt, generation) = uncertain_split();
+    let unmappable = InputObservation::Frontier {
+        tick: InputTick::new(200),
+    };
+    assert_eq!(
+        control.record_pre_ring_failure(generation, unmappable, InputError::IdentityExhausted,),
+        Err(InputError::State)
+    );
+    assert!(
+        control
+            .input(generation)
+            .unwrap()
+            .pre_ring_failure()
+            .is_none()
+    );
+
+    let original = InputObservation::Frontier {
+        tick: InputTick::new(105),
+    };
+    control
+        .record_pre_ring_failure(generation, original, InputError::IdentityExhausted)
+        .unwrap();
+    let retained = control
+        .input(generation)
+        .unwrap()
+        .pre_ring_failure()
+        .unwrap();
+    assert_eq!(retained.reason, InputError::IdentityExhausted);
+    assert_eq!(retained.observation, Some(original));
+}
+
+#[test]
 fn uncertainty_uses_frozen_selection_and_cannot_report_complete_after_fault() {
     for (stopped, input_tick, inside) in [
         (true, 0, true),

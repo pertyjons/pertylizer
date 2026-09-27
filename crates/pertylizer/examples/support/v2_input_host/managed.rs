@@ -4,7 +4,7 @@ use super::*;
 use super::{
     archive::RetainedRuns,
     prepare::PreparedAttempt,
-    source::{SourceInbox, SourceProducer},
+    source::{SourceInbox, SourceProducer, SourceQueueId},
 };
 
 #[must_use]
@@ -233,17 +233,29 @@ impl ManagedRun {
     }
 
     /// Admission and execution have distinct identified outcomes. Both are reported.
+    #[cfg(test)]
     pub fn service(
         &mut self,
         mut input: impl FnMut(InputOfferResult),
+        command: impl FnMut(LoopTransferId, HostOutcome),
+        receipt: impl FnMut(InputReceipt),
+    ) -> Result<(), HostError> {
+        self.service_identified(|_, result| input(result), command, receipt)
+    }
+
+    /// The queue ID identifies an accepted source occurrence before raw admission.
+    /// Pre-ring terminal refusals have no queue ID.
+    pub fn service_identified(
+        &mut self,
+        mut input: impl FnMut(Option<SourceQueueId>, InputOfferResult),
         mut command: impl FnMut(LoopTransferId, HostOutcome),
         mut receipt: impl FnMut(InputReceipt),
     ) -> Result<(), HostError> {
         for inbox in &mut self.inboxes {
-            inbox.record_failure(&mut self.control, &mut input);
+            inbox.record_failure(&mut self.control, |result| input(None, result));
         }
         for inbox in &mut self.inboxes {
-            inbox.service(&mut self.control, &mut input);
+            inbox.service_identified(&mut self.control, &mut input);
         }
         while self.control.has_completions() {
             if let Some((id, outcome)) = self.control.collect()? {
