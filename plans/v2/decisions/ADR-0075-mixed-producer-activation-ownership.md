@@ -680,12 +680,15 @@ merger may still return `InputOfferError::Refused` without an `InputEventId`;
 audition preflight refusals, including a stale message, and raw admission
 failures request host halt. Other pre-admission `Stale` or `State` refusals
 can return without a new halt. Their source and occurrence disposition remains
-to be specified. `SourceProducer::send` returns the original both for a full
-ring, which requires ordered retry, and for a requested halt, which requires
-explicit shutdown refusal. A future nonterminal capacity refusal with a FIFO
-tombstone would be a new contract and must distinguish those cases. An onset
-that reaches the renderer but receives `Refused(IngressRefused)` still owns a
-renderer tombstone; its release must reach the renderer to consume it. The
+to be specified. `SourceProducer::send` returns `Retry(original)` for a full
+ring and `Halted(original)` when its halt check observes shutdown. The Linux
+driver stops its worker at either result and reports the unsent suffix in
+source order. A halt that races after the check may leave a queued observation
+or a `Retry` result; retry must check halt again. A future nonterminal capacity
+refusal with a FIFO tombstone would be a new contract and must distinguish
+`Retry` from `Halted`. An onset that reaches the renderer but receives
+`Refused(IngressRefused)` still owns a renderer tombstone. Its release must
+reach the renderer to consume it. The
 note recorder's tracker `TrackerReserved` and `TrackerFull` refusals invalidate
 the recorder source.
 The raw owner then receives a refused source completion, fails with `Delivery`,

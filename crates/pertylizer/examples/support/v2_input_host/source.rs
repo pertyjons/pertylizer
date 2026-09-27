@@ -5,6 +5,15 @@ const SOURCE_CELLS: usize = 16;
 pub const SOURCE_OUTSTANDING: synth_engine_v2::quantities::EventCount =
     synth_engine_v2::quantities::EventCount::measured(64);
 
+#[derive(Debug, Error, PartialEq)]
+#[must_use]
+pub enum SourceSendError {
+    #[error("source ring full; retry this observation first if the source remains running")]
+    Retry(InputObservation),
+    #[error("source halted; retain this observation for shutdown reporting")]
+    Halted(InputObservation),
+}
+
 #[must_use]
 pub struct SourceProducer {
     halt: InputCaptureHalt,
@@ -83,13 +92,15 @@ impl SourceInbox {
     }
 }
 impl SourceProducer {
-    /// A failed push returns the original observation; the producer must retry it
-    /// before later observations or retain an explicit refusal during shutdown.
-    pub fn send(&mut self, observation: InputObservation) -> Result<(), InputObservation> {
+    /// A full ring requires ordered retry; halt ends publication and retains the
+    /// original observation for an explicit terminal report.
+    pub fn send(&mut self, observation: InputObservation) -> Result<(), SourceSendError> {
         if self.halt.is_requested() {
-            return Err(observation);
+            return Err(SourceSendError::Halted(observation));
         }
-        self.queue.try_push(observation)?;
+        self.queue
+            .try_push(observation)
+            .map_err(SourceSendError::Retry)?;
         Ok(())
     }
 }

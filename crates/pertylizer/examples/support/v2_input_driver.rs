@@ -1,7 +1,10 @@
 //! ALSA callback custody for the concrete simulated-input fixture.
 use crate::input_host::{
-    self, HostOutcome, InputOfferError, LiveAudio, archive::RetainedRuns, managed::ManagedRun,
-    prepare::PreparedAttempt, source::SourceProducer,
+    self, HostOutcome, InputOfferError, LiveAudio,
+    archive::RetainedRuns,
+    managed::ManagedRun,
+    prepare::PreparedAttempt,
+    source::{SourceProducer, SourceSendError},
 };
 use cpal::{
     Device, SampleFormat,
@@ -274,14 +277,33 @@ fn source_wave(
     Ok(observations)
 }
 
-fn send_wave(producer: &mut SourceProducer, wave: &[InputObservation]) -> Vec<InputObservation> {
-    let mut refused = Vec::with_capacity(wave.len());
-    for observation in wave {
-        if let Err(observation) = producer.send(*observation) {
-            refused.push(observation);
+#[derive(Debug, Error)]
+#[error("source wave stopped at {first}")]
+struct SourceWaveFailure {
+    first: SourceSendError,
+    unexamined: Vec<InputObservation>,
+}
+
+fn send_wave(
+    producer: &mut SourceProducer,
+    wave: &[InputObservation],
+) -> Result<(), SourceWaveFailure> {
+    send_wave_with(wave, |observation| producer.send(observation))
+}
+
+fn send_wave_with(
+    wave: &[InputObservation],
+    mut send: impl FnMut(InputObservation) -> Result<(), SourceSendError>,
+) -> Result<(), SourceWaveFailure> {
+    for (index, &observation) in wave.iter().enumerate() {
+        if let Err(first) = send(observation) {
+            return Err(SourceWaveFailure {
+                first,
+                unexamined: wave[index + 1..].to_vec(),
+            });
         }
     }
-    refused
+    Ok(())
 }
 
 fn service(managed: &mut ManagedRun, stopped: &mut bool) -> Result<(), Box<dyn std::error::Error>> {
@@ -365,11 +387,13 @@ fn exercise(
             let mut failure = false;
             for result in results {
                 match result {
-                    Ok(refused) => {
-                        for observation in refused {
-                            eprintln!("source_shutdown_refusal={observation:?}");
-                            failure = true;
+                    Ok(Ok(())) => {}
+                    Ok(Err(wave_failure)) => {
+                        eprintln!("source_send_error={:?}", wave_failure.first);
+                        for observation in wave_failure.unexamined {
+                            eprintln!("source_unexamined_after_send_error={observation:?}");
                         }
+                        failure = true;
                     }
                     Err(_) => {
                         eprintln!("source worker panicked; endpoint retained after join");
@@ -545,5 +569,30 @@ pub fn run(device: &Device, target: u64) -> Result<(), Box<dyn std::error::Error
     match run_error {
         Some(error) => Err(error),
         None => Ok(()),
+    }
+}
+
+#[cfg(test)]
+mod wave_tests {
+    use super::*;
+
+    #[test]
+    fn retry_stops_the_wave_and_retains_the_unexamined_suffix() {
+        let wave = [1, 2, 3, 4].map(|at| InputObservation::Frontier {
+            tick: InputTick::new(at),
+        });
+        let mut attempted = Vec::new();
+        let failure = send_wave_with(&wave, |observation| {
+            attempted.push(observation);
+            if attempted.len() == 2 {
+                Err(SourceSendError::Retry(observation))
+            } else {
+                Ok(())
+            }
+        })
+        .unwrap_err();
+        assert_eq!(attempted.as_slice(), &wave[..2]);
+        assert_eq!(failure.first, SourceSendError::Retry(wave[1]));
+        assert_eq!(failure.unexamined.as_slice(), &wave[2..]);
     }
 }

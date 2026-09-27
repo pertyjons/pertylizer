@@ -710,7 +710,7 @@ fn fresh_attempt_cannot_be_changed_by_old_handles_and_retention_is_bounded() {
 
 #[test]
 fn producer_queue_full_and_joined_shutdown_return_every_original_observation() {
-    use super::source::SourceInbox;
+    use super::source::{SourceInbox, SourceSendError};
     let (mut control, mut audio, generations) = fixture();
     assert!(SourceInbox::storage_bytes().get() < 65536);
     let (mut producer, mut inbox) = SourceInbox::prepare(generations[0], control.halt_handle());
@@ -720,20 +720,24 @@ fn producer_queue_full_and_joined_shutdown_return_every_original_observation() {
             let observation = InputObservation::Frontier {
                 tick: InputTick::new(at),
             };
-            if let Err(original) = producer.send(observation) {
-                refused = Some(original);
+            if let Err(error) = producer.send(observation) {
+                refused = Some(error);
             }
         }
         (producer, refused)
     });
-    let (_joined, refused) = producer.join().unwrap();
+    let (mut joined, refused) = producer.join().unwrap();
     assert_eq!(
         refused,
-        Some(InputObservation::Frontier {
+        Some(SourceSendError::Retry(InputObservation::Frontier {
             tick: InputTick::new(17)
-        })
+        }))
     );
     control.halt_handle().request_device_lost();
+    let halted = InputObservation::Frontier {
+        tick: InputTick::new(18),
+    };
+    assert_eq!(joined.send(halted), Err(SourceSendError::Halted(halted)));
     let mut refusals = Vec::new();
     inbox.service(&mut control, |outcome| {
         let InputOfferError::Refused(original, _) = outcome.unwrap_err() else {
