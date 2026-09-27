@@ -1471,6 +1471,12 @@ managed-host service now report a paired `SourceQueueStamp` with each actual raw
 offer result. It contains the queued ID and checked time; a pre-ring failure
 has no stamp. The Linux driver displays the stamp, and the two-source fixture
 checks the 1:1 and 2:1 source-clock mappings against retained raw receipts.
+The concrete callback now pairs that stamp with the exact queued
+`InputObservation` in `SourceHandoff` beside the actual raw result. A two-source
+fixture compares the handoff original with each delivered raw receipt;
+full-ring owned retry and raw-refusal fixtures retain the same original.
+Pre-ring faults have no queued handoff. This is payload custody for a future
+mixed lane, not mixed staging, a shared charge or a combined outcome.
 Raw service keeps independent fixed source prefixes. A separate design read
 found that applying the mixed-time selector to this raw service would hold a
 source's far-ahead frontier behind the other source's earlier messages. The

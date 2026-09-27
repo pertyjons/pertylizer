@@ -6,7 +6,7 @@ use super::*;
 use super::{
     archive::RetainedRuns,
     prepare::PreparedAttempt,
-    source::{SourceInbox, SourceProducer, SourceQueueStamp},
+    source::{SourceHandoff, SourceInbox, SourceProducer},
 };
 
 #[must_use]
@@ -277,24 +277,24 @@ impl ManagedRun {
         command: impl FnMut(LoopTransferId, HostOutcome),
         receipt: impl FnMut(InputReceipt),
     ) -> Result<(), HostError> {
-        self.service_mapped_identified(
-            |stamp, report| {
+        self.service_handoff_identified(
+            |handoff, report| {
                 assert!(
                     report.attribution_error.is_none(),
                     "test-only projection cannot discard a source attribution failure"
                 );
-                input(stamp.map(SourceQueueStamp::queue), report.offer);
+                input(handoff.map(|item| item.stamp().queue()), report.offer);
             },
             command,
             receipt,
         )
     }
 
-    /// Keep each queued packet's checked engine time beside its raw result.
+    /// Keep each queued original and its checked engine time beside its raw result.
     /// Raw capture still drains source prefixes independently.
-    pub fn service_mapped_identified(
+    pub fn service_handoff_identified(
         &mut self,
-        mut input: impl FnMut(Option<SourceQueueStamp>, SourceOfferReport),
+        mut input: impl FnMut(Option<SourceHandoff>, SourceOfferReport),
         mut command: impl FnMut(LoopTransferId, HostOutcome),
         mut receipt: impl FnMut(InputReceipt),
     ) -> Result<(), HostError> {
@@ -302,7 +302,7 @@ impl ManagedRun {
             inbox.record_failure(&mut self.control, |report| input(None, report));
         }
         for inbox in &mut self.inboxes {
-            inbox.service_mapped_identified(&mut self.control, &mut input);
+            inbox.service_handoff_identified(&mut self.control, &mut input);
         }
         while self.control.has_completions() {
             if let Some((id, outcome)) = self.control.collect()? {

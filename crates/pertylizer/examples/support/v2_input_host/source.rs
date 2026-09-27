@@ -73,6 +73,24 @@ impl SourceQueueStamp {
     }
 }
 
+/// The exact queued original remains paired with its checked stamp and raw result.
+#[derive(Clone, Copy, Debug, PartialEq)]
+#[must_use]
+pub struct SourceHandoff {
+    stamp: SourceQueueStamp,
+    observation: InputObservation,
+}
+
+impl SourceHandoff {
+    pub fn stamp(self) -> SourceQueueStamp {
+        self.stamp
+    }
+
+    pub fn observation(self) -> InputObservation {
+        self.observation
+    }
+}
+
 #[derive(Debug)]
 #[must_use]
 pub struct SourceAccepted {
@@ -290,21 +308,21 @@ impl SourceInbox {
         control: &mut LiveControl,
         mut receive: impl FnMut(Option<SourceQueueId>, InputOfferReport),
     ) {
-        self.service_mapped_identified(control, |stamp, report| {
+        self.service_handoff_identified(control, |handoff, report| {
             assert!(
                 report.attribution_error.is_none(),
                 "test-only projection cannot discard a source attribution failure"
             );
-            receive(stamp.map(SourceQueueStamp::queue), report.offer);
+            receive(handoff.map(|item| item.stamp().queue()), report.offer);
         });
     }
 
-    /// A queued observation carries its validated nominal engine time through
-    /// raw admission. A pre-ring failure has neither queue identity nor stamp.
-    pub fn service_mapped_identified(
+    /// A queued original and its validated nominal engine time remain available
+    /// beside the raw offer result. A pre-ring failure has no queued handoff.
+    pub fn service_handoff_identified(
         &mut self,
         control: &mut LiveControl,
-        mut receive: impl FnMut(Option<SourceQueueStamp>, SourceOfferReport),
+        mut receive: impl FnMut(Option<SourceHandoff>, SourceOfferReport),
     ) {
         self.record_failure(control, |report| receive(None, report));
         let prefix = self.queue.occupied_len();
@@ -313,9 +331,12 @@ impl SourceInbox {
                 break;
             };
             receive(
-                Some(SourceQueueStamp {
-                    queue: packet.id,
-                    mapped_at: packet.mapped_at,
+                Some(SourceHandoff {
+                    stamp: SourceQueueStamp {
+                        queue: packet.id,
+                        mapped_at: packet.mapped_at,
+                    },
+                    observation: packet.observation,
                 }),
                 control.offer_source_queued(self.generation, packet.id, packet.observation),
             );

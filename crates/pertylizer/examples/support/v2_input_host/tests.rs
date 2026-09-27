@@ -970,15 +970,16 @@ fn concrete_two_source_queue_ids_join_delivered_raw_and_recorder_receipts() {
     let mut links = Vec::new();
     let mut mapped = Vec::new();
     for inbox in [&mut first_inbox, &mut second_inbox] {
-        inbox.service_mapped_identified(&mut control, |stamp, report| {
+        inbox.service_handoff_identified(&mut control, |handoff, report| {
             assert!(report.attribution_error.is_none());
             assert_eq!(
                 report.offer.audition_packet,
                 AuditionPacketCustody::NotQueued
             );
-            let stamp = stamp.unwrap();
+            let handoff = handoff.unwrap();
+            let stamp = handoff.stamp();
             let queue = stamp.queue();
-            mapped.push((queue, stamp.mapped_at()));
+            mapped.push((queue, stamp.mapped_at(), handoff.observation()));
             links.push((queue, report.offer.result.unwrap()));
         });
     }
@@ -1024,14 +1025,14 @@ fn concrete_two_source_queue_ids_join_delivered_raw_and_recorder_receipts() {
                 )
             }
         };
+        let receipt = receipts.iter().find(|receipt| receipt.id == raw).unwrap();
         assert_eq!(
             mapped
                 .iter()
-                .find(|(id, _)| *id == queue)
-                .map(|(_, at)| *at),
-            Some(expected_at)
+                .find(|(id, _, _)| *id == queue)
+                .map(|(_, at, original)| (*at, *original)),
+            Some((expected_at, receipt.observation))
         );
-        let receipt = receipts.iter().find(|receipt| receipt.id == raw).unwrap();
         let tick = match observation {
             InputObservation::Message { tick, .. } | InputObservation::Frontier { tick } => tick,
         };
@@ -1192,12 +1193,16 @@ fn pre_ring_attribution_error_preserves_the_producer_reason() {
         Err(SourceSendError::Invalid(original, InputError::Future))
     );
     let mut reports = Vec::new();
-    inbox.service_mapped_identified(&mut control, |stamp, report| reports.push((stamp, report)));
-    inbox.service_mapped_identified(&mut control, |stamp, report| reports.push((stamp, report)));
-    let [(stamp, report)] = reports.as_slice() else {
+    inbox.service_handoff_identified(&mut control, |handoff, report| {
+        reports.push((handoff, report));
+    });
+    inbox.service_handoff_identified(&mut control, |handoff, report| {
+        reports.push((handoff, report));
+    });
+    let [(handoff, report)] = reports.as_slice() else {
         panic!("failed attribution must have one report");
     };
-    assert_eq!(*stamp, None);
+    assert_eq!(*handoff, None);
     assert_eq!(report.attribution_error, Some(InputError::Stale));
     assert_eq!(
         report.offer.result,
@@ -1254,20 +1259,27 @@ fn owned_retry_preserves_attempt_and_mints_queue_id_only_after_push() {
     let (retried_attempt, retried_queue) = producer.retry_owned(token).unwrap().parts();
     assert_eq!(retried_attempt, original_attempt);
     assert_eq!(retried_queue.serial(), 17);
-    let (next_attempt, next_queue) = producer.submit_owned(onset).unwrap().parts();
+    let next_onset = InputObservation::Message {
+        tick: InputTick::new(17),
+        arrival: SampleTime::new(17),
+        input: Midi1Input::from_bytes([0x90, 61, 100]).unwrap(),
+    };
+    let (next_attempt, next_queue) = producer.submit_owned(next_onset).unwrap().parts();
     assert_eq!(next_attempt.serial(), 18);
     assert_eq!(next_queue.serial(), 18);
     assert_ne!(next_attempt, retried_attempt);
     let mut results = Vec::new();
-    inbox.service_mapped_identified(&mut control, |stamp, report| {
+    inbox.service_handoff_identified(&mut control, |handoff, report| {
         assert!(report.attribution_error.is_none());
-        results.push((stamp.unwrap(), report.offer.result));
+        results.push((handoff.unwrap(), report.offer.result));
     });
     assert_eq!(results.len(), 2);
-    assert_eq!(results[0].0.queue(), retried_queue);
-    assert_eq!(results[1].0.queue(), next_queue);
-    for (stamp, result) in results {
-        assert_eq!(stamp.mapped_at(), SampleTime::new(17));
+    assert_eq!(results[0].0.stamp().queue(), retried_queue);
+    assert_eq!(results[1].0.stamp().queue(), next_queue);
+    assert_eq!(results[0].0.observation(), onset);
+    assert_eq!(results[1].0.observation(), next_onset);
+    for (handoff, result) in results {
+        assert_eq!(handoff.stamp().mapped_at(), SampleTime::new(17));
         assert!(result.is_ok());
     }
 }
@@ -1867,16 +1879,16 @@ fn producer_rejects_unmappable_clock_before_ring_custody() {
     assert!(control.halt_handle().is_requested());
     assert!(inbox.is_empty());
     let mut results = Vec::new();
-    inbox.service_mapped_identified(&mut control, |stamp, report| {
-        results.push((stamp, report));
+    inbox.service_handoff_identified(&mut control, |handoff, report| {
+        results.push((handoff, report));
     });
-    inbox.service_mapped_identified(&mut control, |stamp, report| {
-        results.push((stamp, report));
+    inbox.service_handoff_identified(&mut control, |handoff, report| {
+        results.push((handoff, report));
     });
-    let [(stamp, report)] = results.as_slice() else {
+    let [(handoff, report)] = results.as_slice() else {
         panic!("the terminal source failure must be reported once");
     };
-    assert_eq!(*stamp, None);
+    assert_eq!(*handoff, None);
     assert_eq!(report.attribution_error, Some(InputError::State));
     assert_eq!(
         report.offer.result,
@@ -1921,10 +1933,10 @@ fn managed_service_records_second_source_failure_before_first_queue_halt() {
     );
     let mut results = Vec::new();
     managed
-        .service_mapped_identified(
-            |stamp, report| {
+        .service_handoff_identified(
+            |handoff, report| {
                 assert!(report.attribution_error.is_none());
-                results.push((stamp, report.offer.result));
+                results.push((handoff, report.offer.result));
             },
             |_, _| {},
             |_| {},
@@ -1932,8 +1944,9 @@ fn managed_service_records_second_source_failure_before_first_queue_halt() {
         .unwrap();
     assert!(matches!(
         results.as_slice(),
-        [(Some(stamp), Err(InputOfferError::Refused(original, _)))]
-            if stamp.mapped_at() == SampleTime::new(1) && *original == queued
+        [(Some(handoff), Err(InputOfferError::Refused(original, _)))]
+            if handoff.stamp().mapped_at() == SampleTime::new(1)
+                && handoff.observation() == queued && *original == queued
     ));
     assert_eq!(
         managed.source_discontinuity(0).unwrap().reason,
@@ -2675,27 +2688,39 @@ fn audition_credit_exhaustion_retains_results_and_refused_release_without_a_fina
     };
     let later_id = first.send_identified(later).unwrap();
     let mut refused = Vec::new();
-    run.service_mapped_identified(
-        |stamp, report| refused.push((stamp, report)),
+    run.service_handoff_identified(
+        |handoff, report| refused.push((handoff, report)),
         |_, _| {},
         |_| {},
     )
     .unwrap();
-    let [(first_stamp, first_report), (second_stamp, second_report)] = refused.as_slice() else {
+    let [
+        (first_handoff, first_report),
+        (second_handoff, second_report),
+    ] = refused.as_slice()
+    else {
         panic!("two queued observations must each receive a disposition");
     };
-    assert_eq!(first_stamp.map(|stamp| stamp.queue()), Some(release_id));
-    assert_eq!(first_stamp.map(|stamp| stamp.mapped_at()), Some(at));
+    assert_eq!(
+        first_handoff.map(|item| item.stamp().queue()),
+        Some(release_id)
+    );
+    assert_eq!(first_handoff.map(|item| item.stamp().mapped_at()), Some(at));
+    assert_eq!(first_handoff.map(|item| item.observation()), Some(release));
     assert_eq!(first_report.attribution_error, None);
     assert_eq!(
         first_report.offer.result,
         Err(InputOfferError::Refused(release, InputError::Full))
     );
-    assert_eq!(second_stamp.map(|stamp| stamp.queue()), Some(later_id));
     assert_eq!(
-        second_stamp.map(|stamp| stamp.mapped_at()),
+        second_handoff.map(|item| item.stamp().queue()),
+        Some(later_id)
+    );
+    assert_eq!(
+        second_handoff.map(|item| item.stamp().mapped_at()),
         Some(SampleTime::new(at.as_u64() + 64))
     );
+    assert_eq!(second_handoff.map(|item| item.observation()), Some(later));
     assert_eq!(second_report.attribution_error, None);
     assert_eq!(
         second_report.offer.result,

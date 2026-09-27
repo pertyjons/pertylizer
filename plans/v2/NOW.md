@@ -347,6 +347,12 @@ the paired `SourceQueueStamp` beside each raw offer result; it contains the
 Linux driver reports the mapped time, and the two-source raw-receipt fixture
 checks both source clocks. Raw capture still drains each source prefix
 independently.
+The service callback now returns `SourceHandoff`: the checked queue stamp and
+the exact queued `InputObservation` beside its raw offer result. The two-source
+fixture joins that original to the delivered raw receipt; an owned full-ring
+retry and raw refusals preserve it. Pre-ring faults have no queued handoff.
+This supplies source payload custody for a future mixed lane but adds no mixed
+staging, shared charge or combined outcome.
 ADR-0075 records why raw service must not wait for a mixed-time peer frontier:
 the recorder needs far-ahead source frontiers to release its own bounded cells.
 A separate bounded mixed staging and result path remains open.

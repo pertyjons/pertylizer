@@ -395,8 +395,8 @@ fn settle_source_workers(
 
 fn service(managed: &mut ManagedRun, stopped: &mut bool) -> Result<(), Box<dyn std::error::Error>> {
     let mut input_fault = false;
-    managed.service_mapped_identified(
-        |source_stamp, report| {
+    managed.service_handoff_identified(
+        |source_handoff, report| {
             let SourceOfferReport {
                 offer,
                 attribution_error,
@@ -406,12 +406,13 @@ fn service(managed: &mut ManagedRun, stopped: &mut bool) -> Result<(), Box<dyn s
                 audition_packet,
             } = offer;
             input_fault |= attribution_error.is_some();
-            let source_id = source_stamp.map(|stamp| stamp.queue());
-            let mapped_at = source_stamp.map(|stamp| stamp.mapped_at());
+            let source_id = source_handoff.map(|handoff| handoff.stamp().queue());
+            let mapped_at = source_handoff.map(|handoff| handoff.stamp().mapped_at());
+            let source_original = source_handoff.map(|handoff| handoff.observation());
             match result {
                 Ok(id) => {
                     println!(
-                        "source_queue_id={source_id:?} mapped_at={mapped_at:?} raw_input_id={id:?} audition_packet={audition_packet:?} attribution_error={attribution_error:?}"
+                        "source_queue_id={source_id:?} mapped_at={mapped_at:?} source_original={source_original:?} raw_input_id={id:?} audition_packet={audition_packet:?} attribution_error={attribution_error:?}"
                     );
                 }
                 Err(fault) => {
@@ -428,7 +429,7 @@ fn service(managed: &mut ManagedRun, stopped: &mut bool) -> Result<(), Box<dyn s
                             settlement_error,
                         } => {
                             eprintln!(
-                                "source_queue_id={source_id:?} audition_packet={audition_packet:?} accepted_input_fault={id:?} error={error:?} settlement={settlement_error:?} attribution_error={attribution_error:?}"
+                                "source_queue_id={source_id:?} source_original={source_original:?} audition_packet={audition_packet:?} accepted_input_fault={id:?} error={error:?} settlement={settlement_error:?} attribution_error={attribution_error:?}"
                             );
                         }
                     }
