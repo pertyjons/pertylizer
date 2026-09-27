@@ -163,7 +163,7 @@ fn bound_with_events(
     .expect("stamped initial schedule")
 }
 
-fn mixed_profile() -> HostProfile {
+pub(super) fn mixed_profile() -> HostProfile {
     HostProfile::harness(
         SampleRate::new(48_000.0).expect("rate"),
         FrameCount::new(512),
@@ -260,7 +260,9 @@ fn profile_with_release_limits(
     HostProfile::new(original.capabilities(), limits).expect("valid profile")
 }
 
-fn one_shot_with_boundary_on(compiled_first: bool) -> (MixedJoinedPrepared, MixedStampedCandidate) {
+pub(super) fn one_shot_with_boundary_on(
+    compiled_first: bool,
+) -> (MixedJoinedPrepared, MixedStampedCandidate) {
     one_shot_with_boundary_on_at(compiled_first, SampleTime::new(64))
 }
 

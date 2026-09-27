@@ -2,12 +2,18 @@
 
 use std::collections::VecDeque;
 
+use super::{
+    EventPayload, MixedCollection, MixedCollectionEnd, MixedOneShotRenderError, history_tests,
+};
+use crate::identity::NoteIdentity;
+use crate::ingress::{ExhaustedResource, IngressRefused};
 use crate::{
     host::{
         ConnectionGeneration, EndpointId,
         input::{
-            InputCapacity, InputCaptureSession, InputEventId, InputLimits, InputOutcome, InputRate,
-            InputReceipt, InputTick, InputTickSpan, SimulatedInputClock, SimulatedNoteInput,
+            InputCapacity, InputCaptureSession, InputEventId, InputLimits, InputObservation,
+            InputOutcome, InputRate, InputReceipt, InputTick, InputTickSpan, SimulatedInputClock,
+            SimulatedNoteInput,
         },
         session::{
             LoopRecordingSession, SessionCommand, SessionCommandCapacity, SessionLimits,
@@ -27,7 +33,7 @@ use crate::{
         MusicalInterval, NoteArmContext, NoteArmInput, SimulatedNoteRecorder,
         loop_capture::{LoopCaptureSession, tests as loop_test_support},
     },
-    render::AudioBlockMut,
+    render::{AudioBlockMut, NoteEdge},
     tempo::{Bpm, MusicalTick, TempoMap},
     time::{FrameCount, PlanPosition, SampleTime, StreamAnchor, StreamEpoch, issue_epoch},
 };
@@ -214,7 +220,16 @@ struct Entry {
     raw_held: bool,
     raw_onset: Option<InputEventId>,
     ingress_held: bool,
+    ingress_disposition: IngressDisposition,
     result_held: bool,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum IngressDisposition {
+    Pending,
+    Accepted(NoteIdentity),
+    Refused(IngressRefused),
+    FakeRefused,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -493,6 +508,11 @@ impl Model {
             raw_held: raw,
             raw_onset: None,
             ingress_held: ingress,
+            ingress_disposition: if ingress {
+                IngressDisposition::Pending
+            } else {
+                IngressDisposition::FakeRefused
+            },
             result_held: true,
         });
         (attempt.id, attempt.key, attempt.input)
@@ -753,10 +773,26 @@ impl Model {
         if onset.id != raw_onset || onset.matched_onset.is_some() {
             return Err(RawReceiptSettlementError::WrongOnset);
         }
+        if !matches!(
+            onset.observation,
+            InputObservation::Message { input, .. }
+                if input.channel() == entry.key.channel
+                    && matches!(input.event(), Midi1Event::NoteOn { key, .. } if key == entry.key.note)
+        ) {
+            return Err(RawReceiptSettlementError::WrongOnset);
+        }
         if release.matched_onset != Some(raw_onset)
             || release.id.generation() != raw_onset.generation()
             || release.id.serial() <= raw_onset.serial()
         {
+            return Err(RawReceiptSettlementError::WrongRelease);
+        }
+        if !matches!(
+            release.observation,
+            InputObservation::Message { input, .. }
+                if input.channel() == entry.key.channel
+                    && matches!(input.event(), Midi1Event::KeyRelease { key, .. } if key == entry.key.note)
+        ) {
             return Err(RawReceiptSettlementError::WrongRelease);
         }
         let occurrence = |receipt: &InputReceipt| match &receipt.outcome {
@@ -779,6 +815,29 @@ impl Model {
         entry.ingress_held = false;
         self.used.ingress -= 1;
         self.reap(id);
+    }
+
+    fn bind_ingress_onset(&mut self, id: OccurrenceId, identity: NoteIdentity) {
+        assert!(
+            self.entries
+                .iter()
+                .all(|entry| entry.ingress_disposition != IngressDisposition::Accepted(identity))
+        );
+        let entry = self.entry_mut(id);
+        assert!(entry.ingress_held && entry.ingress_disposition == IngressDisposition::Pending);
+        entry.ingress_disposition = IngressDisposition::Accepted(identity);
+    }
+
+    fn refuse_ingress_onset(&mut self, id: OccurrenceId, reason: IngressRefused) {
+        let entry = self.entry_mut(id);
+        assert!(
+            entry.ingress_held
+                && entry.ingress_disposition == IngressDisposition::Pending
+                && !entry.released
+        );
+        entry.ingress_held = false;
+        entry.ingress_disposition = IngressDisposition::Refused(reason);
+        self.used.ingress -= 1;
     }
 
     fn collect_result(&mut self, id: OccurrenceId) {
@@ -1053,8 +1112,7 @@ fn queued_two_source_releases_preserve_payload_and_recorder_pairing() {
     }
 }
 
-#[test]
-fn modeled_ring_releases_settle_raw_credit_from_delivered_serial_receipts() {
+fn bridge_serial_owner(stop: u64) -> (InputCaptureSession, [ConnectionGeneration; 2]) {
     let mut capture = LoopCaptureSession::prepare(
         loop_test_support::stream(0, 2048),
         loop_test_support::limits(3, 64, 1_048_576),
@@ -1098,8 +1156,14 @@ fn modeled_ring_releases_settle_raw_credit_from_delivered_serial_receipts() {
     }
     let _play = owner.offer(SampleTime::ZERO, SessionCommand::Play).unwrap();
     let _stop = owner
-        .offer(SampleTime::new(128), SessionCommand::Stop)
+        .offer(SampleTime::new(stop), SessionCommand::Stop)
         .unwrap();
+    (owner, generations)
+}
+
+#[test]
+fn modeled_ring_releases_settle_raw_credit_from_delivered_serial_receipts() {
+    let (mut owner, generations) = bridge_serial_owner(128);
 
     let mut model = Model::new(limits(3), 4);
     let onsets = [
@@ -1264,6 +1328,223 @@ fn modeled_ring_releases_settle_raw_credit_from_delivered_serial_receipts() {
     assert_eq!(
         model.bind_raw_onset(replay, foreign_release_raw),
         Err(RawOnsetBindError::SourceGeneration)
+    );
+}
+
+#[test]
+fn mixed_hold_refusal_and_later_fault_leave_serial_capture_receipts_independent() {
+    let (mut owner, generations) = bridge_serial_owner(256);
+    let (prepared, candidate) = history_tests::one_shot_with_boundary_on(true);
+    let (control, mut mixed) = prepared
+        .arm_one_shot(candidate, &history_tests::mixed_profile())
+        .unwrap();
+    let mut model = Model::new(limits(3), 4);
+    let onsets = [
+        (ModelSource::First, input(0x90, 60, 100), 140),
+        (ModelSource::Second, input(0x90, 60, 110), 141),
+        (ModelSource::First, input(0x90, 60, 120), 142),
+    ];
+    let ids = onsets.map(|(source, note, _)| model.submit(source, note).unwrap());
+    let mut admitted = Vec::new();
+    for (source, note, time) in onsets {
+        let (id, key, queued) = model.service_with_input(source, true, true);
+        assert_eq!(queued, note);
+        let at = SampleTime::new(time);
+        let raw_id = owner
+            .offer_message(
+                generations[source.index()],
+                InputTick::new(time),
+                at,
+                queued,
+            )
+            .unwrap();
+        model.bind_raw_onset(id, raw_id).unwrap();
+        admitted.push((id, key, raw_id));
+        let Midi1Event::NoteOn {
+            key: live_key,
+            velocity,
+        } = queued.event()
+        else {
+            panic!("modeled onset must remain a note onset");
+        };
+        assert_eq!(live_key, key.note);
+        assert_eq!(queued.channel(), key.channel);
+        match mixed.offer_test_note_on(at, live_key, velocity) {
+            Ok(identity) => {
+                assert_ne!(id, ids[2], "third onset must hit the mixed hold limit");
+                model.bind_ingress_onset(id, identity);
+            }
+            Err(
+                reason @ IngressRefused::Dropped {
+                    resource: ExhaustedResource::Hold,
+                },
+            ) if id == ids[2] => model.refuse_ingress_onset(id, reason),
+            other => panic!("unexpected mixed onset disposition: {other:?}"),
+        }
+    }
+    assert_eq!(mixed.test_ingress.counters().dropped_hold(), 1);
+    assert_eq!(
+        model.entry_mut(ids[2]).ingress_disposition,
+        IngressDisposition::Refused(IngressRefused::Dropped {
+            resource: ExhaustedResource::Hold,
+        })
+    );
+    assert_eq!(
+        model.used,
+        Counts {
+            tracker: 3,
+            ingress: 2,
+            results: 3,
+            ledger: 3,
+        }
+    );
+    let releases = [
+        (ModelSource::First, input(0x90, 60, 0), ids[0], 150),
+        (ModelSource::Second, input(0x80, 60, 0), ids[1], 151),
+        (ModelSource::First, input(0x80, 60, 0), ids[2], 152),
+    ];
+    for (source, release, id, _) in releases {
+        assert_eq!(
+            model.offer_release(source, release),
+            Ok(ReleaseOffer::Queued(id))
+        );
+    }
+    let mut routed = Vec::new();
+    for (source, release, expected, time) in releases {
+        let (route, key, queued) = model.service_release_with_input(source);
+        assert_eq!(route.id, expected);
+        assert_eq!(queued, release);
+        assert_eq!(queued.channel(), key.channel);
+        assert!(
+            matches!(queued.event(), Midi1Event::KeyRelease { key: released, .. } if released == key.note)
+        );
+        assert!(route.raw);
+        assert_eq!(route.ingress, route.id != ids[2]);
+        let at = SampleTime::new(time);
+        let raw_id = owner
+            .offer_message(
+                generations[source.index()],
+                InputTick::new(time),
+                at,
+                queued,
+            )
+            .unwrap();
+        if route.ingress {
+            let IngressDisposition::Accepted(identity) =
+                model.entry_mut(route.id).ingress_disposition
+            else {
+                panic!("accepted mixed onset lost its identity");
+            };
+            mixed.offer_test_note_off(at, identity).unwrap();
+        }
+        routed.push((route.id, key, raw_id));
+    }
+    assert_eq!(mixed.test_ingress.holds_outstanding(), EventCount::NONE);
+    let mut first = [0.0_f32; 128];
+    mixed
+        .render_private(AudioBlockMut::new(&mut first, 128, ChannelLayout::Mono).unwrap())
+        .unwrap();
+    assert!(!mixed.report().faulted);
+    mixed.test_fail_after_ingress_at = Some(SampleTime::new(128));
+    let mut second = [1.0_f32; 128];
+    assert_eq!(
+        mixed.render_private(AudioBlockMut::new(&mut second, 128, ChannelLayout::Mono).unwrap()),
+        Err(MixedOneShotRenderError::InjectedAfterIngress)
+    );
+    assert!(second.iter().all(|sample| *sample == 0.0));
+    let MixedCollection::Ended(ended) = control.collect(mixed).unwrap() else {
+        panic!("faulted mixed owner must be classified at teardown");
+    };
+    assert_eq!(ended.end, MixedCollectionEnd::Faulted);
+    assert!(ended.ingress.queued.is_empty());
+    assert_eq!(ended.ingress.charged_in_faulted_callback.len(), 4);
+    assert_eq!(ended.ingress.counters.dropped_hold(), 1);
+    assert_eq!(ended.ingress.holds_outstanding, EventCount::NONE);
+    assert!(ended.ingress.minted_live.is_empty());
+    assert!(ended.sounding.live().is_empty());
+    let mut ingress_identity = |id| {
+        let IngressDisposition::Accepted(identity) = model.entry_mut(id).ingress_disposition else {
+            panic!("accepted mixed onset lost its identity");
+        };
+        identity
+    };
+    assert_eq!(
+        ended
+            .ingress
+            .charged_in_faulted_callback
+            .iter()
+            .map(|(event, redeems)| {
+                let EventPayload::Note { identity, edge } = event.payload() else {
+                    panic!("mixed fault journal contains only note edges");
+                };
+                (
+                    event.envelope().time(),
+                    identity,
+                    matches!(edge, NoteEdge::Off),
+                    *redeems,
+                )
+            })
+            .collect::<Vec<_>>(),
+        vec![
+            (SampleTime::new(140), ingress_identity(ids[0]), false, false),
+            (SampleTime::new(141), ingress_identity(ids[1]), false, false),
+            (SampleTime::new(150), ingress_identity(ids[0]), true, true),
+            (SampleTime::new(151), ingress_identity(ids[1]), true, true),
+        ]
+    );
+
+    for generation in generations {
+        let _frontier = owner
+            .advance_frontier(generation, InputTick::new(256))
+            .unwrap();
+    }
+    owner.pump().unwrap();
+    let mut samples = [0.0_f32; 512];
+    owner
+        .render(AudioBlockMut::new(&mut samples, 512, ChannelLayout::Mono).unwrap())
+        .unwrap();
+    owner.pump().unwrap();
+    let receipts: Vec<_> = generations
+        .into_iter()
+        .flat_map(|generation| {
+            std::iter::from_fn(|| owner.collect_input(generation).unwrap()).collect::<Vec<_>>()
+        })
+        .collect();
+    owner.finalize().unwrap();
+    assert_eq!(
+        owner.result().unwrap().sealed_outcome(),
+        CaptureOutcome::Complete
+    );
+    assert_eq!(receipts.len(), 10);
+    for (id, key, release_raw) in routed {
+        let (_, original_key, onset_raw) = admitted
+            .iter()
+            .find(|(candidate, _, _)| *candidate == id)
+            .unwrap();
+        assert_eq!(*original_key, key);
+        let onset_receipt = receipts
+            .iter()
+            .find(|receipt| receipt.id == *onset_raw)
+            .unwrap();
+        let release_receipt = receipts
+            .iter()
+            .find(|receipt| receipt.id == release_raw)
+            .unwrap();
+        assert_eq!(
+            model.settle_delivered_raw_release(id, onset_receipt, release_receipt),
+            Ok(())
+        );
+    }
+    // The private owner has no per-occurrence outcome after the fault. The
+    // model retains these ingress credits without a joined redemption rule.
+    assert_eq!(
+        model.used,
+        Counts {
+            tracker: 0,
+            ingress: 2,
+            results: 3,
+            ledger: 3,
+        }
     );
 }
 

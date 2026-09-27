@@ -1426,9 +1426,22 @@ an entry bound to a raw ID.
 The model already returned ingress credit for its modeled refusal at source
 service, while result and ledger credits stay charged. The serial owner still
 receives direct offers from the modeled queue rather than a concrete source-ring
-handoff; there is no
-shared raw-capacity charge, actual mixed-ingress result or combined host
-outcome.
+handoff; there is no shared raw-capacity charge, actual mixed-ingress result or
+combined host outcome.
+The next local probe forwards three modeled onset/release occurrences to the
+private test-only mixed owner beside an actual serial raw/recorder owner. The
+queue's key and velocity reach mixed ingress, while the model retains source
+to identity association; the private owner has no source field. Its two-hold
+limit accepts two onset identities and refuses the third with `Dropped(Hold)`
+after raw admission. The model records that refusal, and the release still
+reaches the recorder. A fault injected after ingress charge in the next audio
+quantum retains the exact two onset and two release edges with their times,
+identities and redemption flags in mixed teardown classification. Independent
+serial capture delivers all three raw/recorder pairs and seals complete. Model
+ingress credits for the two accepted identities stay charged alongside result
+and ledger cells. The private owner has no per-occurrence outcome after the
+fault, and the fixture has no shared raw-capacity charge, concrete source-ring
+handoff, joined fault outcome or production mixed offer.
 EVD-0024's component matrix remains
 insufficient for production capacity; ADR-0022's hardware timing and physical
 round-trip gates remain separate.

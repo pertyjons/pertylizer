@@ -306,8 +306,22 @@ raw onset ID even after its model entry is reaped; reconnect is outside this
 fixture. The separate fake-consumer settlement refuses entries bound to a raw
 onset ID.
 The model already returned ingress credit for its modeled refusal at source
-service. Result and ledger credits stay charged; the fixture has no actual
-mixed-ingress outcome, shared raw-capacity charge or concrete source-ring handoff.
+service. Result and ledger credits stay charged; this serial raw/recorder
+probe has no actual mixed-ingress offer, shared raw-capacity charge or
+concrete source-ring handoff.
+The modeled queue now also offers its three onsets to the private test-only
+mixed owner beside the serial raw/recorder owner. It forwards each queued
+key and velocity and retains the source-to-identity association in its ledger;
+the private owner has no source field. Two onsets get live identities. The
+third receives `Dropped(Hold)` after raw acceptance, which the model records,
+and its release still reaches the recorder. A fault in the next audio quantum
+classifies exact onset/release edges and redemption flags for the two accepted
+identities at teardown. All three raw/recorder pairs still deliver and capture
+completes. The model retains accepted ingress credits, result cells and ledger
+entries because the private owner gives no per-occurrence outcome after the
+fault and the fixture has no joined redemption rule. It uses direct offers
+from modeled queues, no shared raw-capacity charge and no production mixed
+offer.
 An off-thread check now places and stamps the bound stream against
 a disposable copy of only the compiled range. It publishes no events or
 reservations. Tests cover wrong-producer and wrong-capacity refusals, disjoint
