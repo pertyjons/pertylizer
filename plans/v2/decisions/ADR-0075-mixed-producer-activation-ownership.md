@@ -703,6 +703,40 @@ simultaneously admit more than 128.
 Any shared charge must linearize the combined onset and release reservation,
 and redemption must not expose a temporarily lower total to another producer.
 
+Linearizing admission at the merger does not itself justify reclaiming ingress
+hold or tracker credit when that merger forwards a release. Those consumers
+apply events in mapped-time order across sources, which can differ from
+source-ring service order. In an ingress-only fixture using the example live
+graph, four source-A onsets can occupy its four ingress holds at time 10.
+Source A then forwards one release at time 100. If the merger frees a shadow
+ingress hold at forwarding, it can give source B a positive onset receipt at
+time 50, although the renderer still holds all four note identities at 50
+and refuses B's onset.
+The renderer's 128 held-occurrence cells are a separate resource; this example
+saturates the plan's four ingress holds, not that table. A credit can become
+reusable only after its particular consumer has processed the release, or
+after a separately proved time-order fence makes earlier reuse safe. Neither
+source-ring removal nor raw admission proves that. The cross-source progress
+premise for recycling through settlement is stated below.
+
+The recorder has the same time-order hazard when its tracker is the limiting
+resource. The concrete host's four ingress holds and four live note identities
+stop it from safely admitting eight simultaneous onsets into its eight-cell
+tracker. A recorder-only fixture with eight tracker cells and no active capture
+can isolate the tracker: eight tracked onsets followed by a later-time release
+can expose `TrackerFull` after an incorrectly credited earlier-time onset.
+With capture armed, a non-capture-eligible onset can instead hit
+`TrackerReserved` before the tracker fills; that case needs its own recorder
+fixture so an ingress refusal does not mask the tracker result.
+Before a positive model onset receipt, the tracker charge must cover the
+recorder's unspent capture reserve in the worst case: arm or stop boundaries
+may change capture eligibility before the onset reaches pairing. Separate
+ingress-only and recorder-only rehearsals must saturate their respective
+resource, forward source A's later release, then offer source B's earlier-time
+onset. The combined host must then prove the same admission rule across both
+consumers. Any positive model receipt that later becomes `IngressRefused`,
+`TrackerFull` or `TrackerReserved` falsifies that rule.
+
 `Retry` cannot stand for every credit shortage. With the initial raw frontier
 still uncollected, fourteen onset/release pairs without a later frontier
 occupy 29 of 32 raw cells. Retrying the next onset until raw receipts free
