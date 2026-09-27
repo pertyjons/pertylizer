@@ -66,7 +66,7 @@ pub(crate) enum MixedBoundaryStorageError {
 }
 
 /// The compiled release and the mapping the boundary replaced.
-/// A future mixed schedule must keep the retired anchor with its old event list
+/// The private mixed schedule keeps the retired anchor with its old event list
 /// until that list can be reclaimed off the audio thread.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[must_use]
@@ -75,7 +75,7 @@ pub(crate) struct MixedBoundaryAdopted {
     retired_anchor: StreamAnchor,
 }
 
-#[allow(dead_code)] // The mixed schedule owner will consume both fields when connected.
+#[allow(dead_code)] // The private mixed callback has no production caller yet.
 impl MixedBoundaryAdopted {
     /// Sounding compiled notes ended at the boundary.
     pub(crate) const fn released(self) -> crate::quantities::HeldNoteCount {

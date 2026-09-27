@@ -837,6 +837,13 @@ fn every_call_the_render_loop_makes_is_inside_the_checked_region() {
         // `requested` is the candidate's immutable stamp. `count_late_activation` is a
         // saturating add on the diagnostics report, exactly like the counters already here.
         "carry_frames",
+        // The private mixed owner reads checked timing and the boundary
+        // operation's Copy return. These const accessors only return fields.
+        // Its effective-event get/shifted methods live in the scanned mixed/hot.rs.
+        "effective",
+        "shift",
+        "retired_anchor",
+        "released",
         "split_at_frame",
         "requested",
         "count_late_activation",

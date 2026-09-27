@@ -298,17 +298,24 @@ off-thread into a boxed, sendable audio capsule. A joined prepared owner can arm
 one stamped candidate while stopped: it checks plan, epoch, table and initial
 sequence, fixes the effective boundary and displacement from the renderer clock,
 then splits the retained control from the audio half and old event list. A
-refusal returns both inputs unchanged. The split audio owner has no render path
-yet. Arm now checks the renderer registry's compiled span against the bound
-partition and proves the actual ended-note, release-queue and timed-control
-storage. Corrupted storage refuses without consuming the attempt. The check
-is followed by profile-matched admission of the closed candidate before arm
+refusal returns both inputs unchanged. Arm checks the renderer registry's
+compiled span against the bound partition and proves the actual ended-note,
+release-queue and timed-control storage. Corrupted storage refuses without
+consuming the attempt. Profile-matched admission follows for the closed
+candidate before arm
 consumes it: actual restoration spends Session, shifted suffix spends Compiled,
 and a one-quantum arbiter stays with the audio half. Refusals preserve both
-inputs. The private render path still needs its held-live test through that
-arbiter and its callback, fault and retirement laws. Other same-quantum Session
-contributors, production live ingress, other payload fanout and host resource
-charges remain open.
+inputs. A private callback now opens one quantum at a time, keeps the fixed
+boundary pending through carry-only calls, suppresses old boundary-time events,
+and charges release, scoped restoration, shifted suffix and one test-only live
+onset through the same arbiter. Partition tests include a held live note in both
+producer orders; one sounding compiled note is released at the boundary and
+live audio from that quantum onward equals a live-only reference. Faults silence
+the complete callback and retain the capsule, with the terminal cause, boundary
+release and restoration charges, cumulative suffix charges, and completed
+quanta reported. The full fault matrix and off-thread retirement remain open.
+Other same-quantum Session contributors, production live ingress,
+other payload fanout and host resource charges remain open.
 No production mixed offer or command refusal has been lifted.
 The private stamped candidate now has a checked, allocation-free effective-event
 view that applies one displacement on each read without rewriting requested-time

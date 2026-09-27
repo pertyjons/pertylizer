@@ -141,6 +141,13 @@ impl PreparedRenderer {
         self.fault(output);
     }
 
+    /// End a private mixed rehearsal for a non-publication terminal cause.
+    /// The owner retains the exact cause and silences the complete callback.
+    #[allow(dead_code)] // Private mixed rendering is not exposed to production.
+    pub(crate) fn terminal_mixed_fault(&mut self, output: &mut AudioBlockMut<'_>) {
+        self.fault(output);
+    }
+
     /// The exclusive loop owner retains the exact terminal cause in its status.
     pub(crate) fn terminal_loop_fault(
         &mut self,

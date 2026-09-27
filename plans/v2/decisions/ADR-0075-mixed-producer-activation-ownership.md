@@ -382,17 +382,24 @@ remains in carry. It records the checked uniform displacement, effective anchor
 `(effective time, destination position)`, and whether the request preceded the
 arm clock. A timing or pairing refusal leaves the renderer and control minter
 unchanged.
+The recorded late-at-arm bit is defensive while a stopped joined owner has no
+render path; this private callback does not count a late activation.
 
 The armed audio owner remains pending until its fixed boundary. It owns exactly
 one prepared publication arbiter; no callback accepts a caller-supplied second
 arbiter, and its storage returns for off-thread destruction with the owner.
-Each callback, before or after adoption, preflights the renderer's epoch and
-table, fault state, output layout and maximum block before any publication or
-boundary change. An invalid output shape returns with the output untouched and
-may be retried with the correct call; while pending, the fixed boundary stays
-the same. An internal epoch/table mismatch or already faulted renderer is
-terminal and silences the complete callback. A call served entirely from carry
-does not adopt. In a call crossing the boundary, the head publishes every old
+The private callback steps at most one new quantum per publication because this
+arbiter prepares one quantum. Carry-only steps publish nothing and do not adopt.
+Adoption happens only at the start of a step that opens a new quantum at the
+fixed boundary; a callback ending exactly at that boundary leaves the owner
+pending. A zero-frame call is a no-op. Output shape is checked before rendering;
+a mismatch returns untouched output and may be retried.
+Each nonempty callback, before or after adoption, preflights the renderer's
+epoch, table and fault state before any publication or boundary change. While
+pending, an output-shape refusal keeps the fixed boundary. An internal
+epoch/table mismatch or already faulted renderer is terminal and silences the
+complete callback. A call served entirely from carry does not adopt. In a call
+crossing the boundary, the head publishes every old
 event strictly before it; the tail starts with adoption. A head fault silences the
 whole callback and leaves the candidate unadopted. The boundary step's clock,
 partition, producer, pending-boundary, ended-storage, gate-storage and
@@ -401,6 +408,9 @@ unbound-target refusals are terminal too, with the candidate unadopted.
 Adoption releases only the compiled partition and moves the renderer to the
 effective anchor. The capsule receives the old event list and returned **old**
 anchor; its requested-time anchor is never promoted when adoption is delayed.
+The retired capsule records the old list's unconsumed cursor and returned old
+anchor separately from its requested anchor; its event counts continue to
+describe the adopted candidate after the list swap.
 The new list starts with scoped restoration, followed by the compiled suffix.
 The first new quantum charges one release operation and the entire restoration
 prefix to Session, then the due suffix to Compiled. Successful render clears
@@ -464,11 +474,24 @@ candidate. A sample-positioned scoped restoration span must fit the plan's
 admitted fanout; with the prior storage check, the closed private schedule's
 event and control writes fit the prepared buffers. Every admission refusal
 returns both inputs unchanged. This closed schedule has no production live
-ingress or other Session contributor. The required held-live rehearsal must
-publish its live note through a test-only Live seam in this same arbiter;
-directly stamping the renderer does
-not discharge it. The audio half still exposes no callback or render path.
-Before any private mixed audio callback or render path can run, off-thread
+ingress or other Session contributor. A single test-only simulated live onset
+may be armed off-thread before rendering, only before the boundary and within
+the supplied profile's Live share. The callback publishes it as Live after
+Session and Compiled in the same arbiter, without a source receipt or production
+ingress. A private callback now renders the admitted closed schedule one quantum
+at a time. Its read-only report records adoption and fault state, the effective
+and retired anchors, sequence, compiled release count, release and restoration
+charges and cumulative suffix charges reached by the arbiter, completed render
+quanta, and the first terminal cause. Every private callback failure is terminal
+and silences its complete output block, even if a prior step in that block succeeded; output
+shape refusal is the retryable exception. Tests compare one-call, 64-frame,
+8-frame and irregular partitions with a held live note in both producer orders,
+and compare boundary and later held-live audio with a live-only renderer after
+asserting that a sounding compiled note contributed audio before the boundary.
+The one test event spends at most one Live credit in its own quantum; the
+profile's shares sum to no more than the event cap, and the renderer's prepared
+scratch covers the plan's widest event beside the compiled release queue.
+Before extending this private path to more contributors, off-thread
 admission must prove that all contributors in that path fit their shares and the
 event limit and that their total control writes, including scoped restoration
 and the compiled release, fit the timed-control storage. Otherwise the renderer

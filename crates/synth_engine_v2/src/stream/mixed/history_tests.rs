@@ -28,6 +28,41 @@ const CONTROLLER: NodeId = NodeId::new(5);
 const GLOBAL: NodeId = NodeId::new(6);
 const NOTE_SOURCE: NodeId = NodeId::new(7);
 
+impl MixedOneShotAudio {
+    /// One test-only Live event through the owned arbiter, prepared before rendering.
+    fn arm_test_live_on(
+        &mut self,
+        at: SampleTime,
+        key: KeyIdentity,
+        velocity: NoteVelocity,
+    ) -> Result<NoteIdentity, MixedOneShotTestLiveError> {
+        use MixedOneShotTestLiveError as Refused;
+        if self.render_started
+            || self.test_live.is_some()
+            || at < self.audio.renderer.clock()
+            || at >= self.timing.effective()
+        {
+            return Err(Refused::Timing);
+        }
+        if self.test_live_share < EventCount::measured(1) {
+            return Err(Refused::Share);
+        }
+        let identity = self.audio.minter.mint_keyed(self.audio.note, key)?;
+        self.test_live = Some(TimedEvent::new(
+            crate::ingress::PerformanceIngress::envelope_for(self.audio.renderer.epoch(), at),
+            EventPayload::Note {
+                identity,
+                edge: NoteEdge::On {
+                    slot: self.audio.note,
+                    key,
+                    velocity,
+                },
+            },
+        ));
+        Ok(identity)
+    }
+}
+
 fn key(raw: u8) -> KeyIdentity {
     KeyIdentity::new(raw).expect("valid key")
 }
@@ -60,6 +95,43 @@ fn bound(compiled_first: bool) -> MixedJoinedPrepared {
             ),
             PlanEvent::new(
                 PlanPosition::new(30),
+                CompiledPayload::NoteOff {
+                    slot: note,
+                    key: key(60),
+                },
+            ),
+        ]
+    })
+}
+
+fn bound_with_compiled_note_held_at_boundary(compiled_first: bool) -> MixedJoinedPrepared {
+    bound_with_events(compiled_first, |note| {
+        vec![
+            PlanEvent::new(
+                PlanPosition::ZERO,
+                CompiledPayload::NoteOn {
+                    slot: note,
+                    key: key(60),
+                    velocity: NoteVelocity::FULL,
+                },
+            ),
+            PlanEvent::new(
+                PlanPosition::new(100),
+                CompiledPayload::NoteOn {
+                    slot: note,
+                    key: key(72),
+                    velocity: NoteVelocity::FULL,
+                },
+            ),
+            PlanEvent::new(
+                PlanPosition::new(150),
+                CompiledPayload::NoteOff {
+                    slot: note,
+                    key: key(72),
+                },
+            ),
+            PlanEvent::new(
+                PlanPosition::new(200),
                 CompiledPayload::NoteOff {
                     slot: note,
                     key: key(60),
@@ -312,6 +384,359 @@ fn render_quantum(renderer: &mut PreparedRenderer, events: &[TimedEvent]) -> Vec
         .render(output, TimedEvents::new(events))
         .expect("admitted quantum");
     samples
+}
+
+fn one_shot_rehearsal(
+    partition: &[usize],
+    compiled_first: bool,
+) -> (Vec<f32>, MixedOneShotRenderReport) {
+    let prepared = bound_with_compiled_note_held_at_boundary(compiled_first);
+    let history = prepared
+        .prepare_history(SampleTime::new(64), PlanPosition::new(100))
+        .expect("history");
+    let suffix = prepared.prepare_suffix(history).expect("suffix");
+    let candidate = prepared.stamp_suffix(suffix).expect("stamp");
+    let (_, mut audio) = prepared
+        .arm_one_shot(candidate, &mixed_profile())
+        .expect("private arm");
+    let live = audio
+        .arm_test_live_on(SampleTime::ZERO, key(48), NoteVelocity::FULL)
+        .expect("one admitted test live onset");
+    assert_eq!(audio.audio.minter.resolve(live), Resolution::Live);
+    let mut samples = vec![0.0_f32; partition.iter().sum()];
+    let mut offset = 0;
+    for &frames in partition {
+        let end = offset + frames;
+        let output = AudioBlockMut::new(&mut samples[offset..end], frames, ChannelLayout::Mono)
+            .expect("mono block");
+        let allocator_events = crate::render_allocation::count_allocs(|| {
+            audio.render_private(output).expect("private render");
+        });
+        assert_eq!(allocator_events, 0, "callback allocated or deallocated");
+        offset = end;
+    }
+    assert_eq!(audio.audio.minter.resolve(live), Resolution::Live);
+    (samples, audio.report())
+}
+
+#[test]
+fn private_one_shot_audio_is_partition_invariant_with_live_held_across_boundary() {
+    let one = [512];
+    let sixty_four = [64; 8];
+    let tiny = [8; 64];
+    let irregular = [7, 63, 90, 1, 256, 95];
+    for compiled_first in [true, false] {
+        let (reference, report) = one_shot_rehearsal(&one, compiled_first);
+        assert!(report.adopted);
+        assert!(!report.faulted);
+        assert!(report.release_charged);
+        assert_eq!(report.released_compiled, HeldNoteCount::measured(1));
+        assert!(report.restoration_charged.get() > 0);
+        assert!(report.suffix_charged.get() > 0);
+        assert_eq!(report.completed_quanta, QuantumCount::measured(7));
+        assert!(reference.iter().any(|sample| *sample != 0.0));
+        for partition in [&sixty_four[..], &tiny[..], &irregular[..]] {
+            let (samples, candidate_report) = one_shot_rehearsal(partition, compiled_first);
+            assert_eq!(samples, reference);
+            assert_eq!(candidate_report, report);
+        }
+    }
+}
+
+#[test]
+fn private_one_shot_audio_waits_for_a_new_quantum_before_adoption() {
+    let (prepared, candidate) = one_shot_with_boundary_on(true);
+    let (_, mut audio) = prepared
+        .arm_one_shot(candidate, &mixed_profile())
+        .expect("private arm");
+    let mut samples = [0.0_f32; 128];
+    let first = AudioBlockMut::new(&mut samples[..64], 64, ChannelLayout::Mono).expect("first");
+    audio.render_private(first).expect("carry only");
+    assert_eq!(audio.audio.renderer.clock(), SampleTime::ZERO);
+    assert!(!audio.report().adopted);
+    let second = AudioBlockMut::new(&mut samples[64..], 64, ChannelLayout::Mono).expect("second");
+    audio.render_private(second).expect("old quantum");
+    assert_eq!(audio.audio.renderer.clock(), SampleTime::new(64));
+    assert!(
+        !audio.report().adopted,
+        "ending exactly at boundary stays pending"
+    );
+    let mut next = [0.0_f32; 1];
+    let output = AudioBlockMut::new(&mut next, 1, ChannelLayout::Mono).expect("new quantum");
+    audio.render_private(output).expect("boundary quantum");
+    assert!(audio.report().adopted);
+    assert_eq!(audio.report().completed_quanta, QuantumCount::measured(2));
+}
+
+#[test]
+fn private_one_shot_audio_refuses_wrong_shape_without_changing_the_fixed_boundary() {
+    let (prepared, candidate) = one_shot_with_boundary_on(true);
+    let (_, mut audio) = prepared
+        .arm_one_shot(candidate, &mixed_profile())
+        .expect("private arm");
+    let mut wrong = [0.25_f32; 2];
+    let block = AudioBlockMut::new(&mut wrong, 1, ChannelLayout::Stereo).expect("stereo block");
+    assert_eq!(
+        audio.render_private(block),
+        Err(MixedOneShotRenderError::OutputShape)
+    );
+    assert_eq!(wrong, [0.25; 2]);
+    assert_eq!(audio.audio.renderer.clock(), SampleTime::ZERO);
+    assert!(!audio.report().faulted);
+    let mut correct = [0.0_f32; 129];
+    let block = AudioBlockMut::new(&mut correct, 129, ChannelLayout::Mono).expect("mono block");
+    audio.render_private(block).expect("same fixed boundary");
+    assert!(audio.report().adopted);
+    assert_eq!(audio.report().effective_anchor.time(), SampleTime::new(64));
+}
+
+#[test]
+fn private_one_shot_audio_boundary_fault_silences_complete_callback_and_stays_terminal() {
+    let (prepared, candidate) = one_shot_with_boundary_on(true);
+    let (_, mut audio) = prepared
+        .arm_one_shot(candidate, &mixed_profile())
+        .expect("private arm");
+    audio.audio.compiled_ended.clear();
+    let mut samples = [1.0_f32; 256];
+    let block = AudioBlockMut::new(&mut samples, 256, ChannelLayout::Mono).expect("block");
+    assert_eq!(
+        audio.render_private(block),
+        Err(MixedOneShotRenderError::Boundary(
+            crate::render::MixedBoundaryReleaseError::EndedStorage
+        ))
+    );
+    assert!(samples.iter().all(|sample| *sample == 0.0));
+    assert_eq!(audio.report().completed_quanta, QuantumCount::measured(1));
+    assert!(!audio.report().adopted);
+    assert!(audio.report().faulted);
+    assert_eq!(
+        audio.report().fault,
+        Some(MixedOneShotRenderError::Boundary(
+            crate::render::MixedBoundaryReleaseError::EndedStorage
+        ))
+    );
+    assert!(audio.capsule.retired_anchor.is_none());
+    let mut later = [1.0_f32; 64];
+    let block = AudioBlockMut::new(&mut later, 64, ChannelLayout::Mono).expect("later block");
+    assert_eq!(
+        audio.render_private(block),
+        Err(MixedOneShotRenderError::Faulted)
+    );
+    assert!(later.iter().all(|sample| *sample == 0.0));
+}
+
+#[test]
+fn private_one_shot_audio_leaves_old_boundary_event_in_retired_list() {
+    let prepared = bound_with_events(true, |note| {
+        vec![
+            PlanEvent::new(
+                PlanPosition::new(63),
+                CompiledPayload::NoteOn {
+                    slot: note,
+                    key: key(60),
+                    velocity: NoteVelocity::FULL,
+                },
+            ),
+            PlanEvent::new(
+                PlanPosition::new(64),
+                CompiledPayload::NoteOff {
+                    slot: note,
+                    key: key(60),
+                },
+            ),
+        ]
+    });
+    let history = prepared
+        .prepare_history(SampleTime::new(64), PlanPosition::new(100))
+        .expect("history");
+    let suffix = prepared.prepare_suffix(history).expect("suffix");
+    let candidate = prepared.stamp_suffix(suffix).expect("stamp");
+    let (_, mut audio) = prepared
+        .arm_one_shot(candidate, &mixed_profile())
+        .expect("private arm");
+    let mut samples = [0.0_f32; 192];
+    let block = AudioBlockMut::new(&mut samples, 192, ChannelLayout::Mono).expect("block");
+    audio.render_private(block).expect("cross boundary");
+    assert_eq!(audio.capsule.retired_next, Some(1));
+    assert_eq!(audio.capsule.events.len(), 2);
+    assert_eq!(
+        audio.capsule.events[1].envelope().time(),
+        SampleTime::new(64)
+    );
+    assert_eq!(audio.audio.renderer.diagnostics().orphan_note_events(), 0);
+}
+
+#[test]
+fn private_one_shot_audio_publication_fault_after_adoption_reports_reached_charges() {
+    let (prepared, candidate) = one_shot_with_boundary_on(true);
+    let restoration = candidate.restoration_count;
+    let session = restoration
+        .checked_add(EventCount::measured(1))
+        .expect("one release");
+    let profile = profile_with_session_share(session);
+    let (_, mut audio) = prepared
+        .arm_one_shot(candidate, &profile)
+        .expect("exact Session share");
+    // Fault injection after admission: treat the first suffix event as another
+    // Session restoration. No production path can mutate the sealed capsule.
+    audio.capsule.restoration_count = session;
+    let mut samples = [1.0_f32; 256];
+    let block = AudioBlockMut::new(&mut samples, 256, ChannelLayout::Mono).expect("block");
+    let error = audio.render_private(block).expect_err("Session overrun");
+    assert!(matches!(
+        error,
+        MixedOneShotRenderError::Publication(crate::publish::PublicationFault::ShareOverrun {
+            class: crate::publish::ProducerClass::Session,
+            ..
+        })
+    ));
+    assert!(samples.iter().all(|sample| *sample == 0.0));
+    let report = audio.report();
+    assert!(report.adopted && report.faulted && report.release_charged);
+    assert_eq!(report.fault, Some(error));
+    assert_eq!(report.restoration_charged, restoration);
+    assert_eq!(report.suffix_charged, EventCount::NONE);
+    assert_eq!(report.completed_quanta, QuantumCount::measured(1));
+    assert_eq!(
+        report.retired_anchor,
+        Some(StreamAnchor::new(SampleTime::ZERO, PlanPosition::ZERO))
+    );
+}
+
+#[test]
+fn private_one_shot_audio_later_quantum_fault_silences_earlier_output() {
+    let (prepared, candidate) = one_shot_with_boundary_on(false);
+    let (_, mut audio) = prepared
+        .arm_one_shot(candidate, &mixed_profile())
+        .expect("private arm");
+    let share = mixed_profile()
+        .limits()
+        .events()
+        .shares()
+        .compiled_event_share();
+    let original = *audio.capsule.events.last().expect("compiled suffix");
+    let late = TimedEvent::new(
+        EventEnvelope::new(
+            original.envelope().epoch(),
+            SampleTime::new(128),
+            original.envelope().source(),
+        ),
+        original.payload(),
+    );
+    // Fault injection after admission, without a producer API that could offer it.
+    audio
+        .capsule
+        .events
+        .extend(std::iter::repeat_n(late, share.get() as usize + 1));
+    let mut samples = [1.0_f32; 320];
+    let block = AudioBlockMut::new(&mut samples, 320, ChannelLayout::Mono).expect("block");
+    let error = audio
+        .render_private(block)
+        .expect_err("later Compiled overrun");
+    assert!(matches!(
+        error,
+        MixedOneShotRenderError::Publication(crate::publish::PublicationFault::ShareOverrun {
+            class: crate::publish::ProducerClass::Compiled,
+            ..
+        })
+    ));
+    assert!(samples.iter().all(|sample| *sample == 0.0));
+    let report = audio.report();
+    assert!(report.adopted && report.faulted);
+    assert_eq!(report.fault, Some(error));
+    assert_eq!(report.completed_quanta, QuantumCount::measured(2));
+    assert_eq!(
+        report.suffix_charged,
+        share
+            .checked_add(EventCount::measured(1))
+            .expect("charge count")
+    );
+}
+
+#[test]
+fn private_one_shot_audio_displacement_fault_keeps_cause_and_counter() {
+    let (prepared, candidate) = one_shot_with_boundary_on_at(true, SampleTime::new(32));
+    let (_, mut audio) = prepared
+        .arm_one_shot(candidate, &mixed_profile())
+        .expect("private arm");
+    let index = audio.capsule.events.len() - 1;
+    let event = audio.capsule.events[index];
+    // Fault injection after off-thread admission; the real candidate cannot overflow.
+    audio.capsule.events[index] = TimedEvent::new(
+        EventEnvelope::new(
+            event.envelope().epoch(),
+            SampleTime::new(u64::MAX),
+            event.envelope().source(),
+        ),
+        event.payload(),
+    );
+    let mut samples = [1.0_f32; 256];
+    let block = AudioBlockMut::new(&mut samples, 256, ChannelLayout::Mono).expect("block");
+    let error = audio.render_private(block).expect_err("shift overflow");
+    assert_eq!(
+        error,
+        MixedOneShotRenderError::Displacement(MixedEffectiveTimeError::EventTimeUnrepresentable {
+            event_index: index,
+            time: SampleTime::new(u64::MAX),
+            shift: FrameCount::new(32),
+        })
+    );
+    assert_eq!(audio.report().fault, Some(error));
+    assert_eq!(audio.audio.renderer.diagnostics().displacement_faults(), 1);
+    assert!(samples.iter().all(|sample| *sample == 0.0));
+}
+
+#[test]
+fn private_one_shot_audio_preserves_held_live_output_after_compiled_release() {
+    for compiled_first in [true, false] {
+        let prepared = bound_with_compiled_note_held_at_boundary(compiled_first);
+        let plan = std::sync::Arc::clone(&prepared.owner.control.plan);
+        let partition = std::sync::Arc::clone(&prepared.owner.control.partition);
+        let epoch = prepared.epoch();
+        let table = prepared.table_id();
+        let anchor = prepared.owner.control.anchor;
+        let history = prepared
+            .prepare_history(SampleTime::new(64), PlanPosition::new(256))
+            .expect("closed compiled history");
+        let suffix = prepared.prepare_suffix(history).expect("empty suffix");
+        let candidate = prepared.stamp_suffix(suffix).expect("stamp");
+        let (_, mut audio) = prepared
+            .arm_one_shot(candidate, &mixed_profile())
+            .expect("private arm");
+        let live = audio
+            .arm_test_live_on(SampleTime::ZERO, key(48), NoteVelocity::FULL)
+            .expect("test live onset");
+        let mut reference =
+            PreparedRenderer::prepare(plan, anchor, epoch, table).expect("reference renderer");
+        assert!(reference.bind_mixed_partition(partition));
+        let live_event = TimedEvent::new(
+            EventEnvelope::new(epoch, SampleTime::ZERO, TestOrigin::Simulated),
+            EventPayload::Note {
+                identity: live,
+                edge: NoteEdge::On {
+                    slot: audio.audio.note,
+                    key: key(48),
+                    velocity: NoteVelocity::FULL,
+                },
+            },
+        );
+        let mut mixed = [0.0_f32; 256];
+        let mixed_output = AudioBlockMut::new(&mut mixed, 256, ChannelLayout::Mono).expect("mixed");
+        audio.render_private(mixed_output).expect("mixed render");
+        let mut live_only = [0.0_f32; 256];
+        let reference_output =
+            AudioBlockMut::new(&mut live_only, 256, ChannelLayout::Mono).expect("live reference");
+        reference
+            .render(reference_output, TimedEvents::new(&[live_event]))
+            .expect("live render");
+        assert!(audio.report().adopted);
+        assert_eq!(audio.report().released_compiled, HeldNoteCount::measured(1));
+        // The first output quantum is the initial carry. Frames 64..128 hold
+        // the old compiled note; frames 128..192 are the adoption quantum.
+        assert_ne!(&mixed[64..128], &live_only[64..128]);
+        assert_eq!(&mixed[128..], &live_only[128..]);
+        assert!(live_only[128..].iter().any(|sample| *sample != 0.0));
+    }
 }
 
 #[test]

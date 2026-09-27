@@ -1,8 +1,8 @@
 //! A split-born mixed stream before ingress, activation or loop commands are enabled.
 //!
 //! This constructor consumes one bound plan and stream. Its two range minters share a
-//! table identity but never share slots. It deliberately exposes no mixed render or
-//! offer method while ADR-0075's release and restoration laws remain open.
+//! table identity but never share slots. It exposes no production mixed render or
+//! offer while ADR-0075's combined-host laws remain open.
 
 use std::{marker::PhantomData, rc::Rc, sync::Arc};
 
@@ -18,7 +18,7 @@ use crate::{
     plan::{CompiledPlan, NoteSlot, PlanId},
     profile::HostProfile,
     publish::PublicationArbiter,
-    quantities::{EventCount, HeldNoteCount, ParameterValue, VoiceCount},
+    quantities::{EventCount, HeldNoteCount, ParameterValue, QuantumCount, VoiceCount},
     render::{EventEnvelope, EventPayload, PreparedRenderer, ScopedParameterRestore, TimedEvent},
     schedule::{
         AdmittedCompiledStream, Closed, CompiledEvent, CompiledPayload, OpenNote, OpenNotes,
@@ -258,6 +258,70 @@ pub(crate) enum MixedOneShotAdmissionError {
     Arbiter(#[from] crate::profile::ProfileError),
 }
 
+/// Failure of the private one-shot audio owner. All but output shape are terminal.
+#[derive(Debug, Clone, Copy, PartialEq, Error)]
+#[allow(dead_code)] // Only the private rehearsal returns this until mixed hosting lands.
+pub(crate) enum MixedOneShotRenderError {
+    #[error("mixed one-shot output does not match the bound profile")]
+    OutputShape,
+    #[error("mixed one-shot audio owner is terminally faulted")]
+    Faulted,
+    #[error("mixed one-shot renderer epoch or table changed")]
+    Pairing,
+    #[error("mixed one-shot renderer was already faulted")]
+    RendererFaulted,
+    #[error("mixed one-shot compiled event at {event} missed clock {clock}")]
+    MissedEvent {
+        event: SampleTime,
+        clock: SampleTime,
+    },
+    #[error(transparent)]
+    Displacement(#[from] MixedEffectiveTimeError),
+    #[error("mixed one-shot candidate event {event_index} disappeared during a checked read")]
+    MissingCandidateEvent { event_index: usize },
+    #[error("mixed one-shot validated output window cannot be borrowed")]
+    InternalOutputWindow,
+    #[error("mixed one-shot restoration count cannot be indexed")]
+    RestorationCount,
+    #[error(transparent)]
+    Boundary(#[from] crate::render::MixedBoundaryReleaseError),
+    #[error(transparent)]
+    Publication(#[from] crate::publish::PublicationFault),
+    #[error(transparent)]
+    Render(#[from] crate::diagnostics::RenderError),
+}
+
+/// Release, restoration and cumulative suffix charges reached by the owned arbiter,
+/// including charges in a quantum that later failed, plus completed renderer quanta.
+#[derive(Debug, Clone, Copy, PartialEq)]
+#[must_use]
+#[allow(dead_code)] // Off-thread collection is the next private slice.
+pub(crate) struct MixedOneShotRenderReport {
+    pub(crate) effective_anchor: StreamAnchor,
+    pub(crate) retired_anchor: Option<StreamAnchor>,
+    pub(crate) sequence: ActivationSequence,
+    pub(crate) adopted: bool,
+    pub(crate) faulted: bool,
+    pub(crate) fault: Option<MixedOneShotRenderError>,
+    pub(crate) release_charged: bool,
+    pub(crate) released_compiled: HeldNoteCount,
+    pub(crate) restoration_charged: EventCount,
+    pub(crate) suffix_charged: EventCount,
+    pub(crate) completed_quanta: QuantumCount,
+}
+
+#[cfg(test)]
+#[derive(Debug, Error)]
+#[allow(dead_code)] // The test-only live seam is exercised by the callback tests.
+pub(crate) enum MixedOneShotTestLiveError {
+    #[error("test live onset must be admitted before rendering, before the boundary")]
+    Timing,
+    #[error("test live onset exceeds the profile live share")]
+    Share,
+    #[error(transparent)]
+    Identity(#[from] crate::identity::IdentityError),
+}
+
 /// Why a private mixed schedule cannot be read at an effective render boundary.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
 pub enum MixedEffectiveTimeError {
@@ -313,48 +377,18 @@ impl MixedEffectiveTiming {
 /// Each read applies the same displacement to restoration and compiled suffix events.
 #[derive(Debug, Clone, Copy)]
 #[must_use]
-#[allow(dead_code)] // No mixed audio-side schedule reader is connected yet.
 pub(crate) struct MixedEffectiveEvents<'a> {
     events: &'a [TimedEvent],
     shift: FrameCount,
 }
 
-#[allow(dead_code)] // The private mixed activation reader is still under construction.
 impl MixedEffectiveEvents<'_> {
+    #[allow(dead_code)] // List diagnostics are exercised only by private tests.
     pub(crate) const fn len(&self) -> usize {
         self.events.len()
     }
 
-    fn shifted(
-        &self,
-        event_index: usize,
-        event: TimedEvent,
-    ) -> Result<TimedEvent, MixedEffectiveTimeError> {
-        let envelope = event.envelope();
-        let time = envelope.time().checked_add(self.shift).map_err(|_| {
-            MixedEffectiveTimeError::EventTimeUnrepresentable {
-                event_index,
-                time: envelope.time(),
-                shift: self.shift,
-            }
-        })?;
-        Ok(TimedEvent::new(
-            EventEnvelope::new(envelope.epoch(), time, envelope.source()),
-            event.payload(),
-        ))
-    }
-
-    pub(crate) fn get(
-        &self,
-        event_index: usize,
-    ) -> Result<Option<TimedEvent>, MixedEffectiveTimeError> {
-        self.events
-            .get(event_index)
-            .copied()
-            .map(|event| self.shifted(event_index, event))
-            .transpose()
-    }
-
+    #[allow(dead_code)] // Full-list inspection is exercised only by private tests.
     pub(crate) fn iter(
         &self,
     ) -> impl ExactSizeIterator<Item = Result<TimedEvent, MixedEffectiveTimeError>> + '_ {
@@ -435,15 +469,17 @@ pub struct MixedStampedCandidate {
 
 /// Sendable, boxed custody for one private audio-side mixed transition.
 ///
-/// Source-selection history stays off-thread. The eventual audio owner must
+/// Source-selection history stays off-thread. The audio owner must
 /// return this box and its retired event list and anchor there for final drop.
 #[must_use]
-#[allow(dead_code)] // The one-shot audio schedule owner is the next slice.
+#[allow(dead_code)] // Off-thread collection of the retired capsule is next.
 pub(crate) struct MixedAudioCandidate {
     plan: PlanId,
     epoch: StreamEpoch,
     table: TableId,
     anchor: StreamAnchor,
+    retired_anchor: Option<StreamAnchor>,
+    retired_next: Option<usize>,
     supersedes: ActivationSequence,
     sequence: ActivationSequence,
     omitted_releases: EventCount,
@@ -570,7 +606,7 @@ pub struct MixedJoinedPrepared {
 /// An off-thread arm refusal retains both inputs for correction or disposal.
 #[derive(Debug)]
 #[must_use]
-#[allow(dead_code)] // The private one-shot renderer is the next slice.
+#[allow(dead_code)] // The private arm has no production host caller.
 pub(crate) struct MixedOneShotArmRefusal {
     reason: MixedOneShotArmError,
     owner: MixedJoinedPrepared,
@@ -588,10 +624,10 @@ pub(crate) struct MixedOneShotControl {
 }
 
 /// One bound audio half, its old list and a single fixed-boundary capsule.
-/// No render or offer path is exposed until the audio scheduler is connected.
+/// Only a private closed-schedule rehearsal can render; no host offer path exists.
 #[derive(Debug)]
 #[must_use]
-#[allow(dead_code)] // The one-shot audio scheduler is the next slice.
+#[allow(dead_code)] // No production host may call the private scheduler.
 pub(crate) struct MixedOneShotAudio {
     audio: MixedStreamAudio,
     arbiter: PublicationArbiter,
@@ -602,6 +638,20 @@ pub(crate) struct MixedOneShotAudio {
     effective_anchor: StreamAnchor,
     late_at_arm: bool,
     in_force: ActivationSequence,
+    adopted: bool,
+    fault: Option<MixedOneShotRenderError>,
+    release_charged: bool,
+    released_compiled: HeldNoteCount,
+    restoration_charged: EventCount,
+    suffix_charged: EventCount,
+    completed_quanta: QuantumCount,
+    render_started: bool,
+    #[cfg(test)]
+    test_live: Option<TimedEvent>,
+    #[cfg(test)]
+    test_live_spent: bool,
+    #[cfg(test)]
+    test_live_share: EventCount,
 }
 
 /// Off-thread compiled-range custody for one bound mixed plan and stream.
@@ -915,7 +965,7 @@ impl MixedJoinedStream {
 impl MixedJoinedPrepared {
     /// Arm exactly one private transition while both halves are stopped off-thread.
     /// A refusal returns the sealed owner and candidate without changing either minter.
-    #[allow(dead_code)] // The one-shot audio scheduler is the next slice.
+    #[allow(dead_code)] // The private arm has no production host caller.
     pub(crate) fn arm_one_shot(
         self,
         candidate: MixedStampedCandidate,
@@ -1043,6 +1093,20 @@ impl MixedJoinedPrepared {
                 effective_anchor,
                 late_at_arm,
                 in_force: ActivationSequence::INITIAL,
+                adopted: false,
+                fault: None,
+                release_charged: false,
+                released_compiled: HeldNoteCount::NONE,
+                restoration_charged: EventCount::NONE,
+                suffix_charged: EventCount::NONE,
+                completed_quanta: QuantumCount::NONE,
+                render_started: false,
+                #[cfg(test)]
+                test_live: None,
+                #[cfg(test)]
+                test_live_spent: false,
+                #[cfg(test)]
+                test_live_share: profile.limits().events().shares().live_event_share(),
             },
         ))
     }
@@ -1632,7 +1696,7 @@ impl MixedSuffixCandidate {
 impl MixedStampedCandidate {
     /// Strip the non-sendable source history and box the audio payload off-thread.
     /// A sequence refusal gives the complete candidate back for off-thread disposal.
-    #[allow(dead_code)] // The one-shot audio schedule owner is the next slice.
+    #[allow(dead_code)] // Only the private arm constructs this capsule.
     pub(crate) fn into_audio_capsule(
         self,
     ) -> Result<Box<MixedAudioCandidate>, Box<(MixedCapsulePrepareError, Self)>> {
@@ -1667,6 +1731,8 @@ impl MixedStampedCandidate {
             epoch,
             table,
             anchor,
+            retired_anchor: None,
+            retired_next: None,
             supersedes,
             sequence,
             omitted_releases,
@@ -1683,7 +1749,7 @@ impl MixedStampedCandidate {
     /// Check the uniform displacement for a possible adoption boundary.
     ///
     /// This is private preparation evidence, not capacity admission or an offer. The
-    /// eventual audio owner must select and validate its actual boundary again.
+    /// private arm selects and validates its actual boundary again.
     pub fn effective_timing(
         &self,
         effective: SampleTime,
@@ -1728,7 +1794,7 @@ impl MixedStampedCandidate {
 
     /// Inspect the private list at one checked effective boundary. The source list and
     /// its requested-time stamps stay intact, including on a timing refusal.
-    #[allow(dead_code)] // The mixed audio-side schedule reader is not connected yet.
+    #[allow(dead_code)] // This complete-list view is exercised by private tests.
     pub(crate) fn effective_events(
         &self,
         effective: SampleTime,
