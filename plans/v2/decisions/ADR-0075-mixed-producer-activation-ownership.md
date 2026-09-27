@@ -79,6 +79,55 @@ modulation histories. A shared upstream source or non-note target whose
 change can affect a live instance requires its own declared ownership or
 ordering law, or admission must refuse that target.
 
+### Scoped restoration rehearsal
+
+The next restoration slice tests one parameter-group event carrying a checked
+contiguous instance span. The renderer must resolve that span to exactly the
+compiled producer's rows. A group whose rows belong to both producers cannot
+use the existing whole-group `SetParameter` or `RestoreController` payload for
+compiled catch-up. One event per row is also invalid: the current Session
+charge is one event per address plus the boundary release, so expanding a
+group into events would exceed an admitted share without a new charge.
+
+The span must be validated off-thread against both the group's instance count
+and the bound plan's compiled producer partition. The mixed renderer must
+recheck its plan identity and that exact partition membership before applying
+any scoped event; an ordinary exclusive renderer must refuse that event. A
+forged or stale span must touch neither a live nor a neighbouring parameter
+row. For sample-positioned controls, both passes of timed-control collection
+must use the same resolved span. Quantum-rate controls must write only the
+span's rows' override and, for a controller source, their controller layer.
+Ordinary exclusive-stream payloads keep their whole-group behavior. The mixed
+renderer's immutable seed scope must be derived from the admitted instance
+partition, not from a candidate's events. An adoption may mark only compiled
+rows whose boundary restoration retargets `SlotState`;
+sample-positioned writes also retarget it through the timed-control path and
+consume the seed flag. Otherwise a skipped live row retains `seed_next` and
+its next write or modulation takes an unintended step. Shared-sum and global
+rows are omitted from both restoration and seeding. During this rehearsal,
+compiled `SetParameter` and `Controller` writers still refuse and there is no
+live parameter lane, so no admitted source writes those omitted rows through
+the parameter path. Their state persists across the seek. Any influence on
+live instances needs the separate ordering or admission law above.
+
+This rehearsal does not authorize an activation. It must first show, with a
+held live note, that a compiled-only restoration leaves every live gate,
+magnitude, controller, override, modulation layer, ramp and subsequent write
+unchanged. A test-only smoothed live row is necessary: all currently declared
+smoothing policies are `None`, which would hide a stray `seed_next`. Both
+producer orders, sample-positioned and quantum-rate controls, a live edge at
+the boundary, an invalid span, and the unchanged state of omitted global and
+shared rows must be tested. A span that fits the group but crosses into the
+live producer's partition must refuse before any write. The compiled rows
+must restore their gates and trigger destinations to zero without a new rising
+edge. A test-only smoothed compiled controller row must also take the restored
+controller and override together as a step; two successive retargets could
+consume the seed on the first and ramp on the second. The payload size,
+Session share, per-event timed fanout, renderer scratch and seed-scope storage
+must be remeasured before any mixed offer uses the payload. The compiled
+history walk, boundary ordering, release custody and loop restoration remain
+separate acceptance work.
+
 ### Protected note credit rehearsal still needs a law
 
 A note-on/key-release-only rehearsal is a possible next slice, but no credit
