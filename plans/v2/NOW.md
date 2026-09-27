@@ -293,6 +293,15 @@ schedule owner to retain with the retired compiled list. The delayed-boundary
 renderer rehearsal changes the musical mapping and verifies the new anchor
 and retained live audio in both producer orders. Its buffer still needs a
 combined-host resource charge, and no mixed schedule calls the operation yet.
+The privately stamped candidate can now shed its non-sendable source history
+off-thread into a boxed, sendable audio capsule. A joined prepared owner can arm
+one stamped candidate while stopped: it checks plan, epoch, table and initial
+sequence, fixes the effective boundary and displacement from the renderer clock,
+then splits the retained control from the audio half and old event list. A
+refusal returns both inputs unchanged. The split audio owner has no render path
+yet. Before one is added, arm must prove the ended-note span and gate/trigger
+queue bounds. The combined-host resource charge remains open. No production
+mixed offer or command refusal has been lifted.
 The private stamped candidate now has a checked, allocation-free effective-event
 view that applies one displacement on each read without rewriting requested-time
 stamps. A renderer rehearsal reads that actual candidate after a delayed boundary,

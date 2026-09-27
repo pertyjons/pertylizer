@@ -360,9 +360,9 @@ and one privately stamped candidate to a split audio owner. This permission
 does not lift the mixed offer, ingress, command or loop refusals and does not
 satisfy combined-host admission. No public API or production host may call it.
 The rehearsal tests one transition only; a successful arm forbids a second arm.
-An arm refusal returns the capsule and leaves the joined owner unarmed and
-off-thread for a new attempt or off-thread drop. It does not consume the one
-transition.
+An arm refusal returns the stamped candidate before capsule construction and
+leaves the joined owner unarmed and off-thread for a new attempt or off-thread
+drop. It does not consume the one transition.
 
 The off-thread half retains the bound control and initial outstanding set. It
 consumes or drops the candidate's source history off-thread and moves a boxed,
@@ -373,8 +373,9 @@ new outstanding set. The audio half receives the entire bound
 `MixedStreamAudio`, including its live range, instance partition and
 preallocated compiled ended-note buffer, and owns the initial event list. Arm
 runs off-thread while the renderer is stopped, with both halves available to
-check plan, epoch, table and `INITIAL`. A refusal returns the capsule on that
-thread; neither its box nor event vector is dropped in a callback. The arm
+check plan, epoch, table and `INITIAL`. A refusal returns the stamped candidate
+on that thread, before a capsule box exists; neither that candidate nor a
+successfully built capsule is finally dropped in a callback. The arm
 fixes the first complete quantum at or after both the request and the next
 unrendered quantum (`PreparedRenderer::clock()`), even when earlier output
 remains in carry. It records the checked uniform displacement, effective anchor
@@ -440,10 +441,14 @@ cannot resume or rearm. Terminal teardown likewise destroys both halves and
 both lists off-thread. The accepted candidate cannot be withdrawn while audio
 runs.
 
-Construction must prove ended-note span and gate/trigger queue bounds before
-arm. The private fault rules do not decide ADR-0073's future combined-host
-terminal scope. The payload, timed fanout, scratch and seed charges and the
-crossing-release amendments to ADR-0051 clause 5 and SOUND-INV-018 remain
+Before a render path is added, extend the off-thread arm preflight to prove the
+ended-note span and gate/trigger queue bounds. A capacity refusal then returns
+the stamped candidate and joined owner unchanged, with the one transition still
+available for a corrected attempt. The current non-renderable arm may be built
+before that proof, but its audio half cannot accept a callback. The private
+fault rules do not decide ADR-0073's future combined-host terminal scope. The
+payload, timed fanout, scratch and seed charges and the crossing-release
+amendments to ADR-0051 clause 5 and SOUND-INV-018 remain
 necessary before a production offer, alongside the other combined-host
 acceptance work in this ADR.
 

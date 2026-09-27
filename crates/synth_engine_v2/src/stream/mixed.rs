@@ -193,6 +193,33 @@ pub(crate) enum MixedCapsulePrepareError {
     SequenceExhausted,
 }
 
+/// Why the private one-shot audio owner could not be armed off-thread.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
+pub(crate) enum MixedOneShotArmError {
+    /// The candidate belongs to another bound plan, stream or table.
+    #[error("mixed one-shot candidate belongs to another prepared owner")]
+    ForeignCandidate,
+    /// Defensive check: bound halves born from one constructor cannot disagree.
+    #[error("mixed one-shot control and audio halves disagree")]
+    ForeignAudio,
+    /// Defensive check: the joined owner has no render path that can fault it.
+    #[error("mixed one-shot renderer needs reprepare")]
+    FaultedRenderer,
+    /// Defensive check: private stamping always supplies `INITIAL`.
+    #[error("mixed one-shot candidate does not supersede INITIAL")]
+    WrongSequence,
+    /// Defensive check: private history preparation and a quantum renderer clock
+    /// each have a representable following boundary.
+    #[error("no mixed one-shot quantum boundary follows {at}")]
+    BoundaryUnrepresentable { at: SampleTime },
+    /// The complete candidate cannot be displaced to the selected boundary.
+    #[error(transparent)]
+    Timing(#[from] MixedEffectiveTimeError),
+    /// Defensive check: a stamped `INITIAL` candidate lost its successor.
+    #[error(transparent)]
+    Capsule(#[from] MixedCapsulePrepareError),
+}
+
 /// Why a private mixed schedule cannot be read at an effective render boundary.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
 pub enum MixedEffectiveTimeError {
@@ -500,6 +527,42 @@ pub struct MixedJoinedPrepared {
     owner: MixedJoinedStream,
     events: Vec<TimedEvent>,
     outstanding: Vec<NoteIdentity>,
+}
+
+/// An off-thread arm refusal retains both inputs for correction or disposal.
+#[derive(Debug)]
+#[must_use]
+#[allow(dead_code)] // The private one-shot renderer is the next slice.
+pub(crate) struct MixedOneShotArmRefusal {
+    reason: MixedOneShotArmError,
+    owner: MixedJoinedPrepared,
+    candidate: MixedStampedCandidate,
+}
+
+/// Retained off-thread compiled identity authority while one private transition runs.
+#[derive(Debug)]
+#[must_use]
+#[allow(dead_code)] // The one-shot retirement path is the next slice.
+pub(crate) struct MixedOneShotControl {
+    control: MixedStreamControl,
+    outstanding: Vec<NoteIdentity>,
+    off_thread: PhantomData<Rc<()>>,
+}
+
+/// One bound audio half, its old list and a single fixed-boundary capsule.
+/// No render or offer path is exposed until the audio scheduler is connected.
+#[derive(Debug)]
+#[must_use]
+#[allow(dead_code)] // The one-shot audio scheduler is the next slice.
+pub(crate) struct MixedOneShotAudio {
+    audio: MixedStreamAudio,
+    events: Vec<TimedEvent>,
+    next: usize,
+    capsule: Box<MixedAudioCandidate>,
+    timing: MixedEffectiveTiming,
+    effective_anchor: StreamAnchor,
+    late_at_arm: bool,
+    in_force: ActivationSequence,
 }
 
 /// Off-thread compiled-range custody for one bound mixed plan and stream.
@@ -811,6 +874,112 @@ impl MixedJoinedStream {
 }
 
 impl MixedJoinedPrepared {
+    /// Arm exactly one private transition while both halves are stopped off-thread.
+    /// A refusal returns the sealed owner and candidate without changing either minter.
+    #[allow(dead_code)] // The one-shot audio scheduler is the next slice.
+    pub(crate) fn arm_one_shot(
+        self,
+        candidate: MixedStampedCandidate,
+    ) -> Result<(MixedOneShotControl, MixedOneShotAudio), Box<MixedOneShotArmRefusal>> {
+        let control = &self.owner.control;
+        let audio = &self.owner.audio;
+        let history = &candidate.suffix.history;
+        if history.plan != control.plan.id()
+            || history.epoch != control.epoch
+            || history.table != control.minter.id()
+        {
+            return Err(Box::new(MixedOneShotArmRefusal {
+                reason: MixedOneShotArmError::ForeignCandidate,
+                owner: self,
+                candidate,
+            }));
+        }
+        if audio.renderer.plan().id() != control.plan.id()
+            || audio.renderer.epoch() != control.epoch
+            || audio.renderer.table_id() != control.minter.id()
+            || audio.table_id() != control.minter.id()
+        {
+            return Err(Box::new(MixedOneShotArmRefusal {
+                reason: MixedOneShotArmError::ForeignAudio,
+                owner: self,
+                candidate,
+            }));
+        }
+        if audio.renderer.diagnostics().needs_reprepare() {
+            return Err(Box::new(MixedOneShotArmRefusal {
+                reason: MixedOneShotArmError::FaultedRenderer,
+                owner: self,
+                candidate,
+            }));
+        }
+        if candidate.supersedes != ActivationSequence::INITIAL {
+            return Err(Box::new(MixedOneShotArmRefusal {
+                reason: MixedOneShotArmError::WrongSequence,
+                owner: self,
+                candidate,
+            }));
+        }
+        let arm_clock = audio.renderer.clock();
+        let at = candidate.anchor.time().max(arm_clock);
+        let Some(effective) = super::next_boundary(at) else {
+            return Err(Box::new(MixedOneShotArmRefusal {
+                reason: MixedOneShotArmError::BoundaryUnrepresentable { at },
+                owner: self,
+                candidate,
+            }));
+        };
+        let timing = match candidate.effective_timing(effective) {
+            Ok(timing) => timing,
+            Err(error) => {
+                return Err(Box::new(MixedOneShotArmRefusal {
+                    reason: error.into(),
+                    owner: self,
+                    candidate,
+                }));
+            }
+        };
+        let late_at_arm = candidate.anchor.time() < arm_clock;
+        let effective_anchor = StreamAnchor::new(effective, candidate.anchor.position());
+        let capsule = match candidate.into_audio_capsule() {
+            Ok(capsule) => capsule,
+            Err(boxed) => {
+                let (error, candidate) = *boxed;
+                return Err(Box::new(MixedOneShotArmRefusal {
+                    reason: error.into(),
+                    owner: self,
+                    candidate,
+                }));
+            }
+        };
+        let Self {
+            owner:
+                MixedJoinedStream {
+                    control,
+                    audio,
+                    off_thread: _,
+                },
+            events,
+            outstanding,
+        } = self;
+        Ok((
+            MixedOneShotControl {
+                control,
+                outstanding,
+                off_thread: PhantomData,
+            },
+            MixedOneShotAudio {
+                audio,
+                events,
+                next: 0,
+                capsule,
+                timing,
+                effective_anchor,
+                late_at_arm,
+                in_force: ActivationSequence::INITIAL,
+            },
+        ))
+    }
+
     /// The bound stream epoch carried by both retained owners.
     pub const fn epoch(&self) -> StreamEpoch {
         self.owner.control.epoch

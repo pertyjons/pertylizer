@@ -865,6 +865,227 @@ fn private_audio_capsule_is_sendable_without_moving_control_or_source_history() 
 }
 
 #[test]
+fn private_one_shot_arm_fixes_boundary_and_splits_identity_custody() {
+    fn require_send<T: Send>() {}
+    require_send::<MixedOneShotAudio>();
+
+    for compiled_first in [true, false] {
+        let prepared = bound_with_events(compiled_first, |note| {
+            vec![PlanEvent::new(
+                PlanPosition::ZERO,
+                CompiledPayload::NoteOn {
+                    slot: note,
+                    key: key(60),
+                    velocity: NoteVelocity::FULL,
+                },
+            )]
+        });
+        let old = prepared.outstanding[0];
+        let history = prepared
+            .prepare_history(SampleTime::new(65), PlanPosition::new(10))
+            .expect("bound history");
+        let suffix = prepared.prepare_suffix(history).expect("bound suffix");
+        let omitted = (
+            suffix.omitted_release_count(),
+            suffix.omitted_expression_count(),
+        );
+        let candidate = prepared.stamp_suffix(suffix).expect("private stamp");
+        let restoration_count = candidate.restoration_count();
+        let (control, audio) = prepared.arm_one_shot(candidate).expect("one arm");
+        assert_eq!(control.control.minter.resolve(old), Resolution::Live);
+        assert_eq!(control.outstanding, vec![old]);
+        assert_eq!(audio.audio.renderer.clock(), SampleTime::ZERO);
+        assert_eq!(audio.events[0].envelope().time(), SampleTime::ZERO);
+        assert_eq!(audio.next, 0);
+        assert_eq!(audio.timing.effective(), SampleTime::new(128));
+        assert_eq!(audio.timing.shift(), FrameCount::new(63));
+        assert_eq!(
+            audio.effective_anchor,
+            StreamAnchor::new(SampleTime::new(128), PlanPosition::new(10))
+        );
+        assert!(!audio.late_at_arm);
+        assert_eq!(audio.in_force, ActivationSequence::INITIAL);
+        assert_eq!(audio.capsule.supersedes, audio.in_force);
+        assert_eq!(audio.capsule.sequence, audio.in_force.next().unwrap());
+        assert_eq!(audio.capsule.plan, control.control.plan.id());
+        assert_eq!(audio.capsule.epoch, control.control.epoch());
+        assert_eq!(audio.capsule.table, control.control.table_id());
+        assert_eq!(
+            audio.capsule.anchor,
+            StreamAnchor::new(SampleTime::new(65), PlanPosition::new(10))
+        );
+        assert_eq!(
+            audio.capsule.events.len(),
+            audio.capsule.event_count.as_usize().unwrap()
+        );
+        assert_eq!(
+            audio.capsule.outstanding.len(),
+            audio.capsule.outstanding_count.as_usize().unwrap()
+        );
+        assert_eq!(
+            audio.capsule.minter.live(),
+            audio.capsule.outstanding_count.get()
+        );
+        assert_eq!(audio.capsule.restoration_count, restoration_count);
+        assert_eq!(
+            (
+                audio.capsule.omitted_releases,
+                audio.capsule.omitted_expressions
+            ),
+            omitted
+        );
+    }
+}
+
+#[test]
+fn private_one_shot_arm_returns_foreign_candidate_without_changing_owner() {
+    for compiled_first in [true, false] {
+        let prepared = bound_with_events(compiled_first, |note| {
+            vec![PlanEvent::new(
+                PlanPosition::ZERO,
+                CompiledPayload::NoteOn {
+                    slot: note,
+                    key: key(60),
+                    velocity: NoteVelocity::FULL,
+                },
+            )]
+        });
+        let foreign = bound(!compiled_first);
+        let history = foreign
+            .prepare_history(SampleTime::new(64), PlanPosition::new(10))
+            .expect("foreign history");
+        let suffix = foreign.prepare_suffix(history).expect("foreign suffix");
+        let candidate = foreign.stamp_suffix(suffix).expect("foreign stamp");
+        let epoch = prepared.epoch();
+        let table = prepared.table_id();
+        let original = prepared.outstanding[0];
+        let count = prepared.event_count();
+        let refused = prepared.arm_one_shot(candidate).expect_err("foreign epoch");
+        assert_eq!(refused.reason, MixedOneShotArmError::ForeignCandidate);
+        assert_eq!(refused.owner.epoch(), epoch);
+        assert_eq!(refused.owner.table_id(), table);
+        assert_eq!(refused.owner.event_count(), count);
+        assert_eq!(refused.owner.owner.audio.renderer.clock(), SampleTime::ZERO);
+        assert_eq!(
+            refused.owner.owner.control.minter.resolve(original),
+            Resolution::Live
+        );
+        assert_eq!(
+            refused.owner.owner.audio.renderer.anchor_for_test(),
+            StreamAnchor::new(SampleTime::ZERO, PlanPosition::ZERO)
+        );
+        assert_eq!(refused.candidate.anchor.time(), SampleTime::new(64));
+        assert_eq!(
+            refused.candidate.event_count().as_usize(),
+            Some(refused.candidate.events.len())
+        );
+        assert_eq!(
+            refused.candidate.outstanding_count().as_usize(),
+            Some(refused.candidate.outstanding.len())
+        );
+        let returned = refused.owner;
+        let history = returned
+            .prepare_history(SampleTime::new(64), PlanPosition::new(10))
+            .expect("retry history");
+        let suffix = returned.prepare_suffix(history).expect("retry suffix");
+        let candidate = returned.stamp_suffix(suffix).expect("retry stamp");
+        let (control, audio) = returned.arm_one_shot(candidate).expect("retry arm");
+        assert_eq!(control.control.minter.resolve(original), Resolution::Live);
+        assert_eq!(audio.timing.effective(), SampleTime::new(64));
+    }
+}
+
+#[test]
+fn private_one_shot_arm_uses_on_grid_request_without_extra_quantum() {
+    let prepared = bound(true);
+    let history = prepared
+        .prepare_history(SampleTime::new(64), PlanPosition::new(10))
+        .expect("history");
+    let suffix = prepared.prepare_suffix(history).expect("suffix");
+    let candidate = prepared.stamp_suffix(suffix).expect("stamp");
+    let (_, audio) = prepared.arm_one_shot(candidate).expect("arm");
+    assert_eq!(audio.timing.effective(), SampleTime::new(64));
+    assert_eq!(audio.timing.shift(), FrameCount::ZERO);
+    assert!(!audio.late_at_arm);
+}
+
+#[test]
+fn private_one_shot_arm_uses_next_unrendered_quantum_after_request() {
+    let mut prepared = bound_with_events(true, |note| {
+        vec![PlanEvent::new(
+            PlanPosition::new(128),
+            CompiledPayload::NoteOn {
+                slot: note,
+                key: key(60),
+                velocity: NoteVelocity::FULL,
+            },
+        )]
+    });
+    let _ = render_quantum(&mut prepared.owner.audio.renderer, &[]);
+    let _ = render_quantum(&mut prepared.owner.audio.renderer, &[]);
+    assert_eq!(prepared.owner.audio.renderer.clock(), SampleTime::new(64));
+    let history = prepared
+        .prepare_history(SampleTime::new(32), PlanPosition::ZERO)
+        .expect("history");
+    let suffix = prepared.prepare_suffix(history).expect("suffix");
+    let candidate = prepared.stamp_suffix(suffix).expect("stamp");
+    let (_, audio) = prepared.arm_one_shot(candidate).expect("arm");
+    assert_eq!(audio.timing.effective(), SampleTime::new(64));
+    assert_eq!(audio.timing.shift(), FrameCount::new(32));
+    assert!(audio.late_at_arm);
+    assert_eq!(audio.capsule.anchor.time(), SampleTime::new(32));
+}
+
+#[test]
+fn private_one_shot_arm_timing_refusal_preserves_both_inputs() {
+    let prepared = bound_with_events(false, |note| {
+        vec![PlanEvent::new(
+            PlanPosition::new(64),
+            CompiledPayload::NoteOn {
+                slot: note,
+                key: key(60),
+                velocity: NoteVelocity::FULL,
+            },
+        )]
+    });
+    let boundary = u64::MAX - (u64::MAX % u64::from(crate::time::QUANTUM_FRAMES));
+    let requested = SampleTime::new(boundary - 1);
+    let history = prepared
+        .prepare_history(requested, PlanPosition::ZERO)
+        .expect("history");
+    let suffix = prepared.prepare_suffix(history).expect("suffix");
+    let candidate = prepared
+        .stamp_suffix(suffix)
+        .expect("stamp at final sample");
+    let epoch = prepared.epoch();
+    let count = prepared.event_count();
+    let original = prepared.outstanding[0];
+    let refused = prepared
+        .arm_one_shot(candidate)
+        .expect_err("shift overflows");
+    assert!(matches!(
+        refused.reason,
+        MixedOneShotArmError::Timing(MixedEffectiveTimeError::EventTimeUnrepresentable { .. })
+    ));
+    assert_eq!(refused.owner.epoch(), epoch);
+    assert_eq!(refused.owner.event_count(), count);
+    assert_eq!(refused.owner.owner.audio.renderer.clock(), SampleTime::ZERO);
+    assert_eq!(
+        refused.owner.owner.control.minter.resolve(original),
+        Resolution::Live
+    );
+    assert_eq!(refused.candidate.anchor.time(), requested);
+    assert_eq!(
+        refused
+            .candidate
+            .events
+            .last()
+            .map(|event| event.envelope().time()),
+        Some(SampleTime::new(u64::MAX))
+    );
+}
+
+#[test]
 fn private_effective_timing_refuses_suffix_overflow_after_restoration_fits() {
     let prepared = bound_with_events(true, |note| {
         vec![
