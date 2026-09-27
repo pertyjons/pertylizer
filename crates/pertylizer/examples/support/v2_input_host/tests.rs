@@ -1889,6 +1889,49 @@ fn concrete_source_accepts_a_message_at_its_prior_frontier() {
 }
 
 #[test]
+fn concrete_source_release_links_are_visible_before_raw_receipts() {
+    use super::source::SourceInbox;
+    let (mut control, audio, generations) = fixture();
+    let clock = prepare::simulated_clock(audio.core.acknowledged().epoch, 0).unwrap();
+    let (mut producer, mut inbox) =
+        SourceInbox::prepare(generations[0], control.halt_handle(), clock);
+    let messages = [
+        (10, [0x90, 60, 100]),
+        (11, [0x90, 60, 110]),
+        (12, [0x80, 60, 0]),
+        (13, [0x90, 60, 0]),
+    ];
+    let mut queue_ids = Vec::new();
+    let mut originals = Vec::new();
+    for (tick, bytes) in messages {
+        let observation = InputObservation::Message {
+            tick: InputTick::new(tick),
+            arrival: SampleTime::new(tick),
+            input: Midi1Input::from_bytes(bytes).unwrap(),
+        };
+        queue_ids.push(producer.submit_owned(observation).unwrap().parts().1);
+        originals.push(observation);
+    }
+    let mut handoffs = Vec::new();
+    inbox.service_handoff_identified(&mut control, |handoff, report| {
+        assert!(report.attribution_error.is_none());
+        handoffs.push((handoff.unwrap(), report.offer.result.unwrap()));
+    });
+    assert_eq!(handoffs.len(), messages.len());
+    for (index, (handoff, _)) in handoffs.iter().enumerate() {
+        assert_eq!(handoff.stamp().queue(), queue_ids[index]);
+        assert_eq!(handoff.observation(), originals[index]);
+    }
+    assert!(control.collect_input(generations[0]).unwrap().is_none());
+    let raw_ids: Vec<_> = handoffs.iter().map(|(_, id)| *id).collect();
+    assert_eq!(control.core.matched_onset(raw_ids[0]), Ok(None));
+    assert_eq!(control.core.matched_onset(raw_ids[1]), Ok(None));
+    assert_eq!(control.core.matched_onset(raw_ids[2]), Ok(Some(raw_ids[0])));
+    assert_eq!(control.core.matched_onset(raw_ids[3]), Ok(Some(raw_ids[1])));
+    assert!(inbox.close(producer).is_ok());
+}
+
+#[test]
 fn producer_rejects_unmappable_clock_before_ring_custody() {
     use super::source::{SourceInbox, SourceSendError};
     let (mut control, audio, generations) = fixture();

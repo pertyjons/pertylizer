@@ -306,6 +306,48 @@ fn raw_repeated_key_releases_redeem_the_oldest_accepted_onset() {
     );
     assert!(input.held_onsets.iter().all(Option::is_none));
     assert_ne!(first, second);
+    assert_eq!(input.matched_onset(first), Ok(None));
+    assert_eq!(input.matched_onset(first_release), Ok(Some(first)));
+    assert_eq!(input.matched_onset(second_release), Ok(Some(second)));
+    let (_, other_generation) = ready_with_cells(0, 8);
+    assert_eq!(
+        input.matched_onset(InputEventId {
+            generation: other_generation,
+            serial: first_release.serial(),
+        }),
+        Err(InputError::Stale)
+    );
+    assert_eq!(
+        input.matched_onset(InputEventId {
+            generation,
+            serial: u64::MAX,
+        }),
+        Err(InputError::ReceiptOwner)
+    );
+
+    let unmatched = input
+        .offer_message(
+            generation,
+            InputTick::new(14),
+            SampleTime::new(14),
+            Midi1Input::from_bytes([0x80, 61, 0]).unwrap(),
+        )
+        .unwrap();
+    assert_eq!(input.matched_onset(unmatched), Ok(None));
+    input.device_lost(generation).unwrap();
+    let receipts: Vec<_> = std::iter::from_fn(|| input.collect()).collect();
+    assert_eq!(
+        receipts
+            .iter()
+            .find(|receipt| receipt.id == first_release)
+            .unwrap()
+            .matched_onset,
+        Some(first)
+    );
+    assert_eq!(
+        input.matched_onset(first_release),
+        Err(InputError::ReceiptOwner)
+    );
 }
 
 #[test]

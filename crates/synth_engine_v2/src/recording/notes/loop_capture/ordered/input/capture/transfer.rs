@@ -106,6 +106,13 @@ impl InputCaptureControl {
         result.map_err(|error| (observation, error))
     }
 
+    /// Read the raw admission-time link before its receipt is collected.
+    /// This lookup grants no release or mixed-ingress capacity.
+    pub fn matched_onset(&self, id: InputEventId) -> Result<Option<InputEventId>, InputError> {
+        let port = self.port(id.generation())?;
+        self.inputs[port].matched_onset(id)
+    }
+
     /// Validate and retain a producer's terminal refusal whose original never
     /// entered the source ring. Reunion attributes accepted late or uncertain claims;
     /// source order, a retired full ring, and source-serial exhaustion are attestations

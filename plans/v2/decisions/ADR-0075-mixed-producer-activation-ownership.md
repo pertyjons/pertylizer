@@ -1477,6 +1477,16 @@ fixture compares the handoff original with each delivered raw receipt;
 full-ring owned retry and raw-refusal fixtures retain the same original.
 Pre-ring faults have no queued handoff. This is payload custody for a future
 mixed lane, not mixed staging, a shared charge or a combined outcome.
+
+The raw owner now offers a read-only admission-time `matched_onset(id)` lookup
+for a retained raw cell. It distinguishes an unmatched release from an absent
+ID and refuses another generation. The concrete source-inbox fixture reads
+the oldest same-key link for two queued releases before any raw receipt is
+collected. This removes the need to wait for receipt publication merely to
+learn raw pairing. The lookup must happen while the core raw cell remains;
+a host may retain a receipt after that cell is reaped. It does not identify a
+mixed occurrence, reserve shared capacity or settle either consumer.
+
 Raw service keeps independent fixed source prefixes. A separate design read
 found that applying the mixed-time selector to this raw service would hold a
 source's far-ahead frontier behind the other source's earlier messages. The

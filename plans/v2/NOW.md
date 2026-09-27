@@ -354,6 +354,17 @@ retry and raw refusals preserve it. Pre-ring faults have no queued handoff.
 This supplies source payload custody for a future mixed lane but adds no mixed
 staging, shared charge or combined outcome.
 
+The raw owner now exposes `matched_onset(id)` while an accepted raw cell is
+retained. A concrete source-inbox test pairs queued originals with raw IDs and
+reads repeated-key FIFO release links before any raw receipt is available.
+An unmatched release returns `None`; an ID whose core raw cell is absent
+returns `ReceiptOwner`, and a foreign generation returns `Stale`. The link must
+be read at raw admission before that cell is reaped; a host may later retain a
+receipt after reaping. The lookup grants no reservation or combined receipt.
+On resumption, carry this immediate link with the source handoff into a bounded
+mixed stage, retaining exact refusals and checking credit against both consumers
+before reporting acceptance.
+
 A separate V2-local bounded stage model now gives each of two sources packet
 cells and reserves one future release cell with each admitted onset. An empty
 peer can publish a strictly later frontier even when the other source is full;

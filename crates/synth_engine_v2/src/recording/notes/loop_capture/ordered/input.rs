@@ -292,6 +292,18 @@ impl SimulatedNoteInput {
         Ok(())
     }
 
+    /// Read the admission-time release link while this raw ID still owns a
+    /// retained cell. An unmatched release and a missing ID are distinct.
+    pub fn matched_onset(&self, id: InputEventId) -> Result<Option<InputEventId>, InputError> {
+        self.check(id.generation())?;
+        self.slots
+            .iter()
+            .flatten()
+            .find(|entry| entry.id == id)
+            .map(|entry| entry.matched_onset)
+            .ok_or(InputError::ReceiptOwner)
+    }
+
     fn action(&self, entry: &InputEntry) -> Option<SessionSourceAction> {
         let source = self.binding?;
         let clock = self.clock?;
