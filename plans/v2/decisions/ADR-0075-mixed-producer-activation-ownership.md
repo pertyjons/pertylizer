@@ -666,6 +666,33 @@ Joined teardown must classify the actual note and release state, not infer it
 from that outcome alone. Add these counterexamples to any protected-release
 rehearsal before claiming it passes.
 
+A source ledger cannot require the host-reported, settled audition outcome
+before forwarding a release. The onset's raw receipt needs a merge frontier:
+the minimum frontier over all sources must pass its time. That receipt settles
+the audition ID before the host reports its outcome. If the needed frontier
+follows the held release in the same source FIFO, neither can progress. A
+frontier on another source can create the same cycle; both forms must falsify
+any proposed wait rule. A direct renderer outcome has different custody and
+does not discharge this host-reported-outcome falsifier.
+
+A successful source-ring push grants queue custody, not a model receipt. The
+merger may still return `InputOfferError::Refused` without an `InputEventId`;
+audition preflight refusals, including a stale message, and raw admission
+failures request host halt. Other pre-admission `Stale` or `State` refusals
+can return without a new halt. Their source and occurrence disposition remains
+to be specified. `SourceProducer::send` returns the original both for a full
+ring, which requires ordered retry, and for a requested halt, which requires
+explicit shutdown refusal. A future nonterminal capacity refusal with a FIFO
+tombstone would be a new contract and must distinguish those cases. An onset
+that reaches the renderer but receives `Refused(IngressRefused)` still owns a
+renderer tombstone; its release must reach the renderer to consume it. The
+note recorder's tracker `TrackerReserved` and `TrackerFull` refusals invalidate
+the recorder source.
+The raw owner then receives a refused source completion, fails with `Delivery`,
+and requests host halt. Its audition packet may already have reached the
+renderer, so joined teardown must classify that voice or tombstone as well
+as the recorder refusal.
+
 ### Split identity custody is not a table copy
 
 An independent design consultation rejected a late merge of a compiled
