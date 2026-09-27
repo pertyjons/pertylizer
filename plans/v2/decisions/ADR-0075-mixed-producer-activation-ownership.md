@@ -566,10 +566,16 @@ interrupts the live renderer before it transfers a packet previously refused
 by renderer admission and the queued suffix into that closed renderer. Those
 packets receive identified `Cancelled` outcomes, and reunion resolves retained
 raw capture annotations without another callback. If the closed renderer still
-rejects a packet, finish retains it and reunion refuses; command cancellation
-has not yet run on that recovery attempt. It does not invent an outcome for a
-broken identity or capacity invariant. This terminal path does not reserve a
-release lane.
+rejects a packet, finish retains it and reunion refuses. Joined recovery still
+cancels host-held commands from the oldest refused audio packet through the
+ring to the newest pending packet. When core halt succeeds and all host-held
+packets cancel, it then collects outcomes for commands already admitted to the
+core. A failed core halt or command cancellation leaves those core completions
+for a retry. It reports audition, halt and the first command fault together
+when they occur in one attempt.
+A failed command cancellation retains that packet and its ordered suffix.
+This path does not invent an outcome for a broken identity or capacity
+invariant or reserve a release lane.
 
 The future proof must carry a potential onset, its source/channel/key FIFO
 tombstone, tracker cell, identity, ingress hold, protected release path and

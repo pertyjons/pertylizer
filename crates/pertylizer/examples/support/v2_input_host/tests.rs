@@ -376,7 +376,9 @@ fn joined_recovery_resolves_renderer_refusal_and_queued_suffix_without_callback(
 
 #[test]
 fn joined_recovery_keeps_a_renderer_identity_fault_in_custody() {
-    use synth_engine_v2::host::live::LiveInputError;
+    use synth_engine_v2::host::{
+        live::LiveInputError, session::loop_transfer::LoopTransferOutcome,
+    };
 
     let (mut control, mut audio, generations) = fixture();
     let profile = HostProfile::harness(
@@ -396,6 +398,13 @@ fn joined_recovery_keeps_a_renderer_identity_fault_in_custody() {
     frontier(&mut control, generations, 256);
     message(&mut control, generations[0], 280, [0x90, 60, 100]);
     message(&mut control, generations[0], 281, [0x90, 62, 100]);
+    let in_core = control
+        .command(SampleTime::new(256), SessionCommand::Play)
+        .unwrap();
+    audio.admit().unwrap();
+    let queued = control
+        .command(SampleTime::new(512), SessionCommand::Stop)
+        .unwrap();
     {
         let audition = audio.audition.as_mut().unwrap();
         audition.hold_refused_after(1).unwrap();
@@ -403,11 +412,91 @@ fn joined_recovery_keeps_a_renderer_identity_fault_in_custody() {
         assert!(matches!(audition.finish(), Err(LiveInputError::Identity)));
         assert!(!audition.is_finished());
     }
+    let mut command_outcomes = Vec::new();
     assert!(matches!(
-        control.recover(&mut audio, |_, _| {}),
+        control.recover(&mut audio, |id, outcome| command_outcomes
+            .push((id, outcome))),
         Err(HostError::Audition(LiveInputError::Identity))
     ));
+    assert_eq!(command_outcomes.len(), 2);
+    assert!(
+        command_outcomes
+            .iter()
+            .any(|(id, outcome)| *id == queued && matches!(outcome, HostOutcome::Cancelled))
+    );
+    assert!(command_outcomes.iter().any(|(id, outcome)| *id == in_core
+        && matches!(outcome,
+            HostOutcome::Delivered(LoopTransferOutcome::Command(receipt))
+                if matches!(receipt.outcome, SessionOutcome::Cancelled))));
+    assert!(matches!(
+        control.recover(&mut audio, |id, outcome| command_outcomes
+            .push((id, outcome))),
+        Err(HostError::Audition(LiveInputError::Identity))
+    ));
+    assert_eq!(command_outcomes.len(), 2);
+    let (mut foreign, _foreign_audio, _) = fixture();
+    audio.refused = Some(
+        foreign
+            .core
+            .prepare_command(SampleTime::new(256), SessionCommand::Play)
+            .unwrap(),
+    );
+    let error = control
+        .recover(&mut audio, |id, outcome| {
+            command_outcomes.push((id, outcome))
+        })
+        .unwrap_err();
+    let HostError::Recovery { earlier, later } = error else {
+        panic!("both independent recovery faults must be reported");
+    };
+    assert!(matches!(
+        *earlier,
+        HostError::Audition(LiveInputError::Identity)
+    ));
+    assert!(matches!(*later, HostError::Transfer(_)));
+    assert!(audio.refused.is_some());
+    assert_eq!(command_outcomes.len(), 2);
     assert!(!audio.audition.as_ref().unwrap().is_finished());
+    assert!(matches!(
+        control.reunite(audio, |_, _| {}),
+        Err(ReuniteError::Pending(_))
+    ));
+}
+
+#[test]
+fn recovery_keeps_later_command_when_older_refused_packet_cannot_cancel() {
+    let (mut control, mut audio, _) = fixture();
+    let (mut foreign, _foreign_audio, _) = fixture();
+    audio.refused = Some(
+        foreign
+            .core
+            .prepare_command(SampleTime::new(256), SessionCommand::Play)
+            .unwrap(),
+    );
+    // Reproduce a packet retained after a full-ring push without filling the
+    // ring with unrelated source observations.
+    let later = control
+        .core
+        .prepare_command(SampleTime::new(256), SessionCommand::Play)
+        .unwrap();
+    let later_id = later.id();
+    control.pending = Some(later);
+    let queued_before = audio.packets.occupied_len();
+    assert!(queued_before > 0);
+    let mut outcomes = Vec::new();
+    assert!(matches!(
+        control.recover(&mut audio, |id, outcome| outcomes.push((id, outcome))),
+        Err(HostError::Transfer(_))
+    ));
+    assert!(outcomes.is_empty());
+    assert!(audio.refused.is_some());
+    assert_eq!(audio.packets.occupied_len(), queued_before);
+    assert!(
+        control
+            .pending
+            .as_ref()
+            .is_some_and(|packet| packet.id() == later_id)
+    );
     assert!(matches!(
         control.reunite(audio, |_, _| {}),
         Err(ReuniteError::Pending(_))

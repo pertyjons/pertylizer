@@ -86,6 +86,20 @@ pub enum HostError {
     Transfer(#[from] LoopTransferError),
     #[error(transparent)]
     Render(#[from] LoopSessionError),
+    #[error("joined recovery reported multiple faults: {earlier}; {later}")]
+    Recovery {
+        earlier: Box<Self>,
+        later: Box<Self>,
+    },
+}
+
+impl HostError {
+    fn combine_recovery(self, later: Self) -> Self {
+        Self::Recovery {
+            earlier: Box::new(self),
+            later: Box::new(later),
+        }
+    }
 }
 
 /// A refused host-level move retains packets as well as their credit owners.
@@ -333,45 +347,63 @@ impl LiveControl {
     }
 
     /// After callback access joins, recover one bounded batch without consuming either
-    /// owner. Returned command outcomes still belong to the caller. Source quiescence
-    /// and finalization are explicitly later operations on the reunited owner.
+    /// owner. Returned command outcomes are final even if a later step fails;
+    /// retries never report them again. An audition fault does not stop command
+    /// cleanup. Commands are cancelled from the oldest refused packet through
+    /// the ring to the newest pending packet. A command fault keeps that packet
+    /// and its later suffix. A command fault or failed core halt leaves core
+    /// completions for retry. Audition, halt and the first command
+    /// fault are all returned when they occur in the same attempt.
+    /// Source quiescence and finalization follow reunion.
     pub fn recover(
         &mut self,
         audio: &mut LiveAudio,
         mut receive: impl FnMut(LoopTransferId, HostOutcome),
     ) -> Result<(), HostError> {
         self.halt.request_device_lost();
-        if let Some(audition) = &mut audio.audition {
-            audition.finish()?;
-        }
-        audio.core.synchronize_halt()?;
-        let mut pending = self.pending.take();
-        let result = self.cancel_cell(&mut pending);
-        self.pending = pending;
-        if let Some(id) = result? {
-            receive(id, HostOutcome::Cancelled);
-        }
-        if let Some(id) = self.cancel_cell(&mut audio.refused)? {
-            receive(id, HostOutcome::Cancelled);
-        }
-        while let Some(packet) = audio.packets.try_pop() {
-            audio.refused = Some(packet);
+        let audition_error = audio
+            .audition
+            .as_mut()
+            .and_then(|audition| audition.finish().err())
+            .map(HostError::from);
+        let halt_error = audio.core.synchronize_halt().err().map(HostError::from);
+        let cleanup = (|| {
             if let Some(id) = self.cancel_cell(&mut audio.refused)? {
                 receive(id, HostOutcome::Cancelled);
             }
-        }
-        loop {
-            audio.flush();
-            if !self.has_completions() {
-                break;
-            }
-            while self.has_completions() {
-                if let Some((id, outcome)) = self.collect()? {
-                    receive(id, outcome);
+            while let Some(packet) = audio.packets.try_pop() {
+                audio.refused = Some(packet);
+                if let Some(id) = self.cancel_cell(&mut audio.refused)? {
+                    receive(id, HostOutcome::Cancelled);
                 }
             }
-        }
-        Ok(())
+            let mut pending = self.pending.take();
+            let result = self.cancel_cell(&mut pending);
+            self.pending = pending;
+            if let Some(id) = result? {
+                receive(id, HostOutcome::Cancelled);
+            }
+            if halt_error.is_none() {
+                loop {
+                    audio.flush();
+                    if !self.has_completions() {
+                        break;
+                    }
+                    while self.has_completions() {
+                        if let Some((id, outcome)) = self.collect()? {
+                            receive(id, outcome);
+                        }
+                    }
+                }
+            }
+            Ok(())
+        })();
+        let error = audition_error
+            .into_iter()
+            .chain(halt_error)
+            .chain(cleanup.err())
+            .reduce(HostError::combine_recovery);
+        error.map_or(Ok(()), Err)
     }
 
     /// Normal ordered Stop, after the backend and input producers have joined.
