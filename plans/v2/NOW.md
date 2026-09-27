@@ -259,13 +259,19 @@ same-key accepted/refused FIFO, release reservations through the source FIFO,
 and dual-consumer settlement before credit reuse. A release behind an earlier
 onset retry retains its original input in a source-local cell; while that cell
 is occupied, a new onset or release offer causes a terminal `Order` result
-instead of passing it. Ordinary packets have only a preflight in this model;
-their refusal and teardown laws remain open.
+instead of passing it. One host-wide fault cell retains the source, original
+and exact first reason for terminal `Order`, uncharged `NoCredit` or release
+identity exhaustion. The proposed recovery rule uses the stored copy; this
+test model cannot prevent reuse of the identical original returned with the
+first error. Later `Halted(original)` values remain caller-owned for joined
+recovery. The model then halts onset and release offers from both sources.
+A read-only onset preflight preserves the credit-settlement checks
+without issuing a refused packet.
+Ordinary packets have only a preflight; their refusal law remains open.
 Retiring that retry retains a bounded same-key tombstone, so its later release
-cannot end a newer occurrence. Its consumers are still fake. Terminal handling
-for uncharged `NoCredit`, release-attempt identity exhaustion and terminal
-`Order` teardown remains open. Raw occupancy, frontiers, capture reserve, the
-real recorder and the mixed renderer remain to be connected. It does not yet
+cannot end a newer occurrence. Its consumers are still fake. Joined teardown
+after a terminal fault remains open. Raw occupancy, frontiers, capture reserve,
+the real recorder and the mixed renderer remain to be connected. It does not yet
 produce a combined consumer outcome or qualify protected-release service.
 The concrete host connection remains open.
 An off-thread check now places and stamps the bound stream against

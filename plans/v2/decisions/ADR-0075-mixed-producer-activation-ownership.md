@@ -738,8 +738,9 @@ retry stays in one source-local pending cell and returns `Blocked(token)`.
 The original input remains in that cell. A new onset offered while either
 pending cell owns source order gets terminal `Order(original)`. A new release
 gets `Order(original)` when the release cell is occupied; when only the onset
-retry is pending, it enters that cell and gets `Blocked(token)`. Subsequent
-fresh offers get `Halted(original)`. Matching retries after the halt receive
+retry is pending, it enters that cell and gets `Blocked(token)`. A terminal
+fault requests model host halt. Later onset or release offers from either
+source get `Halted(original)`. Matching retries after the halt receive
 `Halted(token)`; stale or foreign tokens receive `Stale(token)`. The pending
 onset cannot retire after the halt. Both pending originals remain held for
 joined teardown, which this model does not implement.
@@ -762,17 +763,39 @@ The model checks one and two held onsets, same-key FIFO, ordinary saturation,
 blocked release ownership, wrong-token rejection, a final stray release and
 retry whose missing ring headroom can be restored by draining `q`.
 If `R_s + 2 > S`, draining this ring cannot admit another onset, so this shortage
-cannot be an ordered retry. A test leaves `q = 0` and confirms `NoCredit`
-without taking shared credit. Shared-credit shortage and occurrence-ID
-exhaustion return the same uncharged `NoCredit`. None of these paths keeps a
-pre-ring tombstone or supplies a final producer outcome; a later release could
-consume a newer same-key onset. Release-attempt identity exhaustion likewise
-returns the original without a pending cell or terminal disposition.
+cannot be an ordered retry. The model returns `NoCredit(original, reason)`
+without taking shared credit or ring custody, and requests host halt. One
+host-wide fault cell retains the source, original and exact reason for later
+attribution. It is the authoritative recovery copy; the returned `Copy` value
+is diagnostic and must not be replayed or recorded independently. A future
+owner must enforce that custody rule. The cell is not an accepted occurrence
+or a replacement for joined teardown. It preserves the first fault while
+later offers return `Halted`. The fault cell does not retain their originals:
+the caller still owns each `Halted(original)` and a combined host must classify
+that unexamined suffix at teardown. A source-reserve shortage and source-order
+`Order` have source-local causes. Tracker, ingress, result or ledger shortage
+and either model-wide identity counter have shared-state causes. Cause origin
+does not change the terminal scope. ADR-0073 establishes a host-terminal policy
+for its audition operation credit and tracker exhaustion. Extending that scope
+to this model's other shares, source reserve, identity and `Order` is a
+conservative rehearsal choice, not an accepted production decision. The model
+does not silence real output. Later releases cannot enter either source ring.
+The onset preflight is read-only so settlement checks can probe shared credit
+without issuing a terminally refused packet. For valid onsets, its check order
+is host halt, pending source order, nondrainable source reserve, tracker,
+ingress, result, ledger, occurrence identity, then drainable ring headroom.
+Tests preserve the cross-source credit-reuse falsifier through that preflight.
+Actual terminal examples cover source reserve, tracker, both identity counters
+and `Order`; preflight also covers ingress, result and ledger shortage.
+Release-attempt identity exhaustion behind an onset retry also retains its
+original and reason in the terminal cell without a shared charge or release
+pending cell. The earlier charged retry remains held.
 The ordinary-packet fixture checks capacity without issuing a refused source
 attempt; it has no ordinary-packet retry or terminal-result contract. The
-model's terminal `Order` also has no joined teardown for the pending onset,
-pending release, earlier charged attempts and held releases. Those source and
-teardown laws remain open for the combined host.
+model's host halt has no joined teardown for the pending onset, pending release,
+earlier charged attempts, held releases or queued prefixes. It does not silence
+real output, settle raw attribution or supply a combined host outcome. Those
+source and teardown laws remain open for the combined host.
 Neither the local reservation nor the retirement tombstone grants a protected
 release claim for the host. The model also lacks raw and audition consumers,
 frontiers, cross-thread handoff and a combined outcome. The source-ring

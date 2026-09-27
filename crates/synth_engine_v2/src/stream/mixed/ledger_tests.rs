@@ -46,6 +46,53 @@ enum RingPacket {
     Release { id: OccurrenceId, key: Key },
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum NoCreditReason {
+    SourceReserve,
+    Tracker,
+    Ingress,
+    Results,
+    Ledger,
+    OccurrenceIdentity,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum TerminalReason {
+    NoCredit(NoCreditReason),
+    Order,
+    ReleaseIdentity,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum CauseOrigin {
+    SourceLocal,
+    SharedState,
+}
+
+impl TerminalReason {
+    const fn origin(self) -> CauseOrigin {
+        match self {
+            Self::NoCredit(NoCreditReason::SourceReserve) | Self::Order => CauseOrigin::SourceLocal,
+            Self::NoCredit(_) | Self::ReleaseIdentity => CauseOrigin::SharedState,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct TerminalFault {
+    original: Midi1Input,
+    reason: TerminalReason,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum OnsetPreflight {
+    Ready,
+    Retry,
+    NoCredit(NoCreditReason),
+    Order,
+    Halted,
+}
+
 struct SourceHold {
     id: OccurrenceId,
     key: Key,
@@ -102,7 +149,7 @@ struct Retirement {
 
 #[derive(Debug)]
 enum SubmitError {
-    NoCredit,
+    NoCredit(Midi1Input, NoCreditReason),
     Retry(RetryToken),
     Order(Midi1Input),
     Halted(Midi1Input),
@@ -157,7 +204,8 @@ struct Model {
     source_holds: Vec<SourceHold>,
     retry_pending: [Option<PendingRetry>; 2],
     release_pending: [Option<PendingRelease>; 2],
-    halted: [bool; 2],
+    host_halted: bool,
+    terminal_fault: Option<(ModelSource, TerminalFault)>,
     entries: Vec<Entry>,
     next: u64,
     next_release: u64,
@@ -174,7 +222,8 @@ impl Model {
             source_holds: Vec::new(),
             retry_pending: [None, None],
             release_pending: [None, None],
-            halted: [false; 2],
+            host_halted: false,
+            terminal_fault: None,
             entries: Vec::new(),
             next: 0,
             next_release: 0,
@@ -189,37 +238,80 @@ impl Model {
         }
     }
 
+    fn onset_preflight(&self, source: ModelSource) -> OnsetPreflight {
+        let index = source.index();
+        if self.host_halted {
+            return OnsetPreflight::Halted;
+        }
+        if self.retry_pending[index].is_some() || self.release_pending[index].is_some() {
+            return OnsetPreflight::Order;
+        }
+        if self.release_reservations[index] + 2 > self.ring_limit {
+            return OnsetPreflight::NoCredit(NoCreditReason::SourceReserve);
+        }
+        for (used, limit, reason) in [
+            (
+                self.used.tracker,
+                self.limits.tracker,
+                NoCreditReason::Tracker,
+            ),
+            (
+                self.used.ingress,
+                self.limits.ingress,
+                NoCreditReason::Ingress,
+            ),
+            (
+                self.used.results,
+                self.limits.results,
+                NoCreditReason::Results,
+            ),
+            (self.used.ledger, self.limits.ledger, NoCreditReason::Ledger),
+        ] {
+            if used >= limit {
+                return OnsetPreflight::NoCredit(reason);
+            }
+        }
+        if self.next == u64::MAX {
+            return OnsetPreflight::NoCredit(NoCreditReason::OccurrenceIdentity);
+        }
+        if self.rings[index].len() + self.release_reservations[index] + 2 > self.ring_limit {
+            OnsetPreflight::Retry
+        } else {
+            OnsetPreflight::Ready
+        }
+    }
+
+    fn fault(&mut self, source: ModelSource, original: Midi1Input, reason: TerminalReason) {
+        if self.host_halted {
+            return;
+        }
+        self.terminal_fault = Some((source, TerminalFault { original, reason }));
+        self.host_halted = true;
+    }
+
     fn submit(
         &mut self,
         source: ModelSource,
         input: Midi1Input,
     ) -> Result<OccurrenceId, SubmitError> {
-        if self.halted[source.index()] {
-            return Err(SubmitError::Halted(input));
-        }
-        if self.retry_pending[source.index()].is_some()
-            || self.release_pending[source.index()].is_some()
-        {
-            self.halted[source.index()] = true;
-            return Err(SubmitError::Order(input));
-        }
         let Midi1Event::NoteOn { key, .. } = input.event() else {
             panic!("the reduced submit operation accepts only note onsets");
         };
         let index = source.index();
-        if self.release_reservations[index] + 2 > self.ring_limit {
-            return Err(SubmitError::NoCredit);
-        }
-        if self.used.tracker >= self.limits.tracker
-            || self.used.ingress >= self.limits.ingress
-            || self.used.results >= self.limits.results
-            || self.used.ledger >= self.limits.ledger
-        {
-            return Err(SubmitError::NoCredit);
-        }
-        let Some(next) = self.next.checked_add(1) else {
-            return Err(SubmitError::NoCredit);
+        let needs_retry = match self.onset_preflight(source) {
+            OnsetPreflight::Halted => return Err(SubmitError::Halted(input)),
+            OnsetPreflight::Order => {
+                self.fault(source, input, TerminalReason::Order);
+                return Err(SubmitError::Order(input));
+            }
+            OnsetPreflight::NoCredit(reason) => {
+                self.fault(source, input, TerminalReason::NoCredit(reason));
+                return Err(SubmitError::NoCredit(input, reason));
+            }
+            OnsetPreflight::Retry => true,
+            OnsetPreflight::Ready => false,
         };
+        let next = self.next + 1;
         self.next = next;
         self.used.tracker += 1;
         self.used.ingress += 1;
@@ -234,7 +326,7 @@ impl Model {
             },
             input,
         };
-        if self.rings[index].len() + self.release_reservations[index] + 2 > self.ring_limit {
+        if needs_retry {
             let token = RetryToken {
                 id: attempt.id,
                 source,
@@ -265,7 +357,7 @@ impl Model {
         {
             return Err(RetryError::Stale(token));
         }
-        if self.halted[index] {
+        if self.host_halted {
             return Err(RetryError::Halted(token));
         }
         if self.rings[index].len() + self.release_reservations[index] + 2 > self.ring_limit {
@@ -294,7 +386,7 @@ impl Model {
         {
             return Err(RetryError::Stale(token));
         }
-        if self.halted[index] {
+        if self.host_halted {
             return Err(RetryError::Halted(token));
         }
         let pending = self.retry_pending[index]
@@ -348,7 +440,7 @@ impl Model {
 
     fn can_offer_ordinary(&self, source: ModelSource) -> bool {
         let index = source.index();
-        !self.halted[index]
+        !self.host_halted
             && self.retry_pending[index].is_none()
             && self.release_pending[index].is_none()
             && self.rings[index].len() + self.release_reservations[index] < self.ring_limit
@@ -374,18 +466,18 @@ impl Model {
     ) -> Result<ReleaseOffer, ReleaseOfferError> {
         assert!(matches!(input.event(), Midi1Event::KeyRelease { .. }));
         let index = source.index();
-        if self.halted[index] {
+        if self.host_halted {
             return Err(ReleaseOfferError::Halted(input));
         }
         if self.release_pending[index].is_some() {
-            self.halted[index] = true;
+            self.fault(source, input, TerminalReason::Order);
             return Err(ReleaseOfferError::Order(input));
         }
         if self.retry_pending[index].is_some() {
-            let next = self
-                .next_release
-                .checked_add(1)
-                .ok_or(ReleaseOfferError::IdentityExhausted(input))?;
+            let Some(next) = self.next_release.checked_add(1) else {
+                self.fault(source, input, TerminalReason::ReleaseIdentity);
+                return Err(ReleaseOfferError::IdentityExhausted(input));
+            };
             self.next_release = next;
             self.release_pending[index] = Some(PendingRelease {
                 id: ReleaseAttemptId(next),
@@ -410,7 +502,7 @@ impl Model {
         {
             return Err(ReleaseRetryError::Stale(token));
         }
-        if self.halted[index] {
+        if self.host_halted {
             return Err(ReleaseRetryError::Halted(token));
         }
         if self.retry_pending[index].is_some() {
@@ -742,23 +834,31 @@ fn nondrainable_reservation_shortage_is_not_a_retry() {
     model.service(ModelSource::First, true, true);
     assert!(model.rings[ModelSource::First.index()].is_empty());
     assert_eq!(model.release_reservations, [2, 0]);
+    let refused = input(0x90, 72, 100);
     assert!(matches!(
-        model.submit(ModelSource::First, input(0x90, 72, 100)),
-        Err(SubmitError::NoCredit)
+        model.submit(ModelSource::First, refused),
+        Err(SubmitError::NoCredit(original, NoCreditReason::SourceReserve))
+            if original == refused
     ));
     assert_eq!(model.used, limits(2));
     assert!(model.retry_pending[ModelSource::First.index()].is_none());
     assert_eq!(
-        model
-            .release(ModelSource::First, input(0x80, 70, 0))
-            .map(|route| route.id),
-        Some(first)
+        model.terminal_fault,
+        Some((
+            ModelSource::First,
+            TerminalFault {
+                original: refused,
+                reason: TerminalReason::NoCredit(NoCreditReason::SourceReserve),
+            }
+        ))
     );
+    assert_eq!(model.entries[0].id, first);
+    assert_eq!(model.entries[1].id, second);
+    assert_eq!(model.release_reservations, [2, 0]);
+    assert!(model.host_halted);
     assert_eq!(
-        model
-            .release(ModelSource::First, input(0x80, 71, 0))
-            .map(|route| route.id),
-        Some(second)
+        TerminalReason::NoCredit(NoCreditReason::SourceReserve).origin(),
+        CauseOrigin::SourceLocal
     );
 }
 
@@ -935,12 +1035,13 @@ fn new_offer_behind_pending_custody_is_terminal_order_fault() {
             Err(SubmitError::Retry(token)) => token,
             _ => panic!("pending onset must wait for ring headroom"),
         };
-        if later_is_onset {
+        let fault_original = if later_is_onset {
             let original = input(0x90, 64, 100);
             assert!(matches!(
                 model.submit(ModelSource::First, original),
                 Err(SubmitError::Order(returned)) if returned == original
             ));
+            original
         } else {
             let first_release = input(0x80, 60, 0);
             let pending_token = match model.offer_release(ModelSource::First, first_release) {
@@ -956,8 +1057,18 @@ fn new_offer_behind_pending_custody_is_terminal_order_fault() {
                 model.retry_release(pending_token),
                 Err(ReleaseRetryError::Halted(_))
             ));
-        }
-        assert!(model.halted[ModelSource::First.index()]);
+            later_release
+        };
+        assert!(model.host_halted);
+        let retained_fault = Some((
+            ModelSource::First,
+            TerminalFault {
+                original: fault_original,
+                reason: TerminalReason::Order,
+            },
+        ));
+        assert_eq!(model.terminal_fault, retained_fault);
+        assert_eq!(TerminalReason::Order.origin(), CauseOrigin::SourceLocal);
         let retry = match model.retry(retry) {
             Err(RetryError::Halted(token)) => token,
             _ => panic!("matching retry must report terminal halt"),
@@ -976,6 +1087,12 @@ fn new_offer_behind_pending_custody_is_terminal_order_fault() {
             model.offer_release(ModelSource::First, later_release),
             Err(ReleaseOfferError::Halted(later_release))
         );
+        let peer = input(0x91, 65, 100);
+        assert!(matches!(
+            model.submit(ModelSource::Second, peer),
+            Err(SubmitError::Halted(original)) if original == peer
+        ));
+        assert_eq!(model.terminal_fault, retained_fault);
     }
 }
 
@@ -1117,25 +1234,168 @@ fn exhausted_release_attempt_id_returns_original_without_queue_custody() {
     );
     assert_eq!(model.used, before);
     assert!(model.release_pending[ModelSource::First.index()].is_none());
+    assert!(model.host_halted);
+    assert_eq!(
+        model.terminal_fault,
+        Some((
+            ModelSource::First,
+            TerminalFault {
+                original,
+                reason: TerminalReason::ReleaseIdentity,
+            }
+        ))
+    );
+    assert_eq!(
+        TerminalReason::ReleaseIdentity.origin(),
+        CauseOrigin::SharedState
+    );
     assert_eq!(
         model.retry_pending[ModelSource::First.index()]
             .as_ref()
             .map(|pending| pending.attempt.id),
         Some(retry.id)
     );
+    assert!(matches!(model.retry(retry), Err(RetryError::Halted(_))));
 }
 
 #[test]
 fn exhausted_occurrence_id_takes_no_shared_credit() {
     let mut model = Model::new(limits(2), 3);
     model.next = u64::MAX;
+    let refused = input(0x90, 60, 100);
     assert!(matches!(
-        model.submit(ModelSource::First, input(0x90, 60, 100)),
-        Err(SubmitError::NoCredit)
+        model.submit(ModelSource::First, refused),
+        Err(SubmitError::NoCredit(original, NoCreditReason::OccurrenceIdentity))
+            if original == refused
     ));
     assert_eq!(model.used, limits(0));
     assert!(model.rings[ModelSource::First.index()].is_empty());
     assert!(model.retry_pending[ModelSource::First.index()].is_none());
+    assert!(model.host_halted);
+    assert_eq!(
+        model.terminal_fault,
+        Some((
+            ModelSource::First,
+            TerminalFault {
+                original: refused,
+                reason: TerminalReason::NoCredit(NoCreditReason::OccurrenceIdentity),
+            }
+        ))
+    );
+    assert_eq!(
+        TerminalReason::NoCredit(NoCreditReason::OccurrenceIdentity).origin(),
+        CauseOrigin::SharedState
+    );
+}
+
+#[test]
+fn shared_credit_refusal_halts_host_and_preserves_other_source_prefix() {
+    let mut model = Model::new(limits(1), 2);
+    let held = model
+        .submit(ModelSource::First, input(0x90, 60, 100))
+        .expect("first source owns shared credit");
+    assert_eq!(
+        model.onset_preflight(ModelSource::Second),
+        OnsetPreflight::NoCredit(NoCreditReason::Tracker)
+    );
+    let refused = input(0x91, 60, 100);
+    assert!(matches!(
+        model.submit(ModelSource::Second, refused),
+        Err(SubmitError::NoCredit(original, NoCreditReason::Tracker))
+            if original == refused
+    ));
+    assert_eq!(model.used, limits(1));
+    assert_eq!(
+        model.terminal_fault,
+        Some((
+            ModelSource::Second,
+            TerminalFault {
+                original: refused,
+                reason: TerminalReason::NoCredit(NoCreditReason::Tracker),
+            }
+        ))
+    );
+    assert_eq!(
+        TerminalReason::NoCredit(NoCreditReason::Tracker).origin(),
+        CauseOrigin::SharedState
+    );
+    assert!(matches!(
+        model.rings[ModelSource::First.index()].front(),
+        Some(RingPacket::Onset(attempt)) if attempt.id == held
+    ));
+    let later = input(0x90, 60, 100);
+    assert!(matches!(
+        model.submit(ModelSource::First, later),
+        Err(SubmitError::Halted(original)) if original == later
+    ));
+    assert_eq!(
+        model.offer_release(ModelSource::First, input(0x80, 60, 0)),
+        Err(ReleaseOfferError::Halted(input(0x80, 60, 0)))
+    );
+    assert_eq!(
+        model.terminal_fault,
+        Some((
+            ModelSource::Second,
+            TerminalFault {
+                original: refused,
+                reason: TerminalReason::NoCredit(NoCreditReason::Tracker),
+            }
+        ))
+    );
+    assert_eq!(model.used, limits(1));
+}
+
+#[test]
+fn peer_terminal_fault_keeps_both_pending_tokens_and_shared_charge() {
+    let mut model = Model::new(limits(2), 3);
+    model
+        .submit(ModelSource::First, input(0x90, 60, 100))
+        .expect("earlier first-source onset");
+    let retry = match model.submit(ModelSource::First, input(0x90, 63, 100)) {
+        Err(SubmitError::Retry(token)) => token,
+        _ => panic!("later first-source onset must retain retry"),
+    };
+    let release = input(0x80, 60, 0);
+    let release_token = match model.offer_release(ModelSource::First, release) {
+        Err(ReleaseOfferError::Blocked(token)) => token,
+        _ => panic!("release must remain behind onset retry"),
+    };
+    let refused = input(0x91, 70, 100);
+    assert!(matches!(
+        model.submit(ModelSource::Second, refused),
+        Err(SubmitError::NoCredit(original, NoCreditReason::Tracker))
+            if original == refused
+    ));
+    let charged = model.used;
+    let retry = match model.retry(retry) {
+        Err(RetryError::Halted(token)) => token,
+        _ => panic!("peer halt must stop matching onset retry"),
+    };
+    assert!(matches!(model.retire(retry), Err(RetryError::Halted(_))));
+    assert!(matches!(
+        model.retry_release(release_token),
+        Err(ReleaseRetryError::Halted(_))
+    ));
+    assert_eq!(model.used, charged);
+    assert!(model.retry_pending[ModelSource::First.index()].is_some());
+    assert_eq!(
+        model.release_pending[ModelSource::First.index()]
+            .as_ref()
+            .map(|pending| pending.input),
+        Some(release)
+    );
+    assert!(!model.can_offer_ordinary(ModelSource::First));
+    assert!(!model.can_offer_ordinary(ModelSource::Second));
+    assert_eq!(
+        model.terminal_fault,
+        Some((
+            ModelSource::Second,
+            TerminalFault {
+                original: refused,
+                reason: TerminalReason::NoCredit(NoCreditReason::Tracker),
+            }
+        ))
+    );
 }
 
 #[test]
@@ -1224,24 +1484,28 @@ fn cross_source_credit_waits_for_consumer_settlement_after_result_collection() {
             ledger: 1,
         }
     );
-    assert!(matches!(
-        model.submit(ModelSource::Second, input(0x91, 67, 100)),
-        Err(SubmitError::NoCredit)
-    ));
+    assert_eq!(
+        model.onset_preflight(ModelSource::Second),
+        OnsetPreflight::NoCredit(NoCreditReason::Tracker)
+    );
     let route = model
         .release(ModelSource::First, input(0x80, 67, 0))
         .expect("held release");
     assert_eq!(route.id, held);
-    assert!(matches!(
-        model.submit(ModelSource::Second, input(0x91, 67, 100)),
-        Err(SubmitError::NoCredit)
-    ));
+    assert_eq!(
+        model.onset_preflight(ModelSource::Second),
+        OnsetPreflight::NoCredit(NoCreditReason::Tracker)
+    );
     model.settle_raw_release(held);
-    assert!(matches!(
-        model.submit(ModelSource::Second, input(0x91, 67, 100)),
-        Err(SubmitError::NoCredit)
-    ));
+    assert_eq!(
+        model.onset_preflight(ModelSource::Second),
+        OnsetPreflight::NoCredit(NoCreditReason::Ingress)
+    );
     model.settle_ingress_release(held);
+    assert_eq!(
+        model.onset_preflight(ModelSource::Second),
+        OnsetPreflight::Ready
+    );
     assert!(
         model
             .submit(ModelSource::Second, input(0x91, 67, 100))
@@ -1256,6 +1520,10 @@ fn refused_onset_keeps_ledger_cell_after_result_collection() {
         .submit(ModelSource::First, input(0x90, 68, 100))
         .expect("queue custody");
     model.service(ModelSource::First, false, false);
+    assert_eq!(
+        model.onset_preflight(ModelSource::Second),
+        OnsetPreflight::NoCredit(NoCreditReason::Results)
+    );
     model.collect_result(refused);
     assert_eq!(
         model.used,
@@ -1266,10 +1534,10 @@ fn refused_onset_keeps_ledger_cell_after_result_collection() {
             ledger: 1,
         }
     );
-    assert!(matches!(
-        model.submit(ModelSource::Second, input(0x91, 69, 100)),
-        Err(SubmitError::NoCredit)
-    ));
+    assert_eq!(
+        model.onset_preflight(ModelSource::Second),
+        OnsetPreflight::NoCredit(NoCreditReason::Ledger)
+    );
     assert_eq!(
         model.release(ModelSource::First, input(0x80, 68, 0)),
         Some(ReleaseRoute {
@@ -1279,6 +1547,10 @@ fn refused_onset_keeps_ledger_cell_after_result_collection() {
         })
     );
     assert_eq!(model.used, limits(0));
+    assert_eq!(
+        model.onset_preflight(ModelSource::Second),
+        OnsetPreflight::Ready
+    );
     assert!(
         model
             .submit(ModelSource::Second, input(0x91, 69, 100))
