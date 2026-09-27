@@ -2574,3 +2574,6 @@ mod history_tests;
 #[cfg(all(test, feature = "simulated-ingress"))]
 #[path = "mixed/ledger_tests.rs"]
 mod ledger_tests;
+#[cfg(all(test, feature = "simulated-ingress"))]
+#[path = "mixed/stage_tests.rs"]
+mod stage_tests;

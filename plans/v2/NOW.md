@@ -353,6 +353,19 @@ fixture joins that original to the delivered raw receipt; an owned full-ring
 retry and raw refusals preserve it. Pre-ring faults have no queued handoff.
 This supplies source payload custody for a future mixed lane but adds no mixed
 staging, shared charge or combined outcome.
+
+A separate V2-local bounded stage model now gives each of two sources packet
+cells and reserves one future release cell with each admitted onset. An empty
+peer can publish a strictly later frontier even when the other source is full;
+repeated frontiers behind queued packets coalesce without spending packet
+cells. Tests hold a waiting onset at the peer's equal-time frontier, select an
+earlier peer onset and release, then select the waiting onset after the peer
+advances. The strict empty-peer rule applies even if source rank would put the
+waiting packet first in an equal-time tie. A frontier between queued packets
+does not close an equal-time packet. This stage-capacity and ordering model has
+no concrete source-ring or raw-owner charge, ordinary-packet disposition,
+refund authority, joined fault teardown or production mixed offer.
+
 ADR-0075 records why raw service must not wait for a mixed-time peer frontier:
 the recorder needs far-ahead source frontiers to release its own bounded cells.
 A separate bounded mixed staging and result path remains open.

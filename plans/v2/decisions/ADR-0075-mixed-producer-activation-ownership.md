@@ -1597,6 +1597,25 @@ joined teardown must conserve all outstanding credits. A terminal shortage is
 valid only when its owner and original are identified and peer silence is not
 misattributed. These are design falsifiers, not an accepted stage contract.
 
+The V2-local `stage_tests` model now exercises one bounded candidate for this
+progress law after hypothetical independent raw service. Each source owns two
+packet cells in the saturation fixtures and four in the between-packets
+fixture; an onset claims its own cell and one protected release cell.
+A frontier attaches to the preceding queued packet or advances an empty lane,
+so repeated frontiers behind a full lane coalesce without using packet credit.
+The selector uniformly requires an empty peer's applied frontier strictly
+beyond the candidate time, even when source rank would put the candidate first
+in an equal-time tie. A saturated source waiting at 150 does not consume the
+peer's cells: the peer can submit and service an earlier onset and release.
+Its frontier 151 releases the wait while frontier 150 does not. A second fixture
+keeps one hundred consecutive frontiers behind a full lane, then verifies its
+final frontier only after both earlier packets leave. A third fixture places
+frontier 150 between two packets and proves an equal-time peer still waits.
+These tests do not connect the example's source rings, raw owner or mixed
+command ring. They do not assign a host fault or resolve ordinary packets,
+refund authority, teardown, or the shared admission charge; the preceding
+falsifiers remain open.
+
 The same read found that holding a popped onset until tracker credit returns
 can deadlock when its release or required frontier is behind that onset in the
 source FIFO. Only a shortage resolved by draining the source ring can justify
