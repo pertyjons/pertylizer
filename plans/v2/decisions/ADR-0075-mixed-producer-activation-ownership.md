@@ -1191,8 +1191,9 @@ onset returns no identity. A foreign or already released identity gets
 `OrphanRelease`, not a drop. Bend, sustain, transport, capture, mass release and
 stealing remain refused. Audio-side minting is test-only rehearsal work, not an
 amendment to ADR-0050's off-thread minter rule or ADR-0072's exclusive-owner
-exception. Its constructor and offer operations are `#[cfg(test)]`; no
-production mixed offer is exposed by this step.
+exception. Its note offers require
+`#[cfg(all(test, feature = "simulated-ingress"))]`; no production mixed offer
+is exposed by this step.
 
 The rehearsal uses the existing registered performance-event ingress queue,
 not a second live source store or another drop licence. The test-only mixed
@@ -1246,6 +1247,59 @@ and loop-owner live-ingress refusal in force. A later implementation may lift
 only a refusal whose replacement contract and falsifiers it has proved and
 explicitly amended. ADR-0072's exclusive owner remains unchanged until that
 boundary.
+
+The immediate source-bridge rehearsal must remain inside `synth_engine_v2`.
+The concrete two-source rings and audition host live in the `pertylizer`
+example, while the mixed owner is crate-private and its note offers require
+`#[cfg(all(test, feature = "simulated-ingress"))]`. Compiling V2 as that
+example's dependency does not enable V2's test-only operations. A V2-local
+fixture may model the rings at their concrete capacity, but passing it proves
+only the modeled admission and ordering law. It does not qualify the example's
+concurrent producer, ring handoff or `AuditionId` result path. Connecting those
+concrete owners requires a separate, reviewable API and custody contract
+before any mixed offer is exposed outside the private rehearsal.
+
+The modeled ledger must keep one source/channel/key FIFO containing both
+accepted and refused onset occurrences. Each entry needs separate raw-recorder
+and mixed-ingress dispositions: a raw-accepted, ingress-refused onset still
+needs its matching release delivered to the recorder, while an ingress-accepted,
+raw-refused onset still owns an ingress identity or tombstone. A release may
+consume only the oldest entry for its own key, including when it is encoded as
+a velocity-zero note-on. Source-ring acceptance is queue custody, not a
+positive model receipt. The fixture must distinguish that queue result, each
+consumer's admission, and the eventual combined outcome. A positive combined
+outcome cannot precede either consumer's settlement; a release cannot wait for
+that outcome because the required frontier may follow the release in the same
+source queue. A partial consumer admission therefore stays explicitly owned
+until its release or joined teardown, even when no positive combined outcome
+can be reported.
+
+Before this modeled bridge claims protected release, its shared charge must
+cover both sources' tracker cells and capture reserve, raw occupancy and
+release reservation per source, ingress hold and identity, and retained
+outcomes. Charge acquisition and redemption must have one linearization point
+in the fixture. A ring-full retry retains its original charge and source
+attempt; terminal retirement reports both. Neither source-ring removal nor
+forwarding a release returns consumer credit. Reuse requires that consumer's
+settled release or a proved time-order fence. Cross-source earlier mapped-time
+onsets following an already forwarded later release, repeated frontiers at
+`h + R = N - 2`, and another source withholding its frontier remain explicit
+falsifiers; the fixture must give each a source-order-preserving disposition
+before claiming bounded release service. The current concrete raw owner has
+no frontier coalescing and the current mixed ingress has no result channel, so
+no such claim follows from the isolated ingress rehearsal.
+
+Build the model in stages: first test the shared ledger and retry/retirement
+with bounded fake consumers; then attach the real raw owner and recorder; then
+attach the private mixed owner and classify a fault in a later quantum beside
+the recorder's independent receipts. Tracker-full and capture-reserve tests
+need fixture capacities that can actually make the tracker the limiting
+consumer; the existing two-hold mixed plan and eight-cell tracker cannot do
+so by themselves. At every stage, a positive combined outcome followed by
+`TrackerFull`, `TrackerReserved`, `PastBoundary` or `IngressRefused`, a release
+attributed to a different occurrence, or an unclassified partially admitted
+note blocks acceptance. This staged fixture does not lift a production
+mixed-producer refusal.
 EVD-0024's component matrix remains
 insufficient for production capacity; ADR-0022's hardware timing and physical
 round-trip gates remain separate.
