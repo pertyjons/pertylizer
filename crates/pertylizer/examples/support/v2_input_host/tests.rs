@@ -794,6 +794,56 @@ fn producer_retry_keeps_time_state_until_the_ring_accepts_the_original() {
 }
 
 #[test]
+fn producer_cannot_overtake_an_unresolved_retry_after_the_ring_drains() {
+    use super::source::{SourceInbox, SourceSendError};
+    let (mut control, audio, generations) = fixture();
+    let clock = prepare::simulated_clock(audio.core.acknowledged().epoch, 0).unwrap();
+    let (mut producer, mut inbox) =
+        SourceInbox::prepare(generations[0], control.halt_handle(), clock);
+    for at in 1..=16 {
+        producer
+            .send(InputObservation::Frontier {
+                tick: InputTick::new(at),
+            })
+            .unwrap();
+    }
+    let pending = InputObservation::Frontier {
+        tick: InputTick::new(17),
+    };
+    assert_eq!(producer.send(pending), Err(SourceSendError::Retry(pending)));
+    let mut delivered = 0;
+    inbox.service(&mut control, |result| {
+        let _id = result.unwrap();
+        delivered += 1;
+    });
+    assert_eq!(delivered, 16);
+    assert!(inbox.is_empty());
+
+    let overtaking = InputObservation::Frontier {
+        tick: InputTick::new(18),
+    };
+    assert_eq!(
+        producer.send(overtaking),
+        Err(SourceSendError::Invalid(overtaking, InputError::Order))
+    );
+    assert!(control.halt_handle().is_requested());
+    inbox.service(&mut control, |_| panic!("no later packet entered the ring"));
+    let fault = control
+        .core
+        .input(generations[0])
+        .unwrap()
+        .pre_ring_failure()
+        .unwrap();
+    assert_eq!(fault.reason, InputError::Order);
+    assert_eq!(fault.observation, Some(overtaking));
+    assert_eq!(
+        producer.send(pending),
+        Err(SourceSendError::Halted(pending))
+    );
+    assert!(inbox.close(producer).is_ok());
+}
+
+#[test]
 fn producer_rejects_frontier_before_prior_arrival_before_ring_custody() {
     use super::source::{SourceInbox, SourceSendError};
     let (mut control, audio, generations) = fixture();

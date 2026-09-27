@@ -568,7 +568,17 @@ discontinuity remains first-wins. If raw failure recording rejects the claim,
 the inbox emits one refusal callback with that recording error, while the
 producer's `Invalid` result retains its original reason. It still drains the
 queued prefix. A full ring leaves its time state unchanged for an ordered
-retry.
+retry. The producer retains that pending retry value: once the ring drains,
+an otherwise valid observation with a different value cannot overtake it. Such
+an attempt returns `Invalid(overtaking, Order)` and requests terminal halt
+before queue custody. An observation with its own invalid time keeps that
+specific reason.
+The caller still owns the original returned by the earlier `Retry`; the Linux
+driver stops and reports it rather than attempting a later send.
+Equal-valued occurrences are indistinguishable at this boundary because no
+source occurrence ID exists before raw admission. A future protected-release
+ledger still needs an occurrence or retry-token law; this value check does not
+claim that ledger.
 Raw input repeats its own admission checks. The bridge commits an audition
 packet only after raw admission. A pre-ring regression or future-arrival
 refusal leaves raw and audition admission, serials and credit unchanged for

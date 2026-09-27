@@ -25,6 +25,7 @@ pub struct SourceProducer {
     generation: ConnectionGeneration,
     time: Box<SourceTime>,
     failure: Arc<OnceLock<SourceFailure>>,
+    retry: Option<InputObservation>,
 }
 #[derive(Clone, Copy)]
 struct SourceFailure {
@@ -66,6 +67,7 @@ impl SourceInbox {
                     frontier: SampleTime::ZERO,
                 }),
                 failure: Arc::clone(&failure),
+                retry: None,
             },
             Self {
                 generation,
@@ -151,6 +153,15 @@ impl SourceInbox {
     }
 }
 impl SourceProducer {
+    fn invalid(&self, observation: InputObservation, reason: InputError) -> SourceSendError {
+        self.failure.get_or_init(|| SourceFailure {
+            observation,
+            reason,
+        });
+        self.halt.request_invalid();
+        SourceSendError::Invalid(observation, reason)
+    }
+
     fn check_order(
         &self,
         observation: InputObservation,
@@ -178,23 +189,24 @@ impl SourceProducer {
         Ok((tick, arrival, nominal))
     }
 
-    /// A full ring requires ordered retry; halt ends publication and retains the
-    /// original observation for an explicit terminal report.
+    /// A full ring records its returned value as the pending retry. A different
+    /// otherwise valid value before that retry is a terminal order fault.
+    /// Halt ends publication and returns the original for an explicit report.
     pub fn send(&mut self, observation: InputObservation) -> Result<(), SourceSendError> {
         if self.halt.is_requested() {
             return Err(SourceSendError::Halted(observation));
         }
-        let (tick, arrival, nominal) = self.check_order(observation).map_err(|error| {
-            self.failure.get_or_init(|| SourceFailure {
-                observation,
-                reason: error,
-            });
-            self.halt.request_invalid();
-            SourceSendError::Invalid(observation, error)
-        })?;
-        self.queue
-            .try_push(observation)
-            .map_err(SourceSendError::Retry)?;
+        let (tick, arrival, nominal) = self
+            .check_order(observation)
+            .map_err(|error| self.invalid(observation, error))?;
+        if self.retry.is_some_and(|pending| pending != observation) {
+            return Err(self.invalid(observation, InputError::Order));
+        }
+        if let Err(original) = self.queue.try_push(observation) {
+            self.retry = Some(original);
+            return Err(SourceSendError::Retry(original));
+        }
+        self.retry = None;
         self.time.last_tick = Some(tick);
         if let Some(arrival) = arrival {
             self.time.last_arrival = Some(arrival);
