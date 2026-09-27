@@ -4,7 +4,10 @@ use crate::input_host::{
     archive::RetainedRuns,
     managed::ManagedRun,
     prepare::PreparedAttempt,
-    source::{SourceProducer, SourceSendError},
+    source::{
+        SourceOwnedSendError, SourceProducer, SourceRetiredAttempt, SourceRetryToken,
+        SourceSendError,
+    },
 };
 use cpal::{
     Device, SampleFormat,
@@ -278,9 +281,19 @@ fn source_wave(
 }
 
 #[derive(Debug, Error)]
+enum SourceWaveError {
+    #[error(transparent)]
+    Source(#[from] SourceSendError),
+    #[error("source retry terminally retired: {0:?}")]
+    Retired(SourceRetiredAttempt),
+    #[error("source retry token did not match its producer: {0:?}")]
+    Token(SourceRetryToken),
+}
+
+#[derive(Debug, Error)]
 #[error("source wave stopped at {first}")]
 struct SourceWaveFailure {
-    first: SourceSendError,
+    first: SourceWaveError,
     unexamined: Vec<InputObservation>,
 }
 
@@ -288,12 +301,57 @@ fn send_wave(
     producer: &mut SourceProducer,
     wave: &[InputObservation],
 ) -> Result<(), SourceWaveFailure> {
-    send_wave_with(wave, |observation| producer.send(observation))
+    send_wave_until(producer, wave, Instant::now() + Duration::from_secs(5))
+}
+
+fn send_wave_until(
+    producer: &mut SourceProducer,
+    wave: &[InputObservation],
+    deadline: Instant,
+) -> Result<(), SourceWaveFailure> {
+    send_wave_with(wave, |observation| {
+        let mut result = producer.submit_owned(observation);
+        let accepted = loop {
+            match result {
+                Ok(accepted) => break accepted,
+                Err(SourceOwnedSendError::Retry(token)) => {
+                    if Instant::now() >= deadline {
+                        let retired = producer
+                            .retire_owned(token)
+                            .map_err(SourceWaveError::Token)?;
+                        return Err(SourceWaveError::Retired(retired));
+                    }
+                    std::thread::sleep(Duration::from_millis(1));
+                    result = producer.retry_owned(token);
+                }
+                Err(SourceOwnedSendError::Halted(token)) => {
+                    let retired = producer
+                        .retire_owned(token)
+                        .map_err(SourceWaveError::Token)?;
+                    return Err(SourceWaveError::Retired(retired));
+                }
+                Err(SourceOwnedSendError::Mismatched(token)) => {
+                    return Err(SourceWaveError::Token(token));
+                }
+                Err(SourceOwnedSendError::Refused(error)) => {
+                    return Err(SourceWaveError::Source(error));
+                }
+            }
+        };
+        let (attempt, queue) = accepted.parts();
+        debug_assert_eq!(attempt.generation(), queue.generation());
+        println!(
+            "source_attempt_serial={} source_queue_serial={}",
+            attempt.serial(),
+            queue.serial()
+        );
+        Ok(())
+    })
 }
 
 fn send_wave_with(
     wave: &[InputObservation],
-    mut send: impl FnMut(InputObservation) -> Result<(), SourceSendError>,
+    mut send: impl FnMut(InputObservation) -> Result<(), SourceWaveError>,
 ) -> Result<(), SourceWaveFailure> {
     for (index, &observation) in wave.iter().enumerate() {
         if let Err(first) = send(observation) {
@@ -302,6 +360,35 @@ fn send_wave_with(
                 unexamined: wave[index + 1..].to_vec(),
             });
         }
+    }
+    Ok(())
+}
+
+fn settle_source_workers(
+    results: [std::thread::Result<Result<(), SourceWaveFailure>>; 2],
+    service_failure: Option<Box<dyn std::error::Error>>,
+    mut report_wave: impl FnMut(&SourceWaveFailure),
+    mut report_panic: impl FnMut(),
+) -> Result<(), Box<dyn std::error::Error>> {
+    let mut failed = false;
+    for result in results {
+        match result {
+            Ok(Ok(())) => {}
+            Ok(Err(wave_failure)) => {
+                report_wave(&wave_failure);
+                failed = true;
+            }
+            Err(_) => {
+                report_panic();
+                failed = true;
+            }
+        }
+    }
+    if let Some(failure) = service_failure {
+        return Err(failure);
+    }
+    if failed {
+        return Err(error("source worker failed"));
     }
     Ok(())
 }
@@ -386,31 +473,42 @@ fn exercise(
             // Workers borrow endpoints. Even a worker panic returns endpoint custody
             // to this owner after scoped joins; it never loses the unique close proof.
             let [first, second] = producers;
-            let results = std::thread::scope(|scope| {
+            let (results, service_failure) = std::thread::scope(|scope| {
                 let first = scope.spawn(|| send_wave(first, &waves[0]));
                 let second = scope.spawn(|| send_wave(second, &waves[1]));
-                [first.join(), second.join()]
-            });
-            let mut failure = false;
-            for result in results {
-                match result {
-                    Ok(Ok(())) => {}
-                    Ok(Err(wave_failure)) => {
-                        eprintln!("source_send_error={:?}", wave_failure.first);
-                        for observation in wave_failure.unexamined {
-                            eprintln!("source_unexamined_after_send_error={observation:?}");
-                        }
-                        failure = true;
+                let mut service_failure = None;
+                while !first.is_finished() || !second.is_finished() {
+                    if let Err(failure) = service(managed, &mut stopped) {
+                        managed.halt_handle().request_invalid();
+                        service_failure = Some(failure);
+                        break;
                     }
-                    Err(_) => {
-                        eprintln!("source worker panicked; endpoint retained after join");
-                        failure = true;
+                    if device.failed.load(Ordering::Acquire) {
+                        managed.halt_handle().request_invalid();
+                        service_failure =
+                            Some(error("backend or callback fault during source wave"));
+                        break;
                     }
+                    if started.elapsed() > Duration::from_secs(30) {
+                        managed.halt_handle().request_invalid();
+                        service_failure = Some(error("source worker timeout"));
+                        break;
+                    }
+                    std::thread::sleep(Duration::from_millis(1));
                 }
-            }
-            if failure {
-                return Err(error("source worker failed"));
-            }
+                ([first.join(), second.join()], service_failure)
+            });
+            settle_source_workers(
+                results,
+                service_failure,
+                |wave_failure| {
+                    eprintln!("source_send_error={:?}", wave_failure.first);
+                    for observation in &wave_failure.unexamined {
+                        eprintln!("source_unexamined_after_send_error={observation:?}");
+                    }
+                },
+                || eprintln!("source worker panicked; endpoint retained after join"),
+            )?;
             sent = true;
         }
         service(managed, &mut stopped)?;
@@ -488,16 +586,30 @@ pub fn run(device: &Device, target: u64) -> Result<(), Box<dyn std::error::Error
             ))));
         }
         drop(writer);
-        if let Err(failure) = exercise(
+        let exercise_result = exercise(
             &device_run,
             &mut managed,
             &mut producers,
             &waves,
             target,
             TransportProgram { start, stop, end },
-        ) {
+        );
+        let mut pending_after_join = false;
+        for (source, producer) in producers.iter_mut().enumerate() {
+            if let Some(pending) = producer.retire_pending() {
+                eprintln!(
+                    "source_pending_retired_after_join={source} attempt={} original={:?}",
+                    pending.attempt().serial(),
+                    pending.observation()
+                );
+                pending_after_join = true;
+            }
+        }
+        if let Err(failure) = exercise_result {
             managed.halt_handle().request_device_lost();
             run_error = Some(failure);
+        } else if pending_after_join {
+            run_error = Some(error("source worker left an unresolved retry"));
         }
         let callback = match device_run.join() {
             Ok(callback) => callback,
@@ -592,14 +704,99 @@ mod wave_tests {
         let failure = send_wave_with(&wave, |observation| {
             attempted.push(observation);
             if attempted.len() == 2 {
-                Err(SourceSendError::Retry(observation))
+                Err(SourceWaveError::Source(SourceSendError::Retry(observation)))
             } else {
                 Ok(())
             }
         })
         .unwrap_err();
         assert_eq!(attempted.as_slice(), &wave[..2]);
-        assert_eq!(failure.first, SourceSendError::Retry(wave[1]));
+        assert!(matches!(
+            failure.first,
+            SourceWaveError::Source(SourceSendError::Retry(original)) if original == wave[1]
+        ));
         assert_eq!(failure.unexamined.as_slice(), &wave[2..]);
+    }
+
+    #[test]
+    fn service_failure_still_reports_joined_original_suffix_and_panic() {
+        let wave = [1, 2, 3].map(|at| InputObservation::Frontier {
+            tick: InputTick::new(at),
+        });
+        let joined = SourceWaveFailure {
+            first: SourceWaveError::Source(SourceSendError::Halted(wave[1])),
+            unexamined: vec![wave[2]],
+        };
+        let mut reported = Vec::new();
+        let mut panics = 0;
+        let result = settle_source_workers(
+            [Ok(Err(joined)), Err(Box::new(()))],
+            Some(error("service failed")),
+            |failure| {
+                assert!(matches!(
+                    failure.first,
+                    SourceWaveError::Source(SourceSendError::Halted(original)) if original == wave[1]
+                ));
+                reported.extend_from_slice(&failure.unexamined);
+            },
+            || panics += 1,
+        );
+        assert!(result.is_err());
+        assert_eq!(reported, vec![wave[2]]);
+        assert_eq!(panics, 1);
+    }
+
+    #[test]
+    fn full_owned_wave_retires_its_original_and_attributes_the_source() {
+        let profile = HostProfile::harness(
+            SampleRate::new(48000.0).unwrap(),
+            FrameCount::new(8192),
+            ChannelLayout::Mono,
+        )
+        .unwrap();
+        let prepared = PreparedAttempt::new(
+            profile,
+            SampleTime::new(256),
+            synth_engine_v2::ir::IrNodeKind::Silence,
+        )
+        .unwrap();
+        let bytes = prepared.bytes();
+        let mut archive = RetainedRuns::prepare(
+            CaptureResultCount::limit(1).unwrap(),
+            bytes,
+            PreparedBytes::measured(bytes.get() * 2 + 65536),
+        )
+        .unwrap();
+        let (mut managed, _audio, [mut first, second]) =
+            ManagedRun::start(&mut archive, prepared).unwrap();
+        let wave: Vec<_> = (1..=18)
+            .map(|at| InputObservation::Frontier {
+                tick: InputTick::new(at),
+            })
+            .collect();
+        let failure = send_wave_until(&mut first, &wave, Instant::now()).unwrap_err();
+        let SourceWaveError::Retired(retired) = failure.first else {
+            panic!("expected terminal full-ring retirement");
+        };
+        assert_eq!(retired.attempt().serial(), 17);
+        assert_eq!(retired.observation(), wave[16]);
+        assert_eq!(failure.unexamined.as_slice(), &wave[17..]);
+        let mut results = 0;
+        managed
+            .service(|_| results += 1, |_, _| {}, |_| {})
+            .unwrap();
+        assert_eq!(results, 16);
+        let fault = managed.source_discontinuity(0).unwrap();
+        assert_eq!(
+            fault.reason,
+            synth_engine_v2::host::input::InputError::SourceQueueFull
+        );
+        assert_eq!(fault.observation, Some(wave[16]));
+        assert_eq!(
+            managed.source_discontinuity(1).unwrap().reason,
+            synth_engine_v2::host::input::InputError::PeerInterrupted
+        );
+        assert!(managed.close_source(first).is_ok());
+        assert!(managed.close_source(second).is_ok());
     }
 }

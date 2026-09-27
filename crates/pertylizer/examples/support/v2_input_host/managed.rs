@@ -224,7 +224,7 @@ impl ManagedRun {
     }
 
     #[cfg(test)]
-    pub(super) fn source_discontinuity(
+    pub(crate) fn source_discontinuity(
         &self,
         port: usize,
     ) -> Option<synth_engine_v2::host::input::InputDiscontinuity> {

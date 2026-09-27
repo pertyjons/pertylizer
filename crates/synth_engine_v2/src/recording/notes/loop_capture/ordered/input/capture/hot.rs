@@ -22,10 +22,16 @@ fn attribute_input_fault(
     clock: Option<SimulatedInputClock>,
     source: Option<ConnectionGeneration>,
     fault: InputDiscontinuity,
+    pre_ring: bool,
 ) -> Result<(), InputCaptureError> {
     // Exact late observations use their actual stamp. Uncertain observations
     // contribute conservative bounds and never acquire a fabricated exact time.
-    if fault.reason == InputError::Order
+    if (fault.reason == InputError::Order
+        || (pre_ring
+            && matches!(
+                fault.reason,
+                InputError::SourceQueueFull | InputError::IdentityExhausted
+            )))
         && let Some(InputObservation::Message { tick, arrival, .. }) = fault.observation
         && let Some(clock) = clock
         && let Ok(nominal) = clock.map(tick)
@@ -118,7 +124,13 @@ impl InputCaptureSession {
                 && fault.reason != InputError::PeerInterrupted
             {
                 if !input.discontinuity_attributed {
-                    attribute_input_fault(&mut self.session, input.clock, input.binding, fault)?;
+                    attribute_input_fault(
+                        &mut self.session,
+                        input.clock,
+                        input.binding,
+                        fault,
+                        input.pre_ring_failure == Some(fault),
+                    )?;
                     input.discontinuity_attributed = true;
                 }
                 if reason.is_none() {
@@ -137,6 +149,7 @@ impl InputCaptureSession {
                             input.clock,
                             input.binding,
                             fault,
+                            true,
                         )?;
                     }
                     input.pre_ring_attributed = true;

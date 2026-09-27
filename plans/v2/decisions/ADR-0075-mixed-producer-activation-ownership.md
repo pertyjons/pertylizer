@@ -554,11 +554,19 @@ records the original and reason in a one-shot source failure cell, requests
 host halt and returns `Invalid(original, reason)` on failure. The source inbox
 passes that failure to the raw owner before servicing its next queued prefix.
 The managed two-source service records failures already published at the start
-of that call before it drains either queue. The Linux driver joins both
-producer workers before this service, so a failed source keeps its specific
-primary reason even if the other source has queued work. If a failure arrives
-during service after the prepass, its primary reason may be `PeerInterrupted`;
-the separate pre-ring cell still retains its actual cause and quality evidence.
+of each call before it drains either queue. The Linux driver now services both
+queues while producer workers run so a full-ring retry can make progress, then
+joins the workers before final service. If a failure arrives during service
+after the prepass, its primary reason may be `PeerInterrupted`; the separate
+pre-ring cell still retains its actual cause and quality evidence. For
+`SourceQueueFull` and source identity exhaustion, the raw owner requires a
+mappable observation and rejects a message arrival before nominal time.
+Joined attribution retains an exact late-message stamp when the recorder's
+source frontier has already advanced beyond that nominal time. The pre-ring
+slot distinguishes source serial exhaustion from raw input-ID exhaustion;
+its `IdentityExhausted` reason does not distinguish the source attempt serial
+from the source queue serial. Raw input-ID exhaustion keeps its existing
+quality policy.
 The raw owner checks clock and arrival claims; source order remains a producer
 attestation because a queued prefix may not have reached raw admission. It
 retains the original in a separate one-shot pre-ring cell. Joined reunion
@@ -567,26 +575,41 @@ halt has already marked this source `PeerInterrupted`. That primary
 discontinuity remains first-wins. If raw failure recording rejects the claim,
 the inbox emits one refusal callback with that recording error, while the
 producer's `Invalid` result retains its original reason. It still drains the
-queued prefix. A full ring leaves its time state unchanged for an ordered
-retry. The producer retains that pending retry value: once the ring drains,
-an otherwise valid observation with a different value cannot overtake it. Such
-an attempt returns `Invalid(overtaking, Order)` and requests terminal halt
-before queue custody. An observation with its own invalid time keeps that
-specific reason.
-The caller still owns the original returned by the earlier `Retry`; the Linux
-driver stops and reports it rather than attempting a later send.
-The source ring now assigns a typed generation and checked serial to each
-successful push, including equal-valued occurrences. The inbox reports that
-queue ID with each popped result, including raw refusals; a rejected
-pre-ring original has no queue ID. A full-ring retry leaves the serial
-unspent, and serial exhaustion is a terminal pre-ring failure recorded by
-the raw owner. The concrete falsifier queues two equal-valued onsets and
-requires distinct ordered IDs, then fills the ring and requires its retried
-original to receive the next ID only after a successful push. Another test
-requires a raw refusal to retain its queue ID. This identity establishes
-custody after source-ring acceptance. Equal-valued attempts before that
-acceptance remain indistinguishable because the retry guard compares values;
-a future protected-release ledger still needs an owned retry-token law.
+queued prefix. The test-only value path still rejects a different observation
+before its pending full-ring retry; that comparison cannot distinguish two
+equal-valued occurrences. The Linux driver now uses an owned attempt path.
+Each valid first submission receives a typed generation and checked attempt
+serial. Success returns that attempt ID with a distinct source queue ID. On a full
+ring, the producer retains the original and attempt ID while returning a
+non-cloneable retry token with the same values. A matching retry keeps the
+attempt ID, and only its successful push spends the next queue ID. An
+otherwise valid fresh submission while either retry path is pending is a
+terminal `Order` refusal, including an equal-valued submission. A foreign or stale
+token is returned without changing either source; token matching precedes the
+halt check. If halt is already requested, a matching token remains pending
+and is returned as `Halted`. Joined retirement reports the producer-owned
+original even if the token was dropped during unwinding. Closing the source refuses while that
+attempt remains pending. Retirement records `SourceQueueFull` as that source's
+pre-ring fault when its one-shot failure cell is still empty, including after a
+peer halt; an earlier source fault and the primary discontinuity remain
+first-wins. The driver services both source rings while the workers retry
+until a bounded deadline, then terminally retires and reports the original
+and unexamined suffix if the ring is still full. It also retires and reports
+any pending attempt after its workers join, before asking for a device-loss
+halt. These reports are the disposition for an original that never obtained
+a queue ID. Attempt-serial exhaustion is checked
+before queue-serial exhaustion and is terminal before ring custody. The one
+producer-owned pending attempt is charged in producer storage; it is outside
+the audition quota and supplies no protected release credit.
+
+The concrete falsifiers require distinct attempt and queue IDs for two
+equal-valued onsets, a stable token through repeated full retries, concurrent
+merger service that lets a blocked retry enter the ring, no queue ID before
+push, no exchange with a fresh equal-valued or foreign attempt, joined recovery
+after token loss, and exact source attribution for terminal
+full-ring retirement. The inbox reports the queue ID with every popped
+result, including raw refusals. This proves source-ring custody and retry
+identity, not a same-key FIFO ledger or a protected release path.
 Raw input repeats its own admission checks. The bridge commits an audition
 packet only after raw admission. A pre-ring regression or future-arrival
 refusal leaves raw and audition admission, serials and credit unchanged for
@@ -594,7 +617,7 @@ that refused observation.
 It requests terminal halt: an earlier queued prefix may already have reached
 raw admission or may return as identified source refusals when the merger next
 services the ring. The driver reports the rejected original and unexamined
-suffix, then services the queued prefix after join and reports each outcome;
+suffix, services queued prefixes while workers run and once more after join;
 the raw owner retains the rejected observation's quality diagnostic. No
 nonterminal rollback is claimed.
 

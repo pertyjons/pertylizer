@@ -208,10 +208,14 @@ queue custody. A terminal refusal retains its original and reason across the
 producer/inbox handoff; the raw owner keeps a separate quality fault when an
 earlier discontinuity already owns the primary reason. This establishes the
 producer order prerequisite but grants no capacity or protected-release credit.
-A full-ring retry now blocks a different observation value from taking queue
-custody first, with a terminal order fault if attempted. Successful queue pushes
-receive distinct source IDs even for equal-valued observations; equal-valued
-attempts before acceptance still need an owned retry token for a protected ledger.
+The concrete driver now uses producer-owned attempt IDs and non-cloneable retry
+tokens. A full-ring retry cannot be exchanged for a fresh equal-valued attempt;
+the producer retains the original if the token is lost, and terminal retirement
+reports it while preserving any earlier source fault. The main thread services
+source rings while producer workers retry to a bounded deadline. Successful
+queue pushes receive distinct IDs even for equal-valued observations. This
+establishes the source custody prerequisite, while the combined credit and same-key FIFO
+ledger remain open.
 An independent design read found that merger forwarding cannot recycle ingress
 hold or tracker credit: another source's earlier mapped-time onset can execute
 before that release. The two-source ingress regression now runs in the workspace

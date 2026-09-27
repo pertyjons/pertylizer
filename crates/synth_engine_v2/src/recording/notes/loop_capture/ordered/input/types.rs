@@ -24,6 +24,8 @@ pub enum InputError {
     Future,
     #[error("input receipt storage is full")]
     Full,
+    #[error("source ring retry was terminally retired while full")]
+    SourceQueueFull,
     #[error("input identity space is exhausted")]
     IdentityExhausted,
     #[error("input requires at least two cells")]

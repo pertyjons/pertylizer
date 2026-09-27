@@ -882,6 +882,452 @@ fn source_queue_identity_exhaustion_is_a_terminal_pre_ring_fault() {
 }
 
 #[test]
+fn owned_retry_preserves_attempt_and_mints_queue_id_only_after_push() {
+    use super::source::{SourceInbox, SourceOwnedSendError};
+    let (mut control, audio, generations) = fixture();
+    let clock = prepare::simulated_clock(audio.core.acknowledged().epoch, 0).unwrap();
+    let (mut producer, mut inbox) =
+        SourceInbox::prepare(generations[0], control.halt_handle(), clock);
+    for at in 1..=16 {
+        let (attempt, queue) = producer
+            .submit_owned(InputObservation::Frontier {
+                tick: InputTick::new(at),
+            })
+            .unwrap()
+            .parts();
+        assert_eq!(attempt.serial(), at);
+        assert_eq!(queue.serial(), at);
+    }
+    let onset = InputObservation::Message {
+        tick: InputTick::new(17),
+        arrival: SampleTime::new(17),
+        input: Midi1Input::from_bytes([0x90, 60, 100]).unwrap(),
+    };
+    let token = match producer.submit_owned(onset) {
+        Err(SourceOwnedSendError::Retry(token)) => token,
+        other => panic!("expected owned retry: {other:?}"),
+    };
+    let original_attempt = token.attempt();
+    assert_eq!(original_attempt.serial(), 17);
+    let token = match producer.retry_owned(token) {
+        Err(SourceOwnedSendError::Retry(token)) => token,
+        other => panic!("expected same pending retry: {other:?}"),
+    };
+    assert_eq!(token.attempt(), original_attempt);
+    assert_eq!(token.observation(), onset);
+    let mut delivered = 0;
+    inbox.service_identified(&mut control, |id, result| {
+        delivered += 1;
+        assert_eq!(id.unwrap().serial(), delivered);
+        assert!(result.is_ok());
+    });
+    assert_eq!(delivered, 16);
+    let (retried_attempt, retried_queue) = producer.retry_owned(token).unwrap().parts();
+    assert_eq!(retried_attempt, original_attempt);
+    assert_eq!(retried_queue.serial(), 17);
+    let (next_attempt, next_queue) = producer.submit_owned(onset).unwrap().parts();
+    assert_eq!(next_attempt.serial(), 18);
+    assert_eq!(next_queue.serial(), 18);
+    assert_ne!(next_attempt, retried_attempt);
+    let mut results = Vec::new();
+    inbox.service_identified(&mut control, |id, result| {
+        results.push((id.unwrap(), result));
+    });
+    assert_eq!(results.len(), 2);
+    assert_eq!(results[0].0, retried_queue);
+    assert_eq!(results[1].0, next_queue);
+}
+
+#[test]
+fn owned_retry_progresses_when_the_merger_services_a_full_ring() {
+    use super::source::{SourceInbox, SourceOwnedSendError};
+    let (mut control, audio, generations) = fixture();
+    let clock = prepare::simulated_clock(audio.core.acknowledged().epoch, 0).unwrap();
+    let (mut producer, mut inbox) =
+        SourceInbox::prepare(generations[0], control.halt_handle(), clock);
+    for at in 1..=16 {
+        let _accepted = producer
+            .submit_owned(InputObservation::Frontier {
+                tick: InputTick::new(at),
+            })
+            .unwrap();
+    }
+    let original = InputObservation::Frontier {
+        tick: InputTick::new(17),
+    };
+    let (ready_tx, ready_rx) = std::sync::mpsc::channel();
+    std::thread::scope(|scope| {
+        let worker = scope.spawn(move || {
+            let mut token = match producer.submit_owned(original) {
+                Err(SourceOwnedSendError::Retry(token)) => token,
+                other => panic!("expected full source ring: {other:?}"),
+            };
+            ready_tx.send(()).unwrap();
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+            loop {
+                match producer.retry_owned(token) {
+                    Ok(accepted) => return (producer, accepted),
+                    Err(SourceOwnedSendError::Retry(pending)) => token = pending,
+                    other => panic!("retry failed: {other:?}"),
+                }
+                assert!(std::time::Instant::now() < deadline, "merger did not drain");
+                std::thread::yield_now();
+            }
+        });
+        ready_rx
+            .recv_timeout(std::time::Duration::from_secs(2))
+            .unwrap();
+        let mut drained = 0;
+        inbox.service_identified(&mut control, |id, result| {
+            assert!(id.is_some());
+            assert!(result.is_ok());
+            drained += 1;
+        });
+        assert_eq!(drained, 16);
+        let (producer, accepted) = worker.join().unwrap();
+        let (attempt, queue) = accepted.parts();
+        assert_eq!(attempt.serial(), 17);
+        assert_eq!(queue.serial(), 17);
+        inbox.service_identified(&mut control, |id, result| {
+            assert_eq!(id, Some(queue));
+            assert!(result.is_ok());
+        });
+        assert!(!control.halt_handle().is_requested());
+        assert!(inbox.close(producer).is_ok());
+    });
+}
+
+#[test]
+fn lost_owned_token_blocks_close_until_terminal_retirement_is_attributed() {
+    use super::source::{SourceInbox, SourceOwnedSendError};
+    let (mut control, audio, generations) = fixture();
+    let clock = prepare::simulated_clock(audio.core.acknowledged().epoch, 0).unwrap();
+    let (mut producer, mut inbox) =
+        SourceInbox::prepare(generations[0], control.halt_handle(), clock);
+    for at in 1..=16 {
+        let _accepted = producer
+            .submit_owned(InputObservation::Frontier {
+                tick: InputTick::new(at),
+            })
+            .unwrap();
+    }
+    let original = InputObservation::Frontier {
+        tick: InputTick::new(17),
+    };
+    let token = match producer.submit_owned(original) {
+        Err(SourceOwnedSendError::Retry(token)) => token,
+        other => panic!("expected owned retry: {other:?}"),
+    };
+    drop(token);
+    inbox.service_identified(&mut control, |id, result| {
+        assert!(id.is_some());
+        assert!(result.is_ok());
+    });
+    let mut producer = inbox.close(producer).err().unwrap();
+    let retired = producer.retire_pending().unwrap();
+    assert_eq!(retired.observation(), original);
+    assert_eq!(retired.attempt().serial(), 17);
+    assert!(control.halt_handle().is_requested());
+    let mut callbacks = 0;
+    inbox.service_identified(&mut control, |_, _| callbacks += 1);
+    assert_eq!(callbacks, 0);
+    let fault = control
+        .core
+        .input(generations[0])
+        .unwrap()
+        .pre_ring_failure()
+        .unwrap();
+    assert_eq!(fault.reason, InputError::SourceQueueFull);
+    assert_eq!(fault.observation, Some(original));
+    assert!(inbox.close(producer).is_ok());
+}
+
+#[test]
+fn foreign_owned_token_does_not_enter_another_source_ring() {
+    use super::source::{SourceInbox, SourceOwnedSendError};
+    let (mut control, audio, generations) = fixture();
+    let clock = prepare::simulated_clock(audio.core.acknowledged().epoch, 0).unwrap();
+    let (mut first, mut first_inbox) =
+        SourceInbox::prepare(generations[0], control.halt_handle(), clock);
+    let (mut second, second_inbox) =
+        SourceInbox::prepare(generations[1], control.halt_handle(), clock);
+    for at in 1..=16 {
+        let _accepted = first
+            .submit_owned(InputObservation::Frontier {
+                tick: InputTick::new(at),
+            })
+            .unwrap();
+    }
+    let original = InputObservation::Frontier {
+        tick: InputTick::new(17),
+    };
+    let token = match first.submit_owned(original) {
+        Err(SourceOwnedSendError::Retry(token)) => token,
+        other => panic!("expected owned retry: {other:?}"),
+    };
+    let token = match second.retry_owned(token) {
+        Err(SourceOwnedSendError::Mismatched(token)) => token,
+        other => panic!("foreign token was not returned: {other:?}"),
+    };
+    assert!(!control.halt_handle().is_requested());
+    assert!(second_inbox.is_empty());
+    first_inbox.service_identified(&mut control, |id, result| {
+        assert!(id.is_some());
+        assert!(result.is_ok());
+    });
+    let (attempt, queue) = first.retry_owned(token).unwrap().parts();
+    assert_eq!(attempt.generation(), generations[0]);
+    assert_eq!(queue.generation(), generations[0]);
+    assert_eq!(queue.serial(), 17);
+}
+
+#[test]
+fn a_fresh_equal_value_cannot_overtake_an_owned_retry() {
+    use super::source::{SourceInbox, SourceOwnedSendError, SourceSendError};
+    let (mut control, audio, generations) = fixture();
+    let clock = prepare::simulated_clock(audio.core.acknowledged().epoch, 0).unwrap();
+    let (mut producer, mut inbox) =
+        SourceInbox::prepare(generations[0], control.halt_handle(), clock);
+    for at in 1..=16 {
+        let _accepted = producer
+            .submit_owned(InputObservation::Frontier {
+                tick: InputTick::new(at),
+            })
+            .unwrap();
+    }
+    let original = InputObservation::Frontier {
+        tick: InputTick::new(17),
+    };
+    let token = match producer.submit_owned(original) {
+        Err(SourceOwnedSendError::Retry(token)) => token,
+        other => panic!("expected owned retry: {other:?}"),
+    };
+    assert!(matches!(
+        producer.submit_owned(original),
+        Err(SourceOwnedSendError::Refused(SourceSendError::Invalid(
+            refused,
+            InputError::Order
+        ))) if refused == original
+    ));
+    assert_eq!(token.observation(), original);
+    assert!(control.halt_handle().is_requested());
+    let retired = producer.retire_owned(token).unwrap();
+    assert_eq!(retired.observation(), original);
+    inbox.service_identified(&mut control, |_, _| {});
+    assert!(inbox.close(producer).is_ok());
+}
+
+#[test]
+fn legacy_retry_cannot_be_exchanged_for_an_equal_owned_attempt() {
+    use super::source::{SourceInbox, SourceOwnedSendError, SourceSendError};
+    let (control, audio, generations) = fixture();
+    let clock = prepare::simulated_clock(audio.core.acknowledged().epoch, 0).unwrap();
+    let (mut producer, _inbox) = SourceInbox::prepare(generations[0], control.halt_handle(), clock);
+    for at in 1..=16 {
+        producer
+            .send(InputObservation::Frontier {
+                tick: InputTick::new(at),
+            })
+            .unwrap();
+    }
+    let original = InputObservation::Frontier {
+        tick: InputTick::new(17),
+    };
+    assert_eq!(
+        producer.send(original),
+        Err(SourceSendError::Retry(original))
+    );
+    assert!(matches!(
+        producer.submit_owned(original),
+        Err(SourceOwnedSendError::Refused(SourceSendError::Invalid(
+            refused,
+            InputError::Order
+        ))) if refused == original
+    ));
+    assert!(control.halt_handle().is_requested());
+}
+
+#[test]
+fn peer_halt_keeps_owned_retry_original_until_joined_retirement() {
+    use super::source::{SourceInbox, SourceOwnedSendError};
+    let (mut control, audio, generations) = fixture();
+    let clock = prepare::simulated_clock(audio.core.acknowledged().epoch, 0).unwrap();
+    let (mut producer, mut inbox) =
+        SourceInbox::prepare(generations[0], control.halt_handle(), clock);
+    for at in 1..=16 {
+        let _accepted = producer
+            .submit_owned(InputObservation::Frontier {
+                tick: InputTick::new(at),
+            })
+            .unwrap();
+    }
+    let original = InputObservation::Frontier {
+        tick: InputTick::new(17),
+    };
+    let token = match producer.submit_owned(original) {
+        Err(SourceOwnedSendError::Retry(token)) => token,
+        other => panic!("expected owned retry: {other:?}"),
+    };
+    control.halt_handle().request_device_lost();
+    let token = match producer.retry_owned(token) {
+        Err(SourceOwnedSendError::Halted(token)) => token,
+        other => panic!("halt lost the pending token: {other:?}"),
+    };
+    assert_eq!(token.observation(), original);
+    let retired = producer.retire_owned(token).unwrap();
+    assert_eq!(retired.observation(), original);
+    inbox.service_identified(&mut control, |id, _| assert!(id.is_some()));
+    let fault = control
+        .core
+        .input(generations[0])
+        .unwrap()
+        .pre_ring_failure()
+        .unwrap();
+    assert_eq!(fault.reason, InputError::SourceQueueFull);
+    assert_eq!(fault.observation, Some(original));
+    assert!(inbox.close(producer).is_ok());
+}
+
+#[test]
+fn peer_fault_keeps_primary_reason_and_retired_retry_evidence_separate() {
+    use super::source::{SourceInbox, SourceOwnedSendError, SourceSendError};
+    let (mut control, audio, generations) = fixture();
+    let clock = prepare::simulated_clock(audio.core.acknowledged().epoch, 0).unwrap();
+    let (mut first, mut first_inbox) =
+        SourceInbox::prepare(generations[0], control.halt_handle(), clock);
+    let (mut second, mut second_inbox) =
+        SourceInbox::prepare(generations[1], control.halt_handle(), clock);
+    for at in 1..=16 {
+        let _accepted = first
+            .submit_owned(InputObservation::Frontier {
+                tick: InputTick::new(at),
+            })
+            .unwrap();
+    }
+    let original = InputObservation::Frontier {
+        tick: InputTick::new(17),
+    };
+    let token = match first.submit_owned(original) {
+        Err(SourceOwnedSendError::Retry(token)) => token,
+        other => panic!("expected full source ring: {other:?}"),
+    };
+    let peer_invalid = InputObservation::Frontier {
+        tick: InputTick::new(0),
+    };
+    assert_eq!(
+        second.send(peer_invalid),
+        Err(SourceSendError::Invalid(peer_invalid, InputError::Order))
+    );
+    second_inbox.service_identified(&mut control, |_, _| panic!("peer was not queued"));
+    control.pump().unwrap();
+    assert_eq!(
+        control
+            .core
+            .input(generations[0])
+            .unwrap()
+            .discontinuity()
+            .unwrap()
+            .reason,
+        InputError::PeerInterrupted
+    );
+    let token = match first.retry_owned(token) {
+        Err(SourceOwnedSendError::Halted(token)) => token,
+        other => panic!("peer halt lost the token: {other:?}"),
+    };
+    assert_eq!(first.retire_owned(token).unwrap().observation(), original);
+    first_inbox.service_identified(&mut control, |id, _| assert!(id.is_some()));
+    let first_state = control.core.input(generations[0]).unwrap();
+    assert_eq!(
+        first_state.discontinuity().unwrap().reason,
+        InputError::PeerInterrupted
+    );
+    let fault = first_state.pre_ring_failure().unwrap();
+    assert_eq!(fault.reason, InputError::SourceQueueFull);
+    assert_eq!(fault.observation, Some(original));
+    assert_eq!(
+        control
+            .core
+            .input(generations[1])
+            .unwrap()
+            .discontinuity()
+            .unwrap()
+            .reason,
+        InputError::Order
+    );
+    assert!(first_inbox.close(first).is_ok());
+    assert!(second_inbox.close(second).is_ok());
+}
+
+#[test]
+fn stale_owned_token_cannot_report_the_retired_original_twice() {
+    use super::source::{SourceInbox, SourceOwnedSendError};
+    let (mut control, audio, generations) = fixture();
+    let clock = prepare::simulated_clock(audio.core.acknowledged().epoch, 0).unwrap();
+    let (mut producer, mut inbox) =
+        SourceInbox::prepare(generations[0], control.halt_handle(), clock);
+    for at in 1..=16 {
+        let _accepted = producer
+            .submit_owned(InputObservation::Frontier {
+                tick: InputTick::new(at),
+            })
+            .unwrap();
+    }
+    let original = InputObservation::Frontier {
+        tick: InputTick::new(17),
+    };
+    let token = match producer.submit_owned(original) {
+        Err(SourceOwnedSendError::Retry(token)) => token,
+        other => panic!("expected owned retry: {other:?}"),
+    };
+    assert_eq!(producer.retire_pending().unwrap().observation(), original);
+    let token = match producer.retry_owned(token) {
+        Err(SourceOwnedSendError::Mismatched(token)) => token,
+        other => panic!("stale token was not returned: {other:?}"),
+    };
+    assert_eq!(token.observation(), original);
+    inbox.service_identified(&mut control, |id, _| assert!(id.is_some()));
+    let fault = control
+        .core
+        .input(generations[0])
+        .unwrap()
+        .pre_ring_failure()
+        .unwrap();
+    assert_eq!(fault.reason, InputError::SourceQueueFull);
+    assert_eq!(fault.observation, Some(original));
+    assert!(inbox.close(producer).is_ok());
+}
+
+#[test]
+fn owned_attempt_identity_exhaustion_precedes_queue_custody() {
+    use super::source::{SourceInbox, SourceOwnedSendError, SourceSendError};
+    let (mut control, audio, generations) = fixture();
+    let clock = prepare::simulated_clock(audio.core.acknowledged().epoch, 0).unwrap();
+    let (mut producer, mut inbox) =
+        SourceInbox::prepare(generations[0], control.halt_handle(), clock);
+    producer.set_attempt_serial_for_test(u64::MAX);
+    let original = InputObservation::Frontier {
+        tick: InputTick::new(1),
+    };
+    assert!(matches!(
+        producer.submit_owned(original),
+        Err(SourceOwnedSendError::Refused(SourceSendError::Invalid(
+            refused,
+            InputError::IdentityExhausted
+        ))) if refused == original
+    ));
+    assert!(inbox.is_empty());
+    inbox.service_identified(&mut control, |_, _| panic!("no queue custody"));
+    let fault = control
+        .core
+        .input(generations[0])
+        .unwrap()
+        .pre_ring_failure()
+        .unwrap();
+    assert_eq!(fault.reason, InputError::IdentityExhausted);
+    assert_eq!(fault.observation, Some(original));
+}
+
+#[test]
 fn producer_cannot_overtake_an_unresolved_retry_after_the_ring_drains() {
     use super::source::{SourceInbox, SourceSendError};
     let (mut control, audio, generations) = fixture();
