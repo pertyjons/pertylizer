@@ -220,7 +220,12 @@ An independent design read found that merger forwarding cannot recycle ingress
 hold or tracker credit: another source's earlier mapped-time onset can execute
 before that release. The two-source ingress regression now runs in the workspace
 gate and proves the consumer ordering and hold refusal. A combined admission
-ledger, tracker-reserve proof and protected release service remain open.
+ledger, worst-case tracker-reserve bound and protected release service remain
+open. Separate recorder-only fixtures prove pointwise tracker-full and
+capture-reserve refusals when a second source's earlier onset precedes the
+first source's later release; exact reverse publication refuses `PastBoundary`.
+The combined host still needs one shared charge and a positive-receipt proof
+across both consumers.
 The off-thread target binding owns its validated plan, one admitted compiled
 stream and one live note slot. It accepts disjoint voice-instance targets and
 refuses shared nodes or compiled writers outside note targets. A constructor

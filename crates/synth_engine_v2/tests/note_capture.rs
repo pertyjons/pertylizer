@@ -15,6 +15,15 @@ use synth_engine_v2::time::{
 };
 
 fn limits(held: u32, events: u32, tracked: u32, results: u32) -> RecordingLimits {
+    limits_with_sources(held, events, tracked, results, 2)
+}
+fn limits_with_sources(
+    held: u32,
+    events: u32,
+    tracked: u32,
+    results: u32,
+    sources: u32,
+) -> RecordingLimits {
     RecordingLimits::new(
         HeldNoteCount::limit(held).unwrap(),
         EventCount::limit(events).unwrap(),
@@ -23,7 +32,7 @@ fn limits(held: u32, events: u32, tracked: u32, results: u32) -> RecordingLimits
     .with_capture(
         CaptureLimits::new(CaptureLimitsInput {
             max_tracked_input_notes: TrackedInputNoteCount::limit(tracked).unwrap(),
-            max_capture_sources: CaptureSourceCount::limit(2).unwrap(),
+            max_capture_sources: CaptureSourceCount::limit(sources).unwrap(),
             max_capture_passes: CapturePassCount::limit(1).unwrap(),
             max_pending_capture_results: CaptureResultCount::limit(results).unwrap(),
             max_capture_bytes: PreparedBytes::limit(1_048_576).unwrap(),
@@ -930,6 +939,124 @@ fn physical_tracker_exhaustion_requires_rebind_and_transfers_retired_diagnostics
             .unwrap()
             .as_u64(),
         0
+    );
+}
+
+#[test]
+fn earlier_cross_source_onset_sees_full_tracker_before_later_release() {
+    let (mut recorder, first, epoch) = recorder(limits(4, 32, 8, 2));
+    let second = recorder
+        .bind_fixture_source(Some(ControllerSnapshot::neutral()))
+        .unwrap();
+    for (time, key) in (10..18).zip(60..68) {
+        let receipt = publish(&mut recorder, first, epoch, time, [0x90, key, 100]);
+        assert!(receipt.occurrence.is_some());
+    }
+
+    // A merger may see the first source's later release before the second
+    // source's earlier onset. The consumer must account for mapped time order.
+    let earlier =
+        CaptureStamp::exact_fixture(epoch, SampleTime::new(30), SampleTime::new(30)).unwrap();
+    assert_eq!(
+        recorder.publish(
+            second,
+            earlier,
+            Midi1Input::from_bytes([0x90, 70, 100]).unwrap(),
+            AuditionTrace::NotOffered,
+        ),
+        Err(NoteCaptureError::TrackerFull)
+    );
+    assert!(
+        publish(&mut recorder, first, epoch, 40, [0x80, 60, 0])
+            .occurrence
+            .is_some()
+    );
+    assert!(
+        publish(&mut recorder, first, epoch, 41, [0x90, 70, 100])
+            .occurrence
+            .is_some()
+    );
+}
+
+#[test]
+fn earlier_cross_source_onset_sees_capture_reserve_before_later_release() {
+    let epoch = issue_epoch().unwrap();
+    let mut recorder =
+        SimulatedNoteRecorder::prepare_fixture(epoch, limits_with_sources(2, 32, 8, 2, 3)).unwrap();
+    let first = recorder
+        .bind_fixture_source(Some(ControllerSnapshot::neutral()))
+        .unwrap();
+    let second = recorder
+        .bind_fixture_source(Some(ControllerSnapshot::neutral()))
+        .unwrap();
+    let selected = recorder
+        .bind_fixture_source(Some(ControllerSnapshot::neutral()))
+        .unwrap();
+    let ticket = start(&mut recorder, &[selected], epoch);
+    for (time, key) in (30..36).zip(60..66) {
+        let receipt = publish(&mut recorder, first, epoch, time, [0x90, key, 100]);
+        assert!(receipt.occurrence.is_some());
+    }
+
+    let earlier =
+        CaptureStamp::exact_fixture(epoch, SampleTime::new(40), SampleTime::new(40)).unwrap();
+    assert_eq!(
+        recorder.publish(
+            second,
+            earlier,
+            Midi1Input::from_bytes([0x90, 70, 100]).unwrap(),
+            AuditionTrace::NotOffered,
+        ),
+        Err(NoteCaptureError::TrackerReserved)
+    );
+    assert!(
+        publish(&mut recorder, first, epoch, 50, [0x80, 60, 0])
+            .occurrence
+            .is_some()
+    );
+    assert!(
+        publish(&mut recorder, first, epoch, 51, [0x90, 70, 100])
+            .occurrence
+            .is_some()
+    );
+    for (time, key) in [(60, 80), (61, 81)] {
+        assert_eq!(
+            publish(&mut recorder, selected, epoch, time, [0x90, key, 100]).capture,
+            CaptureDisposition::Recorded
+        );
+    }
+    fence(&mut recorder, selected, epoch, 125);
+    assert_eq!(
+        recorder.result(ticket).unwrap().sealed_outcome(),
+        CaptureOutcome::Complete
+    );
+}
+
+#[test]
+fn recorder_refuses_an_earlier_cross_source_onset_after_a_later_release() {
+    let (mut recorder, first, epoch) = recorder(limits(4, 32, 8, 2));
+    let second = recorder
+        .bind_fixture_source(Some(ControllerSnapshot::neutral()))
+        .unwrap();
+    for (time, key) in (10..18).zip(60..68) {
+        let _receipt = publish(&mut recorder, first, epoch, time, [0x90, key, 100]);
+    }
+    let _release = publish(&mut recorder, first, epoch, 40, [0x80, 60, 0]);
+    let earlier =
+        CaptureStamp::exact_fixture(epoch, SampleTime::new(30), SampleTime::new(30)).unwrap();
+    assert_eq!(
+        recorder.publish(
+            second,
+            earlier,
+            Midi1Input::from_bytes([0x90, 70, 100]).unwrap(),
+            AuditionTrace::NotOffered,
+        ),
+        Err(NoteCaptureError::PastBoundary)
+    );
+    assert!(
+        publish(&mut recorder, second, epoch, 41, [0x90, 70, 100])
+            .occurrence
+            .is_some()
     );
 }
 

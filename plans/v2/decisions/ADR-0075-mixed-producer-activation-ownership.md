@@ -767,19 +767,28 @@ The recorder has the same time-order hazard when its tracker is the limiting
 resource. The concrete host's four ingress holds and four live note identities
 stop it from safely admitting eight simultaneous onsets into its eight-cell
 tracker. A recorder-only fixture with eight tracker cells and no active capture
-can isolate the tracker: eight tracked onsets followed by a later-time release
-can expose `TrackerFull` after an incorrectly credited earlier-time onset.
+now isolates the tracker: eight tracked source-A onsets leave source B's
+earlier-time onset at `TrackerFull` before A's later-time release frees a cell.
 With capture armed, a non-capture-eligible onset can instead hit
-`TrackerReserved` before the tracker fills; that case needs its own recorder
-fixture so an ingress refusal does not mask the tracker result.
+`TrackerReserved` before the tracker fills. A separate recorder-only fixture
+holds six unselected A onsets against an eight-cell tracker with two cells
+reserved for the armed take. Unselected B's earlier-time onset receives
+`TrackerReserved` before A's later-time release; two selected onsets still
+record afterward. With exact publication stamps, the reverse call order
+rejects B's earlier-time onset as `PastBoundary` after A's later-time release.
+That check uses published time; a host that delivers an earlier nominal event
+with a later published time still needs ordered credit accounting. None of
+these fixtures supplies a model receipt or a host ledger.
 Before a positive model onset receipt, the tracker charge must cover the
 recorder's unspent capture reserve in the worst case: arm or stop boundaries
 may change capture eligibility before the onset reaches pairing. Separate
-ingress-only and recorder-only rehearsals must saturate their respective
-resource, forward source A's later release, then offer source B's earlier-time
-onset. The combined host must then prove the same admission rule across both
-consumers. Any positive model receipt that later becomes `IngressRefused`,
-`TrackerFull` or `TrackerReserved` falsifies that rule.
+ingress-only and recorder-only rehearsals now establish the two consumer
+refusals at their respective limits. The ingress fixture exposes a source-ring
+service order opposite to mapped-time execution; the tracker-full and reserve
+fixtures test the earlier onset before the later release in consumer order.
+The combined host must prove the same admission rule across both consumers.
+Any positive model receipt that later becomes `IngressRefused`, `TrackerFull`,
+`TrackerReserved` or `PastBoundary` falsifies that rule.
 
 `Retry` cannot stand for every credit shortage. With the initial raw frontier
 still uncollected, fourteen onset/release pairs without a later frontier
