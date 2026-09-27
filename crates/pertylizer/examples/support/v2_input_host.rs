@@ -127,6 +127,7 @@ pub struct LiveControl {
     completions: HeapCons<LoopTransferCompletion>,
     pending: Option<LoopTransferPacket>,
     failed_collection: Option<LoopTransferCompletion>,
+    pending_input: Option<InputReceipt>,
     // Never let callback endpoint destruction free the ring allocation.
     _packets: Arc<HeapRb<LoopTransferPacket>>,
     _completions: Arc<HeapRb<LoopTransferCompletion>>,
@@ -165,6 +166,7 @@ impl LiveControl {
                 completions: receiver,
                 pending: None,
                 failed_collection: None,
+                pending_input: None,
                 _packets: packets,
                 _completions: completions,
             },
@@ -307,16 +309,27 @@ impl LiveControl {
     pub fn has_completions(&self) -> bool {
         self.failed_collection.is_some() || !self.completions.is_empty()
     }
+    /// An audition settlement error retains its raw receipt in this owner.
+    /// Other generations report no receipt while this one is retained.
     pub fn collect_input(
         &mut self,
         generation: ConnectionGeneration,
     ) -> Result<Option<InputReceipt>, InputError> {
-        let receipt = self.core.collect_input(generation)?;
-        if let Some(receipt) = &receipt
+        let receipt = if let Some(receipt) = self.pending_input.take() {
+            if receipt.id.generation() != generation {
+                self.pending_input = Some(receipt);
+                return Ok(None);
+            }
+            Some(receipt)
+        } else {
+            self.core.collect_input(generation)?
+        };
+        if let Some(trace) = receipt.as_ref().map(|receipt| receipt.audition)
             && let Some(audition) = &mut self.audition
+            && let Err(error) = audition.settle(trace)
         {
-            // One settlement per outstanding audition credit; queue capacity covers all.
-            audition.settle(receipt.audition)?;
+            self.pending_input = receipt;
+            return Err(error);
         }
         Ok(receipt)
     }
@@ -449,6 +462,7 @@ impl LiveControl {
     ) -> Result<InputCaptureSession, ReuniteError> {
         if self.pending.is_some()
             || self.failed_collection.is_some()
+            || self.pending_input.is_some()
             || audio.pending.is_some()
             || audio.refused.is_some()
             || !audio.packets.is_empty()

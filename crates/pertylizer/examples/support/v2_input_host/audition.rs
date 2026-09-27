@@ -197,6 +197,9 @@ impl AuditionControl {
     }
     pub fn settle(&mut self, trace: AuditionTrace) -> Result<(), InputError> {
         if let AuditionTrace::Pending(id) = trace {
+            // Each unsettled ID still owns an outstanding credit, so a full ring
+            // is unreachable under normal credit accounting. Keep the error for
+            // fault injection and any future change to that accounting.
             self.settled.try_push(id).map_err(|_| InputError::Full)?;
         }
         Ok(())
@@ -209,6 +212,14 @@ impl AuditionControl {
     #[cfg(test)]
     pub(super) fn custody(&self) -> ([u64; 2], usize, usize) {
         (self.serials, self.outstanding, self.queue.occupied_len())
+    }
+    #[cfg(test)]
+    /// Inject a ring state that normal outstanding-credit accounting excludes.
+    pub(super) fn fill_settlements(&mut self, source: ConnectionGeneration) {
+        for serial in 1..=self.settled.capacity().get() {
+            let id = AuditionId::new(source, u64::try_from(serial).unwrap()).unwrap();
+            self.settled.try_push(id).unwrap();
+        }
     }
 }
 impl AuditionAudio {
@@ -355,6 +366,10 @@ impl AuditionAudio {
     }
     pub fn clock(&self) -> SampleTime {
         self.renderer.clock()
+    }
+    #[cfg(test)]
+    pub(super) fn free_settlement_slot(&mut self) -> Option<AuditionId> {
+        self.settled.try_pop()
     }
     #[cfg(test)]
     /// Reproduce the owner locations after a renderer refusal without filling

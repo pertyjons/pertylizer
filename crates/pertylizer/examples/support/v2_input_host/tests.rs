@@ -261,6 +261,93 @@ fn raw_time_refusal_does_not_create_audition_custody() {
 }
 
 #[test]
+fn full_audition_settlement_retains_raw_receipt_until_retry() {
+    use synth_engine_v2::recording::notes::AuditionTrace;
+
+    let (mut control, mut audio, generations) = fixture();
+    let profile = HostProfile::harness(
+        SampleRate::new(48000.0).unwrap(),
+        FrameCount::new(8192),
+        ChannelLayout::Mono,
+    )
+    .unwrap();
+    let clocks = [
+        prepare::simulated_clock(audio.core.acknowledged().epoch, 0).unwrap(),
+        prepare::simulated_clock(audio.core.acknowledged().epoch, 1).unwrap(),
+    ];
+    let (audition, audition_audio, _bytes) =
+        super::audition::AuditionControl::prepare(profile, generations, clocks).unwrap();
+    control.audition = Some(audition);
+    audio.audition = Some(audition_audio);
+    let _play = control
+        .command(SampleTime::new(256), SessionCommand::Play)
+        .unwrap();
+    frontier(&mut control, generations, 256);
+    let observation = InputObservation::Message {
+        tick: InputTick::new(560),
+        arrival: SampleTime::new(280),
+        input: Midi1Input::from_bytes([0x90, 60, 100]).unwrap(),
+    };
+    let id = control.offer(generations[1], observation).unwrap();
+    frontier(&mut control, generations, 512);
+    control.pump().unwrap();
+    render(&mut audio, 768, &[768]);
+    while control.has_completions() {
+        let _ = control.collect().unwrap();
+    }
+    for _ in 0..2 {
+        let prior = control.collect_input(generations[1]).unwrap().unwrap();
+        assert!(matches!(prior.audition, AuditionTrace::NotOffered));
+    }
+
+    control
+        .audition
+        .as_mut()
+        .unwrap()
+        .fill_settlements(generations[1]);
+    assert_eq!(
+        control.collect_input(generations[1]).unwrap_err(),
+        InputError::Full
+    );
+    assert_eq!(control.pending_input.as_ref().unwrap().id, id);
+    assert!(control.collect_input(generations[0]).unwrap().is_none());
+    assert_eq!(control.pending_input.as_ref().unwrap().id, id);
+
+    control.recover(&mut audio, |_, _| {}).unwrap();
+    assert!(audio.audition.as_ref().unwrap().is_finished());
+    assert!(control.pending.is_none());
+    assert!(control.failed_collection.is_none());
+    assert!(audio.pending.is_none());
+    assert!(audio.refused.is_none());
+    assert!(audio.packets.is_empty());
+    assert!(control.completions.is_empty());
+    let Err(ReuniteError::Pending(owners)) = control.reunite(audio, |_, _| {}) else {
+        panic!("reunion must retain the unsettled raw receipt");
+    };
+    let (mut control, mut audio) = *owners;
+    assert!(
+        audio
+            .audition
+            .as_mut()
+            .unwrap()
+            .free_settlement_slot()
+            .is_some()
+    );
+    let receipt = control.collect_input(generations[1]).unwrap().unwrap();
+    assert_eq!(receipt.id, id);
+    assert_eq!(receipt.observation, observation);
+    assert!(matches!(receipt.audition, AuditionTrace::Pending(_)));
+    assert!(control.pending_input.is_none());
+    // The fixture's source-zero frontiers were withheld while source one owned
+    // the pending receipt; they must still be available after its retry.
+    let other_source = control.collect_input(generations[0]).unwrap().unwrap();
+    assert!(matches!(other_source.audition, AuditionTrace::NotOffered));
+    let next = control.collect_input(generations[1]).unwrap().unwrap();
+    assert!(next.id.serial() > id.serial());
+    assert!(control.collect_input(generations[1]).unwrap().is_none());
+}
+
+#[test]
 fn post_receipt_audition_fault_returns_accepted_id_without_retryable_input() {
     let (mut control, mut audio, generations) = fixture();
     let profile = HostProfile::harness(
