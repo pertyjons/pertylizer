@@ -801,6 +801,70 @@ fn private_stamp_releases_only_its_copy_and_orders_restoration_before_destinatio
 }
 
 #[test]
+fn private_audio_capsule_is_sendable_without_moving_control_or_source_history() {
+    fn require_send<T: Send>() {}
+    require_send::<MixedAudioCandidate>();
+
+    for compiled_first in [true, false] {
+        let prepared = bound_with_events(compiled_first, |note| {
+            vec![PlanEvent::new(
+                PlanPosition::ZERO,
+                CompiledPayload::NoteOn {
+                    slot: note,
+                    key: key(60),
+                    velocity: NoteVelocity::FULL,
+                },
+            )]
+        });
+        let old = prepared.outstanding[0];
+        let history = prepared
+            .prepare_history(SampleTime::new(64), PlanPosition::new(10))
+            .expect("prefix");
+        let suffix = prepared.prepare_suffix(history).expect("suffix");
+        let omitted = (
+            suffix.omitted_release_count(),
+            suffix.omitted_expression_count(),
+        );
+        let stamped = prepared.stamp_suffix(suffix).expect("private stamp");
+        let event_count = stamped.event_count();
+        let restoration_count = stamped.restoration_count();
+        let outstanding_count = stamped.outstanding_count();
+        let capsule = stamped.into_audio_capsule().expect("successor sequence");
+        assert_eq!(capsule.plan, prepared.owner.control.plan.id());
+        assert_eq!(capsule.epoch, prepared.epoch());
+        assert_eq!(capsule.table, prepared.table_id());
+        assert_eq!(
+            capsule.anchor,
+            StreamAnchor::new(SampleTime::new(64), PlanPosition::new(10))
+        );
+        assert_eq!(capsule.supersedes, ActivationSequence::INITIAL);
+        assert_eq!(
+            capsule.sequence,
+            ActivationSequence::INITIAL.next().unwrap()
+        );
+        assert_eq!(capsule.event_count, event_count);
+        assert_eq!(capsule.events.len(), event_count.as_usize().unwrap());
+        assert_eq!(capsule.restoration_count, restoration_count);
+        assert_eq!(capsule.outstanding_count, outstanding_count);
+        assert_eq!(
+            capsule.outstanding.len(),
+            outstanding_count.as_usize().unwrap()
+        );
+        assert_eq!(
+            (capsule.omitted_releases, capsule.omitted_expressions),
+            omitted
+        );
+        assert_eq!(capsule.minter.live(), outstanding_count.get());
+        assert_eq!(
+            prepared.owner.control.minter.resolve(old),
+            Resolution::Live,
+            "boxing a copied minter must not alter authoritative custody"
+        );
+        drop(capsule);
+    }
+}
+
+#[test]
 fn private_effective_timing_refuses_suffix_overflow_after_restoration_fits() {
     let prepared = bound_with_events(true, |note| {
         vec![

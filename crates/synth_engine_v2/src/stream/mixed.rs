@@ -185,6 +185,14 @@ pub enum MixedStampPrepareError {
     EventOrder { event_index: usize },
 }
 
+/// Why a privately stamped list cannot become the one-shot audio capsule.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
+pub(crate) enum MixedCapsulePrepareError {
+    /// Defensive check: the privately stamped `INITIAL` baseline must have a successor.
+    #[error("mixed activation sequence has no successor")]
+    SequenceExhausted,
+}
+
 /// Why a private mixed schedule cannot be read at an effective render boundary.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
 pub enum MixedEffectiveTimeError {
@@ -358,6 +366,45 @@ pub struct MixedStampedCandidate {
     outstanding_count: HeldNoteCount,
     #[allow(dead_code)]
     minter: CompiledRangeMinter,
+}
+
+/// Sendable, boxed custody for one private audio-side mixed transition.
+///
+/// Source-selection history stays off-thread. The eventual audio owner must
+/// return this box and its retired event list and anchor there for final drop.
+#[must_use]
+#[allow(dead_code)] // The one-shot audio schedule owner is the next slice.
+pub(crate) struct MixedAudioCandidate {
+    plan: PlanId,
+    epoch: StreamEpoch,
+    table: TableId,
+    anchor: StreamAnchor,
+    supersedes: ActivationSequence,
+    sequence: ActivationSequence,
+    omitted_releases: EventCount,
+    omitted_expressions: EventCount,
+    events: Vec<TimedEvent>,
+    event_count: EventCount,
+    restoration_count: EventCount,
+    outstanding: Vec<NoteIdentity>,
+    outstanding_count: HeldNoteCount,
+    minter: CompiledRangeMinter,
+}
+
+impl std::fmt::Debug for MixedAudioCandidate {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("MixedAudioCandidate")
+            .field("plan", &self.plan)
+            .field("epoch", &self.epoch)
+            .field("table", &self.table)
+            .field("anchor", &self.anchor)
+            .field("supersedes", &self.supersedes)
+            .field("sequence", &self.sequence)
+            .field("event_count", &self.event_count)
+            .field("restoration_count", &self.restoration_count)
+            .field("outstanding_count", &self.outstanding_count)
+            .finish_non_exhaustive()
+    }
 }
 
 impl std::fmt::Debug for MixedStampedCandidate {
@@ -1225,6 +1272,56 @@ impl MixedSuffixCandidate {
 }
 
 impl MixedStampedCandidate {
+    /// Strip the non-sendable source history and box the audio payload off-thread.
+    /// A sequence refusal gives the complete candidate back for off-thread disposal.
+    #[allow(dead_code)] // The one-shot audio schedule owner is the next slice.
+    pub(crate) fn into_audio_capsule(
+        self,
+    ) -> Result<Box<MixedAudioCandidate>, Box<(MixedCapsulePrepareError, Self)>> {
+        let Some(sequence) = self.supersedes.next() else {
+            return Err(Box::new((
+                MixedCapsulePrepareError::SequenceExhausted,
+                self,
+            )));
+        };
+        let Self {
+            suffix,
+            anchor,
+            supersedes,
+            events,
+            event_count,
+            restoration_count,
+            outstanding,
+            outstanding_count,
+            minter,
+        } = self;
+        let plan = suffix.history.plan;
+        let epoch = suffix.history.epoch;
+        let table = suffix.history.table;
+        let omitted_releases = suffix.omitted_releases;
+        let omitted_expressions = suffix.omitted_expressions;
+        // `history` contains a PhantomData<Rc<()>> marker and source-selection
+        // vectors. The vectors are finally dropped here, before the sendable
+        // capsule can reach audio.
+        drop(suffix);
+        Ok(Box::new(MixedAudioCandidate {
+            plan,
+            epoch,
+            table,
+            anchor,
+            supersedes,
+            sequence,
+            omitted_releases,
+            omitted_expressions,
+            events,
+            event_count,
+            restoration_count,
+            outstanding,
+            outstanding_count,
+            minter,
+        }))
+    }
+
     /// Check the uniform displacement for a possible adoption boundary.
     ///
     /// This is private preparation evidence, not capacity admission or an offer. The
