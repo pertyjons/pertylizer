@@ -203,6 +203,11 @@ The existing exclusive `LiveInputStream` now preflights held-cell credit against
 pending key releases, sustain and Stop ordering. Source queue and result credit
 still follow ADR-0073's terminal overload policy; the proposed protected-release
 contract and combined host remain unbuilt.
+The concrete simulated source now validates mapped time and source order before
+queue custody. A terminal refusal retains its original and reason across the
+producer/inbox handoff; the raw owner keeps a separate quality fault when an
+earlier discontinuity already owns the primary reason. This establishes the
+producer order prerequisite but grants no capacity or protected-release credit.
 The off-thread target binding owns its validated plan, one admitted compiled
 stream and one live note slot. It accepts disjoint voice-instance targets and
 refuses shared nodes or compiled writers outside note targets. A constructor
