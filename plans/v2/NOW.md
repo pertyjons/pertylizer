@@ -340,6 +340,16 @@ receipts and recorder publications. Same-key releases on one source redeem its
 onsets in FIFO order; the other source's same key stays separate. The fixture
 uses serial producers and has no atomic shared capacity charge or mixed-ingress
 offer, so the combined host acceptance gate remains open.
+The concrete source packet now retains the producer-validated nominal engine
+time through queue custody and retry. Source and managed-host service expose
+the paired `SourceQueueStamp` beside each raw offer result; it contains the
+`SourceQueueId` and mapped `SampleTime`. A pre-ring failure has no stamp. The
+Linux driver reports the mapped time, and the two-source raw-receipt fixture
+checks both source clocks. Raw capture still drains each source prefix
+independently.
+ADR-0075 records why raw service must not wait for a mixed-time peer frontier:
+the recorder needs far-ahead source frontiers to release its own bounded cells.
+A separate bounded mixed staging and result path remains open.
 An independent design read rejected a merger-only shared counter as sufficient
 mixed admission. A V2-local counterexample gives source A an onset at sample 150
 and source B one at 140: both raw owners accept, and the modeled shared credits

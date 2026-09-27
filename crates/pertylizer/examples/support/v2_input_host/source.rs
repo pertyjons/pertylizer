@@ -55,6 +55,24 @@ impl SourceQueueId {
     }
 }
 
+/// One queue identity and the nominal engine time validated for that packet.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[must_use]
+pub struct SourceQueueStamp {
+    queue: SourceQueueId,
+    mapped_at: SampleTime,
+}
+
+impl SourceQueueStamp {
+    pub fn queue(self) -> SourceQueueId {
+        self.queue
+    }
+
+    pub fn mapped_at(self) -> SampleTime {
+        self.mapped_at
+    }
+}
+
 #[derive(Debug)]
 #[must_use]
 pub struct SourceAccepted {
@@ -120,6 +138,7 @@ impl SourceRetiredAttempt {
 struct SourcePacket {
     id: SourceQueueId,
     observation: InputObservation,
+    mapped_at: SampleTime,
 }
 
 #[derive(Clone, Copy)]
@@ -271,20 +290,21 @@ impl SourceInbox {
         control: &mut LiveControl,
         mut receive: impl FnMut(Option<SourceQueueId>, InputOfferReport),
     ) {
-        self.service_attributed_identified(control, |id, report| {
+        self.service_mapped_identified(control, |stamp, report| {
             assert!(
                 report.attribution_error.is_none(),
                 "test-only projection cannot discard a source attribution failure"
             );
-            receive(id, report.offer);
+            receive(stamp.map(SourceQueueStamp::queue), report.offer);
         });
     }
 
-    /// Source results retain the original refusal and any attribution error.
-    pub fn service_attributed_identified(
+    /// A queued observation carries its validated nominal engine time through
+    /// raw admission. A pre-ring failure has neither queue identity nor stamp.
+    pub fn service_mapped_identified(
         &mut self,
         control: &mut LiveControl,
-        mut receive: impl FnMut(Option<SourceQueueId>, SourceOfferReport),
+        mut receive: impl FnMut(Option<SourceQueueStamp>, SourceOfferReport),
     ) {
         self.record_failure(control, |report| receive(None, report));
         let prefix = self.queue.occupied_len();
@@ -293,7 +313,10 @@ impl SourceInbox {
                 break;
             };
             receive(
-                Some(packet.id),
+                Some(SourceQueueStamp {
+                    queue: packet.id,
+                    mapped_at: packet.mapped_at,
+                }),
                 control.offer_source_queued(self.generation, packet.id, packet.observation),
             );
         }
@@ -399,7 +422,11 @@ impl SourceProducer {
             generation: self.generation,
             serial,
         };
-        if let Err(original) = self.queue.try_push(SourcePacket { id, observation }) {
+        if let Err(original) = self.queue.try_push(SourcePacket {
+            id,
+            observation,
+            mapped_at: nominal,
+        }) {
             self.retry = Some(original.observation);
             return Err(SourceSendError::Retry(original.observation));
         }
@@ -445,6 +472,7 @@ impl SourceProducer {
         if let Err(original) = self.queue.try_push(SourcePacket {
             id: queue,
             observation,
+            mapped_at: nominal,
         }) {
             *self.owned_retry = Some(PendingOwned {
                 retired: SourceRetiredAttempt {
@@ -487,6 +515,7 @@ impl SourceProducer {
             .try_push(SourcePacket {
                 id: pending.queue,
                 observation: pending.retired.observation,
+                mapped_at: pending.nominal,
             })
             .is_err()
         {

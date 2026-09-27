@@ -1465,6 +1465,22 @@ repeated same-key onsets and FIFO releases on one source beside the other
 source's same key. This is an identity and payload handoff check for the
 example's existing ring and raw owner. It has no atomic shared capacity charge,
 concurrent producer proof, mixed-ingress offer or joined outcome.
+The concrete source packet also retains the nominal engine `SampleTime` checked
+before queue custody, including through an owned full-ring retry. Source and
+managed-host service now report a paired `SourceQueueStamp` with each actual raw
+offer result. It contains the queued ID and checked time; a pre-ring failure
+has no stamp. The Linux driver displays the stamp, and the two-source fixture
+checks the 1:1 and 2:1 source-clock mappings against retained raw receipts.
+Raw service keeps independent fixed source prefixes. A separate design read
+found that applying the mixed-time selector to this raw service would hold a
+source's far-ahead frontier behind the other source's earlier messages. The
+serial capture owner needs those frontiers to publish and recycle its bounded
+cells; `source_cells_recycle_beyond_64_with_audition_and_recover_without_a_last_callback`
+is the concrete regression gate for that progress. This is an inference from
+the raw frontier law and that fixture, not a qualified mixed service path. A
+future mixed lane needs its own bounded custody, raw/ingress/result association
+and time-order wait policy. It cannot hold raw capture hostage to a silent
+peer or charge that peer's silence as the blocked producer's `SourceQueueFull`.
 An independent design read rejected the narrower idea that a merger-thread
 shared counter alone could linearize combined mixed admission. The V2-local
 `merger_credit_alone_cannot_admit_out_of_order_mixed_ingress` test provides a

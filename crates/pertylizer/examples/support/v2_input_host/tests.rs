@@ -968,14 +968,18 @@ fn concrete_two_source_queue_ids_join_delivered_raw_and_recorder_receipts() {
     let second_ids =
         second_observations.map(|observation| second.submit_owned(observation).unwrap().parts().1);
     let mut links = Vec::new();
+    let mut mapped = Vec::new();
     for inbox in [&mut first_inbox, &mut second_inbox] {
-        inbox.service_attributed_identified(&mut control, |queue, report| {
+        inbox.service_mapped_identified(&mut control, |stamp, report| {
             assert!(report.attribution_error.is_none());
             assert_eq!(
                 report.offer.audition_packet,
                 AuditionPacketCustody::NotQueued
             );
-            links.push((queue.unwrap(), report.offer.result.unwrap()));
+            let stamp = stamp.unwrap();
+            let queue = stamp.queue();
+            mapped.push((queue, stamp.mapped_at()));
+            links.push((queue, report.offer.result.unwrap()));
         });
     }
     assert_eq!(links.len(), first_ids.len() + second_ids.len());
@@ -1008,7 +1012,30 @@ fn concrete_two_source_queue_ids_join_delivered_raw_and_recorder_receipts() {
     {
         let raw = raw_for(queue);
         assert_eq!(raw.generation(), queue.generation());
+        let expected_at = match observation {
+            InputObservation::Message { tick, .. } | InputObservation::Frontier { tick } => {
+                SampleTime::new(
+                    tick.as_u64()
+                        / if queue.generation() == generations[0] {
+                            1
+                        } else {
+                            2
+                        },
+                )
+            }
+        };
+        assert_eq!(
+            mapped
+                .iter()
+                .find(|(id, _)| *id == queue)
+                .map(|(_, at)| *at),
+            Some(expected_at)
+        );
         let receipt = receipts.iter().find(|receipt| receipt.id == raw).unwrap();
+        let tick = match observation {
+            InputObservation::Message { tick, .. } | InputObservation::Frontier { tick } => tick,
+        };
+        assert_eq!(receipt.clock.map(tick).unwrap(), expected_at);
         assert_eq!(receipt.observation, observation);
         assert!(matches!(
             (observation, &receipt.outcome),
@@ -1165,12 +1192,12 @@ fn pre_ring_attribution_error_preserves_the_producer_reason() {
         Err(SourceSendError::Invalid(original, InputError::Future))
     );
     let mut reports = Vec::new();
-    inbox.service_attributed_identified(&mut control, |id, report| reports.push((id, report)));
-    inbox.service_attributed_identified(&mut control, |id, report| reports.push((id, report)));
-    let [(id, report)] = reports.as_slice() else {
+    inbox.service_mapped_identified(&mut control, |stamp, report| reports.push((stamp, report)));
+    inbox.service_mapped_identified(&mut control, |stamp, report| reports.push((stamp, report)));
+    let [(stamp, report)] = reports.as_slice() else {
         panic!("failed attribution must have one report");
     };
-    assert_eq!(*id, None);
+    assert_eq!(*stamp, None);
     assert_eq!(report.attribution_error, Some(InputError::Stale));
     assert_eq!(
         report.offer.result,
@@ -1232,12 +1259,17 @@ fn owned_retry_preserves_attempt_and_mints_queue_id_only_after_push() {
     assert_eq!(next_queue.serial(), 18);
     assert_ne!(next_attempt, retried_attempt);
     let mut results = Vec::new();
-    inbox.service_identified(&mut control, |id, result| {
-        results.push((id.unwrap(), result));
+    inbox.service_mapped_identified(&mut control, |stamp, report| {
+        assert!(report.attribution_error.is_none());
+        results.push((stamp.unwrap(), report.offer.result));
     });
     assert_eq!(results.len(), 2);
-    assert_eq!(results[0].0, retried_queue);
-    assert_eq!(results[1].0, next_queue);
+    assert_eq!(results[0].0.queue(), retried_queue);
+    assert_eq!(results[1].0.queue(), next_queue);
+    for (stamp, result) in results {
+        assert_eq!(stamp.mapped_at(), SampleTime::new(17));
+        assert!(result.is_ok());
+    }
 }
 
 #[test]
@@ -1835,16 +1867,16 @@ fn producer_rejects_unmappable_clock_before_ring_custody() {
     assert!(control.halt_handle().is_requested());
     assert!(inbox.is_empty());
     let mut results = Vec::new();
-    inbox.service_attributed_identified(&mut control, |id, report| {
-        results.push((id, report));
+    inbox.service_mapped_identified(&mut control, |stamp, report| {
+        results.push((stamp, report));
     });
-    inbox.service_attributed_identified(&mut control, |id, report| {
-        results.push((id, report));
+    inbox.service_mapped_identified(&mut control, |stamp, report| {
+        results.push((stamp, report));
     });
-    let [(id, report)] = results.as_slice() else {
+    let [(stamp, report)] = results.as_slice() else {
         panic!("the terminal source failure must be reported once");
     };
-    assert_eq!(*id, None);
+    assert_eq!(*stamp, None);
     assert_eq!(report.attribution_error, Some(InputError::State));
     assert_eq!(
         report.offer.result,
@@ -1889,11 +1921,19 @@ fn managed_service_records_second_source_failure_before_first_queue_halt() {
     );
     let mut results = Vec::new();
     managed
-        .service(|result| results.push(result), |_, _| {}, |_| {})
+        .service_mapped_identified(
+            |stamp, report| {
+                assert!(report.attribution_error.is_none());
+                results.push((stamp, report.offer.result));
+            },
+            |_, _| {},
+            |_| {},
+        )
         .unwrap();
     assert!(matches!(
         results.as_slice(),
-        [Err(InputOfferError::Refused(original, _))] if *original == queued
+        [(Some(stamp), Err(InputOfferError::Refused(original, _)))]
+            if stamp.mapped_at() == SampleTime::new(1) && *original == queued
     ));
     assert_eq!(
         managed.source_discontinuity(0).unwrap().reason,
@@ -2635,22 +2675,27 @@ fn audition_credit_exhaustion_retains_results_and_refused_release_without_a_fina
     };
     let later_id = first.send_identified(later).unwrap();
     let mut refused = Vec::new();
-    run.service_attributed_identified(
-        |source_id, report| refused.push((source_id, report)),
+    run.service_mapped_identified(
+        |stamp, report| refused.push((stamp, report)),
         |_, _| {},
         |_| {},
     )
     .unwrap();
-    let [(first_id, first_report), (second_id, second_report)] = refused.as_slice() else {
+    let [(first_stamp, first_report), (second_stamp, second_report)] = refused.as_slice() else {
         panic!("two queued observations must each receive a disposition");
     };
-    assert_eq!(*first_id, Some(release_id));
+    assert_eq!(first_stamp.map(|stamp| stamp.queue()), Some(release_id));
+    assert_eq!(first_stamp.map(|stamp| stamp.mapped_at()), Some(at));
     assert_eq!(first_report.attribution_error, None);
     assert_eq!(
         first_report.offer.result,
         Err(InputOfferError::Refused(release, InputError::Full))
     );
-    assert_eq!(*second_id, Some(later_id));
+    assert_eq!(second_stamp.map(|stamp| stamp.queue()), Some(later_id));
+    assert_eq!(
+        second_stamp.map(|stamp| stamp.mapped_at()),
+        Some(SampleTime::new(at.as_u64() + 64))
+    );
     assert_eq!(second_report.attribution_error, None);
     assert_eq!(
         second_report.offer.result,

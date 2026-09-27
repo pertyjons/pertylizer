@@ -395,8 +395,8 @@ fn settle_source_workers(
 
 fn service(managed: &mut ManagedRun, stopped: &mut bool) -> Result<(), Box<dyn std::error::Error>> {
     let mut input_fault = false;
-    managed.service_attributed_identified(
-        |source_id, report| {
+    managed.service_mapped_identified(
+        |source_stamp, report| {
             let SourceOfferReport {
                 offer,
                 attribution_error,
@@ -406,10 +406,12 @@ fn service(managed: &mut ManagedRun, stopped: &mut bool) -> Result<(), Box<dyn s
                 audition_packet,
             } = offer;
             input_fault |= attribution_error.is_some();
+            let source_id = source_stamp.map(|stamp| stamp.queue());
+            let mapped_at = source_stamp.map(|stamp| stamp.mapped_at());
             match result {
                 Ok(id) => {
                     println!(
-                        "source_queue_id={source_id:?} raw_input_id={id:?} audition_packet={audition_packet:?} attribution_error={attribution_error:?}"
+                        "source_queue_id={source_id:?} mapped_at={mapped_at:?} raw_input_id={id:?} audition_packet={audition_packet:?} attribution_error={attribution_error:?}"
                     );
                 }
                 Err(fault) => {

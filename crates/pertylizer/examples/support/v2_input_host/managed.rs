@@ -1,10 +1,12 @@
 //! The executable host boundary: reservation precedes activation and source closure
 //! precedes acknowledgement. Low-level queue helpers do not confer either authority.
+#[cfg(test)]
+use super::source::SourceQueueId;
 use super::*;
 use super::{
     archive::RetainedRuns,
     prepare::PreparedAttempt,
-    source::{SourceInbox, SourceProducer, SourceQueueId},
+    source::{SourceInbox, SourceProducer, SourceQueueStamp},
 };
 
 #[must_use]
@@ -275,23 +277,24 @@ impl ManagedRun {
         command: impl FnMut(LoopTransferId, HostOutcome),
         receipt: impl FnMut(InputReceipt),
     ) -> Result<(), HostError> {
-        self.service_attributed_identified(
-            |id, report| {
+        self.service_mapped_identified(
+            |stamp, report| {
                 assert!(
                     report.attribution_error.is_none(),
                     "test-only projection cannot discard a source attribution failure"
                 );
-                input(id, report.offer);
+                input(stamp.map(SourceQueueStamp::queue), report.offer);
             },
             command,
             receipt,
         )
     }
 
-    /// Source queue custody and any pre-raw attribution error travel together.
-    pub fn service_attributed_identified(
+    /// Keep each queued packet's checked engine time beside its raw result.
+    /// Raw capture still drains source prefixes independently.
+    pub fn service_mapped_identified(
         &mut self,
-        mut input: impl FnMut(Option<SourceQueueId>, SourceOfferReport),
+        mut input: impl FnMut(Option<SourceQueueStamp>, SourceOfferReport),
         mut command: impl FnMut(LoopTransferId, HostOutcome),
         mut receipt: impl FnMut(InputReceipt),
     ) -> Result<(), HostError> {
@@ -299,7 +302,7 @@ impl ManagedRun {
             inbox.record_failure(&mut self.control, |report| input(None, report));
         }
         for inbox in &mut self.inboxes {
-            inbox.service_attributed_identified(&mut self.control, &mut input);
+            inbox.service_mapped_identified(&mut self.control, &mut input);
         }
         while self.control.has_completions() {
             if let Some((id, outcome)) = self.control.collect()? {
