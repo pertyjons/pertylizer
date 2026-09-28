@@ -1654,8 +1654,16 @@ a raw refusal, which never reaches the stage, from lane refusals that retain the
 raw handoff: `NoPacketCredit`, a release linked to that lane-refused onset,
 an unmatched raw release and an ordinary packet. Raw capacity and stage credit
 remain independent charges checked in sequence, not one atomic shared charge.
-The bridge has no concrete source ring, recorder settlement, refund authority,
-joined teardown or rule for a mixed onset refusal's later release.
+`mixed_onset_refusal_disposes_its_raw_linked_release_without_an_offer` holds two
+live notes against the two release holds, so source A's second key-60 onset
+receives `Dropped(Hold)`. Raw FIFO links A's second release to that onset. A lane
+selects each onset before its release, so the onset's mixed result is known when
+the release is selected; the release leaves the stage without a mixed command
+and its combined result carries the onset refusal and raw link. The same-key
+release of the accepted onset and the peer's release succeed, and a later onset
+reuses a returned hold. This is a model disposition, not a recorder or raw
+settlement rule. The bridge has no concrete source ring, recorder settlement,
+refund authority or joined teardown.
 
 The same read found that holding a popped onset until tracker credit returns
 can deadlock when its release or required frontier is behind that onset in the

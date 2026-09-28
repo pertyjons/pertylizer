@@ -15,6 +15,7 @@ use crate::{
         },
     },
     identity::NoteIdentity,
+    ingress::{ExhaustedResource, IngressRefused},
     quantities::PreparedBytes,
     recording::notes::{Midi1Event, Midi1Input},
     time::{FrameCount, SampleTime, issue_epoch},
@@ -422,10 +423,19 @@ enum BridgeRefused {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
+enum MixedDisposition {
+    /// The actual audio-side result for this staged packet's request.
+    Result(MixedIngressOutcome),
+    /// The release's onset was refused by mixed ingress, so no identity exists
+    /// to release. The release is not offered; it carries that onset refusal.
+    OnsetRefused(IngressRefused),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
 struct CombinedResult {
     handoff: RawHandoff,
     occurrence: Occurrence,
-    outcome: MixedIngressOutcome,
+    disposition: MixedDisposition,
 }
 
 impl CombinedResult {
@@ -433,8 +443,10 @@ impl CombinedResult {
     /// audio-side mixed result for the same staged occurrence is positive.
     fn accepted(&self) -> bool {
         matches!(
-            self.outcome,
-            MixedIngressOutcome::Onset(Ok(_)) | MixedIngressOutcome::Release(Ok(()))
+            self.disposition,
+            MixedDisposition::Result(
+                MixedIngressOutcome::Onset(Ok(_)) | MixedIngressOutcome::Release(Ok(()))
+            )
         )
     }
 }
@@ -478,7 +490,7 @@ struct RawStageBridge {
     sources: [RawSource; 2],
     staged_onsets: Vec<(Source, InputEventId, Occurrence)>,
     handoffs: Vec<(Occurrence, bool, RawHandoff)>,
-    identities: Vec<(Occurrence, NoteIdentity)>,
+    onset_results: Vec<(Occurrence, Result<NoteIdentity, IngressRefused>)>,
     next_occurrence: u64,
 }
 
@@ -489,7 +501,7 @@ impl RawStageBridge {
             sources: [raw_source(0), raw_source(1)],
             staged_onsets: Vec::new(),
             handoffs: Vec::new(),
-            identities: Vec::new(),
+            onset_results: Vec::new(),
             next_occurrence: 1,
         }
     }
@@ -583,8 +595,9 @@ impl RawStageBridge {
         self.stage.frontier(source, SampleTime::new(at)).unwrap();
     }
 
-    /// Offer the next time-ordered staged packet to mixed ingress. These
-    /// fixtures never stage a release whose onset lacks an accepted identity.
+    /// Offer the next time-ordered staged packet to mixed ingress. A lane
+    /// selects an onset before its release, so the onset's mixed result is
+    /// known here; a refused onset's release is disposed without an offer.
     fn service(
         &mut self,
         control: &mut MixedOneShotControl,
@@ -613,11 +626,20 @@ impl RawStageBridge {
             },
             Midi1Event::KeyRelease { .. } => {
                 let position = self
-                    .identities
+                    .onset_results
                     .iter()
                     .position(|&(id, _)| id == occurrence)
-                    .expect("staged release follows its accepted mixed onset");
-                let (_, identity) = self.identities.swap_remove(position);
+                    .expect("a lane selects each onset before its release");
+                let identity = match self.onset_results.swap_remove(position).1 {
+                    Ok(identity) => identity,
+                    Err(refusal) => {
+                        return Some(CombinedResult {
+                            handoff,
+                            occurrence,
+                            disposition: MixedDisposition::OnsetRefused(refusal),
+                        });
+                    }
+                };
                 MixedIngressRequest::Release {
                     origin,
                     at: packet.at,
@@ -630,13 +652,13 @@ impl RawStageBridge {
         audio.service_test_ingress_queue();
         let result = control.collect_ingress_result().unwrap();
         assert_eq!((result.id, result.request), (command, request));
-        if let MixedIngressOutcome::Onset(Ok(identity)) = result.outcome {
-            self.identities.push((occurrence, identity));
+        if let MixedIngressOutcome::Onset(onset) = result.outcome {
+            self.onset_results.push((occurrence, onset));
         }
         Some(CombinedResult {
             handoff,
             occurrence,
-            outcome: result.outcome,
+            disposition: MixedDisposition::Result(result.outcome),
         })
     }
 }
@@ -680,7 +702,7 @@ fn raw_release_links_carry_source_handoffs_into_staged_mixed_results() {
         let fourth = bridge.service(&mut control, &mut audio).unwrap();
         assert_eq!((third.occurrence, fourth.occurrence), (a_first, a_second));
         assert!(third.accepted() && fourth.accepted());
-        assert_ne!(third.outcome, fourth.outcome);
+        assert_ne!(third.disposition, fourth.disposition);
 
         let a_release_first = bridge.offer(Source::First, 160, off).unwrap();
         let a_release_second = bridge.offer(Source::First, 161, off).unwrap();
@@ -695,7 +717,7 @@ fn raw_release_links_carry_source_handoffs_into_staged_mixed_results() {
         assert!(control.collect_ingress_result().is_none());
         assert_eq!(bridge.stage.pressure(Source::First), (0, 0));
         assert_eq!(bridge.stage.pressure(Source::Second), (0, 0));
-        assert!(bridge.handoffs.is_empty() && bridge.identities.is_empty());
+        assert!(bridge.handoffs.is_empty() && bridge.onset_results.is_empty());
     }
 }
 
@@ -760,4 +782,81 @@ fn lane_refusals_after_raw_admission_keep_the_raw_handoff_and_its_link() {
     );
     assert_eq!(bridge.stage.pressure(Source::First), (2, 0));
     assert_eq!(bridge.stage.pressure(Source::Second), (0, 0));
+}
+
+#[test]
+fn mixed_onset_refusal_disposes_its_raw_linked_release_without_an_offer() {
+    let on = input(0x90, 60, 100);
+    let off = input(0x80, 60, 0);
+    let hold = IngressRefused::Dropped {
+        resource: ExhaustedResource::Hold,
+    };
+    for compiled_first in [true, false] {
+        let (prepared, candidate) = history_tests::one_shot_with_boundary_on(compiled_first);
+        let (mut control, mut audio) = prepared
+            .arm_one_shot(candidate, &history_tests::mixed_profile())
+            .unwrap();
+        let mut bridge = RawStageBridge::new(4);
+
+        // Two release holds: A's second key-60 onset is the third live note.
+        let a_kept = bridge.offer(Source::First, 140, on).unwrap();
+        let b_onset = bridge.offer(Source::Second, 141, on).unwrap();
+        let a_dropped = bridge.offer(Source::First, 142, on).unwrap();
+        bridge.frontier(Source::Second, 143);
+        let kept = bridge.service(&mut control, &mut audio).unwrap();
+        let peer = bridge.service(&mut control, &mut audio).unwrap();
+        let dropped = bridge.service(&mut control, &mut audio).unwrap();
+        assert_eq!(
+            (kept.occurrence, peer.occurrence, dropped.occurrence),
+            (a_kept, b_onset, a_dropped)
+        );
+        assert!(kept.accepted() && peer.accepted());
+        assert_eq!(
+            dropped.disposition,
+            MixedDisposition::Result(MixedIngressOutcome::Onset(Err(hold)))
+        );
+        assert_eq!(audio.test_ingress.counters().dropped_hold(), 1);
+
+        // Raw FIFO links the second release to the mixed-refused onset.
+        assert_eq!(bridge.offer(Source::First, 150, off), Ok(a_kept));
+        assert_eq!(bridge.offer(Source::First, 151, off), Ok(a_dropped));
+        assert_eq!(bridge.offer(Source::Second, 152, off), Ok(b_onset));
+        assert_eq!(bridge.stage.pressure(Source::First), (2, 0));
+        let released = bridge.service(&mut control, &mut audio).unwrap();
+        assert_eq!(released.handoff.link, Some(kept.handoff.raw));
+        assert!(released.accepted());
+
+        let disposed = bridge.service(&mut control, &mut audio).unwrap();
+        assert_eq!(
+            (
+                disposed.occurrence,
+                disposed.handoff.link,
+                disposed.handoff.at
+            ),
+            (a_dropped, Some(dropped.handoff.raw), SampleTime::new(151))
+        );
+        assert_eq!(disposed.disposition, MixedDisposition::OnsetRefused(hold));
+        assert!(!disposed.accepted());
+        assert!(control.collect_ingress_result().is_none());
+        assert_eq!(bridge.stage.pressure(Source::First), (0, 0));
+
+        // B's release still waits for A's frontier beyond its stamp.
+        assert!(bridge.service(&mut control, &mut audio).is_none());
+        bridge.frontier(Source::First, 153);
+        let peer_released = bridge.service(&mut control, &mut audio).unwrap();
+        assert_eq!(peer_released.handoff.link, Some(peer.handoff.raw));
+        assert!(peer_released.accepted());
+
+        // The actual releases returned both holds; a later onset is accepted.
+        let later = bridge.offer(Source::First, 160, on).unwrap();
+        bridge.frontier(Source::Second, 161);
+        let reused = bridge.service(&mut control, &mut audio).unwrap();
+        assert_eq!(reused.occurrence, later);
+        assert!(reused.accepted());
+        assert_eq!(audio.test_ingress.counters().dropped_hold(), 1);
+        assert!(bridge.handoffs.is_empty());
+        assert_eq!(bridge.onset_results.len(), 1);
+        assert_eq!(bridge.stage.pressure(Source::First), (0, 1));
+        assert_eq!(bridge.stage.pressure(Source::Second), (0, 0));
+    }
 }

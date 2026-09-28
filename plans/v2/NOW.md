@@ -372,9 +372,13 @@ after raw admission, stage credit and the matching audio-side result are all
 positive. A raw refusal never reaches the stage. A lane refusal after raw
 acceptance retains that raw handoff exactly: stage credit shortage, a release
 whose raw onset the stage refused, an unmatched raw release and an ordinary
-packet each have a distinct reason. The bridge has no concrete source ring,
-recorder settlement, atomic shared charge, refund authority or joined teardown;
-a mixed onset refusal and its later release are not yet exercised.
+packet each have a distinct reason. When mixed ingress refuses a staged onset,
+its raw-linked release is still accepted by raw and leaves the stage, but it is
+not offered to mixed ingress; its combined result carries the onset refusal. A
+two-hold fixture drops a repeated key's second onset, releases the first one
+normally, and reuses the returned hold for a later onset. The bridge has no
+concrete source ring, recorder settlement, atomic shared charge, refund
+authority or joined teardown.
 
 A separate V2-local bounded stage model now gives each of two sources packet
 cells and reserves one future release cell with each admitted onset. An empty
