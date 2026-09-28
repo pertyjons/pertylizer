@@ -386,9 +386,14 @@ and a fault after ingress in both producer orders. Teardown returns the raw
 owners and a ledger of every raw ID issued to the bridge. Ending both raw
 connections settles each such ID, including lane-refused packets and
 frontiers, with exactly one cancelled receipt carrying its admission-time link;
-each owner's tick-0 frontier from `prepare` settles separately. The bridge has
-no concrete source ring, delivered recorder settlement, atomic shared charge or
-refund authority.
+each owner's tick-0 frontier from `prepare` settles separately. The same bridge
+now also runs over the raw inputs of an actual serial `InputCaptureSession`.
+After mixed teardown, the session publishes: every raw ID the bridge issued has
+exactly one delivered receipt with its admission link, capture completes, and
+each note's onset and release receipts name one recorder occurrence. The onset
+that mixed ingress refused is still recorded and paired, so the two consumers'
+outcomes are joined per occurrence. The bridge has no concrete source ring,
+atomic shared charge or refund authority.
 
 A separate V2-local bounded stage model now gives each of two sources packet
 cells and reserves one future release cell with each admitted onset. An empty

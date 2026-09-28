@@ -1592,7 +1592,7 @@ fn queued_two_source_releases_preserve_payload_and_recorder_pairing() {
     }
 }
 
-fn bridge_serial_owner(stop: u64) -> (InputCaptureSession, [ConnectionGeneration; 2]) {
+pub(super) fn bridge_serial_owner(stop: u64) -> (InputCaptureSession, [ConnectionGeneration; 2]) {
     let mut capture = LoopCaptureSession::prepare(
         loop_test_support::stream(0, 2048),
         loop_test_support::limits(3, 64, 1_048_576),

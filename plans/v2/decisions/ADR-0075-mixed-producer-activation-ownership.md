@@ -1679,9 +1679,21 @@ yields exactly one `Cancelled` receipt per recorded ID with the same
 `matched_onset` link, and each owner's raw occupancy is zero. The only other
 receipt per owner is the tick-0 frontier that `prepare` admits before any bridge
 traffic; settlement names it separately rather than attributing it to the
-bridge. This is cancellation settlement: delivered raw receipts and recorder
-publication are not exercised here, and no refund authority or
-restart after teardown is defined. The bridge still has no concrete source ring
+bridge. This is cancellation settlement.
+The bridge is generic over its raw side, and
+`delivered_raw_receipts_join_bridge_results_to_recorder_occurrences` runs it over
+the two raw inputs of an actual serial `InputCaptureSession` bound to the
+recorder. Three onsets, one refused with `Dropped(Hold)`, and their releases
+pass through the stage and mixed ring in both producer orders. After joined
+mixed teardown leaves no bridge charge, the session receives frontiers,
+renders and publishes. Every raw ID the bridge or teardown issued has exactly
+one `Delivered` receipt with the same `matched_onset` link; only each input's
+prepared tick-0 frontier is extra, and capture completes. Each note's onset and
+release receipts name the same recorder occurrence, distinct across the three
+notes, including the onset mixed ingress refused. This joins the combined mixed
+result, raw receipt and recorder occurrence for each note, but the consumers are
+still served in sequence by the fixture rather than under one shared charge.
+No refund authority or restart after teardown is defined. The bridge still has no concrete source ring
 or atomic shared charge.
 
 The same read found that holding a popped onset until tracker credit returns

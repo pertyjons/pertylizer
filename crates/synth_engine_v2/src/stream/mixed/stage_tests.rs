@@ -5,21 +5,25 @@ use std::collections::VecDeque;
 use super::{
     EventPayload, MixedCollection, MixedCollectionEnd, MixedIngressOriginId, MixedIngressOutcome,
     MixedIngressRequest, MixedOneShotAudio, MixedOneShotControl, MixedOneShotRenderError,
-    MixedOneShotTeardown, TimedEvent, history_tests,
+    MixedOneShotTeardown, TimedEvent, history_tests, ledger_tests,
 };
 use crate::{
     host::{
         ConnectionGeneration, EndpointId,
         input::{
-            InputCapacity, InputError, InputEventId, InputLimits, InputObservation, InputOutcome,
-            InputRate, InputReceipt, InputTick, InputTickSpan, SimulatedInputClock,
-            SimulatedNoteInput,
+            InputCapacity, InputCaptureError, InputCaptureSession, InputError, InputEventId,
+            InputLimits, InputObservation, InputOutcome, InputRate, InputReceipt, InputTick,
+            InputTickSpan, SimulatedInputClock, SimulatedNoteInput,
         },
+        session::SessionSourceOutcome,
     },
     identity::NoteIdentity,
     ingress::{ExhaustedResource, IngressRefused},
     quantities::{ChannelLayout, EventCount, PreparedBytes},
-    recording::notes::{Midi1Event, Midi1Input},
+    recording::{
+        CaptureOutcome,
+        notes::{Midi1Event, Midi1Input},
+    },
     render::{AudioBlockMut, NoteEdge},
     time::{FrameCount, SampleTime, issue_epoch},
 };
@@ -485,12 +489,110 @@ fn raw_source(index: usize) -> RawSource {
     RawSource { input, generation }
 }
 
+/// The raw side of the bridge: either standalone raw owners or the raw inputs
+/// of one serial capture session feeding the actual recorder.
+trait RawBackend {
+    fn offer(
+        &mut self,
+        source: Source,
+        at: SampleTime,
+        original: Midi1Input,
+    ) -> Result<InputEventId, InputError>;
+    fn frontier(&mut self, source: Source, at: SampleTime) -> InputEventId;
+    fn matched_onset(
+        &self,
+        source: Source,
+        id: InputEventId,
+    ) -> Result<Option<InputEventId>, InputError>;
+}
+
+impl RawBackend for [RawSource; 2] {
+    fn offer(
+        &mut self,
+        source: Source,
+        at: SampleTime,
+        original: Midi1Input,
+    ) -> Result<InputEventId, InputError> {
+        let owner = &mut self[source.index()];
+        owner
+            .input
+            .offer_message(owner.generation, InputTick::new(at.as_u64()), at, original)
+    }
+
+    fn frontier(&mut self, source: Source, at: SampleTime) -> InputEventId {
+        let owner = &mut self[source.index()];
+        owner
+            .input
+            .advance_frontier(owner.generation, InputTick::new(at.as_u64()))
+            .unwrap()
+    }
+
+    fn matched_onset(
+        &self,
+        source: Source,
+        id: InputEventId,
+    ) -> Result<Option<InputEventId>, InputError> {
+        self[source.index()].input.matched_onset(id)
+    }
+}
+
+struct SerialRaw {
+    owner: InputCaptureSession,
+    generations: [ConnectionGeneration; 2],
+}
+
+/// A recording-session error other than raw admission is outside this fixture.
+fn raw_admission(error: InputCaptureError) -> InputError {
+    match error {
+        InputCaptureError::Input(error) => error,
+        other => panic!("serial capture failed outside raw admission: {other}"),
+    }
+}
+
+impl RawBackend for SerialRaw {
+    fn offer(
+        &mut self,
+        source: Source,
+        at: SampleTime,
+        original: Midi1Input,
+    ) -> Result<InputEventId, InputError> {
+        self.owner
+            .offer_message(
+                self.generations[source.index()],
+                InputTick::new(at.as_u64()),
+                at,
+                original,
+            )
+            .map_err(raw_admission)
+    }
+
+    fn frontier(&mut self, source: Source, at: SampleTime) -> InputEventId {
+        self.owner
+            .advance_frontier(
+                self.generations[source.index()],
+                InputTick::new(at.as_u64()),
+            )
+            .unwrap()
+    }
+
+    fn matched_onset(
+        &self,
+        source: Source,
+        id: InputEventId,
+    ) -> Result<Option<InputEventId>, InputError> {
+        self.owner
+            .input(self.generations[source.index()])
+            .ok_or(InputError::Stale)?
+            .matched_onset(id)
+    }
+}
+
 /// Actual raw owners serve each source independently; only raw-admitted note
 /// packets enter the bounded mixed stage, and releases find their staged
 /// occurrence through the raw owner's own same-key FIFO link.
-struct RawStageBridge {
+struct RawStageBridge<R = [RawSource; 2]> {
     stage: Stage,
-    sources: [RawSource; 2],
+    sources: R,
     staged_onsets: Vec<(Source, InputEventId, Occurrence)>,
     handoffs: Vec<(Occurrence, bool, RawHandoff)>,
     onset_results: Vec<(Occurrence, Result<NoteIdentity, IngressRefused>)>,
@@ -501,9 +603,15 @@ struct RawStageBridge {
 
 impl RawStageBridge {
     fn new(cells_per_source: usize) -> Self {
+        Self::with_raw(cells_per_source, [raw_source(0), raw_source(1)])
+    }
+}
+
+impl<R: RawBackend> RawStageBridge<R> {
+    fn with_raw(cells_per_source: usize, sources: R) -> Self {
         Self {
             stage: Stage::new(cells_per_source),
-            sources: [raw_source(0), raw_source(1)],
+            sources,
             staged_onsets: Vec::new(),
             handoffs: Vec::new(),
             onset_results: Vec::new(),
@@ -519,10 +627,9 @@ impl RawStageBridge {
         original: Midi1Input,
     ) -> Result<Occurrence, BridgeRefused> {
         let at = SampleTime::new(at);
-        let owner = &mut self.sources[source.index()];
-        let raw = owner
-            .input
-            .offer_message(owner.generation, InputTick::new(at.as_u64()), at, original)
+        let raw = self
+            .sources
+            .offer(source, at, original)
             .map_err(|error| BridgeRefused::Raw {
                 source,
                 original,
@@ -536,7 +643,7 @@ impl RawStageBridge {
             original,
             at,
         };
-        let link = owner.input.matched_onset(raw);
+        let link = self.sources.matched_onset(source, raw);
         self.raw_issued
             .push((source, raw, link.as_ref().ok().copied().flatten()));
         handoff.link = link.map_err(|error| BridgeRefused::Lane {
@@ -592,12 +699,8 @@ impl RawStageBridge {
     }
 
     fn frontier(&mut self, source: Source, at: u64) {
-        let owner = &mut self.sources[source.index()];
-        let frontier = owner
-            .input
-            .advance_frontier(owner.generation, InputTick::new(at))
-            .unwrap();
-        assert_eq!(owner.input.matched_onset(frontier), Ok(None));
+        let frontier = self.sources.frontier(source, SampleTime::new(at));
+        assert_eq!(self.sources.matched_onset(source, frontier), Ok(None));
         self.raw_issued.push((source, frontier, None));
         self.stage.frontier(source, SampleTime::new(at)).unwrap();
     }
@@ -940,14 +1043,14 @@ fn locate_onset(ended: &MixedOneShotTeardown, identity: NoteIdentity) -> OnsetLo
         .unwrap()
 }
 
-impl RawStageBridge {
+impl<R: RawBackend> RawStageBridge<R> {
     /// Stop the mixed owner and account for every bridge charge exactly once.
     /// The raw owners are returned with their cells; no raw receipt is settled.
     fn tear_down(
         mut self,
         control: MixedOneShotControl,
         audio: MixedOneShotAudio,
-    ) -> (BridgeTeardown, [RawSource; 2], MixedOneShotTeardown) {
+    ) -> (BridgeTeardown, R, MixedOneShotTeardown) {
         let MixedCollection::Ended(ended) = control.collect(audio).unwrap() else {
             panic!("a pending or faulted mixed owner must end at teardown");
         };
@@ -1215,5 +1318,152 @@ fn joined_teardown_accounts_every_outstanding_bridge_credit() {
                 assert_eq!(receipt.matched_onset, handoff.link);
             }
         }
+    }
+}
+
+#[test]
+fn delivered_raw_receipts_join_bridge_results_to_recorder_occurrences() {
+    let on = input(0x90, 60, 100);
+    let off = input(0x80, 60, 0);
+    let hold = IngressRefused::Dropped {
+        resource: ExhaustedResource::Hold,
+    };
+    for compiled_first in [true, false] {
+        let (prepared, candidate) = history_tests::one_shot_with_boundary_on(compiled_first);
+        let (mut control, mut audio) = prepared
+            .arm_one_shot(candidate, &history_tests::mixed_profile())
+            .unwrap();
+        let (owner, generations) = ledger_tests::bridge_serial_owner(256);
+        let mut bridge = RawStageBridge::with_raw(4, SerialRaw { owner, generations });
+
+        let a_live = bridge.offer(Source::First, 140, on).unwrap();
+        let b_live = bridge.offer(Source::Second, 141, on).unwrap();
+        let a_refused = bridge.offer(Source::First, 142, on).unwrap();
+        bridge.frontier(Source::Second, 143);
+        let onsets: Vec<_> =
+            std::iter::from_fn(|| bridge.service(&mut control, &mut audio)).collect();
+        assert_eq!(onsets.len(), 3);
+        assert!(onsets[0].accepted() && onsets[1].accepted());
+        assert_eq!(
+            (onsets[2].occurrence, onsets[2].disposition),
+            (
+                a_refused,
+                MixedDisposition::Result(MixedIngressOutcome::Onset(Err(hold)))
+            )
+        );
+
+        assert_eq!(bridge.offer(Source::First, 150, off), Ok(a_live));
+        assert_eq!(bridge.offer(Source::First, 151, off), Ok(a_refused));
+        assert_eq!(bridge.offer(Source::Second, 152, off), Ok(b_live));
+        bridge.frontier(Source::First, 153);
+        let releases: Vec<_> =
+            std::iter::from_fn(|| bridge.service(&mut control, &mut audio)).collect();
+        assert_eq!(
+            releases
+                .iter()
+                .map(|result| (result.occurrence, result.disposition))
+                .collect::<Vec<_>>(),
+            vec![
+                (
+                    a_live,
+                    MixedDisposition::Result(MixedIngressOutcome::Release(Ok(())))
+                ),
+                (a_refused, MixedDisposition::OnsetRefused(hold)),
+                (
+                    b_live,
+                    MixedDisposition::Result(MixedIngressOutcome::Release(Ok(())))
+                ),
+            ]
+        );
+
+        // The mixed side is fully settled before the raw session publishes.
+        let (teardown, mut raw, ended) = bridge.tear_down(control, audio);
+        assert_eq!(ended.end, MixedCollectionEnd::Pending);
+        assert!(teardown.unoffered.is_empty() && teardown.reservations.is_empty());
+        assert!(teardown.onsets.is_empty());
+        let mut remaining = teardown.raw_issued.clone();
+        assert_eq!(remaining.len(), 8);
+        for (source, generation) in [Source::First, Source::Second]
+            .into_iter()
+            .zip(raw.generations)
+        {
+            let frontier = raw
+                .owner
+                .advance_frontier(generation, InputTick::new(256))
+                .unwrap();
+            remaining.push((source, frontier, None));
+        }
+        raw.owner.pump().unwrap();
+        let mut samples = [0.0_f32; 512];
+        raw.owner
+            .render(AudioBlockMut::new(&mut samples, 512, ChannelLayout::Mono).unwrap())
+            .unwrap();
+        raw.owner.pump().unwrap();
+
+        // Every raw ID the bridge or teardown issued has exactly one delivered
+        // receipt with its admission link; only prepared frontiers are extra.
+        let mut delivered = Vec::new();
+        let mut prepared_frontiers = Vec::new();
+        for (source, generation) in [Source::First, Source::Second]
+            .into_iter()
+            .zip(raw.generations)
+        {
+            while let Some(receipt) = raw.owner.collect_input(generation).unwrap() {
+                assert!(matches!(receipt.outcome, InputOutcome::Delivered(_)));
+                if let Some(position) = remaining
+                    .iter()
+                    .position(|&(owner, id, _)| owner == source && id == receipt.id)
+                {
+                    let (_, _, link) = remaining.swap_remove(position);
+                    assert_eq!(receipt.matched_onset, link);
+                    delivered.push(receipt);
+                } else {
+                    assert_eq!(
+                        receipt.observation,
+                        InputObservation::Frontier {
+                            tick: InputTick::new(0)
+                        }
+                    );
+                    prepared_frontiers.push(source);
+                }
+            }
+        }
+        assert!(
+            remaining.is_empty(),
+            "every issued raw ID must be delivered"
+        );
+        assert_eq!(prepared_frontiers, vec![Source::First, Source::Second]);
+        raw.owner.finalize().unwrap();
+        assert_eq!(
+            raw.owner.result().unwrap().sealed_outcome(),
+            CaptureOutcome::Complete
+        );
+
+        // Join each combined result to its recorder occurrence. The onset that
+        // mixed ingress refused is still recorded and paired by the recorder.
+        let recorded = |result: &CombinedResult| {
+            let receipt = delivered
+                .iter()
+                .find(|receipt| receipt.id == result.handoff.raw)
+                .unwrap();
+            let InputOutcome::Delivered(SessionSourceOutcome::Published(record)) = &receipt.outcome
+            else {
+                panic!("a raw note must reach the recorder: {receipt:?}");
+            };
+            record.occurrence.unwrap()
+        };
+        let mut occurrences = Vec::new();
+        for (onset, release) in onsets
+            .iter()
+            .zip([&releases[0], &releases[2], &releases[1]])
+        {
+            assert_eq!(onset.occurrence, release.occurrence);
+            assert_eq!(release.handoff.link, Some(onset.handoff.raw));
+            assert_eq!(recorded(onset), recorded(release));
+            occurrences.push(recorded(onset));
+        }
+        assert_ne!(occurrences[0], occurrences[1]);
+        assert_ne!(occurrences[0], occurrences[2]);
+        assert_ne!(occurrences[1], occurrences[2]);
     }
 }
