@@ -22,7 +22,7 @@ use crate::{
     quantities::{ChannelLayout, EventCount, PreparedBytes},
     recording::{
         CaptureOutcome,
-        notes::{Midi1Event, Midi1Input},
+        notes::{Midi1Event, Midi1Input, PerformedOccurrenceId},
     },
     render::{AudioBlockMut, NoteEdge},
     time::{FrameCount, SampleTime, issue_epoch},
@@ -1321,6 +1321,66 @@ fn joined_teardown_accounts_every_outstanding_bridge_credit() {
     }
 }
 
+/// Publish the serial session and join every issued raw ID to exactly one
+/// delivered receipt with its admission link; only each input's prepared
+/// tick-0 frontier is extra. Capture must complete.
+fn publish_serial(
+    raw: &mut SerialRaw,
+    mut remaining: Vec<(Source, InputEventId, Option<InputEventId>)>,
+) -> Vec<InputReceipt> {
+    raw.owner.pump().unwrap();
+    let mut samples = [0.0_f32; 512];
+    raw.owner
+        .render(AudioBlockMut::new(&mut samples, 512, ChannelLayout::Mono).unwrap())
+        .unwrap();
+    raw.owner.pump().unwrap();
+    let mut delivered = Vec::new();
+    let mut prepared_frontiers = Vec::new();
+    for (source, generation) in [Source::First, Source::Second]
+        .into_iter()
+        .zip(raw.generations)
+    {
+        while let Some(receipt) = raw.owner.collect_input(generation).unwrap() {
+            assert!(matches!(receipt.outcome, InputOutcome::Delivered(_)));
+            if let Some(position) = remaining
+                .iter()
+                .position(|&(owner, id, _)| owner == source && id == receipt.id)
+            {
+                let (_, _, link) = remaining.swap_remove(position);
+                assert_eq!(receipt.matched_onset, link);
+                delivered.push(receipt);
+            } else {
+                assert_eq!(
+                    receipt.observation,
+                    InputObservation::Frontier {
+                        tick: InputTick::new(0)
+                    }
+                );
+                prepared_frontiers.push(source);
+            }
+        }
+    }
+    assert!(
+        remaining.is_empty(),
+        "every issued raw ID must be delivered"
+    );
+    assert_eq!(prepared_frontiers, vec![Source::First, Source::Second]);
+    raw.owner.finalize().unwrap();
+    assert_eq!(
+        raw.owner.result().unwrap().sealed_outcome(),
+        CaptureOutcome::Complete
+    );
+    delivered
+}
+
+fn recorded_occurrence(delivered: &[InputReceipt], raw: InputEventId) -> PerformedOccurrenceId {
+    let receipt = delivered.iter().find(|receipt| receipt.id == raw).unwrap();
+    let InputOutcome::Delivered(SessionSourceOutcome::Published(record)) = &receipt.outcome else {
+        panic!("a raw note must reach the recorder: {receipt:?}");
+    };
+    record.occurrence.unwrap()
+}
+
 #[test]
 fn delivered_raw_receipts_join_bridge_results_to_recorder_occurrences() {
     let on = input(0x90, 60, 100);
@@ -1393,65 +1453,12 @@ fn delivered_raw_receipts_join_bridge_results_to_recorder_occurrences() {
                 .unwrap();
             remaining.push((source, frontier, None));
         }
-        raw.owner.pump().unwrap();
-        let mut samples = [0.0_f32; 512];
-        raw.owner
-            .render(AudioBlockMut::new(&mut samples, 512, ChannelLayout::Mono).unwrap())
-            .unwrap();
-        raw.owner.pump().unwrap();
-
-        // Every raw ID the bridge or teardown issued has exactly one delivered
-        // receipt with its admission link; only prepared frontiers are extra.
-        let mut delivered = Vec::new();
-        let mut prepared_frontiers = Vec::new();
-        for (source, generation) in [Source::First, Source::Second]
-            .into_iter()
-            .zip(raw.generations)
-        {
-            while let Some(receipt) = raw.owner.collect_input(generation).unwrap() {
-                assert!(matches!(receipt.outcome, InputOutcome::Delivered(_)));
-                if let Some(position) = remaining
-                    .iter()
-                    .position(|&(owner, id, _)| owner == source && id == receipt.id)
-                {
-                    let (_, _, link) = remaining.swap_remove(position);
-                    assert_eq!(receipt.matched_onset, link);
-                    delivered.push(receipt);
-                } else {
-                    assert_eq!(
-                        receipt.observation,
-                        InputObservation::Frontier {
-                            tick: InputTick::new(0)
-                        }
-                    );
-                    prepared_frontiers.push(source);
-                }
-            }
-        }
-        assert!(
-            remaining.is_empty(),
-            "every issued raw ID must be delivered"
-        );
-        assert_eq!(prepared_frontiers, vec![Source::First, Source::Second]);
-        raw.owner.finalize().unwrap();
-        assert_eq!(
-            raw.owner.result().unwrap().sealed_outcome(),
-            CaptureOutcome::Complete
-        );
+        let delivered = publish_serial(&mut raw, remaining);
 
         // Join each combined result to its recorder occurrence. The onset that
         // mixed ingress refused is still recorded and paired by the recorder.
-        let recorded = |result: &CombinedResult| {
-            let receipt = delivered
-                .iter()
-                .find(|receipt| receipt.id == result.handoff.raw)
-                .unwrap();
-            let InputOutcome::Delivered(SessionSourceOutcome::Published(record)) = &receipt.outcome
-            else {
-                panic!("a raw note must reach the recorder: {receipt:?}");
-            };
-            record.occurrence.unwrap()
-        };
+        let recorded =
+            |result: &CombinedResult| recorded_occurrence(&delivered, result.handoff.raw);
         let mut occurrences = Vec::new();
         for (onset, release) in onsets
             .iter()
@@ -1465,5 +1472,70 @@ fn delivered_raw_receipts_join_bridge_results_to_recorder_occurrences() {
         assert_ne!(occurrences[0], occurrences[1]);
         assert_ne!(occurrences[0], occurrences[2]);
         assert_ne!(occurrences[1], occurrences[2]);
+    }
+}
+
+/// Split-outcome rule: raw capture is never refused for a mixed-lane shortage.
+/// A combined positive outcome needs raw admission, stage credit and a positive
+/// audio result; a note may be recorded while its mixed disposition is refused.
+#[test]
+fn a_silent_peer_saturating_the_stage_never_refuses_raw_capture() {
+    let on = input(0x90, 60, 100);
+    let off = input(0x80, 60, 0);
+    for compiled_first in [true, false] {
+        let (prepared, candidate) = history_tests::one_shot_with_boundary_on(compiled_first);
+        let (mut control, mut audio) = prepared
+            .arm_one_shot(candidate, &history_tests::mixed_profile())
+            .unwrap();
+        let (owner, generations) = ledger_tests::bridge_serial_owner(256);
+        let mut bridge = RawStageBridge::with_raw(2, SerialRaw { owner, generations });
+
+        // Source B stays silent, so A's staged onset waits and fills A's lane.
+        let staged = bridge.offer(Source::First, 150, on).unwrap();
+        assert_eq!(bridge.stage.pressure(Source::First), (1, 1));
+        let Err(BridgeRefused::Lane {
+            handoff: shortage,
+            reason: LaneRefusal::Stage(StageRefusal::NoPacketCredit),
+        }) = bridge.offer(Source::First, 151, on)
+        else {
+            panic!("the saturated lane must refuse only its own admission");
+        };
+        assert_eq!(bridge.offer(Source::First, 160, off), Ok(staged));
+        let Err(BridgeRefused::Lane {
+            handoff: orphan,
+            reason: LaneRefusal::UnstagedOnset,
+        }) = bridge.offer(Source::First, 161, off)
+        else {
+            panic!("the shortage onset's release has no staged occurrence");
+        };
+        assert_eq!(orphan.link, Some(shortage.raw));
+        bridge.frontier(Source::First, 256);
+        assert!(bridge.service(&mut control, &mut audio).is_none());
+
+        // B's first progress releases the waiting lane; only the staged note
+        // reaches mixed ingress.
+        bridge.frontier(Source::Second, 256);
+        let onset = bridge.service(&mut control, &mut audio).unwrap();
+        let release = bridge.service(&mut control, &mut audio).unwrap();
+        assert!(bridge.service(&mut control, &mut audio).is_none());
+        assert_eq!((onset.occurrence, release.occurrence), (staged, staged));
+        assert!(onset.accepted() && release.accepted());
+
+        let (teardown, mut raw, ended) = bridge.tear_down(control, audio);
+        assert_eq!(ended.end, MixedCollectionEnd::Pending);
+        assert!(teardown.unoffered.is_empty() && teardown.reservations.is_empty());
+        assert!(teardown.onsets.is_empty());
+        let delivered = publish_serial(&mut raw, teardown.raw_issued);
+
+        // Both notes are recorded and paired, including the one whose mixed
+        // lane refused it; their recorder occurrences are distinct.
+        let combined = recorded_occurrence(&delivered, onset.handoff.raw);
+        assert_eq!(
+            recorded_occurrence(&delivered, release.handoff.raw),
+            combined
+        );
+        let split = recorded_occurrence(&delivered, shortage.raw);
+        assert_eq!(recorded_occurrence(&delivered, orphan.raw), split);
+        assert_ne!(combined, split);
     }
 }

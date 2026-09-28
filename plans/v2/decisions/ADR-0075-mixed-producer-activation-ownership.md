@@ -1693,7 +1693,26 @@ release receipts name the same recorder occurrence, distinct across the three
 notes, including the onset mixed ingress refused. This joins the combined mixed
 result, raw receipt and recorder occurrence for each note, but the consumers are
 still served in sequence by the fixture rather than under one shared charge.
-No refund authority or restart after teardown is defined. The bridge still has no concrete source ring
+No refund authority or restart after teardown is defined.
+
+The user selected split outcomes on 2026-09-28 instead of one atomic
+raw/stage/mixed charge. An atomic charge would refuse raw capture whenever the
+lane is full, and a lane can fill while it waits for a silent peer's frontier;
+that would hold raw capture hostage to peer silence, which the raw frontier law
+above forbids. The proposed rule is therefore: raw admission is decided only by
+the raw owner; a mixed-lane or mixed-ingress shortage never refuses or delays
+raw capture; and a combined positive outcome requires raw admission, stage
+credit and a positive audio-side result for the same occurrence. A note may be
+recorded while its mixed disposition is a refusal, and each such split is
+reported with its exact reason. Protected-release credit and refund authority
+remain open under this rule.
+`a_silent_peer_saturating_the_stage_never_refuses_raw_capture` is the
+falsifier: with two stage cells, source A's staged onset waits on silent source
+B and fills A's lane. A's next onset is raw-accepted and lane-refused with
+`NoPacketCredit`; its release links to that onset and is refused as
+`UnstagedOnset`. B's first frontier releases the waiting lane and the staged
+note returns positive mixed results. After publication, both notes have
+distinct recorder occurrences and their onset and release receipts pair. The bridge still has no concrete source ring
 or atomic shared charge.
 
 The same read found that holding a popped onset until tracker credit returns

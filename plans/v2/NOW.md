@@ -392,8 +392,14 @@ After mixed teardown, the session publishes: every raw ID the bridge issued has
 exactly one delivered receipt with its admission link, capture completes, and
 each note's onset and release receipts name one recorder occurrence. The onset
 that mixed ingress refused is still recorded and paired, so the two consumers'
-outcomes are joined per occurrence. The bridge has no concrete source ring,
-atomic shared charge or refund authority.
+outcomes are joined per occurrence.
+On 2026-09-28 the user selected split outcomes over one atomic shared charge:
+raw capture is never refused for a mixed-lane or mixed-ingress shortage, and a
+combined positive outcome needs raw admission, stage credit and a positive
+audio result. A falsifier fixture keeps one source silent until its lane is
+full; the other source's further onset and its release are still recorded and
+paired while the lane refuses them, and mixed ingress accepts the staged note
+once the silent source advances. The bridge has no concrete source ring or refund authority.
 
 A separate V2-local bounded stage model now gives each of two sources packet
 cells and reserves one future release cell with each admitted onset. An empty
