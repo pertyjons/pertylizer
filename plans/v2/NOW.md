@@ -382,9 +382,13 @@ charge exactly once: each unoffered stage packet returns its raw handoff, each
 release reservation names its raw onset, and each retained onset result is
 either a refusal or an identity found in exactly one of the owner's queued
 edges, faulted-callback journal or sounding set. Tests cover a pending owner
-and a fault after ingress in both producer orders. Raw cells stay with their
-raw owners, which teardown returns; the bridge has no concrete source ring,
-recorder or raw receipt settlement, atomic shared charge or refund authority.
+and a fault after ingress in both producer orders. Teardown returns the raw
+owners and a ledger of every raw ID issued to the bridge. Ending both raw
+connections settles each such ID, including lane-refused packets and
+frontiers, with exactly one cancelled receipt carrying its admission-time link;
+each owner's tick-0 frontier from `prepare` settles separately. The bridge has
+no concrete source ring, delivered recorder settlement, atomic shared charge or
+refund authority.
 
 A separate V2-local bounded stage model now gives each of two sources packet
 cells and reserves one future release cell with each admitted onset. An empty

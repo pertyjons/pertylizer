@@ -1673,8 +1673,14 @@ accepted onset identity has exactly one onset edge or sounding entry across the
 queued ingress edges, the faulted-callback journal and the sounding set, counted
 so that a duplicate in one location fails. The bridge is empty afterwards and
 returns its raw owners; each still resolves the unoffered packets' raw links.
-This conserves bridge-owned charges only. Raw cells, recorder publication and
-raw receipts are not settled here, and no refund authority or
+The bridge also records every raw ID a raw owner issued to it, including
+frontiers and lane-refused packets. After teardown, ending both raw connections
+yields exactly one `Cancelled` receipt per recorded ID with the same
+`matched_onset` link, and each owner's raw occupancy is zero. The only other
+receipt per owner is the tick-0 frontier that `prepare` admits before any bridge
+traffic; settlement names it separately rather than attributing it to the
+bridge. This is cancellation settlement: delivered raw receipts and recorder
+publication are not exercised here, and no refund authority or
 restart after teardown is defined. The bridge still has no concrete source ring
 or atomic shared charge.
 

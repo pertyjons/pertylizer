@@ -11,8 +11,9 @@ use crate::{
     host::{
         ConnectionGeneration, EndpointId,
         input::{
-            InputCapacity, InputError, InputEventId, InputLimits, InputRate, InputTick,
-            InputTickSpan, SimulatedInputClock, SimulatedNoteInput,
+            InputCapacity, InputError, InputEventId, InputLimits, InputObservation, InputOutcome,
+            InputRate, InputReceipt, InputTick, InputTickSpan, SimulatedInputClock,
+            SimulatedNoteInput,
         },
     },
     identity::NoteIdentity,
@@ -493,6 +494,8 @@ struct RawStageBridge {
     staged_onsets: Vec<(Source, InputEventId, Occurrence)>,
     handoffs: Vec<(Occurrence, bool, RawHandoff)>,
     onset_results: Vec<(Occurrence, Result<NoteIdentity, IngressRefused>)>,
+    /// Every raw ID a raw owner issued to this bridge, with its admission link.
+    raw_issued: Vec<(Source, InputEventId, Option<InputEventId>)>,
     next_occurrence: u64,
 }
 
@@ -504,6 +507,7 @@ impl RawStageBridge {
             staged_onsets: Vec::new(),
             handoffs: Vec::new(),
             onset_results: Vec::new(),
+            raw_issued: Vec::new(),
             next_occurrence: 1,
         }
     }
@@ -532,13 +536,13 @@ impl RawStageBridge {
             original,
             at,
         };
-        handoff.link = owner
-            .input
-            .matched_onset(raw)
-            .map_err(|error| BridgeRefused::Lane {
-                handoff,
-                reason: LaneRefusal::Link(error),
-            })?;
+        let link = owner.input.matched_onset(raw);
+        self.raw_issued
+            .push((source, raw, link.as_ref().ok().copied().flatten()));
+        handoff.link = link.map_err(|error| BridgeRefused::Lane {
+            handoff,
+            reason: LaneRefusal::Link(error),
+        })?;
         let refuse = |reason| BridgeRefused::Lane { handoff, reason };
         match original.event() {
             Midi1Event::NoteOn { .. } => {
@@ -594,6 +598,7 @@ impl RawStageBridge {
             .advance_frontier(owner.generation, InputTick::new(at))
             .unwrap();
         assert_eq!(owner.input.matched_onset(frontier), Ok(None));
+        self.raw_issued.push((source, frontier, None));
         self.stage.frontier(source, SampleTime::new(at)).unwrap();
     }
 
@@ -884,6 +889,7 @@ enum OnsetAtTeardown {
 /// packet cell, a stage release reservation, or a retained onset result.
 #[derive(Debug, PartialEq)]
 struct BridgeTeardown {
+    raw_issued: Vec<(Source, InputEventId, Option<InputEventId>)>,
     unoffered: Vec<RawHandoff>,
     reservations: Vec<(Source, Occurrence, InputEventId)>,
     onsets: Vec<(Occurrence, OnsetAtTeardown)>,
@@ -946,6 +952,7 @@ impl RawStageBridge {
             panic!("a pending or faulted mixed owner must end at teardown");
         };
         let mut teardown = BridgeTeardown {
+            raw_issued: std::mem::take(&mut self.raw_issued),
             unoffered: Vec::new(),
             reservations: Vec::new(),
             onsets: Vec::new(),
@@ -993,6 +1000,63 @@ impl RawStageBridge {
     }
 }
 
+/// Raw receipts after ending both connections: those joined to a raw ID the
+/// bridge was issued, and each owner's tick-0 frontier, which `prepare`
+/// admits before the bridge sees any traffic.
+struct RawSettlement {
+    bridge: Vec<(Source, InputReceipt)>,
+    prepared_frontiers: Vec<(Source, InputReceipt)>,
+}
+
+/// End each returned raw connection and join every raw ID the bridge was
+/// issued to exactly one cancelled receipt carrying the same admission link.
+fn settle_raw_by_cancellation(
+    raw: [RawSource; 2],
+    issued: &[(Source, InputEventId, Option<InputEventId>)],
+) -> RawSettlement {
+    let mut remaining = issued.to_vec();
+    let mut settlement = RawSettlement {
+        bridge: Vec::new(),
+        prepared_frontiers: Vec::new(),
+    };
+    for (mut owner, source) in raw.into_iter().zip([Source::First, Source::Second]) {
+        owner.input.device_lost(owner.generation).unwrap();
+        while let Some(receipt) = owner.input.collect() {
+            assert!(matches!(receipt.outcome, InputOutcome::Cancelled));
+            if let Some(position) = remaining
+                .iter()
+                .position(|&(owner, id, _)| owner == source && id == receipt.id)
+            {
+                let (_, _, link) = remaining.swap_remove(position);
+                assert_eq!(receipt.matched_onset, link);
+                settlement.bridge.push((source, receipt));
+                continue;
+            }
+            assert_eq!(
+                (receipt.observation, receipt.matched_onset),
+                (
+                    InputObservation::Frontier {
+                        tick: InputTick::new(0)
+                    },
+                    None
+                ),
+                "only the owner's prepared frontier may settle outside the bridge"
+            );
+            assert!(
+                settlement
+                    .prepared_frontiers
+                    .iter()
+                    .all(|(settled, _)| *settled != source),
+                "one prepared frontier per raw owner"
+            );
+            settlement.prepared_frontiers.push((source, receipt));
+        }
+        assert_eq!(owner.input.pressure().occupied().as_usize(), 0);
+    }
+    assert!(remaining.is_empty(), "every issued raw ID must be settled");
+    settlement
+}
+
 #[test]
 fn joined_teardown_accounts_every_outstanding_bridge_credit() {
     let on = input(0x90, 60, 100);
@@ -1030,6 +1094,13 @@ fn joined_teardown_accounts_every_outstanding_bridge_credit() {
             assert_eq!(bridge.offer(Source::First, 150, off), Ok(a_live));
             assert_eq!(bridge.offer(Source::First, 151, off), Ok(a_refused));
             let b_unoffered = bridge.offer(Source::Second, 155, on).unwrap();
+            let Err(BridgeRefused::Lane {
+                handoff: unmatched,
+                reason: LaneRefusal::UnmatchedRelease,
+            }) = bridge.offer(Source::Second, 156, input(0x80, 61, 0))
+            else {
+                panic!("an unmatched raw release stays outside the stage");
+            };
             assert_eq!(bridge.stage.pressure(Source::First), (2, 0));
             assert_eq!(bridge.stage.pressure(Source::Second), (1, 2));
 
@@ -1119,6 +1190,30 @@ fn joined_teardown_accounts_every_outstanding_bridge_credit() {
                     (a_refused, OnsetAtTeardown::Refused(hold)),
                 ]
             );
+
+            // Raw settlement covers serviced, disposed, unoffered and
+            // lane-refused packets plus B's frontier: four IDs on each source.
+            let issued = teardown.raw_issued.clone();
+            assert_eq!(issued.len(), 8);
+            assert!(issued.contains(&(Source::Second, unmatched.raw, None)));
+            let settled = settle_raw_by_cancellation(raw, &issued);
+            assert_eq!(settled.bridge.len(), issued.len());
+            assert_eq!(
+                settled
+                    .prepared_frontiers
+                    .iter()
+                    .map(|(source, _)| *source)
+                    .collect::<Vec<_>>(),
+                vec![Source::First, Source::Second]
+            );
+            for handoff in &teardown.unoffered {
+                let (_, receipt) = settled
+                    .bridge
+                    .iter()
+                    .find(|(_, receipt)| receipt.id == handoff.raw)
+                    .unwrap();
+                assert_eq!(receipt.matched_onset, handoff.link);
+            }
         }
     }
 }
