@@ -1,6 +1,6 @@
 # Core V2: Current Work
 
-Last updated: 2026-09-27
+Last updated: 2026-09-28
 
 This file contains only active Core V2 state, blockers and next actions. Durable
 contracts live in ADRs and specifications; completed Phase 3 coordination
@@ -361,9 +361,20 @@ An unmatched release returns `None`; an ID whose core raw cell is absent
 returns `ReceiptOwner`, and a foreign generation returns `Stale`. The link must
 be read at raw admission before that cell is reaped; a host may later retain a
 receipt after reaping. The lookup grants no reservation or combined receipt.
-On resumption, carry this immediate link with the source handoff into a bounded
-mixed stage, retaining exact refusals and checking credit against both consumers
-before reporting acceptance.
+
+A V2-local raw-to-stage bridge now offers each note to an actual raw owner per
+source, reads `matched_onset` at raw admission and carries that link with the
+source original and mapped time into the bounded stage. A release reaches its
+staged occurrence only through the raw owner's same-key FIFO link, including a
+repeated key on one source. Stage-selected packets feed the private mixed
+command ring in both producer orders; a combined result reports acceptance only
+after raw admission, stage credit and the matching audio-side result are all
+positive. A raw refusal never reaches the stage. A lane refusal after raw
+acceptance retains that raw handoff exactly: stage credit shortage, a release
+whose raw onset the stage refused, an unmatched raw release and an ordinary
+packet each have a distinct reason. The bridge has no concrete source ring,
+recorder settlement, atomic shared charge, refund authority or joined teardown;
+a mixed onset refusal and its later release are not yet exercised.
 
 A separate V2-local bounded stage model now gives each of two sources packet
 cells and reserves one future release cell with each admitted onset. An empty

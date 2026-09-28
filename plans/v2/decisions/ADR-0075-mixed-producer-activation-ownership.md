@@ -1641,6 +1641,22 @@ This is a direct stage-to-mixed-ring rehearsal with synthetic packets. It does
 not include concrete source-ring custody, raw admission, the recorder, a shared
 charge, or a positive combined host receipt.
 
+The V2-local `RawStageBridge` replaces those synthetic packets with actual
+per-source `SimulatedNoteInput` admissions. Each raw-accepted note reads its
+`matched_onset` link immediately and enters the stage with its original and
+mapped time; a release finds its staged occurrence only through that raw
+same-key FIFO link. `raw_release_links_carry_source_handoffs_into_staged_mixed_results`
+repeats key 60 on one source and shows both releases redeem the onsets raw
+paired them with, in both producer orders, with every combined result positive
+only after raw admission, stage credit and the audio-side result.
+`lane_refusals_after_raw_admission_keep_the_raw_handoff_and_its_link` separates
+a raw refusal, which never reaches the stage, from lane refusals that retain the
+raw handoff: `NoPacketCredit`, a release linked to that lane-refused onset,
+an unmatched raw release and an ordinary packet. Raw capacity and stage credit
+remain independent charges checked in sequence, not one atomic shared charge.
+The bridge has no concrete source ring, recorder settlement, refund authority,
+joined teardown or rule for a mixed onset refusal's later release.
+
 The same read found that holding a popped onset until tracker credit returns
 can deadlock when its release or required frontier is behind that onset in the
 source FIFO. Only a shortage resolved by draining the source ring can justify
