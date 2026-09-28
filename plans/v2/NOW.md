@@ -376,9 +376,15 @@ packet each have a distinct reason. When mixed ingress refuses a staged onset,
 its raw-linked release is still accepted by raw and leaves the stage, but it is
 not offered to mixed ingress; its combined result carries the onset refusal. A
 two-hold fixture drops a repeated key's second onset, releases the first one
-normally, and reuses the returned hold for a later onset. The bridge has no
-concrete source ring, recorder settlement, atomic shared charge, refund
-authority or joined teardown.
+normally, and reuses the returned hold for a later onset. Joined teardown now
+collects the stopped mixed owner and accounts for every outstanding bridge
+charge exactly once: each unoffered stage packet returns its raw handoff, each
+release reservation names its raw onset, and each retained onset result is
+either a refusal or an identity found in exactly one of the owner's queued
+edges, faulted-callback journal or sounding set. Tests cover a pending owner
+and a fault after ingress in both producer orders. Raw cells stay with their
+raw owners, which teardown returns; the bridge has no concrete source ring,
+recorder or raw receipt settlement, atomic shared charge or refund authority.
 
 A separate V2-local bounded stage model now gives each of two sources packet
 cells and reserves one future release cell with each admitted onset. An empty

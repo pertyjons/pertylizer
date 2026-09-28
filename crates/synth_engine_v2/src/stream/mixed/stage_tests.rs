@@ -3,8 +3,9 @@
 use std::collections::VecDeque;
 
 use super::{
-    MixedIngressOriginId, MixedIngressOutcome, MixedIngressRequest, MixedOneShotAudio,
-    MixedOneShotControl, history_tests,
+    EventPayload, MixedCollection, MixedCollectionEnd, MixedIngressOriginId, MixedIngressOutcome,
+    MixedIngressRequest, MixedOneShotAudio, MixedOneShotControl, MixedOneShotRenderError,
+    MixedOneShotTeardown, TimedEvent, history_tests,
 };
 use crate::{
     host::{
@@ -16,8 +17,9 @@ use crate::{
     },
     identity::NoteIdentity,
     ingress::{ExhaustedResource, IngressRefused},
-    quantities::PreparedBytes,
+    quantities::{ChannelLayout, EventCount, PreparedBytes},
     recording::notes::{Midi1Event, Midi1Input},
+    render::{AudioBlockMut, NoteEdge},
     time::{FrameCount, SampleTime, issue_epoch},
 };
 
@@ -858,5 +860,265 @@ fn mixed_onset_refusal_disposes_its_raw_linked_release_without_an_offer() {
         assert_eq!(bridge.onset_results.len(), 1);
         assert_eq!(bridge.stage.pressure(Source::First), (0, 1));
         assert_eq!(bridge.stage.pressure(Source::Second), (0, 0));
+    }
+}
+
+/// Where an accepted mixed onset's identity is found in the stopped owner.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum OnsetLocation {
+    Queued,
+    ChargedInFaultedCallback,
+    Sounding,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum OnsetAtTeardown {
+    Live {
+        identity: NoteIdentity,
+        location: OnsetLocation,
+    },
+    Refused(IngressRefused),
+}
+
+/// Every bridge credit outstanding at teardown, one entry per charge: a stage
+/// packet cell, a stage release reservation, or a retained onset result.
+#[derive(Debug, PartialEq)]
+struct BridgeTeardown {
+    unoffered: Vec<RawHandoff>,
+    reservations: Vec<(Source, Occurrence, InputEventId)>,
+    onsets: Vec<(Occurrence, OnsetAtTeardown)>,
+}
+
+fn onset_edges(events: &[(TimedEvent, bool)], identity: NoteIdentity) -> usize {
+    events
+        .iter()
+        .filter(|(event, _)| {
+            matches!(
+                event.payload(),
+                EventPayload::Note { identity: id, edge: NoteEdge::On { .. } } if id == identity
+            )
+        })
+        .count()
+}
+
+fn locate_onset(ended: &MixedOneShotTeardown, identity: NoteIdentity) -> OnsetLocation {
+    let found = [
+        (
+            onset_edges(&ended.ingress.queued, identity),
+            OnsetLocation::Queued,
+        ),
+        (
+            onset_edges(&ended.ingress.charged_in_faulted_callback, identity),
+            OnsetLocation::ChargedInFaultedCallback,
+        ),
+        (
+            ended
+                .sounding
+                .live()
+                .iter()
+                .filter(|note| note.identity == identity)
+                .count(),
+            OnsetLocation::Sounding,
+        ),
+    ];
+    // Counting, not presence: a duplicate within one location also fails.
+    assert_eq!(
+        found.iter().map(|(count, _)| count).sum::<usize>(),
+        1,
+        "exactly one owner copy per accepted onset"
+    );
+    found
+        .iter()
+        .find(|(count, _)| *count == 1)
+        .map(|(_, location)| *location)
+        .unwrap()
+}
+
+impl RawStageBridge {
+    /// Stop the mixed owner and account for every bridge charge exactly once.
+    /// The raw owners are returned with their cells; no raw receipt is settled.
+    fn tear_down(
+        mut self,
+        control: MixedOneShotControl,
+        audio: MixedOneShotAudio,
+    ) -> (BridgeTeardown, [RawSource; 2], MixedOneShotTeardown) {
+        let MixedCollection::Ended(ended) = control.collect(audio).unwrap() else {
+            panic!("a pending or faulted mixed owner must end at teardown");
+        };
+        let mut teardown = BridgeTeardown {
+            unoffered: Vec::new(),
+            reservations: Vec::new(),
+            onsets: Vec::new(),
+        };
+        for (lane, source) in self
+            .stage
+            .lanes
+            .iter_mut()
+            .zip([Source::First, Source::Second])
+        {
+            for entry in lane.entries.drain(..) {
+                let position = self
+                    .handoffs
+                    .iter()
+                    .position(|&(occurrence, release, _)| {
+                        occurrence == entry.packet.occurrence && release == entry.packet.release
+                    })
+                    .expect("every staged packet has its raw handoff");
+                let (_, _, handoff) = self.handoffs.remove(position);
+                assert_eq!(handoff.source, source);
+                teardown.unoffered.push(handoff);
+            }
+            for occurrence in lane.reserved_releases.drain(..) {
+                let position = self
+                    .staged_onsets
+                    .iter()
+                    .position(|&(owner, _, id)| owner == source && id == occurrence)
+                    .expect("every release reservation names a raw onset");
+                let (_, raw, _) = self.staged_onsets.remove(position);
+                teardown.reservations.push((source, occurrence, raw));
+            }
+        }
+        assert!(self.handoffs.is_empty() && self.staged_onsets.is_empty());
+        for (occurrence, result) in self.onset_results.drain(..) {
+            let state = match result {
+                Ok(identity) => OnsetAtTeardown::Live {
+                    identity,
+                    location: locate_onset(&ended, identity),
+                },
+                Err(refusal) => OnsetAtTeardown::Refused(refusal),
+            };
+            teardown.onsets.push((occurrence, state));
+        }
+        (teardown, self.sources, ended)
+    }
+}
+
+#[test]
+fn joined_teardown_accounts_every_outstanding_bridge_credit() {
+    let on = input(0x90, 60, 100);
+    let off = input(0x80, 60, 0);
+    let hold = IngressRefused::Dropped {
+        resource: ExhaustedResource::Hold,
+    };
+    for compiled_first in [true, false] {
+        for fault in [false, true] {
+            let (prepared, candidate) = history_tests::one_shot_with_boundary_on(compiled_first);
+            let (mut control, mut audio) = prepared
+                .arm_one_shot(candidate, &history_tests::mixed_profile())
+                .unwrap();
+            let mut bridge = RawStageBridge::new(4);
+
+            let a_live = bridge.offer(Source::First, 140, on).unwrap();
+            let b_live = bridge.offer(Source::Second, 141, on).unwrap();
+            let a_refused = bridge.offer(Source::First, 142, on).unwrap();
+            bridge.frontier(Source::Second, 143);
+            let serviced: Vec<_> =
+                std::iter::from_fn(|| bridge.service(&mut control, &mut audio)).collect();
+            assert_eq!(serviced.len(), 3);
+            let raw_of = |occurrence| {
+                serviced
+                    .iter()
+                    .find(|result| result.occurrence == occurrence)
+                    .unwrap()
+                    .handoff
+                    .raw
+            };
+
+            // Credits outstanding when the owner stops: two raw-linked releases
+            // and one onset staged but not offered, two release reservations,
+            // and three retained onset results.
+            assert_eq!(bridge.offer(Source::First, 150, off), Ok(a_live));
+            assert_eq!(bridge.offer(Source::First, 151, off), Ok(a_refused));
+            let b_unoffered = bridge.offer(Source::Second, 155, on).unwrap();
+            assert_eq!(bridge.stage.pressure(Source::First), (2, 0));
+            assert_eq!(bridge.stage.pressure(Source::Second), (1, 2));
+
+            if fault {
+                let mut first = [0.0_f32; 128];
+                audio
+                    .render_private(
+                        AudioBlockMut::new(&mut first, 128, ChannelLayout::Mono).unwrap(),
+                    )
+                    .unwrap();
+                audio.test_fail_after_ingress_at = Some(SampleTime::new(128));
+                let mut second = [1.0_f32; 128];
+                assert_eq!(
+                    audio.render_private(
+                        AudioBlockMut::new(&mut second, 128, ChannelLayout::Mono).unwrap()
+                    ),
+                    Err(MixedOneShotRenderError::InjectedAfterIngress)
+                );
+            }
+            let (teardown, raw, ended) = bridge.tear_down(control, audio);
+            let (end, location) = if fault {
+                (
+                    MixedCollectionEnd::Faulted,
+                    OnsetLocation::ChargedInFaultedCallback,
+                )
+            } else {
+                (MixedCollectionEnd::Pending, OnsetLocation::Queued)
+            };
+            assert_eq!(ended.end, end);
+            assert_eq!(ended.ingress.holds_outstanding, EventCount::measured(2));
+
+            assert_eq!(
+                teardown
+                    .unoffered
+                    .iter()
+                    .map(|handoff| (handoff.source, handoff.at, handoff.link))
+                    .collect::<Vec<_>>(),
+                vec![
+                    (Source::First, SampleTime::new(150), Some(raw_of(a_live))),
+                    (Source::First, SampleTime::new(151), Some(raw_of(a_refused))),
+                    (Source::Second, SampleTime::new(155), None),
+                ]
+            );
+            // The returned raw owners still hold each unoffered packet's cell.
+            for handoff in &teardown.unoffered {
+                assert_eq!(
+                    raw[handoff.source.index()].input.matched_onset(handoff.raw),
+                    Ok(handoff.link)
+                );
+            }
+            let b_unoffered_raw = teardown.unoffered[2].raw;
+            assert_eq!(
+                teardown.reservations,
+                vec![
+                    (Source::Second, b_live, raw_of(b_live)),
+                    (Source::Second, b_unoffered, b_unoffered_raw),
+                ]
+            );
+            let identity_of = |occurrence| {
+                let MixedDisposition::Result(MixedIngressOutcome::Onset(Ok(identity))) = serviced
+                    .iter()
+                    .find(|result| result.occurrence == occurrence)
+                    .unwrap()
+                    .disposition
+                else {
+                    panic!("serviced onset must have been accepted");
+                };
+                identity
+            };
+            assert_eq!(
+                teardown.onsets,
+                vec![
+                    (
+                        a_live,
+                        OnsetAtTeardown::Live {
+                            identity: identity_of(a_live),
+                            location,
+                        }
+                    ),
+                    (
+                        b_live,
+                        OnsetAtTeardown::Live {
+                            identity: identity_of(b_live),
+                            location,
+                        }
+                    ),
+                    (a_refused, OnsetAtTeardown::Refused(hold)),
+                ]
+            );
+        }
     }
 }

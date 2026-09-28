@@ -1662,8 +1662,21 @@ the release is selected; the release leaves the stage without a mixed command
 and its combined result carries the onset refusal and raw link. The same-key
 release of the accepted onset and the peer's release succeed, and a later onset
 reuses a returned hold. This is a model disposition, not a recorder or raw
-settlement rule. The bridge has no concrete source ring, recorder settlement,
-refund authority or joined teardown.
+settlement rule.
+`joined_teardown_accounts_every_outstanding_bridge_credit` stops the owner with
+two raw-linked releases and one onset still staged, two release reservations,
+two accepted onsets and one `Dropped(Hold)` onset outstanding. Collection ends
+`Pending` without rendering and `Faulted` after an injected fault that follows
+ingress. The bridge drains its stage and ledger: every unoffered packet returns
+its raw handoff, every release reservation names its raw onset, and every
+accepted onset identity has exactly one onset edge or sounding entry across the
+queued ingress edges, the faulted-callback journal and the sounding set, counted
+so that a duplicate in one location fails. The bridge is empty afterwards and
+returns its raw owners; each still resolves the unoffered packets' raw links.
+This conserves bridge-owned charges only. Raw cells, recorder publication and
+raw receipts are not settled here, and no refund authority or
+restart after teardown is defined. The bridge still has no concrete source ring
+or atomic shared charge.
 
 The same read found that holding a popped onset until tracker credit returns
 can deadlock when its release or required frontier is behind that onset in the
