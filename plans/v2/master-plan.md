@@ -1728,6 +1728,10 @@ adds this intermediate gate. It is not a Phase 9 exit. It lets Phase 11 begin on
 the simulated live engine while physical qualification and mixed producers wait
 for the exit gate above. Each item is proven by deterministic simulated-host
 tests or the non-shipping Linux harnesses, without a physical-device claim.
+Where an outcome ends in a project transaction, 9A proves only the V2 side:
+canonical revisions, persistent assets and replace/overdub application remain
+Phase 10A, 10B and 10D work under the
+[recording specification](specs/spec-recording-takes-and-commit.md#take-inv-005--overdub-replace-and-concurrent-project-edits).
 
 - [ ] V2 can be selected for live playback without changing project-save
       semantics. A stream that would carry both compiled note playback or
@@ -1745,22 +1749,32 @@ tests or the non-shipping Linux harnesses, without a physical-device claim.
       backlog growth.
 - [ ] Timestamped MIDI/live events, monitoring, note recording, and audio
       recording have deterministic simulated-host tests requiring no physical
-      device. No timestamp-capable live input adapter enters a production path
+      device. Audio recording is proven as the immutable in-memory take with its
+      original PCM, stamps and valid prefix. No timestamp-capable live input adapter enters a production path
       while ADR-0022 is not `Accepted`; a source with genuinely no timestamp
       declares `Arrival` as `unmeasured` under ADR-0032 clause 19.
-- [ ] Count-in, metronome, loop recording, replace/overdub, sustain, stop, and
-      panic order correctly at quantum and loop boundaries.
+- [ ] Count-in, metronome, loop recording, sustain, stop, and panic order
+      correctly at quantum and loop boundaries. Every take and loop pass retains
+      its arm-time replace/overdub intent across those boundaries.
 - [ ] Enabling meters, scopes, or OSC/visualizer subscribers cannot alter audio,
       block the renderer, or make a headless plan require GUI-owned state.
 - [ ] Retired resources are reclaimed off-thread under saturation tests.
-- [ ] The active revision exposed to GUI/MCP matches the audible plan revision.
+- [ ] A control-thread reader's active-plan acknowledgement names the plan
+      that became active at its reported quantum boundary and renders from
+      that boundary on, across swaps, refused candidates and failed compiles.
+      Only the retiring plan's ADR-0009 fade tail may also sound after that
+      boundary, and only until its fade ends. A failed callback delivers no
+      audio from either plan under ADR-0009; the reader sees that failure with
+      the acknowledgement, which then claims no rendered output for that
+      callback. Mapping the acknowledgement to a project revision shown in
+      GUI/MCP stays in the exit gate above.
 - [ ] Before a production live adapter is enabled, ADR-0054 reselection and
       P03-R004's width validation cover the producer partition this gate admits.
 
 The exit gate above additionally requires physical-device recovery, sustained
 physical monitoring, measured latency and error bounds, ADR-0022 acceptance,
-retained platform and adapter evidence, production timestamped live input, and
-the mixed-producer item.
+retained platform and adapter evidence, production timestamped live input, the
+GUI/MCP project revision, and the mixed-producer item.
 
 ## Phase 10: Project Core V2 and Application Core V2 migration
 

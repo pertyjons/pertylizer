@@ -185,7 +185,7 @@ macOS and Windows evidence also remain exit work. Phase 11 may begin after 9A;
 Phase 12 needs the full exit.
 
 The 2026-09-29 audit of the [9A gate](master-plan.md#phase-9a-engine-gate) against code and
-tests found no item fully met. The state is:
+tests found no item fully met; items 7, 8 and 11 were then restated. The state is:
 
 | # | Item | State | Gap |
 |---|---|---|---|
@@ -195,19 +195,19 @@ tests found no item fully met. The state is:
 | 4 | No allocation or lock on audio thread | Partial | Live parameter updates and ingress delivery are not allocation-measured; locks only by source scan |
 | 5 | Disconnect, buffer-size and rate changes | Partial | Disconnect/reconnect met; no device-initiated size or rate change while running |
 | 6 | Independent clocks, sustained monitoring | Partial | Only a fast input clock is tested; no slow clock, drift with stalls or threaded drift |
-| 7 | Simulated live events and recording | Partial | Audio take is in-memory only; its asset and commit belong to Phase 10 |
-| 8 | Boundary ordering | Partial | Replace/overdub is an intent tag only; sustain and panic at a loop wrap, count-in and metronome in loops untested |
+| 7 | Simulated live events and recording | Met as restated | Persistent asset and commit are Phase 10 work outside 9A |
+| 8 | Boundary ordering | Partial | Sustain and panic at a loop wrap, count-in and metronome in loops untested |
 | 9 | Observers cannot alter audio | Partial | Store is tested audio-invariant but unused by live hosts; no cross-thread subscriber |
 | 10 | Off-thread reclamation under saturation | Partial | No saturation test with the renderer on another thread |
-| 11 | GUI/MCP revision matches audible plan | Missing | V2 exposes only `PlanId`; the project revision belongs to Phase 10A |
+| 11 | Active-plan acknowledgement matches audio | Partial | Swaps report `PlanId`; no library test ties it to rendered audio across refused candidates and failed compiles |
 | 12 | ADR-0054 reselection and P03-R004 | Missing | EVD-0024 is not supported for production; binds before item 1 goes live |
 
 Live-editing stage 1 is built, stage 2 exists only for the live stream and stage 3 (ADR-0010) is not started.
 
 Next for Phase 9, in this order:
 
-1. Restate items 7, 8 and 11 so 9A proves only the V2 side (plan identity, pass and intent at boundaries);
-   the project revision, asset and replace/overdub application are Phase 10 commit transactions.
+1. Done: items 7, 8 and 11 now require only the V2 side (in-memory take, intent at boundaries,
+   active-plan acknowledgement); the table's gaps for them are read against that text.
 2. Close the test gaps in items 3, 4, 6 and 10.
 3. Item 8: sustain and panic at a loop wrap, count-in and metronome in loops.
 4. Item 5: simulated device-initiated buffer-size and rate changes with diagnostics and re-prepare.
