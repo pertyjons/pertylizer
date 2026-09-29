@@ -184,10 +184,35 @@ and defers mixed-producer activation to Phase 9's exit. Physical timing, loopbac
 macOS and Windows evidence also remain exit work. Phase 11 may begin after 9A;
 Phase 12 needs the full exit.
 
-Next for Phase 9: audit each 9A gate item against existing tests, specifications
-and harnesses. Record which are met, which are partly met and which are missing,
-then select the missing items as bounded slices. Until that audit exists, no
-9A item is claimed as met.
+The 2026-09-29 audit of the [9A gate](master-plan.md#phase-9a-engine-gate) against code and
+tests found no item fully met. The state is:
+
+| # | Item | State | Gap |
+|---|---|---|---|
+| 1 | V2 selectable live; mixed stream refused | Partial | `MixedProducerPlan` refusal is tested; the application has no V2 live-engine selection |
+| 2 | Structural edit is one whole plan | Partial | Latest-wins mailbox is harness-only; no project edit drives a candidate |
+| 3 | Failed compile keeps previous plan | Met in harness | Library test checks only the plan id, not audio |
+| 4 | No allocation or lock on audio thread | Partial | Live parameter updates and ingress delivery are not allocation-measured; locks only by source scan |
+| 5 | Disconnect, buffer-size and rate changes | Partial | Disconnect/reconnect met; no device-initiated size or rate change while running |
+| 6 | Independent clocks, sustained monitoring | Partial | Only a fast input clock is tested; no slow clock, drift with stalls or threaded drift |
+| 7 | Simulated live events and recording | Partial | Audio take is in-memory only; its asset and commit belong to Phase 10 |
+| 8 | Boundary ordering | Partial | Replace/overdub is an intent tag only; sustain and panic at a loop wrap, count-in and metronome in loops untested |
+| 9 | Observers cannot alter audio | Partial | Store is tested audio-invariant but unused by live hosts; no cross-thread subscriber |
+| 10 | Off-thread reclamation under saturation | Partial | No saturation test with the renderer on another thread |
+| 11 | GUI/MCP revision matches audible plan | Missing | V2 exposes only `PlanId`; the project revision belongs to Phase 10A |
+| 12 | ADR-0054 reselection and P03-R004 | Missing | EVD-0024 is not supported for production; binds before item 1 goes live |
+
+Live-editing stage 1 is built, stage 2 exists only for the live stream and stage 3 (ADR-0010) is not started.
+
+Next for Phase 9, in this order:
+
+1. Restate items 7, 8 and 11 so 9A proves only the V2 side (plan identity, pass and intent at boundaries);
+   the project revision, asset and replace/overdub application are Phase 10 commit transactions.
+2. Close the test gaps in items 3, 4, 6 and 10.
+3. Item 8: sustain and panic at a loop wrap, count-in and metronome in loops.
+4. Item 5: simulated device-initiated buffer-size and rate changes with diagnostics and re-prepare.
+5. Items 2 and 9: move the plan mailbox and observation into the library, with a cross-thread subscriber.
+6. Item 12, then item 1: capacity reselection for the 9A partition, then V2 as a selectable live engine.
 
 ### Selected work — concurrent live host and duplex capture
 
