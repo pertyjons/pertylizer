@@ -1,6 +1,6 @@
 # Core V2: Current Work
 
-Last updated: 2026-09-28
+Last updated: 2026-09-29
 
 This file contains only active Core V2 state, blockers and next actions. Durable
 contracts live in ADRs and specifications; completed Phase 3 coordination
@@ -175,6 +175,20 @@ retain their IO-INV-004/005 gates.
 Concurrent backend fences, physical held-note swaps, production hardware timing and project
 transactions retain their named first-consumer gates.
 
+### Direction — Phase 9A engine gate
+
+On 2026-09-29 the user chose to finish the simulated live engine before physical
+verification. [ADR-0076](decisions/ADR-0076-phase-9a-engine-gate-and-mixed-producer-deferral.md)
+adds the intermediate [Phase 9A engine gate](master-plan.md#phase-9a-engine-gate)
+and defers mixed-producer activation to Phase 9's exit. Physical timing, loopback,
+macOS and Windows evidence also remain exit work. Phase 11 may begin after 9A;
+Phase 12 needs the full exit.
+
+Next for Phase 9: audit each 9A gate item against existing tests, specifications
+and harnesses. Record which are met, which are partly met and which are missing,
+then select the missing items as bounded slices. Until that audit exists, no
+9A item is claimed as met.
+
 ### Selected work — concurrent live host and duplex capture
 
 The five selected steps extend the simulated sessions with concurrent plan publication,
@@ -189,10 +203,13 @@ production capacity: common host admission, same-stream live transport activatio
 representative workload remain missing. All six shares, release holds and ingress depths retain
 their provisional status. No physical loopback is connected.
 
-### Open design work — mixed producer activation
+### Deferred design work — mixed producer activation
+
+ADR-0076 deferred this work to Phase 9's exit on 2026-09-29. No further
+rehearsal slice is selected. The record below is the state at deferral.
 
 [ADR-0075](decisions/ADR-0075-mixed-producer-activation-ownership.md) frames the
-possible mixed-producer activation boundary. It is `Proposed`: target ownership,
+possible mixed-producer activation boundary. It is now `Deferred`: target ownership,
 scoped catch-up, split identity custody, release-hold redemption, command
 order, owner lifetime and capacity all need the ADR's acceptance evidence,
 a tested combined host and explicit contract amendments before the current
@@ -779,6 +796,8 @@ Phase 3 is complete. Its exit review accepted these bounded residuals:
 
 - Phase 6 owned `P04-R001`'s composition law and `SOUND-INV-021`'s **bend** clause; both are
   built (`P06-S003`, `P06-S004`).
+- Phase 9's exit, not its 9A engine gate, owns ADR-0075's mixed-producer work
+  under ADR-0076.
 - Phase 9 owns ADR-0022 acceptance against retained platform/adapter evidence,
   P03-R001 before integrated loop capture or phase exit, P03-R004 before production live
   ingress, and ADR-0050 clause 8's release-hold redemption and activation-time
@@ -794,7 +813,8 @@ Phase 3 is complete. Its exit review accepted these bounded residuals:
 ## Current blockers
 
 Phase 8 has no remaining exit blocker. Phase 0B next resumes `P00B-T002`;
-Phase 9 has completed P09-S001 through P09-S006.
+Phase 9 has completed P09-S001 through P09-S006; its next step is the
+9A gate audit above.
 The accepted residuals above block their named first consumers.
 Session share 128 and total cap 360 remain provisional until
 Phase 9's complete reselection under ADR-0054.

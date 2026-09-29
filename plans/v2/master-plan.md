@@ -1716,12 +1716,58 @@ evidence rather than to Phase 3's scheduler implementation.
       block the renderer, or make a headless plan require GUI-owned state.
 - [ ] Retired resources are reclaimed off-thread under saturation tests.
 - [ ] The active revision exposed to GUI/MCP matches the audible plan revision.
+- [ ] One admitted stream can carry compiled note playback, activation and live
+      note ingress together, with ADR-0075, ADR-0048, ADR-0050 clause 8 and
+      ADR-0051's shared-gate ownership accepted or explicitly superseded
+      ([ADR-0076](decisions/ADR-0076-phase-9a-engine-gate-and-mixed-producer-deferral.md)).
+
+### Phase 9A engine gate
+
+[ADR-0076](decisions/ADR-0076-phase-9a-engine-gate-and-mixed-producer-deferral.md)
+adds this intermediate gate. It is not a Phase 9 exit. It lets Phase 11 begin on
+the simulated live engine while physical qualification and mixed producers wait
+for the exit gate above. Each item is proven by deterministic simulated-host
+tests or the non-shipping Linux harnesses, without a physical-device claim.
+
+- [ ] V2 can be selected for live playback without changing project-save
+      semantics. A stream that would carry both compiled note playback or
+      activation and live note ingress is refused with a named diagnostic.
+- [ ] A structural project edit is either absent or present as one active plan;
+      the audio thread cannot observe a partially edited topology.
+- [ ] A failed compile keeps the previous active plan sounding.
+- [ ] Plan swap, event delivery, and parameter updates allocate nothing and take
+      no locks on the audio thread.
+- [ ] Simulated disconnect/reconnect, negotiated buffer-size changes, and sample-
+      rate changes either recover through the declared lifecycle or fail with a
+      visible host diagnostic while preserving the project and last valid plan.
+- [ ] Simulated independent input/output clocks remain latency-bounded during a
+      sustained monitoring test, with drift/drop counters visible and no hidden
+      backlog growth.
+- [ ] Timestamped MIDI/live events, monitoring, note recording, and audio
+      recording have deterministic simulated-host tests requiring no physical
+      device. No timestamp-capable live input adapter enters a production path
+      while ADR-0022 is not `Accepted`; a source with genuinely no timestamp
+      declares `Arrival` as `unmeasured` under ADR-0032 clause 19.
+- [ ] Count-in, metronome, loop recording, replace/overdub, sustain, stop, and
+      panic order correctly at quantum and loop boundaries.
+- [ ] Enabling meters, scopes, or OSC/visualizer subscribers cannot alter audio,
+      block the renderer, or make a headless plan require GUI-owned state.
+- [ ] Retired resources are reclaimed off-thread under saturation tests.
+- [ ] The active revision exposed to GUI/MCP matches the audible plan revision.
+- [ ] Before a production live adapter is enabled, ADR-0054 reselection and
+      P03-R004's width validation cover the producer partition this gate admits.
+
+The exit gate above additionally requires physical-device recovery, sustained
+physical monitoring, measured latency and error bounds, ADR-0022 acceptance,
+retained platform and adapter evidence, production timestamped live input, and
+the mixed-producer item.
 
 ## Phase 10: Project Core V2 and Application Core V2 migration
 
 Do not begin the broad GUI migration in
 [Phase 11](#phase-11-gui-and-workflow-migration) before Sound Core V2 has passed
-the offline and live render gates above. Until then, `LegacyProjectLowerer`
+the offline render gates above and the [Phase 9A engine gate](#phase-9a-engine-gate).
+Phase 12 still requires Phase 9's complete exit gate. Until then, `LegacyProjectLowerer`
 remains the boundary and the current project format remains the production
 format.
 

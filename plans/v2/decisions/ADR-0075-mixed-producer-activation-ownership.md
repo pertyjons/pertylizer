@@ -3,14 +3,27 @@
 | Field | Value |
 |---|---|
 | ID | ADR-0075 |
-| Status | Proposed |
+| Status | Deferred |
 | Phase | 9 |
 | Created | 2026-09-26 |
-| Last reviewed | 2026-09-27 |
+| Last reviewed | 2026-09-29 |
 | Related | ADR-0009, ADR-0022, ADR-0023, ADR-0046, ADR-0047, ADR-0048, ADR-0050, ADR-0051, ADR-0055, ADR-0058, ADR-0065, ADR-0072, ADR-0073, ADR-0074, EVD-0024 |
 | Amends | None while proposed. Acceptance requires explicit amendments to affected ownership, release and host-profile contracts. |
 | Supersedes | — |
 | Superseded by | — |
+
+## The deferral
+
+| Field | Value |
+|---|---|
+| Deferred to | The **Phase 9 exit gate**, after the Phase 9A engine gate, under [ADR-0076](ADR-0076-phase-9a-engine-gate-and-mixed-producer-deferral.md) |
+| Owner | Project maintainer |
+| Evidence required | Everything listed under *Unresolved acceptance work* and *Falsifiers and order of work* below, unchanged |
+| Why not now | The user chose on 2026-09-29 to finish the simulated live engine first; this frame's acceptance needs amendments to about a dozen accepted records |
+| What makes it safe | `PerformanceIngress::prepare` refuses a mixed plan, `LiveInputStream` has no activation, and the private mixed owner and bridge exist only in tests. The Phase 9A gate requires the mixed case to refuse with a named diagnostic |
+
+The existing rehearsal code and tests stay as they are. The text below is the
+frame as it stood when deferred; it records no decision.
 
 ## Problem and current boundary
 

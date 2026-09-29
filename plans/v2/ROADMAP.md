@@ -34,13 +34,14 @@ accepted exit review. `NOW.md` owns task activity within an active phase.
 | [7](master-plan.md#phase-7-yams-mod-grid-and-unified-modulation) | YAMS, Mod Grid, and unified modulation | Complete | 6 |
 | [8](master-plan.md#phase-8-mixer-channels-buses-effects-and-latency) | Mixer, channels, buses, effects, and latency | Complete | 7 |
 | [9](master-plan.md#phase-9-live-integration-and-immutable-plan-swapping) | Live integration and immutable plan swapping | Active | 8 |
+| [9A](master-plan.md#phase-9a-engine-gate) | Simulated live-engine gate inside Phase 9; not a Phase 9 exit | Active | 8 |
 | [10A](master-plan.md#phase-10a-canonical-project-model-and-stable-identity) | Canonical project model and stable identity | Not started | 0B |
 | [10B](master-plan.md#phase-10b-application-operations-and-transactions) | Application operations and transactions | Not started | 10A |
 | [10C](master-plan.md#phase-10c-history-dirty-state-save-and-recovery) | History, dirty state, save, and recovery | Not started | 10B |
 | [10D](master-plan.md#phase-10d-project-format-v2-assets-and-conversion) | Versioned project format, assets, and conversion | Not started | 10A–10C |
 | [10E](master-plan.md#phase-10e-mcp-cli-import-and-service-migration) | MCP, CLI, import, service, and public-facade migration | Not started | 10A–10D |
-| [11](master-plan.md#phase-11-gui-and-workflow-migration) | GUI and workflow migration | Not started | 9, 10E |
-| [12](master-plan.md#phase-12-default-cutover-and-v1-retirement) | Default cutover and V1 retirement | Not started | 11 |
+| [11](master-plan.md#phase-11-gui-and-workflow-migration) | GUI and workflow migration | Not started | 9A, 10E |
+| [12](master-plan.md#phase-12-default-cutover-and-v1-retirement) | Default cutover and V1 retirement | Not started | 9, 11 |
 
 Phase 0B may run alongside Sound Core Phases 1–4. Phase 10 does not begin until
 0B passes. Detailed work is activated in `NOW.md` only when it becomes the next
@@ -213,6 +214,11 @@ have explicit ownership.
 
 Exit requires safe plan swapping, last-valid-plan behavior on compile failure,
 simulated-host coverage, bounded retirement, and live/offline render agreement.
+
+[ADR-0076](decisions/ADR-0076-phase-9a-engine-gate-and-mixed-producer-deferral.md)
+adds the intermediate 9A engine gate: the simulated live engine without physical
+qualification or one stream mixing compiled and live notes. Phase 11 may begin
+after it. Phase 9's exit, which Phase 12 requires, still includes both.
 
 ### Phase 10A — canonical project model
 
