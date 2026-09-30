@@ -400,6 +400,79 @@ fn actual_installation_crosses_threads_and_retirement_waits_for_the_reader() {
     assert_eq!(render(&mut audio, 64), vec![0.25; 64]);
 }
 
+/// Phase 9A: every replacement credit is spent while the audio owner renders on its own
+/// thread, and the controller withholds reclamation. Callbacks keep rendering without
+/// allocating or freeing, a further candidate refuses as `Full`, and every retired owner
+/// is destroyed only when the controller collects it.
+#[test]
+fn saturated_reclamation_across_threads_never_moves_destruction_onto_the_callback() {
+    let (mut control, mut audio) = setup();
+    let (to_audio, from_control) = std::sync::mpsc::sync_channel(REPLACEMENT_CREDITS);
+    let (to_control, from_audio) = std::sync::mpsc::sync_channel(REPLACEMENT_CREDITS);
+    let (stop, stopped) = std::sync::mpsc::sync_channel::<()>(1);
+    let rendered = std::sync::Arc::new(std::sync::atomic::AtomicU32::new(0));
+    let progress = std::sync::Arc::clone(&rendered);
+    for _ in 0..REPLACEMENT_CREDITS {
+        to_audio.send(candidate(&mut control)).unwrap();
+    }
+    let worker = std::thread::spawn(move || {
+        let mut installed = 0;
+        let mut quanta = 0_u32;
+        loop {
+            // A replacement installs only after the first quantum has primed the owner.
+            assert_eq!(render(&mut audio, 64), vec![0.0; 64]);
+            quanta += 1;
+            progress.store(quanta, std::sync::atomic::Ordering::Release);
+            if let Ok(packet) = from_control.try_recv() {
+                to_control.send(install(&mut audio, packet)).unwrap();
+                installed += 1;
+            }
+            if installed == REPLACEMENT_CREDITS + 1 && stopped.try_recv().is_ok() {
+                return (audio, quanta);
+            }
+            std::thread::yield_now();
+        }
+    });
+    let mut returned = Vec::new();
+    while returned.len() < REPLACEMENT_CREDITS {
+        returned.push(from_audio.recv().unwrap());
+    }
+    // Reclamation is withheld while the callback thread renders further quanta.
+    let withheld = rendered.load(std::sync::atomic::Ordering::Acquire) + 32;
+    while rendered.load(std::sync::atomic::Ordering::Acquire) < withheld {
+        std::thread::yield_now();
+    }
+    let plan = compile(&graph(), &RenderConfig::new(profile()))
+        .into_plan()
+        .unwrap();
+    let stream = AdmittedCompiledStream::admit(&plan, &[]).unwrap();
+    assert!(matches!(
+        control.prepare_replacement(plan, stream, profile(), limits()),
+        Err(PlanReplacementError::Full)
+    ));
+    for packet in returned {
+        assert!(matches!(
+            packet.outcome(),
+            Some(PlanReplacementOutcome::Installed { .. })
+        ));
+        collect_replacement(&mut control, packet);
+    }
+    assert!(!control.has_replacements());
+    to_audio.send(candidate(&mut control)).unwrap();
+    collect_replacement(&mut control, from_audio.recv().unwrap());
+    stop.send(()).unwrap();
+    let (mut audio, quanta) = worker.join().unwrap();
+    assert!(quanta >= withheld);
+    audio
+        .enqueue(control.prepare_play(audio.clock()).unwrap())
+        .unwrap();
+    let carry = audio.frames_until_plan_boundary().as_u64() as usize;
+    if carry != 0 {
+        render(&mut audio, carry);
+    }
+    assert_eq!(render(&mut audio, 64), vec![0.25; 64]);
+}
+
 #[test]
 fn replacement_audio_and_clock_are_independent_of_callback_partitions() {
     fn trace(partition: usize) -> (Vec<f32>, SampleTime) {

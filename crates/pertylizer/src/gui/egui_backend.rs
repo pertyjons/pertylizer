@@ -51,6 +51,8 @@ mod dialog_state;
 mod engine_events;
 mod project_flow;
 mod undo_flow;
+#[cfg(feature = "v2-lowering")]
+mod v2_flow;
 
 use dialog_state::{PendingAction, UnsavedChangesDialog};
 
@@ -172,8 +174,17 @@ impl GuiBackend for EguiBackend {
         mut host: Box<dyn AudioHostTrait>,
         config: SynthGuiConfig,
     ) -> GuiResult<()> {
-        // Start audio before GUI
+        // Start audio before GUI. With `v2-lowering`, the V1 engine runs inside the switch
+        // that can hand the audio to experimental V2 song playback (ADR-0077).
+        #[cfg(feature = "v2-lowering")]
+        let (v2_switch, engine) = crate::lowering::app::wrap(engine);
         let stream_info = host.start_output(None, &config.stream_config, Box::new(engine))?;
+        #[cfg(feature = "v2-lowering")]
+        let v2_switch = {
+            let mut switch = v2_switch;
+            switch.set_stream(&stream_info);
+            switch
+        };
 
         let window_title = config.title.clone();
         let window_width = config.settings.window.width as f32;
@@ -191,7 +202,12 @@ impl GuiBackend for EguiBackend {
             viewport = viewport.with_position([x as f32, y as f32]);
         }
 
-        let app = SynthApp::new(handle, host, config, stream_info.output_latency);
+        #[cfg_attr(not(feature = "v2-lowering"), allow(unused_mut))]
+        let mut app = SynthApp::new(handle, host, config, stream_info.output_latency);
+        #[cfg(feature = "v2-lowering")]
+        {
+            app.v2 = v2_flow::V2State::new(v2_switch);
+        }
 
         let options = eframe::NativeOptions {
             viewport,
@@ -398,6 +414,10 @@ struct SynthApp {
 
     // MIDI input handler
     midi_handler: MidiHandler,
+
+    /// Experimental V2 song playback (ADR-0077).
+    #[cfg(feature = "v2-lowering")]
+    v2: v2_flow::V2State,
 
     // Keyboard state
     keyboard: PianoKeyboard,
@@ -619,6 +639,8 @@ impl SynthApp {
             latency,
             session,
             midi_handler,
+            #[cfg(feature = "v2-lowering")]
+            v2: v2_flow::V2State::default(),
             keyboard,
             pressed_keys: HashMap::new(),
             dialog_state,
@@ -1028,6 +1050,8 @@ impl eframe::App for SynthApp {
         // comparison on all but one frame in ~1800.
         self.poll_autosave();
         self.tick_autosave();
+        #[cfg(feature = "v2-lowering")]
+        self.poll_v2();
 
         // ── Input routing ──
         //
@@ -1117,6 +1141,8 @@ impl eframe::App for SynthApp {
                     ui.separator();
                     // MIDI status indicator (with port selector on click)
                     self.render_midi_status(ui);
+                    #[cfg(feature = "v2-lowering")]
+                    self.render_v2_toggle(ui);
                     ui.separator();
                     // MCP connection status indicator
                     #[cfg(feature = "mcp")]
@@ -3706,6 +3732,19 @@ impl SynthApp {
     /// Top-bar MIDI status indicator with a click-to-select port menu.
     fn render_midi_status(&mut self, ui: &mut egui::Ui) {
         use egui_remixicon::icons as ri;
+        // MIDI input stays off while experimental V2 playback is active (ADR-0077).
+        #[cfg(feature = "v2-lowering")]
+        if self.midi_locked_by_v2() {
+            ui.label(
+                RichText::new(format!("{} MIDI off", ri::PIANO_LINE))
+                    .color(theme().colors.text_dim),
+            )
+            .on_hover_text(
+                "MIDI input is off in V2 mode: a timestamp-capable device may not feed V2 \
+                 until its timing is qualified (ADR-0022). Leave V2 mode to reconnect.",
+            );
+            return;
+        }
         let (icon, color, hover_text) = if self.midi_handler.is_connected() {
             let port_name = self
                 .midi_handler
@@ -4113,6 +4152,8 @@ impl SynthApp {
 
                     // ── Right side: load warnings / CPU / Voices / Latency ──
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        #[cfg(feature = "v2-lowering")]
+                        self.render_v2_badge(ui);
                         // A load that dropped something has to say so where the
                         // user actually is. The full account goes to the
                         // Activity console — which lives on Home, while loading

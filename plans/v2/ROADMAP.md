@@ -34,7 +34,7 @@ accepted exit review. `NOW.md` owns task activity within an active phase.
 | [7](master-plan.md#phase-7-yams-mod-grid-and-unified-modulation) | YAMS, Mod Grid, and unified modulation | Complete | 6 |
 | [8](master-plan.md#phase-8-mixer-channels-buses-effects-and-latency) | Mixer, channels, buses, effects, and latency | Complete | 7 |
 | [9](master-plan.md#phase-9-live-integration-and-immutable-plan-swapping) | Live integration and immutable plan swapping | Active | 8 |
-| [9A](master-plan.md#phase-9a-engine-gate) | Simulated live-engine gate inside Phase 9; not a Phase 9 exit | Active | 8 |
+| [9A](master-plan.md#phase-9a-engine-gate) | Simulated live-engine gate inside Phase 9; not a Phase 9 exit | Complete | 8 |
 | [10A](master-plan.md#phase-10a-canonical-project-model-and-stable-identity) | Canonical project model and stable identity | Not started | 0B |
 | [10B](master-plan.md#phase-10b-application-operations-and-transactions) | Application operations and transactions | Not started | 10A |
 | [10C](master-plan.md#phase-10c-history-dirty-state-save-and-recovery) | History, dirty state, save, and recovery | Not started | 10B |
@@ -219,6 +219,7 @@ simulated-host coverage, bounded retirement, and live/offline render agreement.
 adds the intermediate 9A engine gate: the simulated live engine without physical
 qualification or one stream mixing compiled and live notes. Phase 11 may begin
 after it. Phase 9's exit, which Phase 12 requires, still includes both.
+[REV-P09A](reviews/phase-09a-exit-review.md) accepts the 9A gate.
 
 ### Phase 10A — canonical project model
 

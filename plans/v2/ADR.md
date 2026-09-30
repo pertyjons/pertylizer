@@ -3,7 +3,7 @@
 This is the compact status index for durable Core V2 decisions. Individual ADRs own rationale and evidence; current
 specifications own implementation semantics. Do not copy review history or measurement results into this file.
 
-Next free identifier: `ADR-0077`.
+Next free identifier: `ADR-0078`.
 
 ## Status vocabulary
 
@@ -127,6 +127,7 @@ the durable-decision test in `PROCESS.md` and normally do not need an ADR.
 | ADR-0074 | Concurrent live host and duplex capture | Accepted | 9 | [ADR](decisions/ADR-0074-concurrent-live-host-and-duplex-capture.md) | Latest-wins reset, capture across swaps and independent PCM owners |
 | ADR-0075 | Mixed producer activation ownership | Deferred | 9 | [ADR](decisions/ADR-0075-mixed-producer-activation-ownership.md) | Audio-owned live obligations, split compiled identity custody and scoped gate restoration; deferred to the Phase 9 exit by ADR-0076 |
 | ADR-0076 | Phase 9A engine gate and mixed-producer deferral | Accepted | 9 | [ADR](decisions/ADR-0076-phase-9a-engine-gate-and-mixed-producer-deferral.md) | Simulated live-engine gate for Phase 11; mixed producers and physical qualification stay in the Phase 9 exit |
+| ADR-0077 | Experimental V2 song playback in the application | Accepted | 9 | [ADR](decisions/ADR-0077-experimental-v2-song-playback-in-the-application.md) | Behind v2-lowering; song playback only, MIDI inactive, visible refusals, capacity-gated start |
 
 ### Reversible decisions
 

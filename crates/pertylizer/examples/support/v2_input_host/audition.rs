@@ -293,11 +293,15 @@ impl AuditionAudio {
             done += count;
         }
         self.renderer.commit_outcomes();
-        self.swaps.acknowledge(&self.renderer);
         for (sample, live) in output.samples_mut().iter_mut().zip(scratch) {
             *sample += *live;
         }
         Ok(())
+    }
+    /// Once per outer callback, after its final result: `delivered` is false whenever any
+    /// stage failed or halted and the whole output was silenced.
+    pub fn acknowledge(&mut self, delivered: bool) {
+        self.swaps.acknowledge(&self.renderer, delivered);
     }
     pub fn reconcile(&mut self, core: &mut InputCaptureAudio) -> Result<(), HostError> {
         let prefix = self.settled.occupied_len();

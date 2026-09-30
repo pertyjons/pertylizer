@@ -135,6 +135,14 @@ pub mod validate;
 #[path = "tests/render_allocation.rs"]
 mod render_allocation;
 
+#[cfg(all(test, feature = "simulated-ingress"))]
+#[path = "tests/live_allocation.rs"]
+mod live_allocation;
+
+#[cfg(all(test, feature = "simulated-ingress"))]
+#[path = "tests/live_observation.rs"]
+mod live_observation;
+
 #[cfg(test)]
 #[path = "tests/arena_reuse.rs"]
 mod arena_reuse;

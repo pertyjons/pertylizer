@@ -229,6 +229,8 @@ pub enum HostFailure {
     InvalidConfiguration,
     Compilation,
     DeviceLost,
+    /// The device changed its negotiated rate, layout or callback bound while prepared.
+    DeviceReconfigured,
     CaptureSourceLost(ConnectionGeneration),
     Render(RenderError),
 }

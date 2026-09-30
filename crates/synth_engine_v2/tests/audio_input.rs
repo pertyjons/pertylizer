@@ -200,3 +200,92 @@ fn conversion_uses_source_rate_and_occupancy_feedback_bounds_synthetic_drift() {
     assert_eq!(recorder.monitor_counters().silent, FrameCount::ZERO);
     assert!((450..=650).contains(&recorder.buffered_frames().as_u64()));
 }
+/// Phase 9A: runs `quanta` 64-frame output callbacks against an input clock that
+/// is `ppm` parts per million away from the output clock. The capture worker only
+/// drains every `drain_every` quanta, so it stalls behind the input callback.
+fn drifting_monitor(
+    ppm: i64,
+    quanta: u32,
+    drain_every: u32,
+) -> (SimulatedAudioInput, u64, u64, u64) {
+    let mut recorder = SimulatedAudioInput::prepare(config()).unwrap();
+    let mut input_frame = 0;
+    for _ in 0..2 {
+        recorder
+            .input(InputFrame::new(input_frame), &[0.2; 256])
+            .unwrap();
+        recorder.drain_worker();
+        input_frame += 256;
+    }
+    let mut output = [0.0; 64];
+    let mut credit: i64 = 0;
+    let (mut lowest, mut highest, mut wrong) = (u64::MAX, 0, 0);
+    for quantum in 0..quanta {
+        credit += 64 * ppm;
+        let mut frames: i64 = 64;
+        while credit >= 1_000_000 {
+            credit -= 1_000_000;
+            frames += 1;
+        }
+        while credit <= -1_000_000 {
+            credit += 1_000_000;
+            frames -= 1;
+        }
+        let frames = usize::try_from(frames).unwrap();
+        recorder
+            .input(InputFrame::new(input_frame), &vec![0.2; frames])
+            .unwrap();
+        input_frame += frames as u64;
+        if quantum % drain_every == 0 {
+            recorder.drain_worker();
+        }
+        recorder
+            .monitor(AudioBlockMut::new(&mut output, 64, ChannelLayout::Mono).unwrap())
+            .unwrap();
+        wrong += output.iter().filter(|sample| **sample != 0.2).count() as u64;
+        let buffered = recorder.buffered_frames().as_u64();
+        lowest = lowest.min(buffered);
+        highest = highest.max(buffered);
+    }
+    (recorder, lowest, highest, wrong)
+}
+#[test]
+fn slow_input_clock_with_stalled_worker_keeps_monitoring_in_window_and_capture_exact() {
+    // -100 ppm is inside the monitor's bounded correction; the stalled worker must
+    // neither disturb monitoring nor let capture report missing data as complete.
+    let (recorder, lowest, highest, wrong) = drifting_monitor(-100, 40_000, 20);
+    assert_eq!(
+        wrong, 0,
+        "monitoring stays continuous under a slow input clock"
+    );
+    assert_eq!(recorder.monitor_counters().dropped, FrameCount::ZERO);
+    assert_eq!(recorder.monitor_counters().silent, FrameCount::ZERO);
+    assert!(
+        lowest >= 350 && highest <= 700,
+        "window {lowest}..={highest}"
+    );
+    let take = recorder.finish();
+    let gap = take
+        .first_gap()
+        .expect("the stalled worker exhausts its pool");
+    assert_eq!(gap.reason, AudioGapReason::PoolFull);
+    assert_eq!(take.samples().len() as u64, gap.first.as_u64());
+    assert!(take.samples().iter().all(|sample| *sample == 0.2));
+}
+#[test]
+fn drift_beyond_the_correction_bound_faults_visibly_without_hidden_backlog() {
+    // +/-2000 ppm exceeds the bounded +/-1000 ppm correction. Monitoring must count
+    // its loss instead of growing a backlog or silently shortening the output.
+    let (fast, _, highest, _) = drifting_monitor(2_000, 40_000, 1);
+    assert!(fast.monitor_counters().dropped > FrameCount::ZERO);
+    assert_eq!(fast.monitor_counters().silent, FrameCount::ZERO);
+    assert!(highest <= 1_024, "the backlog never exceeds its capacity");
+    let (slow, _, _, wrong) = drifting_monitor(-2_000, 40_000, 1);
+    assert!(slow.monitor_counters().silent > FrameCount::ZERO);
+    assert_eq!(slow.monitor_counters().dropped, FrameCount::ZERO);
+    assert_eq!(
+        wrong,
+        slow.monitor_counters().silent.as_u64(),
+        "every silent frame is counted"
+    );
+}

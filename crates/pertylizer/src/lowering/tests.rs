@@ -7015,8 +7015,11 @@ fn each_mod_matrix_macro_lowers_once_at_v1s_target_scale_and_in_its_scope() {
     }
 }
 
+mod app;
 mod buses;
 mod evidence;
+pub(crate) mod live;
+pub(crate) use live::{live_fixture_profile, live_fixture_project};
 mod phase7;
 mod phase8;
 mod phase8_exit;

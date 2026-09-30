@@ -36,10 +36,12 @@
 //! marked [`diagnostics::Fidelity::UnsupportedScope`] and the A/B path refuses to compare it
 //! for parity. That refusal is the fails-closed mechanism the phase-exit rule requires.
 
+pub mod app;
 pub mod buses;
 pub mod diagnostics;
 pub mod graph;
 pub mod identity;
+pub mod live;
 pub mod modulation;
 pub mod performance;
 pub mod render;
@@ -52,4 +54,4 @@ pub use graph::{LoweredGraph, lower_voice_patch};
 pub use identity::{IdentityError, ResolvedIdentities};
 pub use modulation::{SongModulators, lower_mod_grid};
 pub use performance::{LoweredPerformance, lower_performance};
-pub use render::{SmokeRender, smoke_render};
+pub use render::{LoweredProject, SmokeRender, lower_project, smoke_render};

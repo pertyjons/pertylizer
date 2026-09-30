@@ -2445,6 +2445,160 @@ fn count_in_metronome_recording_and_panic_share_one_clock_without_callback_alloc
     }
 }
 
+/// Phase 9A item 8: the count-in metronome keeps its engine-time beat across a loop wrap,
+/// and a stop exactly at the wrap wins over both the wrap and the click at that sample.
+/// Returns the click onsets and the retained pass windows for one attempt.
+fn counted_loop_attempt(stop: u64, partitions: &[usize]) -> (Vec<usize>, Vec<(u64, u64)>) {
+    use super::{archive::RetainedRuns, managed::ManagedRun, prepare::PreparedAttempt};
+    let profile = HostProfile::harness(
+        SampleRate::new(48000.0).unwrap(),
+        FrameCount::new(8192),
+        ChannelLayout::Mono,
+    )
+    .unwrap();
+    let prepared = PreparedAttempt::counted(profile, MusicalTick::new(960)).unwrap();
+    let start = prepared.start();
+    let epoch = prepared.epoch();
+    let charge = prepared.bytes();
+    let mut archive = RetainedRuns::prepare(
+        CaptureResultCount::limit(1).unwrap(),
+        charge,
+        PreparedBytes::measured(charge.get() * 2 + 65536),
+    )
+    .unwrap();
+    let (mut run, mut audio, [mut first, mut second]) =
+        ManagedRun::start(&mut archive, prepared).unwrap();
+    let mut pcm = render(&mut audio, 192, partitions);
+    let _play = run.command(start, SessionCommand::Play).unwrap();
+    let _stop = run
+        .command(SampleTime::new(stop), SessionCommand::Stop)
+        .unwrap();
+    for at in [start.as_u64(), stop] {
+        for (producer, scale) in [(&mut first, 1), (&mut second, 2)] {
+            producer
+                .send(InputObservation::Frontier {
+                    tick: InputTick::new(at * scale),
+                })
+                .unwrap();
+        }
+    }
+    run.service(|value| assert!(value.is_ok()), |_, _| {}, |_| {})
+        .unwrap();
+    let total = usize::try_from(stop).unwrap() + 8192;
+    pcm.extend(render(&mut audio, total - 192, partitions));
+    run.service(|value| assert!(value.is_ok()), |_, _| {}, |_| {})
+        .unwrap();
+    assert!(run.close_source(first).is_ok());
+    assert!(run.close_source(second).is_ok());
+    run.finish(audio, false, &mut archive, |_, _| {}, |_| {}, |_, _| {})
+        .unwrap();
+    let owner = archive.take(epoch).unwrap();
+    let result = owner.result().unwrap();
+    assert_eq!(result.sealed_outcome(), CaptureOutcome::Complete);
+    let passes = result
+        .loop_passes()
+        .map(|pass| (pass.window().start().as_u64(), pass.window().end().as_u64()))
+        .collect();
+    // A click oscillates through zero, so its onset is the first nonzero sample after
+    // at least a beat's worth of silence rather than after any single zero sample.
+    let mut onsets = Vec::new();
+    let mut last = None;
+    for (index, sample) in pcm.iter().enumerate() {
+        if *sample != 0.0 {
+            if last.is_none_or(|previous| index - previous > 12_000) {
+                onsets.push(index);
+            }
+            last = Some(index);
+        }
+    }
+    (onsets, passes)
+}
+
+#[test]
+fn count_in_metronome_keeps_its_beat_across_a_loop_wrap_and_stop_at_the_wrap_wins() {
+    // 120 BPM at 48 kHz: one beat is 24,000 frames, the one-beat count-in ends at 24,000
+    // and the one-bar loop wraps at 120,000, exactly on the fifth beat. Every click has
+    // the same measured output offset from its beat; the beat on the wrap must keep it.
+    const OFFSET: usize = 65;
+    let beats = |count: usize| {
+        (0..count)
+            .map(|beat| beat * 24_000 + OFFSET)
+            .collect::<Vec<_>>()
+    };
+    for partitions in [&[8192][..], &[256], &[37, 128, 3]] {
+        let (onsets, passes) = counted_loop_attempt(144_000, partitions);
+        assert_eq!(onsets, beats(6));
+        assert_eq!(passes, [(24_000, 120_000), (120_000, 144_000)]);
+
+        let (onsets, passes) = counted_loop_attempt(120_000, partitions);
+        assert_eq!(
+            onsets,
+            beats(5),
+            "stop at the wrap cancels the click at that sample"
+        );
+        assert_eq!(passes, [(24_000, 120_000)], "no empty final pass");
+    }
+}
+
+/// Phase 9A item 11: the live plan is acknowledged from the outer callback's final result,
+/// so a callback that fails and silences its whole output claims no rendered audio.
+#[test]
+fn a_failed_outer_callback_is_acknowledged_without_rendered_output() {
+    use super::{archive::RetainedRuns, managed::ManagedRun, prepare::PreparedAttempt};
+    let profile = HostProfile::harness(
+        SampleRate::new(48000.0).unwrap(),
+        FrameCount::new(8192),
+        ChannelLayout::Mono,
+    )
+    .unwrap();
+    let prepared = PreparedAttempt::new(profile, SampleTime::new(256), IrNodeKind::Silence)
+        .unwrap()
+        .with_audition()
+        .unwrap();
+    let charge = prepared.bytes();
+    let mut archive = RetainedRuns::prepare(
+        CaptureResultCount::limit(1).unwrap(),
+        charge,
+        PreparedBytes::measured(charge.get() * 2 + 65536),
+    )
+    .unwrap();
+    let (mut run, mut audio, [first, second]) = ManagedRun::start(&mut archive, prepared).unwrap();
+    render(&mut audio, 128, &[64]);
+    let before = run.swap_acknowledgement().unwrap();
+    assert!(!before.callback_failed);
+    let mut oversized = vec![9.0; 8193];
+    assert!(
+        audio
+            .render(AudioBlockMut::new(&mut oversized, 8193, ChannelLayout::Mono).unwrap())
+            .is_err()
+    );
+    assert!(oversized.iter().all(|sample| *sample == 0.0));
+    let failed = run.swap_acknowledgement().unwrap();
+    assert!(
+        failed.callback_failed,
+        "the failed callback is acknowledged"
+    );
+    assert_eq!((failed.active, failed.clock), (before.active, before.clock));
+    render(&mut audio, 128, &[64]);
+    assert!(!run.swap_acknowledgement().unwrap().callback_failed);
+    // A stage after the audition renders fails: audition already rendered into the
+    // output, which the outer callback then silences, so it must claim nothing.
+    let delivered = run.swap_acknowledgement().unwrap();
+    audio.fail_after_audition = true;
+    let mut late = vec![9.0; 128];
+    assert!(
+        audio
+            .render(AudioBlockMut::new(&mut late, 128, ChannelLayout::Mono).unwrap())
+            .is_err()
+    );
+    assert!(late.iter().all(|sample| *sample == 0.0));
+    let late_failure = run.swap_acknowledgement().unwrap();
+    assert!(late_failure.callback_failed);
+    assert_eq!(late_failure.active, delivered.active);
+    assert!(run.close_source(first).is_ok());
+    assert!(run.close_source(second).is_ok());
+}
+
 #[test]
 fn source_cells_recycle_beyond_64_with_audition_and_recover_without_a_last_callback() {
     use super::{archive::RetainedRuns, managed::ManagedRun, prepare::PreparedAttempt};

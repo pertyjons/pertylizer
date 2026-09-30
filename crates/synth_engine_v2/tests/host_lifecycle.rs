@@ -534,3 +534,120 @@ fn an_enumerated_primary_failure_does_not_silently_try_a_fallback() {
         Err(HostError::OpenFailed)
     ));
 }
+
+/// The first quantum after a start is silent (ADR-0001's constant latency); the constant
+/// source sounds from the second quantum on.
+fn primed(frames: usize) -> Vec<f32> {
+    let mut samples = vec![0.25; frames];
+    samples[..64].fill(0.0);
+    samples
+}
+
+/// Phase 9A item 5: a device-initiated rate or callback-bound change while running
+/// quiesces visibly without another callback, never renders the old plan under the new
+/// configuration, and recovers only through an explicit preparation that permits it.
+#[test]
+fn device_reconfiguration_quiesces_visibly_and_recovers_through_reprepare() {
+    for (hz, maximum) in [(44_100.0, 256), (48_000.0, 512)] {
+        for final_callback in [false, true] {
+            let (mut host, old) = active();
+            host.start(old).unwrap();
+            assert_eq!(callback(&mut host, old, 256), primed(256));
+            let plan = host.last_valid_plan().unwrap().id();
+            let epoch = host.active().unwrap().identity.unwrap().epoch;
+
+            host.device_reconfigured(old).unwrap();
+            let status = host.active().unwrap().clone();
+            assert_eq!(status.state, ConnectionState::Quiescing);
+            assert_eq!(status.failure, Some(HostFailure::DeviceReconfigured));
+            assert!(status.needs_reprepare);
+            if final_callback {
+                assert_eq!(callback(&mut host, old, 256), vec![0.0; 256]);
+                assert_eq!(host.active().unwrap().clock, status.clock);
+            }
+            assert!(matches!(host.start(old), Err(HostError::WrongState)));
+
+            let mut changed = backend();
+            changed.endpoints[0].format = format(hz, ChannelLayout::Mono);
+            changed.endpoints[0].callback_bound =
+                CallbackBound::Guaranteed(FrameCount::new(maximum));
+            let rate_changed = hz != 48_000.0;
+            if rate_changed {
+                // The original exact request does not permit the new rate: visible refusal.
+                let refused = host.begin(request()).unwrap();
+                assert!(matches!(
+                    host.prepare(refused, &changed, &graph()),
+                    Err(HostError::UnpermittedFormat)
+                ));
+                assert_eq!(
+                    host.candidate().unwrap().failure,
+                    Some(HostFailure::UnpermittedFormat)
+                );
+                assert_eq!(host.last_valid_plan().unwrap().id(), plan);
+                // A failed candidate owns no callback resources; the next selection replaces it.
+            }
+            let mut permitted = request();
+            permitted.fallback_formats.push(changed.endpoints[0].format);
+            let new = host.begin(permitted).unwrap();
+            host.prepare(new, &changed, &graph()).unwrap();
+            assert!(matches!(
+                host.activate(new),
+                Err(HostError::AwaitingQuiescence)
+            ));
+            assert_eq!(host.last_valid_plan().unwrap().id(), plan);
+            host.acknowledge_quiescence(old).unwrap();
+            assert_eq!(host.active().unwrap().state, ConnectionState::Unavailable);
+            assert_eq!(
+                host.active().unwrap().failure,
+                Some(HostFailure::DeviceReconfigured)
+            );
+            host.activate(new).unwrap();
+            let recovered = host.active().unwrap().clone();
+            assert_eq!(recovered.state, ConnectionState::Ready);
+            assert!(recovered.failure.is_none());
+            assert!(!recovered.needs_reprepare);
+            assert_ne!(recovered.identity.unwrap().epoch, epoch);
+            assert_eq!(recovered.clock, SampleTime::ZERO);
+            let negotiated = recovered.negotiated.unwrap();
+            assert_eq!(negotiated.format.rate, rate(hz));
+            assert_eq!(negotiated.maximum_callback, FrameCount::new(maximum));
+            assert_eq!(negotiated.format_substituted, rate_changed);
+            let plan = host.last_valid_plan().unwrap();
+            assert_eq!(plan.sample_rate(), rate(hz));
+            assert_eq!(plan.maximum_block_size(), FrameCount::new(maximum));
+            host.start(new).unwrap();
+            assert_eq!(
+                callback(&mut host, new, maximum as usize),
+                primed(maximum as usize)
+            );
+        }
+    }
+}
+
+/// Phase 9A item 5: an oversized callback's terminal fault recovers through the declared
+/// lifecycle when the device then guarantees a larger bound, and not before.
+#[test]
+fn oversize_fault_recovers_only_through_reprepare_with_a_larger_bound() {
+    let (mut host, old) = active();
+    host.start(old).unwrap();
+    let mut samples = [9.0; 512];
+    assert!(matches!(
+        host.callback(
+            old,
+            AudioBlockMut::new(&mut samples, 512, ChannelLayout::Mono).unwrap()
+        ),
+        Err(CallbackError::Render(_))
+    ));
+    assert!(host.active().unwrap().needs_reprepare);
+    let plan = host.last_valid_plan().unwrap().id();
+    let mut larger = backend();
+    larger.endpoints[0].callback_bound = CallbackBound::Guaranteed(FrameCount::new(512));
+    let new = host.begin(request()).unwrap();
+    host.prepare(new, &larger, &graph()).unwrap();
+    assert_eq!(host.last_valid_plan().unwrap().id(), plan);
+    host.acknowledge_quiescence(old).unwrap();
+    host.activate(new).unwrap();
+    host.start(new).unwrap();
+    assert_eq!(callback(&mut host, new, 512), primed(512));
+    assert!(!host.active().unwrap().needs_reprepare);
+}

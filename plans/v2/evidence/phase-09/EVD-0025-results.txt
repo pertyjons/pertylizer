@@ -1,0 +1,62 @@
+scope=evd_0025 measured=4 refused=24
+evd_0025_refused,assets/examples/projects/Chrome & Graph Teaching Demo.ptz,OwnedByLaterPhase { capability: "a track-scoped Mod Grid graph, which runs once per assigned track against that track's controls", owner: "Phase 8, with the mixer and bus model" }
+evd_0025_refused,assets/examples/projects/Classic Amiga module.ptz,UnknownPort { port: "fm" }
+evd_0025_refused,assets/examples/projects/Escape from Stockholm.ptz,UnsupportedParameterValue { value: "pulse" }
+evd_0025_refused,assets/examples/projects/Expression & Note-Processor Demo.ptz,UnsupportedModuleType { module_type: EnsembleChorus }
+evd_0025_refused,assets/examples/projects/Karu Sydän — Suomalainen Tango.ptz,OwnedByLaterPhase { capability: "an instrument assigned to two tracks with differing sends, which V1 resolves by taking the last track's list each block", owner: "ADR-0034, with the track, source and channel ownership model" }
+evd_0025_refused,assets/examples/projects/Nemesis_the_Warlock.ptz,OwnedByLaterPhase { capability: "a voice-allocation setting — the mode, the stealing strategy or the voice count — which decides what V1 does when a release still rings under the next note", owner: "Phase 6, with the voice allocator" }
+evd_0025_refused,assets/examples/projects/Neon Horizon.ptz,UnsupportedModuleType { module_type: Mixer }
+evd_0025_refused,assets/examples/projects/Neuro F#m 174-extended.ptz,OwnedByLaterPhase { capability: "a distortion mode other than soft clip, whose law V2 has not carried", owner: "P08-R002, before the first lowering consumer of this saved route" }
+evd_0025_refused,assets/examples/projects/Ornament Demo.ptz,UnsupportedParameterValue { value: "triangle" }
+evd_0025_refused,assets/examples/projects/Oxygene Dreams (80s Techno).ptz,UnknownPort { port: "fm" }
+evd_0025_refused,assets/examples/projects/Sidechain Demo.ptz,UnknownPort { port: "fm" }
+evd_0025_refused,assets/examples/projects/Synth Pop a la Codex.ptz,OwnedByLaterPhase { capability: "an instrument shared by two tracks with differing track controls, which V1 applies per voice", owner: "ADR-0034, with the track, source and channel ownership model" }
+evd_0025_refused,assets/examples/projects/YAMS AudioScript Wavefolder.ptz,UnsupportedModuleType { module_type: EnsembleChorus }
+evd_0025_refused,assets/examples/projects/YAMS Script Demo.ptz,OwnedByLaterPhase { capability: "a Mod Matrix slot driven by a YAMS control script, whose output replaces the slot's source and amount", owner: "P07-S005, with YAMS Control as a node kind" }
+evd_0025_refused,assets/examples/projects/YAMS Script Lab.ptz,UnsupportedParameterValue { value: "pulse" }
+evd_0025_refused,assets/examples/projects/all-modules-reference.ptz,UnsupportedParameterValue { value: "Bool(false)" }
+evd_0025_refused,assets/examples/projects/echoing.ptz.zip,UnsupportedModuleType { module_type: Sampler }
+evd_0025_refused,assets/examples/projects/oxygene-dreams-2-fixed.ptz,UnsupportedModuleType { module_type: Chorus }
+evd_0025_refused,corpus/v2-reference/projects/keyboard-panner-stereo.ptz,UnsupportedModuleType { module_type: KeyboardPanner }
+evd_0025_refused,corpus/v2-reference/projects/polyphonic-voice-stealing.ptz,OwnedByLaterPhase { capability: "a voice-allocation setting — the mode, the stealing strategy or the voice count — which decides what V1 does when a release still rings under the next note", owner: "Phase 6, with the voice allocator" }
+evd_0025_refused,corpus/v2-reference/projects/sends-returns-master.ptz,UnsupportedModuleType { module_type: Reverb }
+evd_0025_refused,corpus/v2-reference/projects/shared-instrument-tracks.ptz,OwnedByLaterPhase { capability: "an instrument shared by two tracks with differing track controls, which V1 applies per voice", owner: "ADR-0034, with the track, source and channel ownership model" }
+evd_0025_refused,corpus/v2-reference/projects/yams-audio-script.ptz,UnsupportedModuleType { module_type: AudioScript }
+evd_0025_refused,corpus/v2-reference/projects/yams-control.ptz,UnsupportedModuleType { module_type: Script }
+evd_0025,project,rate,block,song_frames,compiled,session,total,split_compiled,split_session,session_request
+evd_0025,corpus/v2-reference/projects/instrument-inserts.ptz,44100,64,88200,2,29,31,2,29,29
+evd_0025,corpus/v2-reference/projects/instrument-inserts.ptz,44100,256,88200,2,29,31,2,29,29
+evd_0025,corpus/v2-reference/projects/instrument-inserts.ptz,44100,8192,88200,2,29,31,2,29,29
+evd_0025,corpus/v2-reference/projects/instrument-inserts.ptz,48000,64,96000,2,29,31,2,29,29
+evd_0025,corpus/v2-reference/projects/instrument-inserts.ptz,48000,256,96000,2,29,31,2,29,29
+evd_0025,corpus/v2-reference/projects/instrument-inserts.ptz,48000,8192,96000,2,29,31,2,29,29
+evd_0025,corpus/v2-reference/projects/instrument-inserts.ptz,96000,64,192000,2,29,31,2,29,29
+evd_0025,corpus/v2-reference/projects/instrument-inserts.ptz,96000,256,192000,2,29,31,2,29,29
+evd_0025,corpus/v2-reference/projects/instrument-inserts.ptz,96000,8192,192000,2,29,31,2,29,29
+evd_0025,corpus/v2-reference/projects/mod-matrix.ptz,44100,64,88200,1,23,24,1,23,23
+evd_0025,corpus/v2-reference/projects/mod-matrix.ptz,44100,256,88200,1,23,24,1,23,23
+evd_0025,corpus/v2-reference/projects/mod-matrix.ptz,44100,8192,88200,1,23,24,1,23,23
+evd_0025,corpus/v2-reference/projects/mod-matrix.ptz,48000,64,96000,1,23,24,1,23,23
+evd_0025,corpus/v2-reference/projects/mod-matrix.ptz,48000,256,96000,1,23,24,1,23,23
+evd_0025,corpus/v2-reference/projects/mod-matrix.ptz,48000,8192,96000,1,23,24,1,23,23
+evd_0025,corpus/v2-reference/projects/mod-matrix.ptz,96000,64,192000,1,23,24,1,23,23
+evd_0025,corpus/v2-reference/projects/mod-matrix.ptz,96000,256,192000,1,23,24,1,23,23
+evd_0025,corpus/v2-reference/projects/mod-matrix.ptz,96000,8192,192000,1,23,24,1,23,23
+evd_0025,corpus/v2-reference/projects/subtractive-voice.ptz,44100,64,88200,1,21,22,1,21,21
+evd_0025,corpus/v2-reference/projects/subtractive-voice.ptz,44100,256,88200,1,21,22,1,21,21
+evd_0025,corpus/v2-reference/projects/subtractive-voice.ptz,44100,8192,88200,1,21,22,1,21,21
+evd_0025,corpus/v2-reference/projects/subtractive-voice.ptz,48000,64,96000,1,21,22,1,21,21
+evd_0025,corpus/v2-reference/projects/subtractive-voice.ptz,48000,256,96000,1,21,22,1,21,21
+evd_0025,corpus/v2-reference/projects/subtractive-voice.ptz,48000,8192,96000,1,21,22,1,21,21
+evd_0025,corpus/v2-reference/projects/subtractive-voice.ptz,96000,64,192000,1,21,22,1,21,21
+evd_0025,corpus/v2-reference/projects/subtractive-voice.ptz,96000,256,192000,1,21,22,1,21,21
+evd_0025,corpus/v2-reference/projects/subtractive-voice.ptz,96000,8192,192000,1,21,22,1,21,21
+evd_0025,corpus/v2-reference/projects/tempo-map-arrangement.ptz,44100,64,117600,1,21,22,1,21,21
+evd_0025,corpus/v2-reference/projects/tempo-map-arrangement.ptz,44100,256,117600,1,21,22,1,21,21
+evd_0025,corpus/v2-reference/projects/tempo-map-arrangement.ptz,44100,8192,117600,1,21,22,1,21,21
+evd_0025,corpus/v2-reference/projects/tempo-map-arrangement.ptz,48000,64,128000,1,21,22,1,21,21
+evd_0025,corpus/v2-reference/projects/tempo-map-arrangement.ptz,48000,256,128000,1,21,22,1,21,21
+evd_0025,corpus/v2-reference/projects/tempo-map-arrangement.ptz,48000,8192,128000,1,21,22,1,21,21
+evd_0025,corpus/v2-reference/projects/tempo-map-arrangement.ptz,96000,64,256000,1,21,22,1,21,21
+evd_0025,corpus/v2-reference/projects/tempo-map-arrangement.ptz,96000,256,256000,1,21,22,1,21,21
+evd_0025,corpus/v2-reference/projects/tempo-map-arrangement.ptz,96000,8192,256000,1,21,22,1,21,21

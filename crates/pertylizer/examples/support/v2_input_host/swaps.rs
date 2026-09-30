@@ -12,8 +12,13 @@ pub(super) const PAYLOAD_BYTES: PreparedBytes = PreparedBytes::measured(8_000_00
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct SwapReport {
+    /// Renders from `at` on (or from preparation before any swap); only the retiring
+    /// plan's one-quantum fade tail may also sound after that boundary.
     pub active: Option<PlanId>,
     pub at: Option<synth_engine_v2::time::SampleTime>,
+    pub clock: Option<synth_engine_v2::time::SampleTime>,
+    /// The acknowledged callback delivered no audio from either plan.
+    pub callback_failed: bool,
     pub rejected: u64,
     pub cancelled: u64,
 }
@@ -85,6 +90,11 @@ impl SwapControl {
         self.mailbox.write(Some(candidate));
         Ok(plan)
     }
+    /// The newest audio-side acknowledgement, without collecting retired owners.
+    #[cfg(test)]
+    pub fn acknowledgement(&mut self) -> SwapReport {
+        *self.feedback.read()
+    }
     pub fn collect(&mut self) -> usize {
         let report = *self.feedback.read();
         if report != self.last_report {
@@ -102,8 +112,11 @@ impl SwapControl {
     }
 }
 impl SwapAudio {
-    pub fn acknowledge(&mut self, renderer: &SwappingLiveStream) {
+    /// After every callback, including one that failed and delivered no audio.
+    pub fn acknowledge(&mut self, renderer: &SwappingLiveStream, succeeded: bool) {
         self.report.active = Some(renderer.active().plan_id());
+        self.report.clock = Some(renderer.clock());
+        self.report.callback_failed = !succeeded;
         if let Some(synth_engine_v2::host::live::SwapOutcome::Installed { at, .. }) =
             renderer.swap_outcome()
         {
@@ -208,7 +221,7 @@ mod tests {
                     .unwrap();
             }
             renderer.commit_outcomes();
-            audio.acknowledge(renderer);
+            audio.acknowledge(renderer, true);
         });
         assert_eq!(measured.count_total, 0);
         assert_eq!(
@@ -367,5 +380,240 @@ mod tests {
             stop.store(true, std::sync::atomic::Ordering::Release);
             handle.join().unwrap();
         });
+    }
+
+    fn edited_graph() -> GraphIr {
+        use synth_engine_v2::{
+            ir::{
+                ExecutionScope, IrNodeKind, NoteProducerDeclaration, PlanDeclarations, PortId,
+                SignalDomain,
+            },
+            quantities::{Amplitude, HeldNoteCount, NormalizedLevel, Seconds},
+            tuning::PreparedTuning,
+        };
+        // Structurally different from `live_graph`: a second amplifier stage fed by a new
+        // fan-out of the envelope, so a partial topology would be audible as a wrong level.
+        GraphIr::builder()
+            // A constant, not a free-running sine, so the comparison measures topology and
+            // note timing rather than oscillator phase since plan installation.
+            .node(
+                NodeId::new(1),
+                IrNodeKind::Constant {
+                    level: Amplitude::new(0.05).unwrap(),
+                },
+                ExecutionScope::Voice,
+            )
+            .node(
+                NodeId::new(2),
+                IrNodeKind::Envelope {
+                    attack: Seconds::ZERO,
+                    decay: Seconds::ZERO,
+                    sustain: NormalizedLevel::FULL,
+                    release: Seconds::ZERO,
+                    velocity_sensitivity: NormalizedLevel::FULL,
+                },
+                ExecutionScope::Voice,
+            )
+            .node(NodeId::new(3), IrNodeKind::Amplifier, ExecutionScope::Voice)
+            .node(NodeId::new(4), IrNodeKind::Output, ExecutionScope::Global)
+            .node(NodeId::new(6), IrNodeKind::Amplifier, ExecutionScope::Voice)
+            .connect(
+                (NodeId::new(1), PortId::FIRST),
+                (NodeId::new(3), PortId::FIRST),
+                SignalDomain::Audio,
+            )
+            .connect(
+                (NodeId::new(2), PortId::FIRST),
+                (NodeId::new(3), synth_engine_v2::node::AMPLIFIER_CONTROL),
+                SignalDomain::Control,
+            )
+            .connect(
+                (NodeId::new(3), PortId::FIRST),
+                (NodeId::new(6), PortId::FIRST),
+                SignalDomain::Audio,
+            )
+            .connect(
+                (NodeId::new(2), PortId::FIRST),
+                (NodeId::new(6), synth_engine_v2::node::AMPLIFIER_CONTROL),
+                SignalDomain::Control,
+            )
+            .connect(
+                (NodeId::new(6), PortId::FIRST),
+                (NodeId::new(4), PortId::FIRST),
+                SignalDomain::Audio,
+            )
+            .tuning(
+                ExecutionScope::Voice,
+                PreparedTuning::equal_temperament().unwrap(),
+            )
+            .declaring(PlanDeclarations {
+                note_producers: vec![NoteProducerDeclaration {
+                    compiled: false,
+                    simultaneous_notes: HeldNoteCount::measured(4),
+                    simultaneous_holds: EventCount::measured(4),
+                }],
+                ..PlanDeclarations::default()
+            })
+            .build()
+            .unwrap()
+    }
+    /// Phase 9A items 2 and 11: a structural edit lands as one whole plan. A note sounding
+    /// across the swap is the old plan's exactly until the boundary, then only its
+    /// one-quantum fade tail; afterwards only the edited plan sounds, exactly as that plan
+    /// prepared alone. The acknowledgement names the edited plan from its boundary.
+    #[test]
+    fn a_structural_edit_sounds_as_one_whole_plan_and_is_acknowledged() {
+        let (mut control, mut audio, mut renderer, sources) = fixture();
+        let profile = HostProfile::harness(
+            SampleRate::new(48000.0).unwrap(),
+            FrameCount::new(128),
+            ChannelLayout::Mono,
+        )
+        .unwrap();
+        let reference = |graph: &GraphIr| {
+            SwappingLiveStream::prepare(
+                graph,
+                profile,
+                NodeId::new(2),
+                &sources,
+                &[],
+                EventCount::measured(16),
+                PreparedBytes::measured(16_100_000),
+            )
+            .unwrap()
+        };
+        let plain = |stream: &mut SwappingLiveStream| {
+            let mut block = [0.0; 128];
+            for chunk in block.chunks_mut(64) {
+                stream
+                    .render(AudioBlockMut::new(chunk, 64, ChannelLayout::Mono).unwrap())
+                    .unwrap();
+            }
+            block
+        };
+        let note = |stream: &mut SwappingLiveStream, serial| {
+            stream
+                .queue(
+                    AuditionId::new(sources[0], serial).unwrap(),
+                    stream.clock(),
+                    Midi1Input::from_bytes([0x90, 69, 100]).unwrap(),
+                )
+                .unwrap();
+        };
+        let original = renderer.active().plan_id();
+        let mut old = reference(&super::super::audition::live_graph().unwrap());
+        render(&mut audio, &mut renderer);
+        plain(&mut old);
+        note(&mut renderer, 1);
+        note(&mut old, 1);
+        for _ in 0..2 {
+            let (actual, expected) = (render(&mut audio, &mut renderer), plain(&mut old));
+            assert!(
+                actual == expected,
+                "before the edit the old plan sounds unchanged"
+            );
+            assert!(actual.iter().any(|sample| *sample != 0.0));
+        }
+        assert_eq!(control.acknowledgement().active, Some(original));
+
+        let edited = edited_graph();
+        let plan = control.publish(&edited).unwrap();
+        let boundary = renderer.clock();
+        let swapped = render(&mut audio, &mut renderer);
+        let tail = plain(&mut old);
+        for frame in 0..64 {
+            let blend = f32::from(u16::try_from(frame + 1).unwrap()) / 64.0;
+            assert_eq!(
+                swapped[frame],
+                tail[frame] * (1.0 - blend),
+                "the boundary quantum is only the old plan's fade tail"
+            );
+        }
+        assert!(tail[..64].iter().any(|sample| *sample != 0.0));
+        assert!(
+            swapped[64..].iter().all(|sample| *sample == 0.0),
+            "after the fade only the edited plan sounds, and it holds no note yet"
+        );
+        assert_eq!(renderer.active().plan_id(), plan);
+        let ack = control.acknowledgement();
+        assert_eq!(ack.active, Some(plan));
+        assert_eq!(
+            ack.at,
+            Some(boundary),
+            "the acknowledged boundary is the fade's start"
+        );
+        assert!(!ack.callback_failed);
+
+        let mut fresh = reference(&edited);
+        plain(&mut fresh);
+        note(&mut renderer, 2);
+        note(&mut fresh, 1);
+        let mut sounding = false;
+        for _ in 0..8 {
+            let (actual, expected) = (render(&mut audio, &mut renderer), plain(&mut fresh));
+            assert!(
+                actual == expected,
+                "the edited plan sounds as prepared alone"
+            );
+            sounding |= actual.iter().any(|sample| *sample != 0.0);
+        }
+        assert!(sounding, "the comparison covers an audible note");
+        assert_eq!(control.acknowledgement().active, Some(plan));
+    }
+    /// Phase 9A item 11: the acknowledgement follows the rendered plan across refused
+    /// candidates and failed compiles, and a failed callback claims no rendered output.
+    #[test]
+    fn acknowledgement_survives_refusals_and_reports_a_failed_callback() {
+        let (mut control, mut audio, mut renderer, sources) = fixture();
+        let original = renderer.active().plan_id();
+        render(&mut audio, &mut renderer);
+        let wrong = HostProfile::harness(
+            SampleRate::new(44100.0).unwrap(),
+            FrameCount::new(128),
+            ChannelLayout::Mono,
+        )
+        .unwrap();
+        control.mailbox.write(Some(
+            PreparedLivePlan::prepare(
+                &super::super::audition::live_graph().unwrap(),
+                wrong,
+                NodeId::new(2),
+                &sources,
+                &[],
+                EventCount::measured(16),
+                PAYLOAD_BYTES,
+            )
+            .unwrap(),
+        ));
+        render(&mut audio, &mut renderer);
+        let ack = control.acknowledgement();
+        assert_eq!((ack.active, ack.rejected), (Some(original), 1));
+        assert!(
+            control
+                .publish(&GraphIr::builder().build().unwrap())
+                .is_err()
+        );
+        render(&mut audio, &mut renderer);
+        let before = control.acknowledgement();
+        assert_eq!(before.active, Some(original));
+        assert!(!before.callback_failed);
+
+        let mut oversized = [9.0; 129];
+        let measured = allocation_counter::measure(|| {
+            audio.service(&mut renderer).unwrap();
+            let result = renderer.render_deferred(
+                AudioBlockMut::new(&mut oversized, 129, ChannelLayout::Mono).unwrap(),
+            );
+            audio.acknowledge(&renderer, result.is_ok());
+            assert!(result.is_err());
+        });
+        assert_eq!((measured.count_total, measured.count_current), (0, 0));
+        assert_eq!(oversized, [0.0; 129], "a failed callback delivers no audio");
+        let failed = control.acknowledgement();
+        assert!(failed.callback_failed);
+        assert_eq!(failed.active, Some(original));
+        assert_eq!(failed.clock, before.clock, "no rendered output is claimed");
+        render(&mut audio, &mut renderer);
+        assert!(!control.acknowledgement().callback_failed);
     }
 }

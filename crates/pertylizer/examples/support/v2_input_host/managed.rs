@@ -115,6 +115,14 @@ impl std::fmt::Debug for FinishFailure {
 }
 
 impl ManagedRun {
+    /// The live plan's latest acknowledgement, for tests of the outer callback.
+    #[cfg(test)]
+    pub fn swap_acknowledgement(&mut self) -> Option<super::swaps::SwapReport> {
+        self.control
+            .audition
+            .as_mut()
+            .map(|audition| audition.swaps.acknowledgement())
+    }
     pub fn publish_live_plan(
         &mut self,
         graph: &synth_engine_v2::ir::GraphIr,

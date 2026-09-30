@@ -6,7 +6,7 @@ use super::{
 use crate::{
     publish::ProducerClass,
     recording::notes::Midi1Event,
-    render::{AudioBlockMut, EventPayload, Renderer, TimedEvent},
+    render::{AudioBlockMut, EventPayload, TimedEvent},
     schedule::ScheduledRenderError,
     time::{FrameCount, QUANTUM_FRAMES, SampleTime},
 };
@@ -482,10 +482,36 @@ impl LiveInputStream {
         Ok(())
     }
 
+    /// [`Self::render`] with the host's observation subscriptions for this plan
+    /// (`HOST-INV-023`). The store is handed over for one call and only receives copies
+    /// after each quantum's render, so the audio is the same with or without it. A store
+    /// prepared for another plan refuses as `Configuration` and silences the output.
+    pub fn render_observed(
+        &mut self,
+        mut output: AudioBlockMut<'_>,
+        observers: &mut crate::observe::ObservationSubscriptions,
+    ) -> Result<(), LiveInputError> {
+        if observers.plan() != self.plan_id() {
+            output.silence();
+            return Err(LiveInputError::Configuration);
+        }
+        self.render_deferred_observed(output, Some(observers))?;
+        self.commit_outcomes();
+        Ok(())
+    }
+
     /// The enclosing host commits only after its complete callback succeeds.
     pub(super) fn render_deferred(
         &mut self,
+        output: AudioBlockMut<'_>,
+    ) -> Result<(), LiveInputError> {
+        self.render_deferred_observed(output, None)
+    }
+
+    fn render_deferred_observed(
+        &mut self,
         mut output: AudioBlockMut<'_>,
+        observers: Option<&mut crate::observe::ObservationSubscriptions>,
     ) -> Result<(), LiveInputError> {
         if self.failed {
             output.silence();
@@ -500,7 +526,7 @@ impl LiveInputStream {
             output.silence();
             return Err(LiveInputError::Shape);
         }
-        let result = self.render_inner(output.reborrow());
+        let result = self.render_inner(output.reborrow(), observers);
         if result.is_err() {
             output.silence();
             self.interrupt();
@@ -521,7 +547,11 @@ impl LiveInputStream {
         }
     }
 
-    fn render_inner(&mut self, mut output: AudioBlockMut<'_>) -> Result<(), LiveInputError> {
+    fn render_inner(
+        &mut self,
+        mut output: AudioBlockMut<'_>,
+        mut observers: Option<&mut crate::observe::ObservationSubscriptions>,
+    ) -> Result<(), LiveInputError> {
         while output.frames() > 0 {
             let carry = self.renderer.carry_frames();
             if carry == 0 {
@@ -568,7 +598,7 @@ impl LiveInputStream {
                 .drain_into(&mut publication, self.renderer.diagnostics_mut(), clock)
                 .map_err(ScheduledRenderError::Publication)?;
             self.renderer
-                .render(block, publication.seal().events())
+                .render_observed(block, publication.seal().events(), observers.as_deref_mut())
                 .map_err(ScheduledRenderError::Render)?;
             if let Some(rest) = rest {
                 output = rest;

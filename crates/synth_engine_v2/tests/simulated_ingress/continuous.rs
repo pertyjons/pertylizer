@@ -4,13 +4,15 @@ use synth_engine_v2::{
         ConnectionGeneration, EndpointId,
         input::{InputCapacity, InputLimits, SimulatedNoteInput},
         live::{
-            AuditionId, AuditionOutcome, LiveInputStream, SwappingLiveStream, UpdateStatus,
-            UpdateVersion,
+            AuditionId, AuditionOutcome, LiveInputError, LiveInputStream, PreparedLivePlan,
+            SwappingLiveStream, UpdateStatus, UpdateVersion,
         },
     },
     ingress::ReleaseCause,
+    profile::HostProfile,
     quantities::{ParameterValue, PreparedBytes},
     recording::notes::Midi1Input,
+    time::FrameCount,
 };
 fn source() -> ConnectionGeneration {
     SimulatedNoteInput::new(
@@ -522,6 +524,84 @@ fn running_swap_fades_releases_retires_and_preserves_old_key_tombstones() {
     assert_eq!(pcm, [0.0; 64]);
 }
 
+/// Phase 9A: a failed compile and a refused prepared candidate leave the active plan's
+/// audio bit-identical to a stream that never saw either, not merely its plan id.
+#[test]
+fn failed_compile_and_refused_candidate_keep_the_active_plan_sounding() {
+    let source = source();
+    let graph = gated_constant(live_only(4, 4));
+    let prepare = || {
+        SwappingLiveStream::prepare(
+            &graph,
+            common::profile(TOTAL_FRAMES as u64, ChannelLayout::Mono),
+            ENVELOPE,
+            &[source],
+            &[],
+            EventCount::measured(16),
+            PreparedBytes::measured(8_000_000),
+        )
+        .unwrap()
+    };
+    let render = |live: &mut SwappingLiveStream| {
+        let mut pcm = [0.0; 64];
+        live.render(AudioBlockMut::new(&mut pcm, 64, ChannelLayout::Mono).unwrap())
+            .unwrap();
+        pcm
+    };
+    let mut reference = prepare();
+    let mut live = prepare();
+    for stream in [&mut reference, &mut live] {
+        render(stream);
+        stream
+            .queue(
+                AuditionId::new(source, 1).unwrap(),
+                SampleTime::ZERO,
+                Midi1Input::from_bytes([0x90, 60, 127]).unwrap(),
+            )
+            .unwrap();
+        assert_eq!(render(stream), [1.0; 64]);
+    }
+    let plan = live.active().plan_id();
+
+    let invalid = GraphIr::builder()
+        .node(NodeId::new(99), IrNodeKind::Silence, ExecutionScope::Global)
+        .build()
+        .unwrap();
+    assert!(live.prepare_candidate(&invalid, ENVELOPE, &[]).is_err());
+    assert_eq!(render(&mut live), render(&mut reference));
+
+    let wrong_rate = HostProfile::harness(
+        common::rate(44_100.0),
+        FrameCount::new(TOTAL_FRAMES as u64),
+        ChannelLayout::Mono,
+    )
+    .unwrap();
+    let mut cell = Some(
+        PreparedLivePlan::prepare(
+            &graph,
+            wrong_rate,
+            ENVELOPE,
+            &[source],
+            &[],
+            EventCount::measured(16),
+            PreparedBytes::measured(4_000_000),
+        )
+        .unwrap(),
+    );
+    assert!(matches!(
+        live.accept_prepared(&mut cell),
+        Err(LiveInputError::Configuration)
+    ));
+    assert!(cell.is_some(), "the refused payload stays with its sender");
+
+    for _ in 0..4 {
+        let (actual, expected) = (render(&mut live), render(&mut reference));
+        assert_eq!(actual, [1.0; 64]);
+        assert_eq!(actual, expected);
+    }
+    assert_eq!(live.active().plan_id(), plan);
+    assert_eq!(live.swap_outcome(), None);
+}
 #[test]
 fn bend_overload_is_terminal_silent_and_never_reports_partial_execution() {
     let source = source();

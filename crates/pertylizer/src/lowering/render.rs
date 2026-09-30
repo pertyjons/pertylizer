@@ -562,35 +562,55 @@ pub fn smoke_render(
     )
 }
 
-/// A refused render: no samples beside the diagnostics that say why.
-fn refused(diagnostics: Vec<LoweringDiagnostic>) -> SmokeRender {
-    SmokeRender {
-        samples: Vec::new(),
-        diagnostics,
-        lowered_events: EventCount::NONE,
-        lowered_frames: FrameCount::new(0),
-        report: None,
+/// A whole project lowered to one plan and its events, before any render.
+#[derive(Debug)]
+#[must_use]
+#[non_exhaustive]
+pub struct LoweredProject {
+    /// The plan, or `None` when any diagnostic refused the project.
+    pub plan: Option<synth_engine_v2::plan::CompiledPlan>,
+    /// Every lowered event at its engine time from the song start; empty when refused.
+    pub events: Vec<synth_engine_v2::offline::OfflineEvent>,
+    /// Everything the lowering had to say about the project.
+    pub diagnostics: Vec<LoweringDiagnostic>,
+    /// How many events the lowering produced, reported even when it refused afterwards.
+    pub lowered_events: EventCount,
+    /// The frames the arrangement occupies, from its own tempo map.
+    pub lowered_frames: FrameCount,
+    /// What admission reported about the plan's resources, where it was reached.
+    pub report: Option<synth_engine_v2::report::ResourceReport>,
+}
+
+impl LoweredProject {
+    fn refused(diagnostics: Vec<LoweringDiagnostic>) -> Self {
+        Self {
+            plan: None,
+            events: Vec::new(),
+            diagnostics,
+            lowered_events: EventCount::NONE,
+            lowered_frames: FrameCount::new(0),
+            report: None,
+        }
     }
 }
 
-/// Lower every saved instrument and the song into one plan, and render it (`P08-S002`).
+/// Lower every saved instrument and the song into one plan and its events (`P08-S002`).
 ///
-/// `tail` is added to the arrangement's own length so a final release is heard rather than
-/// cut at the last note-off. It is the caller's, because how long a release lasts is a
-/// property of the patch rather than of this path. `policy` selects V1's saturation stages
-/// or declines them.
+/// The plan is `None` whenever any diagnostic refuses the project; its events are then
+/// empty, while the counts and the admission report say how far the lowering reached.
+/// `policy` selects V1's saturation stages or declines them. [`smoke_render_project`]
+/// renders the result offline, and the experimental live path (ADR-0077) plays it.
 #[allow(
     clippy::too_many_lines,
     reason = "one pass over the project, stage by stage"
 )]
-pub fn smoke_render_project(
+pub fn lower_project(
     instruments: &[InstrumentState],
     song: &synth_sequencer::Song,
     global: &crate::project::GlobalProjectState,
     profile: HostProfile,
-    tail: FrameCount,
     policy: OutputPolicy,
-) -> SmokeRender {
+) -> LoweredProject {
     let sample_rate = profile.capabilities().sample_rate();
     let mut diagnostics = project_diagnostics(global);
     let stop = |diagnostics: &[LoweringDiagnostic]| {
@@ -599,15 +619,15 @@ pub fn smoke_render_project(
             .any(|d| d.severity() == Severity::Refused)
     };
     if stop(&diagnostics) {
-        return refused(diagnostics);
+        return LoweredProject::refused(diagnostics);
     }
     let Some(master_level) = master_trim(global, &mut diagnostics) else {
-        return refused(diagnostics);
+        return LoweredProject::refused(diagnostics);
     };
     // Every return the song declares, addressed before any instrument's sends name one
     // (`P08-S004`).
     let Some(slots) = bus_slots(song, &mut diagnostics) else {
-        return refused(diagnostics);
+        return LoweredProject::refused(diagnostics);
     };
     diagnostics.extend(summation_order_marks(instruments, song, &slots, policy));
 
@@ -684,7 +704,7 @@ pub fn smoke_render_project(
         });
     }
     if stop(&diagnostics) || prepared.iter().any(|p| p.modulators.refused) {
-        return refused(diagnostics);
+        return LoweredProject::refused(diagnostics);
     }
 
     // Admission needs the arrangement's event peak before the plan exists, so it is counted
@@ -770,7 +790,7 @@ pub fn smoke_render_project(
         });
     }
     if refused_any {
-        return refused(diagnostics);
+        return LoweredProject::refused(diagnostics);
     }
     // Sidechains resolve saved references into audio edges before compilation. They read
     // the source channel's pre-fader signal in this quantum, not V1's callback cache.
@@ -792,7 +812,7 @@ pub fn smoke_render_project(
                     spelling: format!("sidechain source instrument {raw_source} is absent"),
                 },
             ));
-            return refused(diagnostics);
+            return LoweredProject::refused(diagnostics);
         };
         let Some(input) = graph.channel_input(source.identities.slot().channel()) else {
             diagnostics.push(LoweringDiagnostic::refused(
@@ -803,7 +823,7 @@ pub fn smoke_render_project(
                     ),
                 },
             ));
-            return refused(diagnostics);
+            return LoweredProject::refused(diagnostics);
         };
         let mut connected = false;
         for (_, node) in destination.identities.pairs() {
@@ -831,13 +851,13 @@ pub fn smoke_render_project(
         MASTER_MIX,
         &mut diagnostics,
     ) {
-        return refused(diagnostics);
+        return LoweredProject::refused(diagnostics);
     }
 
     // The master, in V1's order: every channel into one sum, the master volume, V1's output
     // clamp under the parity policy, and the plan's one output.
     let Some(inserts) = master_inserts(&global.master_effects, &mut diagnostics) else {
-        return refused(diagnostics);
+        return LoweredProject::refused(diagnostics);
     };
     let mut master_ir = master_nodes(policy, master_level);
     master_ir.splice(1..1, inserts);
@@ -863,7 +883,7 @@ pub fn smoke_render_project(
             ProjectSubject::Project,
             LoweringReason::UnresolvedEndpoint { spelling: error },
         ));
-        return refused(diagnostics);
+        return LoweredProject::refused(diagnostics);
     }
 
     let tuning = match voice_tuning() {
@@ -875,7 +895,7 @@ pub fn smoke_render_project(
                     value: error.to_string(),
                 },
             ));
-            return refused(diagnostics);
+            return LoweredProject::refused(diagnostics);
         }
     };
     let ir = match graph.build(tuning, plan_declarations(notes, peak)) {
@@ -887,7 +907,7 @@ pub fn smoke_render_project(
                     spelling: error.to_string(),
                 },
             ));
-            return refused(diagnostics);
+            return LoweredProject::refused(diagnostics);
         }
     };
 
@@ -916,7 +936,7 @@ pub fn smoke_render_project(
                         owner: "Phase 6",
                     },
                 ));
-                return refused(diagnostics);
+                return LoweredProject::refused(diagnostics);
             }
             _ => {
                 diagnostics.push(LoweringDiagnostic::refused(
@@ -927,7 +947,7 @@ pub fn smoke_render_project(
                         owner: "Phase 6, with the voice-instantiation model",
                     },
                 ));
-                return refused(diagnostics);
+                return LoweredProject::refused(diagnostics);
             }
         }
     }
@@ -943,9 +963,9 @@ pub fn smoke_render_project(
                     value: error.to_string(),
                 },
             ));
-            return SmokeRender {
+            return LoweredProject {
                 report,
-                ..refused(diagnostics)
+                ..LoweredProject::refused(diagnostics)
             };
         }
     };
@@ -974,6 +994,47 @@ pub fn smoke_render_project(
         EventCount::measured(u32::try_from(performance.events.len()).unwrap_or(u32::MAX));
     let lowered_frames = performance.frames;
     if performance_refused {
+        return LoweredProject {
+            diagnostics,
+            lowered_events,
+            lowered_frames,
+            report,
+            ..LoweredProject::refused(Vec::new())
+        };
+    }
+    LoweredProject {
+        plan: Some(plan),
+        events: performance.events,
+        diagnostics,
+        lowered_events,
+        lowered_frames,
+        report,
+    }
+}
+
+/// Lower the project and render it offline, bounded (`P08-S002`).
+///
+/// `tail` is added to the arrangement's own length so a final release is heard rather than
+/// cut at the last note-off. It is the caller's, because how long a release lasts is a
+/// property of the patch rather than of this path.
+pub fn smoke_render_project(
+    instruments: &[InstrumentState],
+    song: &synth_sequencer::Song,
+    global: &crate::project::GlobalProjectState,
+    profile: HostProfile,
+    tail: FrameCount,
+    policy: OutputPolicy,
+) -> SmokeRender {
+    let sample_rate = profile.capabilities().sample_rate();
+    let LoweredProject {
+        plan,
+        events,
+        mut diagnostics,
+        lowered_events,
+        lowered_frames,
+        report,
+    } = lower_project(instruments, song, global, profile, policy);
+    let Some(plan) = plan else {
         return SmokeRender {
             samples: Vec::new(),
             diagnostics,
@@ -981,8 +1042,8 @@ pub fn smoke_render_project(
             lowered_frames,
             report,
         };
-    }
-    let requested = performance.frames.as_u64().saturating_add(tail.as_u64());
+    };
+    let requested = lowered_frames.as_u64().saturating_add(tail.as_u64());
     let ceiling = MAX_SMOKE_SECONDS * f64::from(sample_rate.as_f32());
     #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
     let ceiling = ceiling as u64;
@@ -1007,7 +1068,7 @@ pub fn smoke_render_project(
     // to a huge but representable position — or a caller's huge tail — would allocate without
     // any ceiling. A bounded smoke render has to have a bound, and this is it.
     let frames = FrameCount::new(requested);
-    match render_offline(plan, frames, PlanPosition::ZERO, &performance.events) {
+    match render_offline(plan, frames, PlanPosition::ZERO, &events) {
         Ok(samples) => SmokeRender {
             samples,
             diagnostics,

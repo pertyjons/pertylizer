@@ -217,6 +217,13 @@ impl MidiHandler {
 
     /// Connect to a specific MIDI port by name.
     ///
+    /// Disconnect from the current port, if any, and return its name so it can be
+    /// reconnected. Dropping the midir connection closes the port.
+    pub fn disconnect(&mut self) -> Option<String> {
+        self.connection = None;
+        self.port_name.take()
+    }
+
     /// Disconnects from any current port first.
     pub fn connect_to(&mut self, port_name: &str) -> Result<(), MidiError> {
         // Disconnect current connection

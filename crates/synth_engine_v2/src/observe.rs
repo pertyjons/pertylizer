@@ -20,11 +20,14 @@
 //! how many were evicted and how far behind the newest quantum it still stands
 //! (`HOST-INV-019`'s expose-the-loss condition, at the API).
 //!
+//! A live stream takes the store the same way, through `LiveInputStream::render_observed`
+//! (behind `simulated-ingress`); moving what a read returns to another thread is the
+//! host's, bounded and non-blocking.
+//!
 //! What is **not** here, and owed: subscribing and unsubscribing while the stream renders
-//! across a thread boundary, decimation, and the versioned telemetry facade — Phase 9's live
-//! host and Phase 10E's facade, whichever first reads a tap. Here a subscription is made
-//! between render calls by the same caller that hands the store over, which is what an
-//! offline or single-threaded host does and what the equivalence test needs.
+//! across a thread boundary, a store-level cross-thread transport, decimation, and the
+//! versioned telemetry facade — Phase 10E's. Here a subscription is made between render calls
+//! by the same caller that hands the store over.
 
 use crate::plan::{CompiledPlan, PlanId, TapSlot};
 use crate::profile::HostProfile;

@@ -1,0 +1,480 @@
+command: CARGO_TARGET_DIR=<fresh> cargo test -p pertylizer --release --lib evd_0025_song_partition_matrix -- --ignored --nocapture
+utc_start: 2026-09-29T22:23:54Z
+revision: 41fdc24d65ad14dfd87ac77e7f17730befaef081
+worktree_status: 1 changed paths
+rustc 1.98.1 (48a229cea 2026-09-01)
+cargo 1.98.1 (797e8a9bc 2026-08-05)
+Linux 7.2.7-200.fc44.x86_64 x86_64
+   Compiling proc-macro2 v1.0.107
+   Compiling quote v1.0.47
+   Compiling unicode-ident v1.0.24
+   Compiling serde_core v1.0.229
+   Compiling libc v0.2.189
+   Compiling serde v1.0.229
+   Compiling cfg-if v1.0.4
+   Compiling once_cell v1.21.4
+   Compiling log v0.4.33
+   Compiling autocfg v1.5.1
+   Compiling pkg-config v0.3.33
+   Compiling memchr v2.8.3
+   Compiling find-msvc-tools v0.1.9
+   Compiling shlex v2.0.1
+   Compiling pin-project-lite v0.2.17
+   Compiling itoa v1.0.18
+   Compiling rustix v1.1.4
+   Compiling slab v0.4.12
+   Compiling linux-raw-sys v0.12.1
+   Compiling thiserror v2.0.19
+   Compiling zmij v1.0.23
+   Compiling foldhash v0.2.0
+   Compiling equivalent v1.0.2
+   Compiling libloading v0.8.9
+   Compiling allocator-api2 v0.2.21
+   Compiling futures-core v0.3.33
+   Compiling bytes v1.12.1
+   Compiling stable_deref_trait v1.2.1
+   Compiling serde_json v1.0.151
+   Compiling downcast-rs v1.2.1
+   Compiling scoped-tls v1.0.1
+   Compiling tracing-core v0.1.36
+   Compiling arrayvec v0.7.8
+   Compiling wayland-client v0.31.15
+   Compiling parking_lot_core v0.9.12
+   Compiling dlib v0.5.3
+   Compiling crossbeam-utils v0.8.22
+   Compiling ref-cast v1.0.26
+   Compiling scopeguard v1.2.0
+   Compiling getrandom v0.3.4
+   Compiling futures-sink v0.3.33
+   Compiling percent-encoding v2.3.2
+   Compiling lock_api v0.4.14
+   Compiling zerocopy v0.8.55
+   Compiling futures-channel v0.3.33
+   Compiling version_check v0.9.5
+   Compiling num-traits v0.2.19
+   Compiling futures-io v0.3.33
+   Compiling futures-task v0.3.33
+   Compiling heck v0.5.0
+   Compiling rand_core v0.10.1
+   Compiling getrandom v0.4.3
+   Compiling dunce v1.0.5
+   Compiling litemap v0.8.2
+   Compiling writeable v0.6.3
+   Compiling fs_extra v1.3.0
+   Compiling iana-time-zone v0.1.65
+   Compiling wayland-sys v0.31.11
+   Compiling quick-xml v0.41.0
+   Compiling polycool v0.4.0
+   Compiling utf8_iter v1.0.4
+   Compiling hashbrown v0.17.1
+   Compiling ahash v0.8.12
+   Compiling khronos_api v3.1.0
+   Compiling icu_properties_data v2.2.0
+   Compiling icu_normalizer_data v2.2.0
+   Compiling dyn-clone v1.0.20
+   Compiling linebender_resource_handle v0.1.1
+   Compiling simd-adler32 v0.3.10
+   Compiling crc32fast v1.5.0
+   Compiling unicode-general-category v1.1.0
+   Compiling cfg_aliases v0.2.2
+   Compiling http v1.4.2
+   Compiling form_urlencoded v1.2.2
+   Compiling syn v2.0.119
+   Compiling syn v3.0.3
+   Compiling tower-service v0.3.3
+   Compiling typeid v1.0.3
+   Compiling xml-rs v0.8.28
+   Compiling thiserror v1.0.69
+   Compiling zeroize v1.9.0
+   Compiling ringbuf v0.5.1
+   Compiling fearless_simd v0.4.1
+   Compiling rustix v0.38.44
+   Compiling aws-lc-rs v1.17.3
+   Compiling xkeysym v0.2.1
+   Compiling httparse v1.10.1
+   Compiling cursor-icon v1.2.0
+   Compiling adler2 v2.0.1
+   Compiling either v1.16.0
+   Compiling linux-raw-sys v0.4.15
+   Compiling xcursor v0.3.10
+   Compiling miniz_oxide v0.8.9
+   Compiling rustls-pki-types v1.15.1
+   Compiling x11-dl v2.21.0
+   Compiling atomic-waker v1.1.2
+   Compiling unicode-segmentation v1.13.3
+   Compiling epaint_default_fonts v0.35.0
+   Compiling num-integer v0.1.46
+   Compiling socket2 v0.6.5
+   Compiling mio v1.2.2
+   Compiling jobserver v0.1.35
+   Compiling euclid v0.22.14
+   Compiling num-complex v0.4.6
+   Compiling gl_generator v0.14.0
+   Compiling indexmap v2.14.0
+   Compiling wayland-scanner v0.31.11
+   Compiling memmap2 v0.9.11
+   Compiling cc v1.3.0
+   Compiling http-body v1.1.0
+   Compiling profiling v1.0.18
+   Compiling fnv v1.0.7
+   Compiling nohash-hasher v0.2.0
+   Compiling try-lock v0.2.5
+   Compiling self_cell v1.3.0
+   Compiling zlib-rs v0.6.6
+   Compiling http-body-util v0.1.4
+   Compiling itertools v0.14.0
+   Compiling want v0.3.1
+   Compiling sync_wrapper v1.0.2
+   Compiling smithay-client-toolkit v0.19.2
+   Compiling httpdate v1.0.3
+   Compiling regex-syntax v0.8.11
+   Compiling strict-num v0.1.1
+   Compiling arrayref v0.3.9
+   Compiling strength_reduce v0.2.4
+   Compiling rustls v0.23.42
+   Compiling ttf-parser v0.25.1
+   Compiling tower-layer v0.3.3
+   Compiling untrusted v0.9.0
+   Compiling rustversion v1.0.23
+   Compiling guillotiere v0.7.0
+   Compiling transpose v0.2.3
+   Compiling primal-check v0.3.4
+   Compiling fdeflate v0.3.7
+   Compiling aho-corasick v1.1.4
+   Compiling alsa-sys v0.4.0
+   Compiling as-raw-xcb-connection v1.0.1
+   Compiling x11rb-protocol v0.13.2
+   Compiling unicase v2.9.0
+   Compiling siphasher v1.0.3
+   Compiling ident_case v1.0.1
+   Compiling strsim v0.11.1
+   Compiling subtle v2.6.1
+   Compiling ipnet v2.12.0
+   Compiling pxfm v0.1.30
+   Compiling base64 v0.22.1
+   Compiling ab_glyph_rasterizer v0.1.10
+   Compiling phf_shared v0.11.3
+   Compiling rustfft v6.4.1
+   Compiling glutin_egl_sys v0.7.1
+   Compiling cmake v0.1.58
+   Compiling glutin_glx_sys v0.6.1
+   Compiling num-bigint v0.4.8
+   Compiling winit v0.30.13
+   Compiling typenum v1.20.1
+   Compiling fastrand v2.5.0
+   Compiling cpufeatures v0.3.0
+   Compiling mime v0.3.17
+   Compiling bitflags v2.13.1
+   Compiling uuid v1.24.0
+   Compiling raw-window-handle v0.6.2
+   Compiling lazy_static v1.5.0
+   Compiling smithay-client-toolkit v0.20.0
+   Compiling crossbeam-epoch v0.9.20
+   Compiling byteorder-lite v0.1.0
+   Compiling xkbcommon-dl v0.4.2
+   Compiling wayland-backend v0.3.16
+   Compiling aws-lc-sys v0.43.0
+   Compiling arc-swap v1.9.2
+   Compiling phf v0.11.3
+   Compiling num-iter v0.1.46
+   Compiling glutin v0.32.3
+   Compiling memoffset v0.9.1
+   Compiling openssl-probe v0.2.1
+   Compiling hybrid-array v0.4.14
+   Compiling hound v3.5.1
+   Compiling utf8parse v0.2.2
+   Compiling regex-automata v0.4.16
+   Compiling crossbeam-deque v0.8.7
+   Compiling smol_str v0.2.2
+   Compiling serde_derive_internals v0.30.0
+   Compiling darling_core v0.24.0
+   Compiling dpi v0.1.2
+   Compiling num-rational v0.4.2
+   Compiling option-ext v0.2.0
+   Compiling flate2 v1.1.9
+   Compiling dirs-sys v0.5.0
+   Compiling owned_ttf_parser v0.25.1
+   Compiling synstructure v0.13.2
+   Compiling png v0.18.1
+   Compiling ab_glyph v0.2.32
+   Compiling num v0.4.3
+   Compiling rustls-native-certs v0.8.4
+   Compiling moxcms v0.8.1
+   Compiling anstyle-parse v1.0.0
+   Compiling mime_guess2 v2.3.1
+   Compiling chacha20 v0.10.1
+   Compiling serde_derive v1.0.229
+   Compiling thiserror-impl v2.0.19
+   Compiling ref-cast-impl v1.0.26
+   Compiling schemars_derive v1.2.2
+   Compiling glutin-winit v0.5.0
+   Compiling anstyle v1.0.14
+   Compiling num-conv v0.2.2
+   Compiling ryu v1.0.23
+   Compiling winnow v1.0.4
+   Compiling colorchoice v1.0.5
+   Compiling rmcp v3.1.2
+   Compiling deranged v0.5.8
+   Compiling bit-vec v0.8.0
+   Compiling static_assertions v1.1.0
+   Compiling minimal-lexical v0.2.1
+   Compiling time-core v0.1.9
+   Compiling rayon-core v1.13.0
+   Compiling borrow-or-share v0.2.4
+   Compiling powerfmt v0.2.0
+   Compiling is_terminal_polyfill v1.70.2
+   Compiling anstyle-query v1.1.5
+   Compiling toml_parser v1.1.3+spec-1.1.0
+   Compiling anstream v1.0.0
+   Compiling bit-set v0.8.0
+   Compiling bytemuck_derive v1.11.0
+   Compiling tracing-attributes v0.1.31
+   Compiling zerofrom-derive v0.1.7
+   Compiling yoke-derive v0.8.2
+   Compiling zerovec-derive v0.11.3
+   Compiling futures-macro v0.3.33
+   Compiling displaydoc v0.2.6
+   Compiling tokio-macros v2.7.1
+   Compiling strum_macros v0.28.0
+   Compiling thiserror-impl v1.0.69
+   Compiling enumn v0.1.14
+   Compiling darling_macro v0.24.0
+   Compiling tokio v1.53.1
+   Compiling realfft v3.5.0
+   Compiling enum-map-derive v0.17.0
+   Compiling darling v0.24.0
+   Compiling chrono v0.4.45
+   Compiling futures-util v0.3.33
+   Compiling rmcp-macros v3.1.2
+   Compiling nom v7.1.3
+   Compiling time v0.3.54
+   Compiling alsa v0.11.0
+   Compiling rand v0.10.2
+   Compiling bytemuck v1.25.2
+   Compiling zerofrom v0.1.8
+   Compiling async-trait v0.1.91
+   Compiling yoke v0.8.3
+   Compiling tracing v0.1.44
+   Compiling fraction v0.15.4
+   Compiling color v0.3.3
+   Compiling zerovec v0.11.6
+   Compiling zerotrie v0.2.4
+   Compiling polling v3.11.0
+   Compiling gethostname v1.1.0
+   Compiling tiny-skia-path v0.11.4
+   Compiling calloop v0.13.0
+   Compiling calloop v0.14.4
+   Compiling axum-core v0.5.6
+   Compiling crypto-common v0.2.2
+   Compiling block-buffer v0.12.1
+   Compiling tinystr v0.8.3
+   Compiling potential_utf v0.1.5
+   Compiling icu_collections v2.2.0
+   Compiling serde_spanned v1.1.1
+   Compiling icu_locale_core v2.2.0
+   Compiling tiny-skia v0.11.4
+   Compiling serde_path_to_error v0.1.20
+   Compiling toml_datetime v1.1.1+spec-1.1.0
+   Compiling strum v0.28.0
+   Compiling micromap v0.3.0
+   Compiling bumpalo v3.20.3
+   Compiling image v0.25.10
+   Compiling base64 v0.23.1
+   Compiling midir v0.11.0
+   Compiling outref v0.5.2
+   Compiling byteorder v1.5.0
+   Compiling smallvec v1.15.2
+   Compiling font-types v0.11.3
+   Compiling emath v0.35.0
+   Compiling ron v0.12.2
+   Compiling accesskit v0.24.1
+   Compiling synth_osc_protocol v0.1.0 (/home/per/github/pertylizer/crates/synth_osc_protocol)
+   Compiling kurbo v0.13.1
+   Compiling fluent-uri v0.4.1
+   Compiling parking_lot v0.12.5
+   Compiling icu_provider v2.2.0
+   Compiling serde_urlencoded v0.7.1
+   Compiling vsimd v0.8.0
+   Compiling read-fonts v0.39.2
+   Compiling ecolor v0.35.0
+   Compiling matchit v0.8.4
+   Compiling web-time v1.1.0
+   Compiling icu_normalizer v2.2.0
+   Compiling icu_properties v2.2.0
+   Compiling num-cmp v0.1.0
+   Compiling bytecount v0.6.9
+   Compiling glow v0.17.0
+   Compiling cpal v0.18.2
+   Compiling litrs v1.0.0
+   Compiling const-oid v0.10.2
+   Compiling clap_lex v1.1.0
+   Compiling wayland-csd-frame v0.3.0
+   Compiling pastey v0.2.3
+   Compiling schemars v1.2.2
+   Compiling futures-executor v0.3.33
+   Compiling peniko v0.6.1
+   Compiling futures v0.3.33
+   Compiling sse-stream v0.2.5
+   Compiling toml_writer v1.1.2+spec-1.1.0
+   Compiling document-features v0.2.12
+   Compiling clap_builder v4.6.5
+   Compiling jsonschema-value v0.49.5
+   Compiling digest v0.11.3
+   Compiling referencing v0.49.5
+   Compiling vello_common v0.0.9
+   Compiling toml v1.1.4+spec-1.1.0
+   Compiling uuid-simd v0.8.0
+   Compiling rosc v0.11.4
+   Compiling email_address v0.2.9
+   Compiling idna_adapter v1.2.2
+   Compiling idna v1.1.0
+   Compiling zopfli v0.8.3
+   Compiling pertylizer v0.317.0 (/home/per/github/pertylizer/crates/pertylizer)
+   Compiling fancy-regex v0.19.0
+   Compiling regex v1.13.1
+   Compiling synth_core v0.1.0 (/home/per/github/pertylizer/crates/synth_core)
+   Compiling url v2.5.8
+   Compiling matchers v0.2.0
+   Compiling wayland-protocols v0.32.13
+   Compiling wayland-cursor v0.31.14
+   Compiling vello_cpu v0.0.9
+   Compiling calloop-wayland-source v0.3.0
+   Compiling calloop-wayland-source v0.4.1
+   Compiling webbrowser v1.2.1
+   Compiling tokio-util v0.7.19
+   Compiling tower v0.5.3
+   Compiling tokio-stream v0.1.19
+   Compiling enum-map v2.7.3
+   Compiling tower-http v0.6.11
+   Compiling clap_derive v4.6.4
+   Compiling directories v6.0.0
+   Compiling h2 v0.4.15
+   Compiling jsonschema-regex v0.49.5
+   Compiling sharded-slab v0.1.7
+   Compiling audio_thread_priority v0.35.1
+   Compiling sysinfo v0.39.6
+   Compiling thread_local v1.1.10
+   Compiling typed-path v0.12.3
+   Compiling dasp_sample v0.11.0
+   Compiling home v0.5.12
+   Compiling nu-ansi-term v0.50.3
+   Compiling data-encoding v2.11.0
+   Compiling rayon v1.12.0
+   Compiling tracing-subscriber v0.3.23
+   Compiling synth_config v0.1.0 (/home/per/github/pertylizer/crates/synth_config)
+   Compiling clap v4.6.5
+   Compiling sha2 v0.11.0
+   Compiling tempfile v3.27.0
+   Compiling dirs v6.0.0
+   Compiling triple_buffer v9.0.0
+   Compiling zip v8.6.0
+   Compiling x11rb v0.13.2
+   Compiling tracing-log v0.2.0
+   Compiling allocation-counter v0.8.1
+   Compiling harfrust v0.7.0
+   Compiling skrifa v0.42.1
+   Compiling synth_dsp v0.1.0 (/home/per/github/pertylizer/crates/synth_dsp)
+   Compiling synth_sequencer v0.1.0 (/home/per/github/pertylizer/crates/synth_sequencer)
+   Compiling synth_sampler v0.1.0 (/home/per/github/pertylizer/crates/synth_sampler)
+   Compiling synth_script v0.1.0 (/home/per/github/pertylizer/crates/synth_script)
+   Compiling arboard v3.6.1
+   Compiling synth_engine_v2 v0.1.0 (/home/per/github/pertylizer/crates/synth_engine_v2)
+   Compiling synth_modules v0.1.0 (/home/per/github/pertylizer/crates/synth_modules)
+   Compiling hyper v1.11.0
+   Compiling wayland-protocols-wlr v0.3.12
+   Compiling wayland-protocols-plasma v0.3.12
+   Compiling wayland-protocols-experimental v20250721.0.1
+   Compiling wayland-protocols-misc v0.3.12
+   Compiling epaint v0.35.0
+   Compiling hyper-util v0.1.20
+   Compiling sctk-adwaita v0.10.1
+   Compiling smithay-clipboard v0.7.3
+   Compiling synth_engine v0.1.0 (/home/per/github/pertylizer/crates/synth_engine)
+   Compiling axum v0.8.9
+   Compiling egui v0.35.0
+   Compiling synth_osc v0.1.0 (/home/per/github/pertylizer/crates/synth_osc)
+   Compiling synth_mcp v0.1.0 (/home/per/github/pertylizer/crates/synth_mcp)
+   Compiling egui-winit v0.35.0
+   Compiling egui_glow v0.35.0
+   Compiling egui-file-dialog v0.14.1
+   Compiling egui_extras v0.35.0
+   Compiling egui-remixicon v0.34.0 (/home/per/github/pertylizer/third_party/egui-remixicon)
+   Compiling eframe v0.35.0
+   Compiling rustls-webpki v0.103.13
+   Compiling tokio-rustls v0.26.4
+   Compiling rustls-platform-verifier v0.7.0
+   Compiling hyper-rustls v0.27.9
+   Compiling reqwest v0.13.4
+   Compiling jsonschema v0.49.5
+    Finished `release` profile [optimized] target(s) in 5m 09s
+     Running unittests src/lib.rs (/tmp/claude-1000/-home-per-github-pertylizer/9c1cda63-a85a-41fd-b2ec-e18c460f9b79/scratchpad/evd25-target/release/deps/pertylizer-7a29f88c23bf30cc)
+
+running 1 test
+scope=evd_0025 measured=4 refused=24
+evd_0025_refused,assets/examples/projects/Chrome & Graph Teaching Demo.ptz,OwnedByLaterPhase { capability: "a track-scoped Mod Grid graph, which runs once per assigned track against that track's controls", owner: "Phase 8, with the mixer and bus model" }
+evd_0025_refused,assets/examples/projects/Classic Amiga module.ptz,UnknownPort { port: "fm" }
+evd_0025_refused,assets/examples/projects/Escape from Stockholm.ptz,UnsupportedParameterValue { value: "pulse" }
+evd_0025_refused,assets/examples/projects/Expression & Note-Processor Demo.ptz,UnsupportedModuleType { module_type: EnsembleChorus }
+evd_0025_refused,assets/examples/projects/Karu Sydän — Suomalainen Tango.ptz,OwnedByLaterPhase { capability: "an instrument assigned to two tracks with differing sends, which V1 resolves by taking the last track's list each block", owner: "ADR-0034, with the track, source and channel ownership model" }
+evd_0025_refused,assets/examples/projects/Nemesis_the_Warlock.ptz,OwnedByLaterPhase { capability: "a voice-allocation setting — the mode, the stealing strategy or the voice count — which decides what V1 does when a release still rings under the next note", owner: "Phase 6, with the voice allocator" }
+evd_0025_refused,assets/examples/projects/Neon Horizon.ptz,UnsupportedModuleType { module_type: Mixer }
+evd_0025_refused,assets/examples/projects/Neuro F#m 174-extended.ptz,OwnedByLaterPhase { capability: "a distortion mode other than soft clip, whose law V2 has not carried", owner: "P08-R002, before the first lowering consumer of this saved route" }
+evd_0025_refused,assets/examples/projects/Ornament Demo.ptz,UnsupportedParameterValue { value: "triangle" }
+evd_0025_refused,assets/examples/projects/Oxygene Dreams (80s Techno).ptz,UnknownPort { port: "fm" }
+evd_0025_refused,assets/examples/projects/Sidechain Demo.ptz,UnknownPort { port: "fm" }
+evd_0025_refused,assets/examples/projects/Synth Pop a la Codex.ptz,OwnedByLaterPhase { capability: "an instrument shared by two tracks with differing track controls, which V1 applies per voice", owner: "ADR-0034, with the track, source and channel ownership model" }
+evd_0025_refused,assets/examples/projects/YAMS AudioScript Wavefolder.ptz,UnsupportedModuleType { module_type: EnsembleChorus }
+evd_0025_refused,assets/examples/projects/YAMS Script Demo.ptz,OwnedByLaterPhase { capability: "a Mod Matrix slot driven by a YAMS control script, whose output replaces the slot's source and amount", owner: "P07-S005, with YAMS Control as a node kind" }
+evd_0025_refused,assets/examples/projects/YAMS Script Lab.ptz,UnsupportedParameterValue { value: "pulse" }
+evd_0025_refused,assets/examples/projects/all-modules-reference.ptz,UnsupportedParameterValue { value: "Bool(false)" }
+evd_0025_refused,assets/examples/projects/echoing.ptz.zip,UnsupportedModuleType { module_type: Sampler }
+evd_0025_refused,assets/examples/projects/oxygene-dreams-2-fixed.ptz,UnsupportedModuleType { module_type: Chorus }
+evd_0025_refused,corpus/v2-reference/projects/keyboard-panner-stereo.ptz,UnsupportedModuleType { module_type: KeyboardPanner }
+evd_0025_refused,corpus/v2-reference/projects/polyphonic-voice-stealing.ptz,OwnedByLaterPhase { capability: "a voice-allocation setting — the mode, the stealing strategy or the voice count — which decides what V1 does when a release still rings under the next note", owner: "Phase 6, with the voice allocator" }
+evd_0025_refused,corpus/v2-reference/projects/sends-returns-master.ptz,UnsupportedModuleType { module_type: Reverb }
+evd_0025_refused,corpus/v2-reference/projects/shared-instrument-tracks.ptz,OwnedByLaterPhase { capability: "an instrument shared by two tracks with differing track controls, which V1 applies per voice", owner: "ADR-0034, with the track, source and channel ownership model" }
+evd_0025_refused,corpus/v2-reference/projects/yams-audio-script.ptz,UnsupportedModuleType { module_type: AudioScript }
+evd_0025_refused,corpus/v2-reference/projects/yams-control.ptz,UnsupportedModuleType { module_type: Script }
+evd_0025,project,rate,block,song_frames,compiled,session,total,split_compiled,split_session,session_request
+evd_0025,corpus/v2-reference/projects/instrument-inserts.ptz,44100,64,88200,2,29,31,2,29,29
+evd_0025,corpus/v2-reference/projects/instrument-inserts.ptz,44100,256,88200,2,29,31,2,29,29
+evd_0025,corpus/v2-reference/projects/instrument-inserts.ptz,44100,8192,88200,2,29,31,2,29,29
+evd_0025,corpus/v2-reference/projects/instrument-inserts.ptz,48000,64,96000,2,29,31,2,29,29
+evd_0025,corpus/v2-reference/projects/instrument-inserts.ptz,48000,256,96000,2,29,31,2,29,29
+evd_0025,corpus/v2-reference/projects/instrument-inserts.ptz,48000,8192,96000,2,29,31,2,29,29
+evd_0025,corpus/v2-reference/projects/instrument-inserts.ptz,96000,64,192000,2,29,31,2,29,29
+evd_0025,corpus/v2-reference/projects/instrument-inserts.ptz,96000,256,192000,2,29,31,2,29,29
+evd_0025,corpus/v2-reference/projects/instrument-inserts.ptz,96000,8192,192000,2,29,31,2,29,29
+evd_0025,corpus/v2-reference/projects/mod-matrix.ptz,44100,64,88200,1,23,24,1,23,23
+evd_0025,corpus/v2-reference/projects/mod-matrix.ptz,44100,256,88200,1,23,24,1,23,23
+evd_0025,corpus/v2-reference/projects/mod-matrix.ptz,44100,8192,88200,1,23,24,1,23,23
+evd_0025,corpus/v2-reference/projects/mod-matrix.ptz,48000,64,96000,1,23,24,1,23,23
+evd_0025,corpus/v2-reference/projects/mod-matrix.ptz,48000,256,96000,1,23,24,1,23,23
+evd_0025,corpus/v2-reference/projects/mod-matrix.ptz,48000,8192,96000,1,23,24,1,23,23
+evd_0025,corpus/v2-reference/projects/mod-matrix.ptz,96000,64,192000,1,23,24,1,23,23
+evd_0025,corpus/v2-reference/projects/mod-matrix.ptz,96000,256,192000,1,23,24,1,23,23
+evd_0025,corpus/v2-reference/projects/mod-matrix.ptz,96000,8192,192000,1,23,24,1,23,23
+evd_0025,corpus/v2-reference/projects/subtractive-voice.ptz,44100,64,88200,1,21,22,1,21,21
+evd_0025,corpus/v2-reference/projects/subtractive-voice.ptz,44100,256,88200,1,21,22,1,21,21
+evd_0025,corpus/v2-reference/projects/subtractive-voice.ptz,44100,8192,88200,1,21,22,1,21,21
+evd_0025,corpus/v2-reference/projects/subtractive-voice.ptz,48000,64,96000,1,21,22,1,21,21
+evd_0025,corpus/v2-reference/projects/subtractive-voice.ptz,48000,256,96000,1,21,22,1,21,21
+evd_0025,corpus/v2-reference/projects/subtractive-voice.ptz,48000,8192,96000,1,21,22,1,21,21
+evd_0025,corpus/v2-reference/projects/subtractive-voice.ptz,96000,64,192000,1,21,22,1,21,21
+evd_0025,corpus/v2-reference/projects/subtractive-voice.ptz,96000,256,192000,1,21,22,1,21,21
+evd_0025,corpus/v2-reference/projects/subtractive-voice.ptz,96000,8192,192000,1,21,22,1,21,21
+evd_0025,corpus/v2-reference/projects/tempo-map-arrangement.ptz,44100,64,117600,1,21,22,1,21,21
+evd_0025,corpus/v2-reference/projects/tempo-map-arrangement.ptz,44100,256,117600,1,21,22,1,21,21
+evd_0025,corpus/v2-reference/projects/tempo-map-arrangement.ptz,44100,8192,117600,1,21,22,1,21,21
+evd_0025,corpus/v2-reference/projects/tempo-map-arrangement.ptz,48000,64,128000,1,21,22,1,21,21
+evd_0025,corpus/v2-reference/projects/tempo-map-arrangement.ptz,48000,256,128000,1,21,22,1,21,21
+evd_0025,corpus/v2-reference/projects/tempo-map-arrangement.ptz,48000,8192,128000,1,21,22,1,21,21
+evd_0025,corpus/v2-reference/projects/tempo-map-arrangement.ptz,96000,64,256000,1,21,22,1,21,21
+evd_0025,corpus/v2-reference/projects/tempo-map-arrangement.ptz,96000,256,256000,1,21,22,1,21,21
+evd_0025,corpus/v2-reference/projects/tempo-map-arrangement.ptz,96000,8192,256000,1,21,22,1,21,21
+test lowering::live::evd_0025::evd_0025_song_partition_matrix ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 891 filtered out; finished in 1.35s
+
+exit_status: 0
+utc_end: 2026-09-29T22:29:05Z

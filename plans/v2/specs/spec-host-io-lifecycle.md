@@ -116,6 +116,14 @@ Restoring an old rate/layout after retiring its stream is another preparation,
 not reuse of the old epoch. Initial reconfiguration occurs while transport is
 stopped; seamless changes require the separately accepted live-swap contract.
 
+A device-initiated rate, layout or callback-bound change while prepared reports
+`DeviceReconfigured`, quiesces like a loss without needing another callback,
+publishes `needs_reprepare`, and interrupts active capture as device
+re-preparation. The old plan never renders under the new configuration.
+Recovery is an explicit preparation against it, which the request's explicit
+fallback set must permit; otherwise that candidate fails visibly and the last
+valid plan remains owned.
+
 ### IO-INV-003 — Unknown capabilities and fallback
 
 A missing buffer bound is reported as unknown. Neither CPAL's buffer estimate
@@ -248,7 +256,9 @@ must wait for shutdown and quiescence of a prepared candidate before replacing i
 - IO-INV-002: stopped-only configuration changes with a fresh epoch, preparation
   failure retaining the active plan, sine-wave partition equality with equal clocks,
   and terminal oversized callbacks while both Ready and Running. Shutdown uses the
-  fence directly and has no pause dependency.
+  fence directly and has no pause dependency. A device-initiated rate or bound change
+  while running quiesces with or without a final callback and recovers only through a
+  permitted preparation; an oversized-callback fault recovers through a larger bound.
 - IO-INV-003: unknown bounds refuse even with an estimate or buffer preference;
   ambiguous identity refuses, equal names do not match, and explicit substitutions
   are reported before activation.
@@ -881,3 +891,46 @@ until an explicit loopback path is characterized under ADR-0022.
 `v2_cpal_output` example tests concurrent custody, original PCM, allocation and
 no-final-callback recovery. Physical timing qualification, anti-aliasing quality,
 representative identity endurance and full production producer budgets remain open.
+
+## Application song playback
+
+[ADR-0077](../decisions/ADR-0077-experimental-v2-song-playback-in-the-application.md) owns
+the application's first V2 playback path. Implementation follows these rules:
+
+- The path lives under `pertylizer`'s `src/lowering/` behind the non-default `v2-lowering`
+  feature; the application reaches it only through `crate::lowering`. A default build has no
+  V2 code path and no V2 setting.
+- V2 mode lowers the whole open project to one plan and plays it through the ordered session
+  transport with its own play, pause and stop; the V1 transport does not drive it. Stop
+  returns to the song start by preparing a fresh session. V2 offers no seek, loop or pattern
+  preview. Entering and leaving V2 mode stops V1 and resets its DSP, so nothing V1 held or
+  rendered silently is heard when the engines switch. Play and pause take effect two maximum
+  callbacks plus a quantum after they are requested. Stop, a refused edit and leaving V2
+  mode silence V2 from the next callback; leaving cannot fail for want of ring space. A
+  project refused after an edit never plays: V2 is silenced and V2 mode is left through the
+  path that resets V1 first.
+- A project with any `Refused` lowering diagnostic does not play, and the notice names the
+  first refusal. `Unrepresented` diagnostics play and remain visible. V2 mode never writes
+  project state; loading and saving are unchanged.
+- An edit while stopped re-lowers off the audio thread and installs through stopped-only
+  replacement. An edit while playing applies at the next pause or stop, and the notice says
+  so; since V2 mode cannot seek, applying it restarts the song from its start, with a notice.
+- MIDI input is disconnected before V2 mode is entered, with a visible notice, and
+  reconnects only once the audio callback has released V2. No timestamp-capable input
+  reaches V2.
+- V2 mode refuses to start, visibly, until an accepted evidence record has reselected the
+  compiled and session partition that song playback admits under ADR-0054, over every saved
+  project that lowers as a whole, and has shown that no other producer class is reached.
+- V2 mode consumes no host timestamp or callback latency and claims no qualified timing.
+
+Conformance: `lowering::tests::live` holds live playback equal to the offline render one
+quantum after the play boundary, pause and resume at the paused position, the end stop and
+the capacity gate; `lowering::live::tests` holds refused, returned and faulted commands; and
+`lowering::tests::app` holds the application switch around the V1 processor with no callback
+allocation, V2's own play, pause and stop, release only after the callback retires V2,
+leaving V2 mode with a full command ring, silence from the next callback after stop or a
+refused edit, a deferred edit, an oversized callback taking V2's terminal fault with a
+visible re-preparation at the song start, and the refusals of an unlowerable project, a mono
+device and an unknown stream. EVD-0025 qualifies the partition.
+The application toggle beside the MIDI indicator and the status-bar omissions badge are wiring
+in `gui/egui_backend/v2_flow.rs`, verified by the feature build rather than a GUI test.

@@ -291,10 +291,32 @@ impl SimulatedHost {
     /// An asynchronous output-device error may be delivered without another callback.
     /// The first failure persists until this connection is replaced.
     pub fn device_lost(&mut self, generation: ConnectionGeneration) -> Result<(), HostError> {
+        self.fail_device(generation, HostFailure::DeviceLost, false)
+    }
+
+    /// The device changed its own rate, layout or callback bound. The prepared plan was
+    /// compiled for the old configuration and never renders under the new one: the
+    /// connection quiesces as for a loss, needs no further callback, and reports
+    /// `needs_reprepare`. Recovery is an explicit preparation against the backend's new
+    /// configuration; a request that does not permit it fails visibly on that candidate.
+    pub fn device_reconfigured(
+        &mut self,
+        generation: ConnectionGeneration,
+    ) -> Result<(), HostError> {
+        self.fail_device(generation, HostFailure::DeviceReconfigured, true)
+    }
+
+    fn fail_device(
+        &mut self,
+        generation: ConnectionGeneration,
+        failure: HostFailure,
+        reprepare: bool,
+    ) -> Result<(), HostError> {
         let connection = self.connection_mut(generation)?;
         if connection.status.state == ConnectionState::Preparing {
-            connection.status.failure = Some(HostFailure::DeviceLost);
+            connection.status.failure = Some(failure);
             connection.status.state = ConnectionState::Unavailable;
+            connection.status.needs_reprepare |= reprepare;
             return Ok(());
         }
         if !matches!(
@@ -303,10 +325,8 @@ impl SimulatedHost {
         ) {
             return Err(HostError::WrongState);
         }
-        connection
-            .status
-            .failure
-            .get_or_insert(HostFailure::DeviceLost);
+        connection.status.failure.get_or_insert(failure);
+        connection.status.needs_reprepare |= reprepare;
         connection.status.state = ConnectionState::Quiescing;
         #[cfg(feature = "simulated-ingress")]
         self.close_ordered_session(generation)?;

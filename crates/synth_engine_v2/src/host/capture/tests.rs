@@ -492,6 +492,40 @@ fn terminal_render_fault_closes_admission_before_off_thread_capture_finalization
     );
 }
 
+/// Phase 9A item 5: a device-initiated reconfiguration interrupts capture as device
+/// re-preparation, not as loss, and needs no further callback to finalize.
+#[test]
+fn device_reconfiguration_interrupts_capture_as_reprepare_without_another_callback() {
+    let (mut host, generation, sources, epoch) = setup(16, 1);
+    let ticket = arm_start(&mut host, generation, &sources, epoch, 1, 5);
+    publish(
+        &mut host,
+        generation,
+        sources[0],
+        epoch,
+        30,
+        [0x90, 60, 100],
+    );
+    for source in sources {
+        fence(&mut host, generation, source, epoch, 75);
+    }
+    host.device_reconfigured(generation).unwrap();
+    assert!(host.active().unwrap().needs_reprepare);
+    assert_eq!(
+        host.active().unwrap().failure,
+        Some(HostFailure::DeviceReconfigured)
+    );
+    acknowledge_all(&mut host, generation, &sources);
+    let result = host.note_capture().unwrap().result(ticket).unwrap();
+    assert_eq!(result.effective_outcome(), CaptureOutcome::Interrupted);
+    assert!(result.closures().count() > 0, "the held note is closed");
+    assert!(
+        result
+            .closures()
+            .all(|closure| closure.reason == CaptureStopReason::DeviceReprepare)
+    );
+}
+
 #[test]
 fn notification_stall_and_full_ordinary_storage_preserve_every_retained_result() {
     let (mut host, generation, sources, epoch) = setup(1, 2);

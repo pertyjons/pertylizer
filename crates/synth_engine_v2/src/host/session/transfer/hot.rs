@@ -6,6 +6,7 @@ use super::{
 };
 use crate::host::session::{PlaybackState, SessionCommand};
 use crate::plan::PlanId;
+use crate::quantities::EventCount;
 use crate::render::AudioBlockMut;
 use crate::schedule::ScheduledRenderError;
 use crate::time::{SampleTime, StreamEpoch};
@@ -25,6 +26,18 @@ impl SessionAudio {
     }
     pub const fn has_retained_commands(&self) -> bool {
         self.runtime.held != 0
+    }
+    /// The stream's high water for one producer class, never reset (EVD-0025).
+    pub const fn high_water(&self, class: crate::publish::ProducerClass) -> EventCount {
+        self.runtime.arbiter.high_water(class)
+    }
+    /// The stream's high water of all external classes in one window, never reset.
+    pub const fn high_water_external_total(&self) -> EventCount {
+        self.runtime.arbiter.high_water_external_total()
+    }
+    /// Publication faults the renderer has counted, which a completed run must not have.
+    pub const fn publication_faults(&self) -> u64 {
+        self.renderer.diagnostics().publication_faults()
     }
 
     /// A host establishes its ingress cut before rendering a callback. Late delivery

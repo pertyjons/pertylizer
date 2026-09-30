@@ -189,18 +189,18 @@ tests found no item fully met; items 7, 8 and 11 were then restated. The state i
 
 | # | Item | State | Gap |
 |---|---|---|---|
-| 1 | V2 selectable live; mixed stream refused | Partial | `MixedProducerPlan` refusal is tested; the application has no V2 live-engine selection |
-| 2 | Structural edit is one whole plan | Partial | Latest-wins mailbox is harness-only; no project edit drives a candidate |
-| 3 | Failed compile keeps previous plan | Met in harness | Library test checks only the plan id, not audio |
-| 4 | No allocation or lock on audio thread | Partial | Live parameter updates and ingress delivery are not allocation-measured; locks only by source scan |
-| 5 | Disconnect, buffer-size and rate changes | Partial | Disconnect/reconnect met; no device-initiated size or rate change while running |
-| 6 | Independent clocks, sustained monitoring | Partial | Only a fast input clock is tested; no slow clock, drift with stalls or threaded drift |
+| 1 | V2 selectable live; mixed stream refused | Met | `v2-lowering` builds a V2 toggle around the V1 processor (`lowering::app` tests); the toggle is build-verified |
+| 2 | Structural edit is one whole plan | Met in harness | A structural graph edit sounds exactly as its plan prepared alone; no saved-project edit yet |
+| 3 | Failed compile keeps previous plan | Met | `failed_compile_and_refused_candidate_keep_the_active_plan_sounding` compares audio |
+| 4 | No allocation or lock on audio thread | Met | `live_allocation` counts live ingress, parameters, swap and prepared-plan handoff; locks by the `render_loop_purity` scan |
+| 5 | Disconnect, buffer-size and rate changes | Met | `device_reconfigured` quiesces visibly and recovers through a permitted preparation (`host_lifecycle`) |
+| 6 | Independent clocks, sustained monitoring | Met | Slow clock with stalled worker and beyond-bound drift in `audio_input`; threaded harness has no drift |
 | 7 | Simulated live events and recording | Met as restated | Persistent asset and commit are Phase 10 work outside 9A |
-| 8 | Boundary ordering | Partial | Sustain and panic at a loop wrap, count-in and metronome in loops untested |
-| 9 | Observers cannot alter audio | Partial | Store is tested audio-invariant but unused by live hosts; no cross-thread subscriber |
-| 10 | Off-thread reclamation under saturation | Partial | No saturation test with the renderer on another thread |
-| 11 | Active-plan acknowledgement matches audio | Partial | Swaps report `PlanId`; no library test ties it to rendered audio across refused candidates and failed compiles |
-| 12 | ADR-0054 reselection and P03-R004 | Missing | EVD-0024 is not supported for production; binds before item 1 goes live |
+| 8 | Boundary ordering | Met | `ordered::boundaries` covers panic and sustain at a wrap; segmentation holds no pedal state, sealing derives it from the initial snapshot and admitted input; harness clicks keep their beat across a wrap |
+| 9 | Observers cannot alter audio | Met | `live_observation`: no store, a draining subscriber thread or a stalled one leave audio identical and never block |
+| 10 | Off-thread reclamation under saturation | Met | `saturated_reclamation_across_threads_never_moves_destruction_onto_the_callback` |
+| 11 | Active-plan acknowledgement matches audio | Met in harness | Harness acknowledgement follows refusals and failed compiles and flags a failed callback |
+| 12 | ADR-0054 reselection and P03-R004 | Met for song playback | EVD-0025 selects the compiled and session partition; no live ingress, so P03-R004 is not reached |
 
 Live-editing stage 1 is built, stage 2 exists only for the live stream and stage 3 (ADR-0010) is not started.
 
@@ -208,11 +208,19 @@ Next for Phase 9, in this order:
 
 1. Done: items 7, 8 and 11 now require only the V2 side (in-memory take, intent at boundaries,
    active-plan acknowledgement); the table's gaps for them are read against that text.
-2. Close the test gaps in items 3, 4, 6 and 10.
-3. Item 8: sustain and panic at a loop wrap, count-in and metronome in loops.
-4. Item 5: simulated device-initiated buffer-size and rate changes with diagnostics and re-prepare.
-5. Items 2 and 9: move the plan mailbox and observation into the library, with a cross-thread subscriber.
-6. Item 12, then item 1: capacity reselection for the 9A partition, then V2 as a selectable live engine.
+2. Done: test gaps in items 3, 4, 6 and 10 are closed.
+3. Done: item 8's loop-boundary panic, sustain, count-in and metronome tests.
+4. Done: item 5's device-initiated buffer-size and rate changes with diagnostics and re-prepare.
+5. Done: items 2 and 11 in the harness, whose mailbox stays outside V2's dependency allowlist, and item 9 through
+   a live-host observation path with a cross-thread subscriber.
+6. Item 12, then item 1, under [ADR-0077](decisions/ADR-0077-experimental-v2-song-playback-in-the-application.md):
+   expose whole-project lowering as a plan and events, build the capacity-gated V2 song engine under
+   `src/lowering/`, reselect the song-playback partition in an EVD, then wire the application.
+   Done: `lower_project` and the capacity-gated `lowering::live` engine, whose playback equals the offline
+   render one quantum after the play boundary; [EVD-0025](evidence/phase-09/EVD-0025-song-playback-partition.md)
+   qualifies the song-playback partition, so item 12 is met for it and the gate is open; the application
+   switch and its toggle are wired behind `v2-lowering`.
+7. Done: [REV-P09A](reviews/phase-09a-exit-review.md) accepts the 9A gate. Phase 9's exit remains open.
 
 ### Selected work — concurrent live host and duplex capture
 

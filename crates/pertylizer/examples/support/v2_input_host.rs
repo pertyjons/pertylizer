@@ -200,6 +200,9 @@ pub struct LiveAudio {
     completions: HeapProd<LoopTransferCompletion>,
     refused: Option<LoopTransferPacket>,
     pending: Option<LoopTransferCompletion>,
+    /// Test-only fault after the audition stage, standing in for a failed reconcile.
+    #[cfg(test)]
+    fail_after_audition: bool,
 }
 
 impl LiveControl {
@@ -238,6 +241,8 @@ impl LiveControl {
                 completions: returns,
                 refused: None,
                 pending: None,
+                #[cfg(test)]
+                fail_after_audition: false,
             },
         )
     }
@@ -670,7 +675,18 @@ impl LiveAudio {
         self.core.acknowledged().clock
     }
 
-    pub fn render(&mut self, mut output: AudioBlockMut<'_>) -> Result<(), HostError> {
+    /// Acknowledges the live plan once, from the outer callback's final result: any
+    /// failure or halt silences the whole output, so it claims no rendered audio.
+    pub fn render(&mut self, output: AudioBlockMut<'_>) -> Result<(), HostError> {
+        let result = self.render_callback(output);
+        if let Some(audition) = &mut self.audition {
+            audition.acknowledge(matches!(result, Ok(true)));
+        }
+        result.map(|_| ())
+    }
+
+    /// Returns whether audio was delivered; a halt delivers silence successfully.
+    fn render_callback(&mut self, mut output: AudioBlockMut<'_>) -> Result<bool, HostError> {
         if let Some(audition) = &self.audition
             && let Err(error) = audition.validate(&output)
         {
@@ -696,7 +712,7 @@ impl LiveAudio {
         if self.halt.is_requested() {
             output.silence();
             self.flush();
-            return Ok(());
+            return Ok(false);
         }
         if let Some(audition) = &mut self.audition
             && let Err(error) = audition.render(&mut output, self.core.applied_end())
@@ -704,6 +720,12 @@ impl LiveAudio {
             output.silence();
             self.halt.request_invalid();
             return Err(error.into());
+        }
+        #[cfg(test)]
+        if self.fail_after_audition {
+            output.silence();
+            self.halt.request_invalid();
+            return Err(synth_engine_v2::host::live::LiveInputError::Closed.into());
         }
         if let Some(audition) = &mut self.audition
             && let Err(error) = audition.reconcile(&mut self.core)
@@ -720,7 +742,7 @@ impl LiveAudio {
             return Err(error.into());
         }
         self.flush();
-        Ok(())
+        Ok(true)
     }
 
     fn admit(&mut self) -> Result<(), HostError> {
