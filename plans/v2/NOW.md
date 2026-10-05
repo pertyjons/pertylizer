@@ -1,6 +1,6 @@
 # Core V2: Current Work
 
-Last updated: 2026-09-29
+Last updated: 2026-10-05
 
 This file contains only active Core V2 state, blockers and next actions. Durable
 contracts live in ADRs and specifications; completed Phase 3 coordination
@@ -804,13 +804,13 @@ Phase 0B remains `Active, parallel`; Phase 10 still waits for its exit.
 | Task | State | Current boundary |
 |---|---|---|
 | P00B-T001 | Complete | Closed 2026-08-29; 64 state entries are `Classified` and coverage-gated |
-| P00B-T002 | Paused | Resume by assigning reachability and migration dispositions in the capability inventory |
+| P00B-T002 | Active | 32 rows `Classified` in the [capability inventory](inventories/capabilities.md); the 2026-10-05 slice covered six MCP instance graph reads |
 | P00B-T003 | Complete | Identity/reference audit and proposed conversion dispositions closed in [EVD-0023](evidence/phase-00b/EVD-0023-identity-reference-coverage.md). Implementation and format/API approval remain with the named consumers. |
 | P00B-T004–T007, P00B-T009 | Not started | Follow the frozen Phase 0B decomposition |
 | P00B-T008 | Not started | Re-scope the former all-ADR task under `PROCESS.md` decision timing |
 
-Next for Phase 0B: resume P00B-T002 with reachability and migration dispositions
-in the [capability inventory](inventories/capabilities.md). P00B-T006 and
+Next for Phase 0B: continue P00B-T002 with the seven unclassified `discovery.rs`
+tools, then the other surfaces in the [capability inventory](inventories/capabilities.md). P00B-T006 and
 P00B-T007 still own the operation-result and format contracts; the completed
 identity audit supplies their conversion cases and first-consumer obligations.
 
@@ -845,9 +845,15 @@ Phase 3 is complete. Its exit review accepted these bounded residuals:
 
 ## Current blockers
 
-Phase 8 has no remaining exit blocker. Phase 0B next resumes `P00B-T002`;
-Phase 9 has completed P09-S001 through P09-S006; its next step is the
-9A gate audit above.
+Phase 8 has no remaining exit blocker. Phase 0B continues `P00B-T002`.
+[REV-P09A](reviews/phase-09a-exit-review.md) accepted the 9A engine gate; Phase 9's exit
+still needs ADR-0075's deferred mixed-producer work, physical qualification under ADR-0022
+and the ADR-0054 reselection.
+The public `PerformanceIngress::prepare` does not check
+`release_event_share >= performance_ingress_capacity`, which only the test-only mixed store
+enforces. A temporary probe on 2026-10-05 showed a legal profile with release share and hold
+capacity 8 and depth 32 queue 20 releases for one quantum and fault terminally. Engine defaults
+cannot reach it; the relation and a regression test are owed before production live ingress.
 The accepted residuals above block their named first consumers.
 Session share 128 and total cap 360 remain provisional until
 Phase 9's complete reselection under ADR-0054.
