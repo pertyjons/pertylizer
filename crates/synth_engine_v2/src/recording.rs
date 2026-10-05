@@ -29,7 +29,7 @@ static NEXT_TAKE: AtomicU64 = AtomicU64::new(0);
 
 fn issue_take(counter: &AtomicU64) -> Result<TakeId, CaptureError> {
     counter
-        .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |last| {
+        .try_update(Ordering::Relaxed, Ordering::Relaxed, |last| {
             last.checked_add(1)
         })
         .map(|last| TakeId(last + 1))

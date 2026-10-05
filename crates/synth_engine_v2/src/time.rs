@@ -573,7 +573,7 @@ static NEXT_EPOCH: AtomicU32 = AtomicU32::new(0);
 /// keeps ADR-0032 clause 20's staleness check total.
 pub fn issue_epoch() -> Result<StreamEpoch, TimeError> {
     NEXT_EPOCH
-        .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |current| {
+        .try_update(Ordering::Relaxed, Ordering::Relaxed, |current| {
             current.checked_add(1)
         })
         .map(StreamEpoch)

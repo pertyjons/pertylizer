@@ -151,7 +151,7 @@ impl std::fmt::Display for PlanId {
 pub(crate) fn issue_plan_id() -> PlanId {
     static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     PlanId(
-        NEXT.fetch_update(
+        NEXT.try_update(
             std::sync::atomic::Ordering::Relaxed,
             std::sync::atomic::Ordering::Relaxed,
             |current| Some(current.saturating_add(1)),

@@ -686,7 +686,7 @@ impl NoteCaptureResult<'_> {
 
 fn issue_session(counter: &AtomicU64) -> Result<CaptureSessionId, NoteCaptureError> {
     counter
-        .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |n| n.checked_add(1))
+        .try_update(Ordering::Relaxed, Ordering::Relaxed, |n| n.checked_add(1))
         .map(|n| CaptureSessionId(n + 1))
         .map_err(|_| NoteCaptureError::IdentityExhausted)
 }

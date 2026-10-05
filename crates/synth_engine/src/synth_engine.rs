@@ -129,7 +129,7 @@ impl DeferredDropSlots {
 
     fn try_reserve(&self) -> bool {
         self.available
-            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |available| {
+            .try_update(Ordering::AcqRel, Ordering::Acquire, |available| {
                 available.checked_sub(1)
             })
             .is_ok()
@@ -2423,7 +2423,7 @@ impl SynthEngine {
                 // Saturating, not wrapping: nothing drains this when OSC is
                 // off, so `fetch_add` would eventually wrap a loss count back
                 // through zero and report "no losses".
-                let _ = self.state.refused_recorded_note_flushes.fetch_update(
+                let _ = self.state.refused_recorded_note_flushes.try_update(
                     std::sync::atomic::Ordering::Relaxed,
                     std::sync::atomic::Ordering::Relaxed,
                     |v| Some(v.saturating_add(1)),
@@ -2878,7 +2878,7 @@ impl SynthEngine {
         }
 
         if dropped_here > 0 {
-            let _ = self.state.deferred_drop_handoff_failures.fetch_update(
+            let _ = self.state.deferred_drop_handoff_failures.try_update(
                 std::sync::atomic::Ordering::Relaxed,
                 std::sync::atomic::Ordering::Relaxed,
                 |v| Some(v.saturating_add(dropped_here)),
@@ -3384,7 +3384,7 @@ impl SynthEngine {
                 }
             }
             if truncated {
-                let _ = self.state.channel_send_truncations.fetch_update(
+                let _ = self.state.channel_send_truncations.try_update(
                     std::sync::atomic::Ordering::Relaxed,
                     std::sync::atomic::Ordering::Relaxed,
                     |v| Some(v.saturating_add(1)),
@@ -4228,7 +4228,7 @@ impl AudioProcessor for SynthEngine {
         self.sequencer
             .process(sample_count, &mut self.sequencer_event_buffer);
         if self.sequencer_event_buffer.capacity() > capacity_before {
-            let _ = self.state.sequencer_buffer_growths.fetch_update(
+            let _ = self.state.sequencer_buffer_growths.try_update(
                 std::sync::atomic::Ordering::Relaxed,
                 std::sync::atomic::Ordering::Relaxed,
                 |v| Some(v.saturating_add(1)),

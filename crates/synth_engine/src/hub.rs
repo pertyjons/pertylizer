@@ -274,7 +274,7 @@ impl EngineHub {
                 // quiet.
                 if producer.try_push(event.clone()).is_err() {
                     drop(producer);
-                    let _ = client.dropped_events.fetch_update(
+                    let _ = client.dropped_events.try_update(
                         Ordering::Relaxed,
                         Ordering::Relaxed,
                         |v| Some(v.saturating_add(1)),

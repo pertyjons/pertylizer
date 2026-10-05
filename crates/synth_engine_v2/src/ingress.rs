@@ -126,7 +126,7 @@ static NEXT_INGRESS_STORE_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::
 fn issue_ingress_store_id() -> Option<IngressStoreId> {
     use std::sync::atomic::Ordering::Relaxed;
     NEXT_INGRESS_STORE_ID
-        .fetch_update(Relaxed, Relaxed, |id| id.checked_add(1))
+        .try_update(Relaxed, Relaxed, |id| id.checked_add(1))
         .ok()
         .map(IngressStoreId)
 }

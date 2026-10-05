@@ -60,7 +60,7 @@ static NEXT_TABLE_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU6
 
 /// Issue the next table identity, or `None` once the space is spent.
 ///
-/// **Refuses permanently rather than saturating.** `fetch_update` leaves the counter at its
+/// **Refuses permanently rather than saturating.** `try_update` leaves the counter at its
 /// ceiling, so every later call refuses too; `fetch_add` would wrap at `u64::MAX` and the
 /// refusal would be one hiccup followed by reissued identities, which is the one thing this
 /// type exists to prevent. `Relaxed` is sufficient — the identities must differ, not order
@@ -68,7 +68,7 @@ static NEXT_TABLE_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU6
 fn issue_table_id() -> Option<TableId> {
     use std::sync::atomic::Ordering::Relaxed;
     NEXT_TABLE_ID
-        .fetch_update(Relaxed, Relaxed, |id| id.checked_add(1))
+        .try_update(Relaxed, Relaxed, |id| id.checked_add(1))
         .ok()
         .map(TableId)
 }

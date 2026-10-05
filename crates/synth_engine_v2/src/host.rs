@@ -43,7 +43,7 @@ static NEXT_GENERATION: AtomicU64 = AtomicU64::new(0);
 
 fn issue_generation(counter: &AtomicU64) -> Result<ConnectionGeneration, HostError> {
     counter
-        .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |last| {
+        .try_update(Ordering::Relaxed, Ordering::Relaxed, |last| {
             last.checked_add(1)
         })
         .map(|last| ConnectionGeneration(last + 1))

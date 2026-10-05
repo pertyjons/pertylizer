@@ -254,12 +254,12 @@ static NEXT_ARBITER_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::Atomic
 /// `fetch_add` is wrong here and an earlier revision used it. At `u64::MAX` it wraps the
 /// counter to zero, so the call that refuses is followed by one issuing 0 and another
 /// reissuing 1 — the refusal would be a single hiccup rather than an end.
-/// `fetch_update` leaves the counter at its ceiling instead, so every later call refuses
+/// `try_update` leaves the counter at its ceiling instead, so every later call refuses
 /// too. `Relaxed` is sufficient: the identities have to differ, not to order anything.
 fn issue_arbiter_id() -> Option<ArbiterId> {
     use std::sync::atomic::Ordering::Relaxed;
     NEXT_ARBITER_ID
-        .fetch_update(Relaxed, Relaxed, |id| id.checked_add(1))
+        .try_update(Relaxed, Relaxed, |id| id.checked_add(1))
         .ok()
         .map(ArbiterId)
 }

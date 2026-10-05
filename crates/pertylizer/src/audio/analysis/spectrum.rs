@@ -1,6 +1,6 @@
 //! Detailed offline spectrum analysis: detected partials, harmonicity, and
 //! timbre descriptors that separate sounds the coarse 4-band
-//! [`energy_bands`](crate::audio::analysis::energy_bands) metric cannot (a plain triangle, a
+//! [`energy_bands`] metric cannot (a plain triangle, a
 //! ring-modulated triangle, and a metallic carrier have near-identical 4-band
 //! energy yet very different partial structure).
 //!
