@@ -4,7 +4,7 @@
 |---------------|------------|
 | Status        | Active     |
 | Phase         | 00B        |
-| Last reviewed | 2026-09-19 (public command-batch helper surface only) |
+| Last reviewed | 2026-10-05 (MCP instance graph-read subset only) |
 
 This ledger covers every shipped or externally consumed capability and assigns it a deliberate V2 disposition.
 
@@ -50,10 +50,11 @@ capabilities: `CAP-0048` through `CAP-0053`, and `CAP-0055`. The
 [cleanup, lint and example-patch inspection](#mcp-cleanup-lint-and-example-patches-2026-09-12) adds
 `CAP-0084`, `CAP-0153`, `CAP-0156`, `CAP-0171` and `CAP-0178`. The
 [discovery inspection](#mcp-discovery-2026-09-12) adds `CAP-0140`, `CAP-0143`, `CAP-0162`, `CAP-0167` and
-`CAP-0208`. Other dispositions remain open.
+`CAP-0208`. The [instance graph-read inspection](#mcp-instance-graph-reads-2026-10-05) adds `CAP-0129`,
+`CAP-0134`, `CAP-0139`, `CAP-0142`, `CAP-0158` and `CAP-0163`. Other dispositions remain open.
 
 **Status rule.** The [register vocabulary](README.md) defines `Classified` as required fields *and* disposition filled
-with supporting evidence. The twenty-six inspected rows meet that classification threshold, not migration verification.
+with supporting evidence. The thirty-two inspected rows meet that classification threshold, not migration verification.
 Entries whose disposition is open stay `Discovered` or `Investigating`. `Verified` requires the named migration
 checks to pass; source inspection alone does not establish implemented V2 behavior. P00B-T002 remains incomplete.
 
@@ -65,7 +66,7 @@ checks to pass; source inspection alone does not establish implemented V2 behavi
 | CAP-0002 | MCP     | Instrument tools — 34 (`instruments.rs`): create/build/delete, modules, connections, parameters, patches, schema                                                     | Same                                                                 |             |                      |                                                                                                                                                                                                                                                 | Discovered    |
 | CAP-0003 | MCP     | Analysis tools — 32 (`analysis.rs`): harmony, mix bus, sections, spectra, spectrograms, envelopes, groove, masking, tension, motifs                                  | Same                                                                 |             |                      | Offline analyzers read source, not note-processor expansion — a known documented seam                                                                                                                                                           | Investigating |
 | CAP-0004 | MCP     | Mixing tools — 30 (`mixing.rs`): return buses, sends, master/return effects, bypass, solo, color, description, sidechain                                             | Same                                                                 |             |                      |                                                                                                                                                                                                                                                 | Discovered    |
-| CAP-0005 | MCP     | Discovery tools — 19 (`discovery.rs`): module catalog, type info, search, port types, connection check, YAMS reference, engine status                                | Same                                                                 |             |                      |                                                                                                                                                                                                                                                 | Discovered    |
+| CAP-0005 | MCP     | Discovery tools — 19 (`discovery.rs`): instrument, module, connection, parameter and Mod Matrix reads; instrument profiles; graph diagnostics and project lint; module catalog, type info, search, port types, connection check; project schema, YAMS reference, engine status and version | Same                                                                 |             |                      |                                                                                                                                                                                                                                                 | Discovered    |
 | CAP-0006 | MCP     | Sample tools — 16 (`samples.rs`): import, export, crop, loop, normalize, reverse, trim, root note, duplicate, delete                                                 | Same                                                                 |             |                      |                                                                                                                                                                                                                                                 | Discovered    |
 | CAP-0007 | MCP     | Automation tools — 12 (`automation.rs`): points, lanes, copy, scale, offset, simplify, clear, summary                                                                | Same                                                                 |             |                      |                                                                                                                                                                                                                                                 | Discovered    |
 | CAP-0008 | MCP     | Audio-input tools — 7 (`audio_input.rs`): device list/select, monitoring, recording                                                                                  | Same                                                                 |             |                      | Device lifecycle is ADR-0036                                                                                                                                                                                                                    | Discovered    |
@@ -162,10 +163,11 @@ capability added or removed later shows up as a diff rather than as a changed to
 
 `CAP-0001`..`CAP-0010`, `CAP-0014`, `CAP-0015`, `CAP-0023`, and `CAP-0027` remain at their stable identifiers as
 **rollup rows**: they describe a surface, carry no disposition of their own, and are not counted as capability entries.
-The authoritative per-capability entries are below. Fourteen MCP entries are now classified by the
+The authoritative per-capability entries are below. Twenty MCP entries are now classified by the
 [project-operation inspection](#mcp-project-operations-2026-09-11),
-[cleanup, lint and example-patch inspection](#mcp-cleanup-lint-and-example-patches-2026-09-12) and
-[discovery inspection](#mcp-discovery-2026-09-12), departing from
+[cleanup, lint and example-patch inspection](#mcp-cleanup-lint-and-example-patches-2026-09-12),
+[discovery inspection](#mcp-discovery-2026-09-12) and
+[instance graph-read inspection](#mcp-instance-graph-reads-2026-10-05), departing from
 the generated rows' original `Discovered` status. The other generated entries still lack a disposition;
 reachability alone cannot make them `Classified`. Evidence for each classified MCP entry is linked from its
 `Reachable from` cell.
@@ -250,20 +252,20 @@ reachability alone cannot make them `Classified`. Evidence for each classified M
 | CAP-0126 | MCP | `generate_chord` | `analysis.rs` | mutating | `synth` server: HTTP `127.0.0.1:9850/mcp` and `--headless` stdio | | | Discovered |
 | CAP-0127 | MCP | `get_automation_points` | `automation.rs` | read | `synth` server: HTTP `127.0.0.1:9850/mcp` and `--headless` stdio | | | Discovered |
 | CAP-0128 | MCP | `get_automation_summary` | `automation.rs` | read | `synth` server: HTTP `127.0.0.1:9850/mcp` and `--headless` stdio | | | Discovered |
-| CAP-0129 | MCP | `get_connections` | `discovery.rs` | read | `synth` server: HTTP `127.0.0.1:9850/mcp` and `--headless` stdio | | | Discovered |
+| CAP-0129 | MCP | `get_connections` | `discovery.rs` | read | Default MCP GUI HTTP and `--headless` stdio → `InstrumentBridge::get_connections`; [source trace](#mcp-connection-listing) | Migrate | Phase 10A canonical cable records; 10B connect/disconnect results; 10E MCP read adapter | Classified |
 | CAP-0130 | MCP | `get_engine_status` | `discovery.rs` | read | `synth` server: HTTP `127.0.0.1:9850/mcp` and `--headless` stdio | | | Discovered |
 | CAP-0131 | MCP | `get_graph_diagnostics` | `discovery.rs` | read | `synth` server: HTTP `127.0.0.1:9850/mcp` and `--headless` stdio | | | Discovered |
 | CAP-0132 | MCP | `get_input_state` | `audio_input.rs` | read | `synth` server: HTTP `127.0.0.1:9850/mcp` and `--headless` stdio | | | Discovered |
 | CAP-0133 | MCP | `get_instrument_automation_targets` | `automation.rs` | read | `synth` server: HTTP `127.0.0.1:9850/mcp` and `--headless` stdio | | | Discovered |
-| CAP-0134 | MCP | `get_instrument_info` | `discovery.rs` | read | `synth` server: HTTP `127.0.0.1:9850/mcp` and `--headless` stdio | | | Discovered |
+| CAP-0134 | MCP | `get_instrument_info` | `discovery.rs` | read | Default MCP GUI HTTP and `--headless` stdio → `InstrumentBridge::get_instrument_info`; [source trace](#mcp-instrument-listing-and-detail) | Migrate | Phase 10A instrument instance, channel strip and patch metadata; 10E MCP read adapter | Classified |
 | CAP-0135 | MCP | `get_instrument_profiles` | `discovery.rs` | read | `synth` server: HTTP `127.0.0.1:9850/mcp` and `--headless` stdio | | | Discovered |
 | CAP-0136 | MCP | `get_master_volume` | `mixing.rs` | read | `synth` server: HTTP `127.0.0.1:9850/mcp` and `--headless` stdio | | | Discovered |
 | CAP-0137 | MCP | `get_mod_graph` | `sequencer.rs` | read | `synth` server: HTTP `127.0.0.1:9850/mcp` and `--headless` stdio | | | Discovered |
 | CAP-0138 | MCP | `get_mod_matrix_routings` | `discovery.rs` | read | `synth` server: HTTP `127.0.0.1:9850/mcp` and `--headless` stdio | | | Discovered |
-| CAP-0139 | MCP | `get_module_info` | `discovery.rs` | read | `synth` server: HTTP `127.0.0.1:9850/mcp` and `--headless` stdio | | | Discovered |
+| CAP-0139 | MCP | `get_module_info` | `discovery.rs` | read | Default MCP GUI HTTP and `--headless` stdio → `InstrumentBridge::get_module_info`; [source trace](#mcp-module-listing-and-detail) | Migrate | Phase 10A patch graph nodes; Phase 5 port/parameter declarations; 10E MCP read adapter | Classified |
 | CAP-0140 | MCP | `get_module_type_info` | `discovery.rs` | read | Default MCP GUI HTTP and `--headless` stdio → `DiscoveryBridge::get_module_type_info`; [source trace](#mcp-module-type-detail) | Migrate | Phase 5 node/parameter declarations and metadata; 10E MCP detail adapter | Classified |
 | CAP-0141 | MCP | `get_note_graph` | `sequencer.rs` | read | `synth` server: HTTP `127.0.0.1:9850/mcp` and `--headless` stdio | | | Discovered |
-| CAP-0142 | MCP | `get_parameter` | `discovery.rs` | read | `synth` server: HTTP `127.0.0.1:9850/mcp` and `--headless` stdio | | | Discovered |
+| CAP-0142 | MCP | `get_parameter` | `discovery.rs` | read | Default MCP GUI HTTP and `--headless` stdio → `InstrumentBridge::get_parameter`; [source trace](#mcp-parameter-read) | Migrate | Phase 5 parameter declarations and identifiers; 10A parameter values; 10E MCP selector/read adapter | Classified |
 | CAP-0143 | MCP | `get_project_schema` | `discovery.rs` | read | Default MCP GUI HTTP and `--headless` stdio → `InstrumentBridge::get_project_schema`; [source trace](#mcp-project-schema-discovery) | Migrate | Phase 10D versioned format/schema artifacts; 10E MCP schema adapter | Classified |
 | CAP-0144 | MCP | `get_sample_info` | `samples.rs` | read | `synth` server: HTTP `127.0.0.1:9850/mcp` and `--headless` stdio | | | Discovered |
 | CAP-0145 | MCP | `get_sampler_state` | `samples.rs` | read | `synth` server: HTTP `127.0.0.1:9850/mcp` and `--headless` stdio | | | Discovered |
@@ -279,12 +281,12 @@ reachability alone cannot make them `Classified`. Evidence for each classified M
 | CAP-0155 | MCP | `list_automation_lanes` | `automation.rs` | read | `synth` server: HTTP `127.0.0.1:9850/mcp` and `--headless` stdio | | | Discovered |
 | CAP-0156 | MCP | `list_example_patches` | `instruments.rs` | read | Default MCP GUI HTTP and `--headless` stdio → `InstrumentBridge::list_example_patches`; [source trace](#mcp-example-patch-discovery) | Migrate | Phase 10A catalog content; 10E MCP discovery adapter | Classified |
 | CAP-0157 | MCP | `list_input_devices` | `audio_input.rs` | read | `synth` server: HTTP `127.0.0.1:9850/mcp` and `--headless` stdio | | | Discovered |
-| CAP-0158 | MCP | `list_instruments` | `discovery.rs` | read | `synth` server: HTTP `127.0.0.1:9850/mcp` and `--headless` stdio | | | Discovered |
+| CAP-0158 | MCP | `list_instruments` | `discovery.rs` | read | Default MCP GUI HTTP and `--headless` stdio → `InstrumentBridge::list_instruments`; [source trace](#mcp-instrument-listing-and-detail) | Migrate | Phase 10A instrument instance, channel strip and patch metadata; 10E MCP read adapter | Classified |
 | CAP-0159 | MCP | `list_master_effects` | `mixing.rs` | read | `synth` server: HTTP `127.0.0.1:9850/mcp` and `--headless` stdio | | | Discovered |
 | CAP-0160 | MCP | `list_mod_graphs` | `sequencer.rs` | read | `synth` server: HTTP `127.0.0.1:9850/mcp` and `--headless` stdio | | | Discovered |
 | CAP-0161 | MCP | `list_mod_targets` | `sequencer.rs` | read | `synth` server: HTTP `127.0.0.1:9850/mcp` and `--headless` stdio | | | Discovered |
 | CAP-0162 | MCP | `list_module_types` | `discovery.rs` | read | Default MCP GUI HTTP and `--headless` stdio → `InstrumentBridge::list_module_types_brief`; [source trace](#mcp-module-type-listing) | Migrate | Phase 5 node declarations and derived catalog; 10E MCP discovery adapter | Classified |
-| CAP-0163 | MCP | `list_modules` | `discovery.rs` | read | `synth` server: HTTP `127.0.0.1:9850/mcp` and `--headless` stdio | | | Discovered |
+| CAP-0163 | MCP | `list_modules` | `discovery.rs` | read | Default MCP GUI HTTP and `--headless` stdio → `InstrumentBridge::list_modules`; [source trace](#mcp-module-listing-and-detail) | Migrate | Phase 10A patch graph nodes; Phase 5 port/parameter declarations; 10E MCP read adapter | Classified |
 | CAP-0164 | MCP | `list_note_graphs` | `sequencer.rs` | read | `synth` server: HTTP `127.0.0.1:9850/mcp` and `--headless` stdio | | | Discovered |
 | CAP-0165 | MCP | `list_notes` | `sequencer.rs` | read | `synth` server: HTTP `127.0.0.1:9850/mcp` and `--headless` stdio | | | Discovered |
 | CAP-0166 | MCP | `list_patterns` | `sequencer.rs` | read | `synth` server: HTTP `127.0.0.1:9850/mcp` and `--headless` stdio | | | Discovered |
@@ -1409,6 +1411,177 @@ Only these five existing rows gain a disposition. Twenty-six capability rows, in
 supporting classification. CAP-0510 remains next; other capabilities, per-module fidelity, T004/T005 evidence and
 the complete P00B-T002/Phase 0B exit remain open.
 
+## MCP instance graph reads 2026-10-05
+
+This bounded P00B-T002 slice classifies six read-only tools at `d07b3d83`: `list_instruments` (CAP-0158),
+`get_instrument_info` (CAP-0134), `list_modules` (CAP-0163), `get_module_info` (CAP-0139), `get_connections`
+(CAP-0129) and `get_parameter` (CAP-0142). They are the instance half of the `discovery.rs` family whose type half
+the [preceding inspection](#mcp-discovery-2026-09-12) classified, and they include the instance route that pass
+asked to be verified before any claim of complete parameter coverage. The existing
+[source-inspection method](#method-and-acceptance-boundary) applies: follow registered dispatch to the actual source
+of each answer, inspect failure branches, and assign owners under the [roadmap](../ROADMAP.md). The
+[master plan](../master-plan.md#phase-10e-mcp-cli-import-and-service-migration) moves project reads onto immutable
+canonical snapshots in 10E; [10A](../master-plan.md#phase-10a-canonical-project-model-and-stable-identity) owns the
+patch definition, instrument instance and channel strip those snapshots contain; Phase 5 owns port and parameter
+declarations. A false behavioral claim, missing route, inconsistent owner or untestable criterion blocks
+classification; optional implementation detail does not.
+
+Source and the named tests were read; no Rust test, live MCP call, GUI interaction or runtime experiment was executed.
+Every observation below is a reading of the code, not a reproduction. This pass changes only the inventory, not
+production code, the evidence harness, an external contract or ADR status. `Migrate` retains the ability to read
+instrument and graph state. It does not retain V1's control-mirror source, unordered output, display-name selectors
+or catalog wording, and it authorizes no wire or identity change.
+
+### Instance-read entry and snapshot boundary
+
+All six handlers in [tools/discovery.rs](../../../crates/synth_mcp/src/server/tools/discovery.rs) carry
+`read_only_hint = true` and return `Json<T>` with typed output schemas: the two listings and the connection list
+use `Listing`, the three details use `InstrumentInfo`, `ModuleInfo` and `ParameterInfo`. The default router in
+[server.rs](../../../crates/synth_mcp/src/server.rs) includes the discovery router with no tool disabled, and its
+batch dispatch names all six in the typed list; CAP-0040/0041 cover GUI HTTP and headless stdio. The handlers call
+the synchronous bridge directly and turn any bridge error into an `Error:` tool error. Inputs are `NoParams`, an
+`InstrumentId`, a module-ID string and, for `get_parameter`, a parameter-name string.
+
+Every answer comes from control mirrors declared in
+[shared_state.rs](../../../crates/synth_engine/src/shared_state.rs), not from the running engine or a project
+document. [control_snapshot.rs](../../../crates/synth_engine/src/control_snapshot.rs) is the only writer of the
+instrument snapshots and the shared graph. `CommandSender::send` in
+[synth_engine.rs](../../../crates/synth_engine/src/synth_engine.rs) calls it under the producer lock once queue space
+is confirmed, before the push. A command refused for lack of space is not mirrored; an enqueued command is mirrored
+whether or not the engine later applies it, and no engine handler writes back. The graph mirror's "updated by audio
+thread" comment and the engine's note that `handle_command` mirrors its effect are therefore stale at this revision.
+So is the module comment of [mcp_allocator_config.rs](../../../crates/pertylizer/tests/mcp_allocator_config.rs)
+claiming that reading back after pumping proves engine receipt rather than an optimistic patch.
+`set_instrument_writes_through_to_snapshot_before_audio_tick` in
+[mcp_project_load.rs](../../../crates/pertylizer/tests/mcp_project_load.rs) correctly expects the mirror to change
+before any audio block, although its comments also speak of an audio-thread rebuild.
+
+Parameter metadata comes from a third source, the descriptor registry in
+[session.rs](../../../crates/pertylizer/src/session.rs). Module creation inserts a descriptor after its command is
+sent; a script edit registers the rebuilt descriptor before sending. The instrument list, module map, connection
+list and registry are read under separate locks, so no reply is pinned to one revision. The engine-fallback save
+builder in [project_apply.rs](../../../crates/pertylizer/src/project_apply.rs) reads the same instrument snapshots
+and shared graph (CAP-0206). Agreement between these reads and such a save is therefore not evidence that either
+matches the DSP graph.
+
+The input descriptions call instrument `0` the default instrument. A fresh headless bridge has no instruments
+(`list_instruments_starts_empty_and_create_instrument_appears`), so `0` is an ordinary identifier resolved against
+the current snapshots.
+
+### MCP instrument listing and detail
+
+`CAP-0158` clones the snapshot vector through `SynthSession::list_instruments` and maps each entry with
+`snapshot_to_info` in [mcp_bridge.rs](../../../crates/pertylizer/src/mcp_bridge.rs). Order is the order in which
+`AddInstrument` commands were mirrored; re-adding an ID moves it to the end. It is not ID, rack or track order.
+`CAP-0134` scans the same vector for one ID and returns `InstrumentNotFound` otherwise. The record carries name,
+descriptions, colors, sidechain source, category, MIDI channel, volume, pan, enabled/muted/solo, module and effect
+counts and allocator settings. It omits mirrored fields such as key range, transpose, oversampling, velocity
+sensitivities and effect-chain order, so neither tool is a complete instance read.
+
+**Mirror limits:** `muted` is always `!enabled`. Mute is sent as `SetInstrumentEnabled`, so the two fields are one
+flag. `module_count` and `effect_count` are adjusted per mirrored command rather than recomputed. `module_count`
+grows for a GUI-inserted `SignalMonitor` sent as a module instance, but not for a visualizer sent by
+`AddVisualizer`. `sidechain_source_id` crosses the wire as a raw integer while `id` keeps its `InstrumentId` type,
+an exception to the response-type module's own identity rule. Phase 10A divides these fields among
+`PatchDefinition`, `InstrumentInstance` and `ChannelStrip`; 10E must publish them from one canonical revision, with
+one mute concept and counts derived from the document.
+
+`get_instrument_info_exposes_allocator_defaults` and `set_allocator_config_round_trips_every_field` read allocator
+fields through the batch dispatch path. In
+[mcp_wire_contract.rs](../../../crates/pertylizer/tests/mcp_wire_contract.rs),
+`every_reply_family_matches_its_published_schema` checks a direct `list_instruments` reply, and a batch carrying
+one, against published schemas over headless stdio; `a_batched_payload_is_not_also_sent_as_text` checks that the
+batched payload is not duplicated as text. None checks ordering, the mute/enabled relation or count drift.
+
+### MCP module listing and detail
+
+`CAP-0163` validates the instrument, then reads the instrument's modules and connections from the shared graph and,
+per module, the registry descriptor. The module mirror is a `HashMap` keyed by instrument and module ID, so listing
+order is unspecified and can differ between processes. Each `ModuleInfo` carries the rendered module ID, the type's
+display name (`ADSR`, `VCA`), instance name, bypass, description, parameters, port lists and, for a Mod Matrix, its
+routing table.
+
+The mirror holds voice modules, effect-chain modules and the GUI's inline `SignalMonitor`; visualizers added by
+`AddVisualizer` are not mirrored. The tool description says "voice graph", but effect inserts are listed beside
+voice nodes. Only their type reveals the insert role, and chain order is reported by none of these six tools. The
+bridge's own graph diagnostics skip effects because they have no voice-graph cables.
+
+**Port limit:** the per-port connection counts in `ModuleStateSnapshot` have no writer, as a bridge comment already
+records. Port lists therefore contain only ports that occur in a mirrored connection, plus the virtual `matrix`
+marker on a Mod Matrix without other outputs and on the sources and destinations of active slots. Only Script
+modules add their declared `in1`..`in4` and `out1`..`out4` from the descriptor. For every other type an unconnected
+port is absent: the lists describe current cabling, not the declared port set, which remains CAP-0140's answer.
+`matrix` is not a connectable port name.
+
+**Parameter and script limit:** values come from the mirrored `Param` list. Bounds, default, choices, `type_id`,
+automation and modulation flags, curve and value kind come from the registry descriptor, matched by parameter kind
+and then by normalized name; a missed match leaves those fields absent. The curve is the Rust `Debug` spelling.
+For Script and AudioScript modules a script edit replaces the mirrored parameters with the declared knobs and
+registers the rebuilt descriptor, so installed knobs are listed with their `type_id`. That is the instance route
+the [module-type detail](#mcp-module-type-detail) inspection left unverified, established here by source reading
+only. The installed source is returned only for Script modules. AudioScript source is mirrored but not exposed,
+although `set_mod_matrix_script`'s description directs callers to read `asc` programs back through
+`get_module_info`.
+
+`CAP-0139` builds the complete `list_modules` answer and returns the entry whose rendered ID equals the argument
+exactly. It does not parse the argument, so a non-canonical spelling receives `ModuleNotFound` without the prefix
+hint that module-ID parsing offers elsewhere. The input description's example `filter-1` cannot match, because the
+filter prefix renders as `flt-1`. Phase 10A replaces prefix-shaped module IDs as identity (`IDN-0016` in the
+[identity inventory](identities.md)); 10E owns the selector and its refusal.
+
+`set_module_description_round_trips_via_bridge` in `mcp_project_load.rs` reads a description through both tools.
+`set_mseg_segments_replaces_the_complete_shape` in
+[mcp_array_tools.rs](../../../crates/pertylizer/tests/mcp_array_tools.rs) finds an MSEG by type display name and its
+parameters by `type_id` through batch dispatch. `script_module_readback_via_get_module_info` in
+[mcp_control_script.rs](../../../crates/pertylizer/tests/mcp_control_script.rs) checks Script ports, slot source and
+a declared knob. None checks ordering, insert labeling, unconnected ports of other types or AudioScript readback.
+
+### MCP connection listing
+
+`CAP-0129` validates the instrument and returns its mirrored connections in mirror order, each as four strings. It
+carries no port type, cable identity or effect-chain wiring. The mirror appends a row for every mirrored `Connect`.
+The engine graph instead stores connections in a set, and its validation rejects missing modules or ports, wrong
+direction, incompatible types and cycles; the engine's connect handler discards that error. The MCP bridge's
+`connect` pre-checks ports, direction and type compatibility but neither cycles nor duplicates.
+
+**Truthfulness limit:** by this reading, a cycle-forming MCP connect is reported as made, listed here and captured
+by an engine-fallback save while the engine never connected it. A repeated connect lists two rows for one engine
+connection. Neither consequence was reproduced. Cable records are ordered records without persisted identity
+(`IDN-0019`, `IDN-0036`); Phase 10A owns their canonical form and 10B must refuse an inadmissible connect in the
+operation result rather than after enqueue. No existing test reads connections through this tool; only generic
+dispatch coverage reaches it.
+
+### MCP parameter read
+
+`CAP-0142` calls `get_module_info` and returns the first parameter whose display name equals `param_name` exactly.
+MCP `set_parameter` instead resolves through `ModuleDescriptor::find_parameter`: `type_id` first, then display
+name, case-insensitively with `_` and space interchangeable. The read is therefore narrower than the write. The
+input description's examples `frequency` and `resonance` do not match the `Frequency` and `Resonance` display
+names, and a `type_id` such as `cutoff` does not find `Cutoff`. Indexed parameters that share a display name, such
+as the MSEG's per-segment `Seg Time`, yield only the first in mirror order. A miss returns `ParameterNotFound`
+listing display names, not the near-miss hint the write path gives. The record is the same `ParameterInfo` as the
+module detail, with the same metadata gaps.
+
+`IDN-0015` and Phase 5 own the parameter identifier; 10E must make reads and writes accept one declared selector
+policy. No existing test calls this tool beyond generic dispatch coverage.
+
+### Instance-read migration checks still owed
+
+| Capabilities | Owner | Observable check before `Verified` |
+|---|---|---|
+| All six | 10E read adapter over 10A snapshots | Exercise direct and batched calls over supported transports against the published schemas, including unknown and stale IDs. Each reply must name the canonical revision it read and leave canonical and dirty state unchanged. Listing order must be deterministic, and catalog descriptions must match the implemented selectors and coverage. |
+| CAP-0158, CAP-0134 | 10A instance, channel strip and patch; 10E | Compare listing and detail with the canonical instance, channel and patch after mutations, including refused and failed ones. Mute must be one field or two independent ones, never a mirrored inversion. Counts must derive from the document. State which instance fields are omitted, or include them. |
+| CAP-0163, CAP-0139 | 10A graph; 5 declarations; 10E | Read a graph containing voice nodes, inserts, a Script and an AudioScript with knobs, a Mod Matrix, unconnected ports and GUI-only nodes. Distinguish declared, connected and virtual ports and mark inserts and their order. Return script source for every type the catalog names. Take values and metadata from one revision; reject non-canonical module selectors with a hint. |
+| CAP-0129 | 10A cable records; 10B connect results; 10E | Request duplicate, cycle-forming and otherwise inadmissible cables, then remove one. A cable is listed exactly when the canonical revision holds it; a refused operation leaves no listed cable. Cable identity follows ADR-0014 once accepted, or an explicitly recorded identity-free rule. |
+| CAP-0142 | 5 parameter identifiers; 10A values; 10E | Look up by `type_id` and display name under the selector policy shared with `set_parameter`. Address each indexed parameter (MSEG segments) and each script knob individually. Unknown names must return a hint, and value and metadata must come from one revision. |
+
+Only these six existing rows gain a disposition. Thirty-two capability rows, including twenty MCP tools, now have
+supporting classification. The CAP-0005 rollup's member summary is corrected to name the instance, diagnostic,
+profile, schema and version reads it already counted. Seven `discovery.rs` tools remain open — `check_connection`,
+`get_engine_status`, `get_graph_diagnostics`, `get_instrument_profiles`, `get_mod_matrix_routings`, `get_version`
+and `get_yams_reference` — as do the mutating tools that write the state read here. No identifier is added: CAP-0511
+remains next. P00B-T002, T004/T005 evidence and the Phase 0B exit remain open.
+
 ## Audit passes
 
 | Date       | Source revision | Discovery method                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  | Coverage/result                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       | Evidence                           |
@@ -1422,6 +1595,7 @@ the complete P00B-T002/Phase 0B exit remain open.
 | 2026-09-12 | `ee5c6600` | Followed five default MCP handlers and batch routes through cleanup, lint aggregation, built-in catalog lookup, shared patch application and the GUI pending-patch consumer; read the named tests without running them. | Classified CAP-0084, CAP-0153, CAP-0156, CAP-0171 and CAP-0178 with owners and pending checks. Recorded silent cleanup failures, lint coverage limits and the load/apply diagnostic and GUI-target differences. Twenty-one rows have supporting dispositions; P00B-T002 remains incomplete. | [Cleanup, lint and example-patch inspection](#mcp-cleanup-lint-and-example-patches-2026-09-12) |
 | 2026-09-12 | `3fb94fb4` | Followed five discovery handlers and batch routes into enum/factory catalogs, descriptor builders, search filters/ranking, port compatibility and the embedded schema; inspected JSON branches and read named tests without running Rust. | Classified CAP-0140, CAP-0143, CAP-0162, CAP-0167 and CAP-0208 with V2 owners and pending checks. Recorded type/instance limits, post-build search truncation and schema publication/correctness limits. Twenty-six rows have supporting dispositions; P00B-T002 remains incomplete. | [Discovery inspection](#mcp-discovery-2026-09-12) |
 | 2026-09-19 | `d1272754` | Read public command-batch declarations, helpers and exports alongside IDN-0033; distinguished engine helpers from MCP bulk tools and batch dispatch. | Added CAP-0510 as a previously unlisted public surface; migration remains open and no existing classification changes. | [Source inspection](identities.md#transaction-identity-idn-0033); no runtime or migration test executed. |
+| 2026-10-05 | `d07b3d83` | Followed six instance-read handlers and batch routes through the bridge into the instrument snapshots, shared graph, control-snapshot publisher, session descriptor registry and engine connect handling; read the named tests without running them. | Classified CAP-0129, CAP-0134, CAP-0139, CAP-0142, CAP-0158 and CAP-0163 as `Migrate` with owners and pending checks. Recorded enqueue-time mirrors, unordered modules, connected-only ports, phantom/duplicate cables, display-name-only parameter lookup and catalog mismatches; corrected the CAP-0005 member summary. Thirty-two rows have supporting dispositions; P00B-T002 remains incomplete. | [Instance graph-read inspection](#mcp-instance-graph-reads-2026-10-05) |
 
 Completion requires each discovered entry to have reachability, disposition, V2 ownership, and verification. Matching
 the seed counts alone is insufficient.
