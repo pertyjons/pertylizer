@@ -599,12 +599,25 @@ pub enum IngressPrepareError {
     #[cfg(all(test, feature = "simulated-ingress"))]
     #[error("the private mixed ingress minter is not the renderer's live producer range")]
     ForeignLiveRange,
-    /// A whole queued release backlog can converge on one callback.
-    #[cfg(all(test, feature = "simulated-ingress"))]
-    #[error("release share {share} cannot cover private mixed ingress depth {capacity}")]
+    /// A whole queued release backlog can converge on one quantum.
+    #[error("release share {share} cannot cover ingress depth {capacity}")]
     ReleaseBacklogShare {
+        /// The admitted release share.
         share: EventCount,
+        /// The live ingress depth.
         capacity: EventCount,
+    },
+    /// Stealing can publish one deferred release per index beside a full ingress queue.
+    #[error(
+        "release share {share} cannot cover ingress depth {capacity} plus {range} deferred releases"
+    )]
+    StealingReleaseBacklogShare {
+        /// The admitted release share.
+        share: EventCount,
+        /// The live ingress depth.
+        capacity: EventCount,
+        /// The producer's bounded identity range.
+        range: crate::quantities::HeldNoteCount,
     },
     /// The store identity space is spent.
     ///
@@ -672,15 +685,6 @@ impl PerformanceIngress {
         minter: &LiveRangeMinter,
         renderer: &crate::render::PreparedRenderer,
     ) -> Result<Self, IngressPrepareError> {
-        let capacity = profile
-            .limits()
-            .events()
-            .queues()
-            .performance_ingress_capacity();
-        let share = profile.limits().events().shares().release_event_share();
-        if share < capacity {
-            return Err(IngressPrepareError::ReleaseBacklogShare { share, capacity });
-        }
         let producer = minter.producer();
         let index = usize::from(producer.as_u16());
         let ranges = plan.note_producer_ranges();
@@ -735,10 +739,6 @@ impl PerformanceIngress {
             return Err(IngressPrepareError::MixedProducerPlan { compiled });
         }
 
-        let Some(id) = issue_ingress_store_id() else {
-            return Err(IngressPrepareError::IdentitySpaceExhausted);
-        };
-
         let capacity = profile
             .limits()
             .events()
@@ -754,6 +754,29 @@ impl PerformanceIngress {
                 producer,
             });
         }
+        let share = profile.limits().events().shares().release_event_share();
+        if share < capacity {
+            return Err(IngressPrepareError::ReleaseBacklogShare { share, capacity });
+        }
+        if plan.stealing() != crate::ir::StealingPolicy::None {
+            // The ring contributes at most `capacity` release entries. A steal can
+            // defer one further release per identity index in `pending`, outside
+            // that ring. Both sets may reach the same destination quantum. This
+            // store is currently the only Release-class producer in its stream;
+            // a combined host must rederive the partition if that changes.
+            let range = plan.note_producer_ranges()[index];
+            if u64::from(share.get()) < u64::from(capacity.get()) + u64::from(range.get()) {
+                return Err(IngressPrepareError::StealingReleaseBacklogShare {
+                    share,
+                    capacity,
+                    range,
+                });
+            }
+        }
+
+        let Some(id) = issue_ingress_store_id() else {
+            return Err(IngressPrepareError::IdentitySpaceExhausted);
+        };
 
         let partition = plan
             .note_producer_ranges()

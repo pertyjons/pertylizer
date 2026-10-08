@@ -849,11 +849,13 @@ Phase 8 has no remaining exit blocker. Phase 0B continues `P00B-T002`.
 [REV-P09A](reviews/phase-09a-exit-review.md) accepted the 9A engine gate; Phase 9's exit
 still needs ADR-0075's deferred mixed-producer work, physical qualification under ADR-0022
 and the ADR-0054 reselection.
-The public `PerformanceIngress::prepare` does not check
-`release_event_share >= performance_ingress_capacity`, which only the test-only mixed store
-enforces. A temporary probe on 2026-10-05 showed a legal profile with release share and hold
-capacity 8 and depth 32 queue 20 releases for one quantum and fault terminally. Engine defaults
-cannot reach it; the relation and a regression test are owed before production live ingress.
+The public `PerformanceIngress::prepare` now checks that the release share covers the full
+live queue, plus one deferred release per producer identity index when stealing is enabled.
+A regression test covers refusal and equality at both preparation boundaries. A temporary
+probe on 2026-10-05 had shown a legal profile with release share and hold capacity 8 and
+depth 32 queue 20 releases for one quantum and fault terminally; that profile now refuses
+preparation. The combined host must rederive the bound if another Release-class producer
+shares the publication.
 The accepted residuals above block their named first consumers.
 Session share 128 and total cap 360 remain provisional until
 Phase 9's complete reselection under ADR-0054.

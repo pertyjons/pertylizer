@@ -4,7 +4,8 @@ use super::*;
 use synth_engine_v2::{
     admit::AdmissionError,
     compile::{RenderConfig, compile},
-    profile::HostProfile,
+    ingress::IngressPrepareError,
+    profile::{EventLimits, HostProfile, ProducerShares, RenderLimits},
     quantities::{KeyIdentity, NoteVelocity, ParameterValue, SampleRate},
     schedule::CompiledStreamError,
     time::FrameCount,
@@ -12,6 +13,144 @@ use synth_engine_v2::{
 
 const CALLBACKS: u64 = 64;
 const NOTES: HeldNoteCount = HeldNoteCount::measured(8);
+
+fn with_release_share(original: HostProfile, release_share: EventCount) -> HostProfile {
+    let limits = original.limits();
+    let events = limits.events();
+    let shares = events.shares();
+    let shares = ProducerShares::new(
+        shares.compiled_event_share(),
+        shares.authored_runtime_event_share(),
+        shares.live_event_share(),
+        shares.session_event_share(),
+        shares.internal_event_share(),
+        release_share,
+        release_share,
+    )
+    .unwrap();
+    let events = EventLimits::new(
+        events.max_events_per_quantum(),
+        events.max_note_expansion_per_tick(),
+        events.max_scheduled_events_in_flight(),
+        events.forward_event_horizon(),
+        events.queues(),
+        shares,
+    )
+    .unwrap();
+    let limits = RenderLimits::new(
+        limits.stream(),
+        limits.graph(),
+        limits.voices(),
+        events,
+        limits.observation(),
+        limits.mixing(),
+        limits.memory(),
+        limits.script(),
+        limits.recording(),
+        limits.cost(),
+    )
+    .unwrap();
+    HostProfile::new(original.capabilities(), limits).unwrap()
+}
+
+#[test]
+fn no_stealing_ingress_refuses_a_release_share_below_its_queue_depth() {
+    let original = HostProfile::harness(
+        SampleRate::new(48_000.0).unwrap(),
+        FrameCount::QUANTUM,
+        ChannelLayout::Mono,
+    )
+    .unwrap();
+    let profile = with_release_share(original, EventCount::measured(8));
+    let plan = compile(
+        &gated_constant(live_only(NOTES.get(), NOTES.get())),
+        &RenderConfig::new(profile),
+    )
+    .into_plan()
+    .unwrap();
+    let (_, renderer) = StreamControl::open(plan.clone(), ORIGIN).unwrap();
+    let capacity = profile
+        .limits()
+        .events()
+        .queues()
+        .performance_ingress_capacity();
+    assert_eq!(capacity, EventCount::measured(32));
+    assert!(matches!(
+        PerformanceIngress::prepare(&profile, &plan, ONLY_PRODUCER, &renderer),
+        Err(IngressPrepareError::ReleaseBacklogShare { share, capacity: found })
+            if share == EventCount::measured(8) && found == capacity
+    ));
+
+    let equal_profile = with_release_share(original, capacity);
+    let equal_plan = compile(
+        &gated_constant(live_only(NOTES.get(), NOTES.get())),
+        &RenderConfig::new(equal_profile),
+    )
+    .into_plan()
+    .unwrap();
+    let (_, equal_renderer) = StreamControl::open(equal_plan.clone(), ORIGIN).unwrap();
+    assert!(
+        PerformanceIngress::prepare(&equal_profile, &equal_plan, ONLY_PRODUCER, &equal_renderer,)
+            .is_ok()
+    );
+}
+
+#[test]
+fn stealing_ingress_reserves_release_share_for_deferred_indices() {
+    let original = HostProfile::harness(
+        SampleRate::new(48_000.0).unwrap(),
+        FrameCount::QUANTUM,
+        ChannelLayout::Mono,
+    )
+    .unwrap();
+    let capacity = original
+        .limits()
+        .events()
+        .queues()
+        .performance_ingress_capacity();
+    let range = HeldNoteCount::measured(2);
+    let plan_for = |profile| {
+        compile(
+            &gated_constant(stealing(
+                live_only(range.get(), range.get()),
+                synth_engine_v2::ir::StealingPolicy::Oldest {
+                    fade: FrameCount::new(128),
+                },
+            )),
+            &RenderConfig::new(profile),
+        )
+        .into_plan()
+        .unwrap()
+    };
+    let insufficient = with_release_share(original, capacity);
+    let plan = plan_for(insufficient);
+    let (_, renderer) = StreamControl::open(plan.clone(), ORIGIN).unwrap();
+    assert!(matches!(
+        PerformanceIngress::prepare(&insufficient, &plan, ONLY_PRODUCER, &renderer),
+        Err(IngressPrepareError::StealingReleaseBacklogShare {
+            share,
+            capacity: found,
+            range: found_range,
+        }) if share == capacity && found == capacity && found_range == range
+    ));
+
+    let one_short = with_release_share(
+        original,
+        EventCount::measured(capacity.get() + range.get() - 1),
+    );
+    let plan = plan_for(one_short);
+    let (_, renderer) = StreamControl::open(plan.clone(), ORIGIN).unwrap();
+    assert!(matches!(
+        PerformanceIngress::prepare(&one_short, &plan, ONLY_PRODUCER, &renderer),
+        Err(IngressPrepareError::StealingReleaseBacklogShare { .. })
+    ));
+
+    let sufficient =
+        with_release_share(original, EventCount::measured(capacity.get() + range.get()));
+    let plan = plan_for(sufficient);
+    let (_, renderer) = StreamControl::open(plan.clone(), ORIGIN).unwrap();
+    assert!(PerformanceIngress::prepare(&sufficient, &plan, ONLY_PRODUCER, &renderer).is_ok());
+}
 
 struct Fixture {
     profile: HostProfile,
