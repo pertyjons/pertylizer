@@ -2274,6 +2274,225 @@ fn mixed_ingress_command_id_exhaustion_retains_original_request() {
 }
 
 #[test]
+fn out_of_order_mixed_command_silences_the_complete_callback() {
+    let (prepared, candidate) = history_tests::one_shot_with_boundary_on(true);
+    let (mut control, mut audio) = prepared
+        .arm_one_shot(candidate, &history_tests::mixed_profile())
+        .unwrap();
+    let invalid = super::MixedIngressCommand {
+        id: MixedIngressCommandId(2),
+        request: MixedIngressRequest::Panic {
+            origin: MixedIngressOriginId(1),
+            at: SampleTime::new(140),
+        },
+        bend_credits: super::MixedIngressQueueCount::NONE,
+    };
+    assert!(control.ingress_commands.0.try_push(invalid).is_ok());
+    let mut first = [1.0_f32; 256];
+    assert_eq!(
+        audio.render_private(AudioBlockMut::new(&mut first, 256, ChannelLayout::Mono).unwrap()),
+        Err(MixedOneShotRenderError::IngressCommandOrder)
+    );
+    assert!(first.iter().all(|sample| *sample == 0.0));
+    assert_eq!(
+        audio.invalid_ingress_command.map(|packet| packet.id),
+        Some(invalid.id)
+    );
+    assert_eq!(audio.last_served_ingress_id, None);
+    assert!(control.collect_ingress_result().is_none());
+    let mut later = [1.0_f32; 64];
+    assert_eq!(
+        audio.render_private(AudioBlockMut::new(&mut later, 64, ChannelLayout::Mono).unwrap()),
+        Err(MixedOneShotRenderError::Faulted)
+    );
+    assert!(later.iter().all(|sample| *sample == 0.0));
+    assert!(audio.audio.renderer.diagnostics().needs_reprepare());
+    let MixedCollection::Ended(ended) = control.collect(audio).unwrap() else {
+        panic!("invalid command must end the mixed owner");
+    };
+    assert_eq!(ended.end, MixedCollectionEnd::Faulted);
+    assert_eq!(
+        ended.ingress.invalid_command.map(|packet| packet.id),
+        Some(invalid.id)
+    );
+    assert_eq!(ended.ingress.last_served_id, None);
+}
+
+#[test]
+fn duplicate_mixed_command_cannot_release_a_live_occurrence() {
+    let (prepared, candidate) = history_tests::one_shot_with_boundary_on(true);
+    let (mut control, mut audio) = prepared
+        .arm_one_shot(candidate, &history_tests::mixed_profile())
+        .unwrap();
+    let origin = MixedIngressOriginId(1);
+    let (id, onset) = control
+        .submit_onset(
+            origin,
+            super::TEST_SCOPE,
+            SampleTime::new(140),
+            KeyIdentity::new(60).unwrap(),
+            NoteVelocity::FULL,
+        )
+        .unwrap();
+    let MixedIngressRequest::Onset { occurrence, .. } = onset else {
+        panic!("onset request");
+    };
+    let invalid = super::MixedIngressCommand {
+        id,
+        request: MixedIngressRequest::Release {
+            origin,
+            occurrence,
+            at: SampleTime::new(150),
+        },
+        bend_credits: super::MixedIngressQueueCount::NONE,
+    };
+    assert!(control.ingress_commands.0.try_push(invalid).is_ok());
+    audio.service_test_ingress_queue();
+    assert_eq!(
+        audio.invalid_ingress_command.map(|packet| packet.id),
+        Some(id)
+    );
+    assert_eq!(audio.last_served_ingress_id, Some(id));
+    assert_eq!(
+        audio.test_ingress.holds_outstanding(),
+        EventCount::measured(1)
+    );
+    let result = control.collect_ingress_result().unwrap();
+    assert_eq!((result.id, result.request), (id, onset));
+    assert!(matches!(result.outcome, MixedIngressOutcome::Onset(Ok(_))));
+    assert!(control.collect_ingress_result().is_none());
+    let mut block = [1.0_f32; 64];
+    assert_eq!(
+        audio.render_private(AudioBlockMut::new(&mut block, 64, ChannelLayout::Mono).unwrap()),
+        Err(MixedOneShotRenderError::IngressCommandOrder)
+    );
+    assert!(block.iter().all(|sample| *sample == 0.0));
+    assert!(audio.audio.renderer.diagnostics().needs_reprepare());
+    let MixedCollection::Ended(ended) = control.collect(audio).unwrap() else {
+        panic!("duplicate command must end the mixed owner");
+    };
+    assert_eq!(ended.end, MixedCollectionEnd::Faulted);
+    assert_eq!(
+        ended.ingress.invalid_command.map(|packet| packet.id),
+        Some(id)
+    );
+    assert_eq!(ended.ingress.last_served_id, Some(id));
+}
+
+#[test]
+fn terminal_command_order_fault_reports_unanswered_packets_and_reservations() {
+    let (prepared, candidate) = history_tests::one_shot_with_boundary_on(true);
+    let (mut control, mut audio) = prepared
+        .arm_one_shot(candidate, &history_tests::mixed_profile())
+        .unwrap();
+    let origin = MixedIngressOriginId(1);
+    let (onset_id, onset) = control
+        .submit_onset(
+            origin,
+            super::TEST_SCOPE,
+            SampleTime::new(140),
+            KeyIdentity::new(60).unwrap(),
+            NoteVelocity::FULL,
+        )
+        .unwrap();
+    let invalid = super::MixedIngressCommand {
+        id: onset_id,
+        request: MixedIngressRequest::Panic {
+            origin,
+            at: SampleTime::new(141),
+        },
+        bend_credits: super::MixedIngressQueueCount::NONE,
+    };
+    assert!(control.ingress_commands.0.try_push(invalid).is_ok());
+    let (panic_id, panic_request) = control.submit_panic(origin, SampleTime::new(142)).unwrap();
+    let bend_credits_free = control.bend_credits_free;
+    audio.service_test_ingress_queue();
+    assert_eq!(
+        audio.invalid_ingress_command.map(|packet| packet.id),
+        Some(onset_id)
+    );
+    let MixedCollection::Ended(ended) = control.collect(audio).unwrap() else {
+        panic!("terminal command fault must permit joined teardown");
+    };
+    assert_eq!(ended.end, MixedCollectionEnd::Faulted);
+    let report = &ended.ingress;
+    let custody = report.terminal_control.as_ref().unwrap();
+    assert_eq!(
+        report.invalid_command.map(|packet| packet.id),
+        Some(onset_id)
+    );
+    assert_eq!(report.last_served_id, Some(onset_id));
+    assert_eq!(
+        custody.ingress_outstanding,
+        super::MixedIngressQueueCount(1)
+    );
+    assert_eq!(custody.release_reserved, super::MixedIngressQueueCount(1));
+    assert_eq!(custody.pedal_reserved, super::MixedIngressQueueCount::NONE);
+    assert_eq!(custody.panic_inflight, Some(panic_id));
+    assert_eq!(custody.bend_credits_free, bend_credits_free);
+    assert_eq!(
+        custody.bend_credits_return_pending,
+        super::MixedIngressQueueCount::NONE
+    );
+    assert!(custody.bend_scopes.is_empty());
+    assert_eq!(report.uncollected_results.len(), 1);
+    assert_eq!(report.uncollected_results[0].id, onset_id);
+    assert_eq!(report.uncollected_results[0].request, onset);
+    assert_eq!(report.unserved_commands.len(), 1);
+    assert_eq!(report.unserved_commands[0].id, panic_id);
+    assert_eq!(report.unserved_commands[0].request, panic_request);
+    assert!(report.pending_result.is_none());
+}
+
+#[test]
+fn terminal_render_fault_collects_an_unanswered_mixed_result() {
+    let (prepared, candidate) = history_tests::one_shot_with_boundary_on(true);
+    let (mut control, mut audio) = prepared
+        .arm_one_shot(candidate, &history_tests::mixed_profile())
+        .unwrap();
+    let (id, request) = control
+        .submit_onset(
+            MixedIngressOriginId(1),
+            super::TEST_SCOPE,
+            SampleTime::new(140),
+            KeyIdentity::new(60).unwrap(),
+            NoteVelocity::FULL,
+        )
+        .unwrap();
+    let mut first = [0.0_f32; 128];
+    audio
+        .render_private(AudioBlockMut::new(&mut first, 128, ChannelLayout::Mono).unwrap())
+        .unwrap();
+    audio.test_fail_after_ingress_at = Some(SampleTime::new(128));
+    let mut faulted = [1.0_f32; 128];
+    assert_eq!(
+        audio.render_private(AudioBlockMut::new(&mut faulted, 128, ChannelLayout::Mono).unwrap()),
+        Err(MixedOneShotRenderError::InjectedAfterIngress)
+    );
+    assert!(faulted.iter().all(|sample| *sample == 0.0));
+    let MixedCollection::Ended(ended) = control.collect(audio).unwrap() else {
+        panic!("terminal render fault must permit joined teardown");
+    };
+    assert_eq!(ended.end, MixedCollectionEnd::Faulted);
+    let report = &ended.ingress;
+    let custody = report.terminal_control.as_ref().unwrap();
+    assert!(report.invalid_command.is_none());
+    assert_eq!(
+        custody.ingress_outstanding,
+        super::MixedIngressQueueCount(1)
+    );
+    assert_eq!(custody.release_reserved, super::MixedIngressQueueCount(1));
+    assert_eq!(report.uncollected_results.len(), 1);
+    assert_eq!(
+        (
+            report.uncollected_results[0].id,
+            report.uncollected_results[0].request
+        ),
+        (id, request)
+    );
+}
+
+#[test]
 fn a_lost_reserved_command_place_refuses_without_spending_release_or_lift_custody() {
     let (prepared, candidate) = history_tests::one_shot_with_boundary_on(true);
     let (mut control, _audio) = prepared

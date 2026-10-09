@@ -6,9 +6,9 @@ use super::{
         MixedIngressResult, MixedOneShotArmError, MixedOneShotAudio, MixedOneShotControl,
         history_tests,
     },
-    CellUse, LiveOccurrenceCell, LiveOccurrenceGeneration, LiveOccurrenceId,
-    MixedHandleRefused, MixedOccurrenceState, MixedOnsetSubmitError, MixedReleaseSubmitError,
-    MixedRetireCause, MixedRetired,
+    CellUse, LiveOccurrenceCell, LiveOccurrenceGeneration, LiveOccurrenceId, MixedHandleRefused,
+    MixedOccurrenceState, MixedOnsetSubmitError, MixedReleaseSubmitError, MixedRetireCause,
+    MixedRetired,
 };
 use crate::{
     identity::{NoteIdentity, Resolution},

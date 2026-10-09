@@ -201,6 +201,9 @@ impl MixedOccurrenceTable {
 impl MixedOneShotAudio {
     /// Serve only the preallocated command prefix; each result retains its request.
     pub(crate) fn service_test_ingress_queue(&mut self) {
+        if self.fault.is_some() || self.invalid_ingress_command.is_some() {
+            return;
+        }
         if let Some(pending) = self.ingress_result_pending.take()
             && let Err(pending) = self.ingress_results.0.try_push(pending)
         {
@@ -208,6 +211,14 @@ impl MixedOneShotAudio {
             return;
         }
         while let Some(command) = self.ingress_commands.0.try_pop() {
+            let expected = self
+                .last_served_ingress_id
+                .map_or(Some(1), |id| id.0.checked_add(1));
+            if expected != Some(command.id.0) {
+                self.invalid_ingress_command = Some(command);
+                return;
+            }
+            self.last_served_ingress_id = Some(command.id);
             let granted = command.bend_credits;
             let none = MixedIngressQueueCount::NONE;
             let (outcome, spent) = match command.request {

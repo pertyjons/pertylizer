@@ -238,6 +238,12 @@ impl MixedOneShotAudio {
         {
             return Err(MixedOneShotRenderError::OutputShape);
         }
+        #[cfg(all(test, feature = "simulated-ingress"))]
+        if self.invalid_ingress_command.is_some() {
+            self.fault = Some(MixedOneShotRenderError::IngressCommandOrder);
+            self.audio.renderer.terminal_mixed_fault(&mut output);
+            return Err(MixedOneShotRenderError::IngressCommandOrder);
+        }
         if output.frames() == 0 {
             return Ok(());
         }
@@ -326,6 +332,9 @@ impl MixedOneShotAudio {
         #[cfg(all(test, feature = "simulated-ingress"))]
         if opens_quantum {
             self.service_test_ingress_queue();
+            if self.invalid_ingress_command.is_some() {
+                return Err(MixedOneShotRenderError::IngressCommandOrder);
+            }
         }
         let mut publication = self.arbiter.open(clock, usize::from(opens_quantum))?;
         let mut next = self.next;

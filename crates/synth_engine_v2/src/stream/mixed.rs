@@ -280,6 +280,9 @@ pub(crate) enum MixedOneShotRenderError {
     #[error("private mixed ingress journal cannot hold the registered queue")]
     IngressJournal,
     #[cfg(all(test, feature = "simulated-ingress"))]
+    #[error("private mixed ingress command identity is out of order")]
+    IngressCommandOrder,
+    #[cfg(all(test, feature = "simulated-ingress"))]
     #[error("injected private mixed fault after ingress charge")]
     InjectedAfterIngress,
     #[error("mixed one-shot compiled event at {event} missed clock {clock}")]
@@ -1568,6 +1571,26 @@ struct MixedIngressTeardown {
     pedals_down: Vec<MixedLiveScope>,
     released_after_refusal: EventCount,
     released_after_panic: EventCount,
+    /// The command that failed the audio-side sequence check, if any.
+    invalid_command: Option<MixedIngressCommand>,
+    last_served_id: Option<MixedIngressCommandId>,
+    unserved_commands: Vec<MixedIngressCommand>,
+    uncollected_results: Vec<MixedIngressResult>,
+    pending_result: Option<MixedIngressResult>,
+    terminal_control: Option<MixedTerminalControlCustody>,
+}
+
+/// Control-side places and bend credits retained at a terminal mixed teardown.
+#[cfg(all(test, feature = "simulated-ingress"))]
+#[derive(Debug)]
+struct MixedTerminalControlCustody {
+    ingress_outstanding: MixedIngressQueueCount,
+    release_reserved: MixedIngressQueueCount,
+    pedal_reserved: MixedIngressQueueCount,
+    panic_inflight: Option<MixedIngressCommandId>,
+    bend_credits_free: MixedIngressQueueCount,
+    bend_credits_return_pending: MixedIngressQueueCount,
+    bend_scopes: Vec<MixedBendScopeCell>,
 }
 
 #[derive(Debug)]
@@ -1646,6 +1669,12 @@ pub(crate) struct MixedOneShotAudio {
     ingress_results: OpaqueQueue<HeapProd<MixedIngressResult>>,
     #[cfg(all(test, feature = "simulated-ingress"))]
     ingress_result_pending: Option<MixedIngressResult>,
+    /// The last served command ID; a gap, duplicate or wrap faults before the
+    /// offending command changes audio state. Its packet remains owned for teardown.
+    #[cfg(all(test, feature = "simulated-ingress"))]
+    last_served_ingress_id: Option<MixedIngressCommandId>,
+    #[cfg(all(test, feature = "simulated-ingress"))]
+    invalid_ingress_command: Option<MixedIngressCommand>,
     /// Returns each command's unused bend credits after service, and each written one
     /// after its entry drains.
     #[cfg(all(test, feature = "simulated-ingress"))]
@@ -1805,6 +1834,12 @@ fn mixed_teardown_parts(
             pedals_down: audio.occurrences.pedals_down(),
             released_after_refusal: audio.occurrences.released_after_refusal(),
             released_after_panic: audio.occurrences.released_after_panic(),
+            invalid_command: audio.invalid_ingress_command,
+            last_served_id: audio.last_served_ingress_id,
+            unserved_commands: Vec::new(),
+            uncollected_results: Vec::new(),
+            pending_result: None,
+            terminal_control: None,
         }
     };
     Ok(MixedTeardownParts {
@@ -1855,7 +1890,16 @@ impl MixedOneShotControl {
             }));
         }
         #[cfg(all(test, feature = "simulated-ingress"))]
-        if self.ingress_outstanding > MixedIngressQueueCount::NONE || self.panic_inflight.is_some()
+        let ingress_faulted = audio.invalid_ingress_command.is_some();
+        #[cfg(not(all(test, feature = "simulated-ingress")))]
+        let ingress_faulted = false;
+        let terminal = ingress_faulted
+            || audio.fault.is_some()
+            || audio.audio.renderer.diagnostics().needs_reprepare();
+        #[cfg(all(test, feature = "simulated-ingress"))]
+        if !terminal
+            && (self.ingress_outstanding > MixedIngressQueueCount::NONE
+                || self.panic_inflight.is_some())
         {
             return Err(Box::new(MixedCollectionRefusal {
                 reason: MixedCollectionError::IngressResultPending,
@@ -1863,16 +1907,12 @@ impl MixedOneShotControl {
                 audio,
             }));
         }
-        if !audio.adopted
-            || audio.fault.is_some()
-            || audio.audio.renderer.diagnostics().needs_reprepare()
-        {
-            let end =
-                if audio.fault.is_some() || audio.audio.renderer.diagnostics().needs_reprepare() {
-                    MixedCollectionEnd::Faulted
-                } else {
-                    MixedCollectionEnd::Pending
-                };
+        if !audio.adopted || terminal {
+            let end = if terminal {
+                MixedCollectionEnd::Faulted
+            } else {
+                MixedCollectionEnd::Pending
+            };
             let parts = match mixed_teardown_parts(&audio) {
                 Ok(parts) => parts,
                 Err(reason) => {
@@ -1883,6 +1923,27 @@ impl MixedOneShotControl {
                     }));
                 }
             };
+            #[cfg(all(test, feature = "simulated-ingress"))]
+            let mut parts = parts;
+            #[cfg(all(test, feature = "simulated-ingress"))]
+            if terminal {
+                parts.ingress.terminal_control = Some(MixedTerminalControlCustody {
+                    ingress_outstanding: self.ingress_outstanding,
+                    release_reserved: self.release_reserved,
+                    pedal_reserved: MixedIngressQueueCount(self.pedal_ledger.reserved()),
+                    panic_inflight: self.panic_inflight,
+                    bend_credits_free: self.bend_credits_free,
+                    bend_credits_return_pending: self.bend_credit_return.pending(),
+                    bend_scopes: self.bend_scopes.iter().flatten().copied().collect(),
+                });
+                parts.ingress.pending_result = audio.ingress_result_pending.take();
+                while let Some(command) = audio.ingress_commands.0.try_pop() {
+                    parts.ingress.unserved_commands.push(command);
+                }
+                while let Some(result) = self.ingress_results.0.try_pop() {
+                    parts.ingress.uncollected_results.push(result);
+                }
+            }
             drop(self);
             return Ok(MixedCollection::Ended(Box::new(mixed_finish_teardown(
                 audio, end, parts,
@@ -2513,6 +2574,10 @@ impl MixedJoinedPrepared {
                 ingress_results: OpaqueQueue(ingress_result_writer),
                 #[cfg(all(test, feature = "simulated-ingress"))]
                 ingress_result_pending: None,
+                #[cfg(all(test, feature = "simulated-ingress"))]
+                last_served_ingress_id: None,
+                #[cfg(all(test, feature = "simulated-ingress"))]
+                invalid_ingress_command: None,
                 #[cfg(all(test, feature = "simulated-ingress"))]
                 bend_credit_return,
                 #[cfg(test)]
