@@ -1065,6 +1065,14 @@ Private mixed release and pedal-lift submission now returns a typed
 `ReservedPlaceUnavailable` error if its reserved command place is unexpectedly
 missing, while retaining the handle, lift reservation and command ID. A focused
 test injects both a physically full ring and inconsistent room accounting.
+The private owner now journals each submitted command before result collection.
+Audio faults before applying an out-of-order command; control faults before
+settling a mismatched, reordered or duplicate result. Terminal teardown retains
+the invalid packet and outstanding command custody. Bend-result collection also
+checks its nominal stamp, listed members' scope and order, dense shape and
+reserved credit bound. The control ledger cannot yet prove that the listed bend
+members are complete or were sounding when audio served the command. These are
+test-only checks, not a public mixed transfer contract or Phase 9 exit evidence.
 [ADR-0078](decisions/ADR-0078-host-owned-mixed-transfer-rehearsal.md) is a
 reviewed proposal for a default-off, host-owned packet transfer rehearsal.
 It requires maintainer approval before the public mixed API or feature is
