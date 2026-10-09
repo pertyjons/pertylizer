@@ -1061,6 +1061,14 @@ recorded entry history reconstructs equal scope values through frame 511.
 This is a private experiment, not the unapproved draft's D5 coalescing marker
 and not acceptance of a production bend contract. This slice does not lift
 the production mixed-plan refusal.
+Private mixed release and pedal-lift submission now returns a typed
+`ReservedPlaceUnavailable` error if its reserved command place is unexpectedly
+missing, while retaining the handle, lift reservation and command ID. A focused
+test injects both a physically full ring and inconsistent room accounting.
+[ADR-0078](decisions/ADR-0078-host-owned-mixed-transfer-rehearsal.md) is a
+reviewed proposal for a default-off, host-owned packet transfer rehearsal.
+It requires maintainer approval before the public mixed API or feature is
+enabled. The existing mixed-plan and application refusals remain in force.
 
 ### Selected work — ordered transport through live I/O
 
