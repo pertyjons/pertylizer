@@ -888,6 +888,17 @@ an ordered combined disposition that attributes each later note to this
 raw/mixed pedal split, source-ring pedal custody, a settled mixed `Full` split
 outcome and recorder delivery remain open.
 
+The private raw bridge also stages bends alongside pedal and note edges.
+One five-cell lane holds a pedal-down, note-on, bend, key-up and pedal lift
+with protected places redeemed by the last two edges. The focused services
+select those five heads in order. Exhausted ordinary command room leaves
+the selected bend and its raw handoff staged without minting a command ID.
+After drain, the bend writes the held note, the key-up is sustained, and the
+lift retires that same handle. A stage-full bend keeps its raw ID in a
+separate refusal fixture. Raw IDs stay paired to their original messages.
+This fixture has no source ring and still uses separate test service calls
+instead of a production combined dispatcher.
+
 The budget withholds `B` queue places from ordinary traffic for the whole
 private run, leaving at most `C - B` for ordinary entries and release holds.
 When `2H + 1 <= C <= 3H`, `B = H`: one bend with all credits outstanding can

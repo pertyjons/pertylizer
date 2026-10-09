@@ -9,8 +9,8 @@ use super::{
     MixedIngressRequest, MixedOneShotAudio, MixedOneShotControl, MixedOneShotRenderError,
     MixedOneShotTeardown, MixedPedalSubmitted, TimedEvent, history_tests, ledger_tests,
     occurrence::{
-        LiveOccurrenceId, MixedLiveScope, MixedLiveSource, MixedOnsetSubmitError,
-        MixedPedalSubmitError, MixedRetireCause, MixedRetired,
+        LiveOccurrenceId, MixedBendSubmitError, MixedLiveScope, MixedLiveSource,
+        MixedOnsetSubmitError, MixedPedalSubmitError, MixedRetireCause, MixedRetired,
     },
 };
 use crate::{
@@ -575,7 +575,6 @@ enum LaneRefusal {
     UnmatchedRelease,
     UnstagedOnset,
     UnstagedPedal { down_raw: InputEventId },
-    Ordinary,
 }
 
 /// Raw and mixed dispositions stay separate: a raw refusal never reaches the
@@ -652,6 +651,13 @@ struct PedalCombinedResult {
     paired_down_raw: Option<InputEventId>,
     /// `None` means the selected edge was redundant at the mixed owner.
     outcome: Option<MixedIngressOutcome>,
+}
+
+#[derive(Debug, PartialEq)]
+struct BendCombinedResult {
+    handoff: RawHandoff,
+    occurrence: Occurrence,
+    outcome: MixedIngressOutcome,
 }
 
 impl CombinedResult {
@@ -848,8 +854,8 @@ impl RawBackend for SerialRaw {
     }
 }
 
-/// Actual raw owners serve each source independently. Notes and pedals enter
-/// the bounded mixed stage; note releases use the raw owner's same-key link.
+/// Actual raw owners serve each source independently. Notes, pedals and bends
+/// enter the bounded mixed stage; note releases use the raw owner's same-key link.
 struct RawStageBridge<R = [RawSource; 2]> {
     stage: Stage,
     sources: R,
@@ -1171,7 +1177,24 @@ impl<R: RawBackend> RawStageBridge<R> {
                 self.handoffs.push((occurrence, false, handoff));
                 Ok(occurrence)
             }
-            _ => Err(refuse(LaneRefusal::Ordinary)),
+            Midi1Event::PitchBend { .. } => {
+                assert_eq!(handoff.link, None);
+                let occurrence = Occurrence(self.next_occurrence);
+                self.stage
+                    .bend(
+                        source,
+                        Packet {
+                            occurrence,
+                            original,
+                            at,
+                            release: false,
+                        },
+                    )
+                    .map_err(|refusal| refuse(LaneRefusal::Stage(refusal)))?;
+                self.next_occurrence += 1;
+                self.handoffs.push((occurrence, false, handoff));
+                Ok(occurrence)
+            }
         }
     }
 
@@ -1234,9 +1257,51 @@ impl<R: RawBackend> RawStageBridge<R> {
         }))
     }
 
-    /// Offer a selected note packet to mixed ingress. A selected pedal remains
-    /// staged for [`Self::service_pedal`]. A note release names the handle its
-    /// onset was staged under and never resolves through a key.
+    /// A caller-side bend refusal retains the selected stage head and its raw
+    /// handoff. The same source/channel scope reaches mixed ingress unchanged.
+    fn service_bend(
+        &mut self,
+        control: &mut MixedOneShotControl,
+        audio: &mut MixedOneShotAudio,
+    ) -> Result<Option<BendCombinedResult>, MixedBendSubmitError> {
+        let Some((source, packet)) = self.stage.peek_next() else {
+            return Ok(None);
+        };
+        let Midi1Event::PitchBend { value } = packet.original.event() else {
+            return Ok(None);
+        };
+        let cents = crate::quantities::Cents::new(value.as_f32() * 200.0)
+            .expect("a validated MIDI bend has finite cents");
+        let (command, request) = control.submit_bend(
+            MixedIngressOriginId(packet.occurrence.0),
+            source_scope(source, packet.original),
+            packet.at,
+            cents,
+        )?;
+        self.stage.commit_next(source, packet);
+        let position = self
+            .handoffs
+            .iter()
+            .position(|&(occurrence, release, _)| occurrence == packet.occurrence && !release)
+            .expect("a selected bend keeps its raw handoff");
+        let (_, _, handoff) = self.handoffs.remove(position);
+        assert_eq!(
+            (handoff.source, handoff.original, handoff.at),
+            (source, packet.original, packet.at)
+        );
+        audio.service_test_ingress_queue();
+        let result = control.collect_ingress_result().unwrap();
+        assert_eq!((result.id, result.request), (command, request));
+        Ok(Some(BendCombinedResult {
+            handoff,
+            occurrence: packet.occurrence,
+            outcome: result.outcome,
+        }))
+    }
+
+    /// Offer a selected note packet to mixed ingress. Selected pedal and bend
+    /// heads remain staged for their focused services. A note release names
+    /// the handle its onset was staged under and never resolves through a key.
     fn service(
         &mut self,
         control: &mut MixedOneShotControl,
@@ -1440,14 +1505,18 @@ fn lane_refusals_after_raw_admission_keep_the_raw_handoff_and_its_link() {
     assert_eq!(bridge.unstaged_pedal_downs[0].3, split_pedal.raw);
     let wheel = input(0xe0, 0, 64);
     let Err(BridgeRefused::Lane {
-        handoff: ordinary,
-        reason: LaneRefusal::Ordinary,
+        handoff: split_bend,
+        reason: LaneRefusal::Stage(StageRefusal::NoPacketCredit),
     }) = bridge.offer(Source::First, 164, wheel)
     else {
-        panic!("an ordinary bend has no note-bridge stage disposition");
+        panic!("a full lane keeps the raw bend handoff with its stage refusal");
     };
-    assert_eq!((ordinary.original, ordinary.link), (wheel, None));
-
+    assert_eq!((split_bend.original, split_bend.link), (wheel, None));
+    assert_eq!(
+        bridge.raw_issued.last(),
+        Some(&(Source::First, split_bend.raw, None))
+    );
+    assert_eq!(bridge.stage.pressure(Source::First), (2, 0));
     // A raw refusal owns its original and never touches the stage.
     assert_eq!(
         bridge.offer(Source::First, 149, on),
@@ -2289,6 +2358,118 @@ fn raw_pedal_lift_redeems_its_stage_place_behind_sustained_note() {
             && teardown.pedal_lifts.is_empty()
     );
     assert_eq!(ended.ingress.holds_outstanding, EventCount::measured(0));
+    let issued = teardown.raw_issued.clone();
+    assert_eq!(
+        settle_raw_by_cancellation(raw, &issued).bridge.len(),
+        issued.len()
+    );
+}
+
+#[test]
+fn one_raw_stage_orders_pedal_note_bend_release_and_lift() {
+    let (prepared, candidate) = history_tests::one_shot_with_live(
+        true,
+        crate::quantities::HeldNoteCount::measured(1),
+        EventCount::measured(1),
+    );
+    let (mut control, mut audio) = prepared
+        .arm_one_shot(candidate, &history_tests::mixed_profile())
+        .unwrap();
+    let mut bridge = RawStageBridge::new(5);
+    let down_id = bridge
+        .offer(Source::First, 100, input(0xb0, 64, 127))
+        .unwrap();
+    let note_id = bridge
+        .offer(Source::First, 101, input(0x90, 60, 100))
+        .unwrap();
+    let bend_id = bridge
+        .offer(Source::First, 102, input(0xe0, 127, 127))
+        .unwrap();
+    assert_eq!(
+        bridge.offer(Source::First, 103, input(0x80, 60, 0)),
+        Ok(note_id)
+    );
+    let lift_id = bridge
+        .offer(Source::First, 104, input(0xb0, 64, 0))
+        .unwrap();
+    bridge.frontier(Source::Second, 105);
+    assert_eq!(bridge.stage.pressure(Source::First), (5, 0));
+    let selected = bridge.stage.peek_next();
+    assert_eq!(bridge.service_bend(&mut control, &mut audio), Ok(None));
+    assert!(bridge.service(&mut control, &mut audio).is_none());
+    assert_eq!(bridge.stage.peek_next(), selected);
+
+    let down = bridge
+        .service_pedal(&mut control, &mut audio)
+        .unwrap()
+        .unwrap();
+    assert_eq!(down.occurrence, down_id);
+    assert!(matches!(
+        down.outcome,
+        Some(MixedIngressOutcome::PedalDown(Ok(_)))
+    ));
+    let onset = bridge.service(&mut control, &mut audio).unwrap();
+    assert_eq!(onset.occurrence, note_id);
+    assert!(onset.accepted());
+    let mut pressed = 0;
+    while control.ingress_room() > 0 {
+        let id = u64::try_from(1000 + pressed).unwrap();
+        let peer = MixedLiveScope::new(MixedLiveSource::new(id), MidiChannel::CH1);
+        assert!(matches!(
+            control
+                .submit_pedal(MixedIngressOriginId(id), peer, SampleTime::new(102), true)
+                .unwrap(),
+            MixedPedalSubmitted::Command(..)
+        ));
+        pressed += 1;
+    }
+    let selected_bend = bridge.stage.peek_next();
+    let before = control.last_ingress_id;
+    assert_eq!(
+        bridge.service_bend(&mut control, &mut audio),
+        Err(MixedBendSubmitError::Full)
+    );
+    assert_eq!(bridge.stage.peek_next(), selected_bend);
+    assert_eq!(bridge.handoffs.len(), 3);
+    assert_eq!(control.last_ingress_id, before);
+    audio.service_test_ingress_queue();
+    for _ in 0..pressed {
+        assert!(matches!(
+            control.collect_ingress_result().unwrap().outcome,
+            MixedIngressOutcome::PedalDown(Ok(_))
+        ));
+    }
+    let bend = bridge
+        .service_bend(&mut control, &mut audio)
+        .unwrap()
+        .unwrap();
+    assert_eq!(bend.occurrence, bend_id);
+    assert_eq!(bend.handoff.original, input(0xe0, 127, 127));
+    let MixedIngressOutcome::Bend(Ok(written)) = bend.outcome else {
+        panic!("the selected bend must write the held note");
+    };
+    assert_eq!(written.written().collect::<Vec<_>>(), vec![onset.handle]);
+    let release = bridge.service(&mut control, &mut audio).unwrap();
+    assert_eq!(release.occurrence, note_id);
+    assert_eq!(release.handoff.link, Some(onset.handoff.raw));
+    assert_eq!(
+        release.disposition,
+        MixedDisposition::Result(MixedIngressOutcome::Sustained(onset.handle))
+    );
+    let lift = bridge
+        .service_pedal(&mut control, &mut audio)
+        .unwrap()
+        .unwrap();
+    assert_eq!(lift.occurrence, lift_id);
+    assert_eq!(lift.paired_down_raw, Some(down.handoff.raw));
+    let Some(MixedIngressOutcome::Lift(Ok(retired))) = lift.outcome else {
+        panic!("the selected lift must retire the sustained note");
+    };
+    assert_eq!(retired.retired().collect::<Vec<_>>(), vec![onset.handle]);
+    assert_eq!(bridge.stage.pressure(Source::First), (0, 0));
+
+    let (teardown, raw, _ended) = bridge.tear_down(control, audio);
+    assert!(teardown.unoffered.is_empty() && teardown.pedal_lifts.is_empty());
     let issued = teardown.raw_issued.clone();
     assert_eq!(
         settle_raw_by_cancellation(raw, &issued).bridge.len(),
