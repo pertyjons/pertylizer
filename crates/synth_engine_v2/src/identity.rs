@@ -120,6 +120,12 @@ impl NoteIdentity {
         self.index
     }
 
+    /// Generation within this table, for assertions across separately prepared test streams.
+    #[cfg(test)]
+    pub(crate) const fn generation(self) -> u32 {
+        self.generation
+    }
+
     /// A stand-in for an entry whose identity the minter has not issued yet, off-thread.
     ///
     /// Names this table with index and generation zero; it is replaced by the minted identity

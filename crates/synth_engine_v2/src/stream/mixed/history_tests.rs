@@ -1934,13 +1934,6 @@ fn private_adopted_collection_promotes_one_authority_and_reclaims_retired_list()
     for compiled_first in [true, false] {
         let (prepared, candidate) =
             one_shot_with_boundary_on_at(compiled_first, SampleTime::new(65));
-        let EventPayload::Note {
-            identity: original, ..
-        } = prepared.events[0].payload()
-        else {
-            panic!("initial compiled onset");
-        };
-        let successor = candidate.outstanding[0];
         let (control, mut audio) = prepared
             .arm_one_shot(candidate, &mixed_profile())
             .expect("private arm");
@@ -1949,6 +1942,13 @@ fn private_adopted_collection_promotes_one_authority_and_reclaims_retired_list()
             .render_private(AudioBlockMut::new(&mut before, 192, ChannelLayout::Mono).expect("old"))
             .expect("old quanta");
         assert!(!audio.report().adopted);
+        let original = audio
+            .audio
+            .renderer
+            .snapshot_mixed_sounding()
+            .expect("old sounding");
+        assert_eq!(original.compiled().len(), 1);
+        let original = original.compiled()[0].identity;
         let mut boundary = [0.0_f32; 1];
         audio
             .render_private(
@@ -1956,6 +1956,16 @@ fn private_adopted_collection_promotes_one_authority_and_reclaims_retired_list()
             )
             .expect("adopted quantum");
         assert!(audio.report().boundary_quantum_completed);
+        let successor = audio
+            .audio
+            .renderer
+            .snapshot_mixed_sounding()
+            .expect("new sounding");
+        assert_eq!(successor.compiled().len(), 1);
+        let successor = successor.compiled()[0].identity;
+        assert_eq!(original.table(), audio.audio.renderer.table_id());
+        assert_eq!(successor.table(), audio.audio.renderer.table_id());
+        assert_ne!(original, successor);
         let MixedCollection::Resumed {
             control,
             mut audio,
@@ -2005,6 +2015,54 @@ fn private_adopted_collection_promotes_one_authority_and_reclaims_retired_list()
                 .collect::<Vec<_>>(),
             vec![original]
         );
+    }
+}
+
+#[test]
+fn published_compiled_identities_are_callback_partition_invariant() {
+    fn published_pair(compiled_first: bool, partition: &[usize]) -> [(u16, u32); 2] {
+        assert_eq!(partition.iter().sum::<usize>(), 256);
+        let (prepared, candidate) =
+            one_shot_with_boundary_on_at(compiled_first, SampleTime::new(65));
+        let (_, mut audio) = prepared
+            .arm_one_shot(candidate, &mixed_profile())
+            .expect("private arm");
+        for &frames in partition {
+            let mut samples = vec![0.0_f32; frames];
+            audio
+                .render_private(
+                    AudioBlockMut::new(&mut samples, frames, ChannelLayout::Mono)
+                        .expect("partition block"),
+                )
+                .expect("partition render");
+        }
+        let old = audio.audio.compiled_ended[0]
+            .expect("published old note ended at the boundary")
+            .identity;
+        let sounding = audio
+            .audio
+            .renderer
+            .snapshot_mixed_sounding()
+            .expect("successor sounding");
+        assert_eq!(sounding.compiled().len(), 1);
+        let successor = sounding.compiled()[0].identity;
+        assert_eq!(old.table(), audio.audio.renderer.table_id());
+        assert_eq!(successor.table(), audio.audio.renderer.table_id());
+        assert_ne!(old, successor);
+        assert!(audio.report().adopted);
+        [
+            (old.index(), old.generation()),
+            (successor.index(), successor.generation()),
+        ]
+    }
+
+    let regular = [64; 4];
+    let irregular = [7, 63, 90, 1, 95];
+    for compiled_first in [true, false] {
+        let reference = published_pair(compiled_first, &[256]);
+        assert_eq!(published_pair(compiled_first, &regular), reference);
+        assert_eq!(published_pair(compiled_first, &[1; 256]), reference);
+        assert_eq!(published_pair(compiled_first, &irregular), reference);
     }
 }
 
