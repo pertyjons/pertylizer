@@ -528,6 +528,66 @@ fn a_late_bend_uses_its_reserved_place_and_an_empty_scope_keeps_the_fence() {
 }
 
 #[test]
+fn an_inherited_bend_can_precede_an_older_notes_new_bend() {
+    let s = scope(1, 1);
+    let (mut control, mut audio) = armed_with(true, 2);
+    let old = onset_in(&mut control, s, 100, 60);
+    let first = bend_at(&mut control, s, 110, 30.0);
+    audio.service_test_ingress_queue();
+    let results = collect_all(&mut control);
+    let old_identity = accepted(outcome_for(&results, onset_request_in(old, s, 100, 60)));
+    assert_eq!(
+        written(outcome_for(&results, first)),
+        vec![(old, MixedBendWrite::Queued)]
+    );
+    render(&mut audio);
+    assert!(audio.test_ingress.is_empty());
+    assert_eq!(audio.occurrences.bend_of(s), cents(30.0));
+
+    let newer = onset_in(&mut control, s, 300, 61);
+    audio.service_test_ingress_queue();
+    let new_identity = accepted(outcome_for(
+        &collect_all(&mut control),
+        onset_request_in(newer, s, 300, 61),
+    ));
+    assert_eq!(
+        entries(&audio),
+        vec![
+            Entry::On(new_identity, 300),
+            Entry::Bend(new_identity, 30.0, 300)
+        ]
+    );
+    let later = bend_at(&mut control, s, 320, 50.0);
+    audio.service_test_ingress_queue();
+    let results = collect_all(&mut control);
+    assert_eq!(
+        written(outcome_for(&results, later)),
+        vec![
+            (old, MixedBendWrite::Queued),
+            (
+                newer,
+                MixedBendWrite::Early {
+                    applies_at: SampleTime::new(300),
+                    origin: MixedBendOrigin::Inherited,
+                },
+            ),
+        ]
+    );
+    // Between 300 and 320 the newer note carries 50 cents and the older note
+    // still carries 30 cents. This is a same-scope value-symmetry counterexample.
+    assert_eq!(
+        entries(&audio),
+        vec![
+            Entry::On(new_identity, 300),
+            Entry::Bend(new_identity, 50.0, 300),
+            Entry::Bend(old_identity, 50.0, 320),
+        ]
+    );
+    render(&mut audio);
+    assert_eq!(orphans(&audio), 0);
+}
+
+#[test]
 fn four_wheel_updates_over_a_held_chord_spend_one_slot_per_member_and_quantum() {
     let s = scope(1, 1);
     let (mut control, audio) = armed_with(true, 8);

@@ -787,6 +787,16 @@ lies before the bend, at most the forward event horizon.
 No amendment is approved for that behaviour, so it stays confined to the private
 owner. Still open: a full command ring refuses a bend at the caller boundary;
 two notes in one scope can carry different values after an intervening onset.
+Another test pins a drained-entry variant: note A's 30-cent bend at frame 110
+drains; note B enters at 300 and inherits 30 cents; a 50-cent bend at 320 arrives
+before B's inherited entry drains. B's entry is rewritten to 50 cents at 300,
+while A receives a new 50-cent entry at 320. Frames 300–319 therefore have
+different bend values within the scope. The target property is same-scope bend
+value symmetry at each sample; preserving command order is a separate property.
+The current one-place-per-note coalescing rule proves neither. A replacement
+needs an explicit timing rule for interleaved bends and onsets, including an
+undrained inherited entry reached by a later bend, plus a capacity proof for
+whatever events that rule emits.
 This slice does not lift the production mixed-plan refusal.
 
 ### Selected work — ordered transport through live I/O
