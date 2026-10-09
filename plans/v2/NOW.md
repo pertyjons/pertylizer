@@ -771,14 +771,37 @@ releases that cell when no later bend is pending and the last accepted scope
 value is zero, including after a refused latest bend. The private bridge
 settles a late bend's raw handoff and stage place on its terminal result, then
 serves the next source bend. A full scope table or command ring still refuses
-a bend at the caller boundary and leaves the source head for retry.
+a bend at the caller boundary. The private bridge leaves the source head for
+retry; that custody alone does not establish progress.
+
+`ScopeCapacity` does not yet have a progress guarantee: arm sizes both bend
+scope tables to ingress depth `C`, but the admitted minimum `C = 2H + 1` can
+be smaller than the number of live `(source, channel)` scopes. At `H = 2` and
+`C = 5`, five non-zero channel values can keep all cells indefinitely. A sixth
+channel's refused head then blocks a zero bend behind it in the same source
+FIFO. A production bend-scope guarantee therefore needs a bounded admitted
+scope set, enough prepared cells for every admitted scope, and a named outcome
+for input outside that set. Its terminal mixed reason and retained raw receipt
+must follow ADR-0075's split-outcome rule.
+
+The falsifier is the five-channel case with the sixth bend followed by a zero
+on channel one: a claimed source-owned retry must advance both in order
+without a peer action.
+
+That bend-cell bound alone does not make every caller `Full` retryable. At the
+same `C = 5`, four serviced and collected pedal-downs can retain four reserved
+lift places. An onset then needs two ordinary command places but has one; if a
+lift is behind that onset in the same source FIFO, rendering and result
+collection cannot clear the refusal. The combined host still needs an
+admission or terminal-disposition law for this prefix, including its raw
+handoff, before it can promise progress for ordered source-owned retry.
 
 The budget withholds `B` queue places from ordinary traffic for the whole
 private run, leaving at most `C - B` for ordinary entries and release holds.
 When `2H + 1 <= C <= 3H`, `B = H`: one bend with all credits outstanding can
 temporarily refuse a bent-scope onset, and any undrained bend entry prevents
-another full-`H` bend. The source must retain and retry caller refusals in
-the later concrete bridge.
+another full-`H` bend. The source must retain and retry those transient credit
+refusals in the later concrete bridge.
 
 A private two-source bend fixture uses `H = 2` and `B >= 6`. Its bend heads
 cross a real bounded SPSC source ring before raw admission, then a bounded
