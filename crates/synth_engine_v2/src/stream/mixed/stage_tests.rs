@@ -133,6 +133,24 @@ impl Stage {
         Ok(())
     }
 
+    /// A bend opens no occurrence, so it needs only its own packet cell.
+    fn bend(&mut self, source: Source, packet: Packet) -> Result<(), StageRefusal> {
+        assert!(!packet.release && matches!(packet.original.event(), Midi1Event::PitchBend { .. }));
+        let lane = &mut self.lanes[source.index()];
+        if lane.last_offered.is_some_and(|last| packet.at < last) {
+            return Err(StageRefusal::Order);
+        }
+        if lane.entries.len() + lane.reserved_releases.len() >= self.cells_per_source {
+            return Err(StageRefusal::NoPacketCredit);
+        }
+        lane.last_offered = Some(packet.at);
+        lane.entries.push_back(Entry {
+            packet,
+            frontier_after: None,
+        });
+        Ok(())
+    }
+
     fn frontier(&mut self, source: Source, at: SampleTime) -> Result<(), StageRefusal> {
         let lane = &mut self.lanes[source.index()];
         if lane.last_offered.is_some_and(|last| at <= last) {
@@ -174,14 +192,34 @@ impl Stage {
         }
     }
 
-    fn pop_next(&mut self) -> Option<(Source, Packet)> {
+    /// The time-ordered head, which stays staged until its consumer accepts it.
+    fn peek_next(&self) -> Option<(Source, Packet)> {
         let source = self.next()?;
+        let entry = self.lanes[source.index()].entries.front()?;
+        Some((source, entry.packet))
+    }
+
+    /// Remove the head [`Self::peek_next`] returned, once its consumer accepted it.
+    fn commit_next(&mut self, source: Source, packet: Packet) {
+        assert_eq!(
+            self.peek_next(),
+            Some((source, packet)),
+            "only the selected head is committed"
+        );
         let lane = &mut self.lanes[source.index()];
-        let entry = lane.entries.pop_front()?;
+        let entry = lane
+            .entries
+            .pop_front()
+            .expect("the selected head is staged");
         if let Some(frontier) = entry.frontier_after {
             lane.frontier = Some(frontier);
         }
-        Some((source, entry.packet))
+    }
+
+    fn pop_next(&mut self) -> Option<(Source, Packet)> {
+        let (source, packet) = self.peek_next()?;
+        self.commit_next(source, packet);
+        Some((source, packet))
     }
 
     fn pressure(&self, source: Source) -> (usize, usize) {
@@ -502,10 +540,14 @@ struct RawSource {
 }
 
 fn raw_source(index: usize) -> RawSource {
+    raw_source_with_cells(index, 12)
+}
+
+fn raw_source_with_cells(index: usize, cells: u32) -> RawSource {
     let mut input = SimulatedNoteInput::new(
         EndpointId::new(format!("stage-{index}")).unwrap(),
         InputLimits {
-            cells: InputCapacity::new(12).unwrap(),
+            cells: InputCapacity::new(cells).unwrap(),
             bytes: PreparedBytes::measured(65_536),
         },
     )
@@ -1626,3 +1668,6 @@ fn a_silent_peer_saturating_the_stage_never_refuses_raw_capture() {
         assert_ne!(combined, split);
     }
 }
+
+#[path = "stage_bend_tests.rs"]
+mod bend;

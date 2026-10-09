@@ -775,7 +775,20 @@ private run, leaving at most `C - B` for ordinary entries and release holds.
 When `2H + 1 <= C <= 3H`, `B = H`: one bend with all credits outstanding can
 temporarily refuse a bent-scope onset, and any undrained bend entry prevents
 another full-`H` bend. The source must retain and retry caller refusals in
-the later concrete bridge; that source contract is not implemented here.
+the later concrete bridge.
+
+A private two-source bend fixture uses `H = 2` and `B >= 6`. It carries one
+source head through actual raw admission, a bounded packet stage, the typed
+command ring, audio service and ingress drain. A stage-full bend retains its
+raw handoff and source head; a credit-refused staged bend retains its selected
+packet and raw handoff, mints no command ID, and prevents later same-source
+bends from passing it. After drain, the fixture retries the credit-refused
+bend at frame 320, first submits the already staged bend at 321, and retries
+the stage-refused bend at 322. Each live member gets a separate ordered entry.
+The fixture does not cover a bent-scope onset refused in the `B = H` case. It
+assumes prepared raw capacity. A raw owner's full admission is a terminal
+discontinuity, so source-side preflight/reservation and the concrete
+example-host bridge remain open.
 
 Tests cover caller refusal without identity minting, full ordinary and bend
 budgets with Panic still serviceable, credit return after drain without another
