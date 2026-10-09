@@ -906,6 +906,15 @@ one source-owned pending handoff with the same raw ID. Each service pass
 retries that bend first; if stage is still full and a younger message or
 frontier is queued, the bend receives an explicit sound-path split and raw
 capture advances.
+The 2026-10-09 private choice gives a stage-full bend a final sound-path split
+before a younger head enters mixed stage. The immediate-split fixture records
+its raw observation; the audio scope keeps its last accepted value. A
+split return to zero also leaves the non-zero bend-table cell held until a
+later accepted zero, which may never arrive and can starve another scope.
+Production acceptance must revisit this result and scope-capacity law together
+with ordered result attribution, stage admission and recorder delivery.
+A younger head from that source staged while the bend is still pending, or a
+retry that takes a second raw ID, falsifies the private candidate.
 A stage-full pedal-down splits immediately so its protected key-up and later
 raw lift advance. A private shutdown fixture reports the pending bend's
 source queue identity and raw ID before closing both owners. A separate
