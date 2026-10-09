@@ -907,10 +907,11 @@ retries that bend first; if stage is still full and a younger message or
 frontier is queued, the bend receives an explicit sound-path split and raw
 capture advances.
 The 2026-10-09 private choice gives a stage-full bend a final sound-path split
-before a younger head enters mixed stage. The immediate-split fixture records
-its raw observation; the audio scope keeps its last accepted value. A
-split return to zero also leaves the non-zero bend-table cell held until a
-later accepted zero, which may never arrive and can starve another scope.
+before a younger head enters mixed stage. Immediate and frontier-triggered
+split fixtures record their raw observations; the audio scope keeps its last
+accepted value. A split return to zero leaves the non-zero bend-table cell
+held until a later accepted zero, which may never arrive and can starve
+another scope.
 Production acceptance must revisit this result and scope-capacity law together
 with ordered result attribution, stage admission and recorder delivery.
 A younger head from that source staged while the bend is still pending, or a
