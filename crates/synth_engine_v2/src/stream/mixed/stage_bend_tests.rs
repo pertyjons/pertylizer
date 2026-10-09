@@ -793,7 +793,7 @@ fn actual_source_bends_keep_stage_places_and_order_when_the_command_ring_is_full
 }
 
 #[test]
-fn full_actual_source_ring_retries_one_bend_through_raw_stage_and_command() {
+fn source_stage_and_command_refusals_keep_seventeen_bends_in_order() {
     let (prepared, candidate) = history_tests::one_shot_with_live(
         true,
         crate::quantities::HeldNoteCount::measured(2),
@@ -850,6 +850,22 @@ fn full_actual_source_ring_retries_one_bend_through_raw_stage_and_command() {
     assert_eq!(inbox.peek_handoff().unwrap().stamp().queue(), queue_ids[0]);
     bridge.frontier(Source::Second, 200);
 
+    // Exhaust ordinary command room while the producer still owns its seventeenth
+    // attempt. The same run will also fill the two-cell stage below.
+    let mut pressed = 0;
+    while control.ingress_room() > 0 {
+        let id = u64::try_from(1000 + pressed).unwrap();
+        let peer = MixedLiveScope::new(MixedLiveSource::new(id), MidiChannel::CH1);
+        assert!(matches!(
+            control
+                .submit_pedal(MixedIngressOriginId(id), peer, SampleTime::new(90), true)
+                .unwrap(),
+            MixedPedalSubmitted::Command(..)
+        ));
+        pressed += 1;
+    }
+    assert_eq!(control.ingress_room(), 0);
+
     let mut raw_ids = Vec::new();
     let (first, first_raw) = pump_concrete_bend(&mut bridge, &mut inbox, &mut pending_head)
         .unwrap()
@@ -865,29 +881,70 @@ fn full_actual_source_ring_retries_one_bend_through_raw_stage_and_command() {
     queue_ids.push(last_queue);
     assert_eq!(inbox.peek_handoff().unwrap().stamp().queue(), queue_ids[1]);
 
-    for expected in 1..=SOURCE_CELLS {
-        if expected > 1 {
-            let (head, raw) = pump_concrete_bend(&mut bridge, &mut inbox, &mut pending_head)
-                .unwrap()
-                .unwrap();
-            assert_eq!(head.stamp().queue(), queue_ids[expected - 1]);
-            raw_ids.push(raw.raw);
-        }
+    let (second, second_raw) = pump_concrete_bend(&mut bridge, &mut inbox, &mut pending_head)
+        .unwrap()
+        .unwrap();
+    assert_eq!(second.stamp().queue(), queue_ids[1]);
+    raw_ids.push(second_raw.raw);
+    let blocked = inbox.peek_handoff().unwrap();
+    assert_eq!(blocked.stamp().queue(), queue_ids[2]);
+    assert_eq!(
+        pump_concrete_bend(&mut bridge, &mut inbox, &mut pending_head),
+        Err(BendPumpRefusal::Stage(StageRefusal::NoPacketCredit))
+    );
+    assert_eq!(inbox.peek_handoff(), Some(blocked));
+    assert_eq!(pending_head, Some(blocked));
+    let third_raw = bridge.raw_pending[0].unwrap();
+    assert_eq!(bridge.raw_issued.len(), 3);
+    let before = control.last_ingress_id;
+    assert_eq!(
+        bridge.submit_next(&mut control),
+        Err(MixedBendSubmitError::Full)
+    );
+    assert_eq!(control.last_ingress_id, before);
+    assert_eq!(
+        bridge.stage.peek_next().unwrap().1.occurrence,
+        Occurrence(1)
+    );
+    assert_eq!(bridge.stage.pressure(Source::First), (2, 0));
+
+    audio.service_test_ingress_queue();
+    for _ in 0..pressed {
+        assert!(matches!(
+            control.collect_ingress_result().unwrap().outcome,
+            MixedIngressOutcome::PedalDown(Ok(_))
+        ));
+    }
+    let (occurrence, handoff, outcome) = bridge.service(&mut control, &mut audio).unwrap().unwrap();
+    assert_eq!((occurrence, handoff), (Occurrence(1), first_raw));
+    assert!(matches!(outcome, MixedIngressOutcome::Bend(Ok(_))));
+
+    let (third, retried_raw) = pump_concrete_bend(&mut bridge, &mut inbox, &mut pending_head)
+        .unwrap()
+        .unwrap();
+    assert_eq!(third, blocked);
+    assert_eq!(retried_raw, third_raw);
+    assert_eq!(bridge.raw_issued.len(), 3);
+    raw_ids.push(retried_raw.raw);
+    for expected in 2..=3 {
         let (occurrence, handoff, outcome) =
             bridge.service(&mut control, &mut audio).unwrap().unwrap();
         assert_eq!(occurrence.0, u64::try_from(expected).unwrap());
         assert_eq!(handoff.raw, raw_ids[expected - 1]);
         assert!(matches!(outcome, MixedIngressOutcome::Bend(Ok(_))));
     }
-    let (last, last_raw) = pump_concrete_bend(&mut bridge, &mut inbox, &mut pending_head)
-        .unwrap()
-        .unwrap();
-    assert_eq!(last.stamp().queue(), queue_ids[SOURCE_CELLS]);
-    raw_ids.push(last_raw.raw);
-    let (occurrence, handoff, outcome) = bridge.service(&mut control, &mut audio).unwrap().unwrap();
-    assert_eq!(occurrence.0, u64::try_from(SOURCE_CELLS + 1).unwrap());
-    assert_eq!(handoff.raw, last_raw.raw);
-    assert!(matches!(outcome, MixedIngressOutcome::Bend(Ok(_))));
+    for expected in 4..=SOURCE_CELLS + 1 {
+        let (head, raw) = pump_concrete_bend(&mut bridge, &mut inbox, &mut pending_head)
+            .unwrap()
+            .unwrap();
+        assert_eq!(head.stamp().queue(), queue_ids[expected - 1]);
+        raw_ids.push(raw.raw);
+        let (occurrence, handoff, outcome) =
+            bridge.service(&mut control, &mut audio).unwrap().unwrap();
+        assert_eq!(occurrence.0, u64::try_from(expected).unwrap());
+        assert_eq!(handoff.raw, raw.raw);
+        assert!(matches!(outcome, MixedIngressOutcome::Bend(Ok(_))));
+    }
     assert!(inbox.is_empty());
     assert!(inbox.close(producer).is_ok());
     assert_eq!(bridge.raw_issued.len(), originals.len());

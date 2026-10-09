@@ -968,6 +968,13 @@ retry keeps attempt 17 and receives queue identity 17. All seventeen heads then
 pass raw admission, stage and ordered command results, and their raw receipt
 IDs pair with the original observations. This fixture uses an empty live scope
 to isolate source capacity and command ordering from sounding bend credit.
+The same run now also fills the two-cell stage and exhausts ordinary command
+room before service. The third source head keeps its already issued raw ID
+through stage refusal, while the selected first bend keeps its stage place
+and leaves its command identity unminted through command-ring `Full`.
+Drain, exact retry and later service preserve all seventeen bend results and
+original raw observations in order. The fixture still does not prove a
+production shared charge or recorder delivery.
 The concrete source service now preflights the actual raw owner before taking
 that head. It waits only when completed local raw receipts can free enough
 cells. The managed host reconciles callback completions before source service,
