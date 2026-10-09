@@ -26,45 +26,6 @@ fn armed(compiled_first: bool) -> (MixedOneShotControl, MixedOneShotAudio) {
         .expect("private arm")
 }
 
-/// The mixed harness profile with ingress depth `depth` and everything else unchanged.
-fn profile_with_ingress_depth(depth: u32) -> crate::profile::HostProfile {
-    use crate::profile::{EventLimits, HostProfile, QueueCapacities, RenderLimits};
-
-    let original = history_tests::mixed_profile();
-    let limits = original.limits();
-    let events = limits.events();
-    let queues = events.queues();
-    let queues = QueueCapacities::new(
-        EventCount::measured(depth),
-        queues.command_queue_capacity(),
-        queues.event_egress_capacity(),
-    )
-    .expect("valid shallow queue");
-    let events = EventLimits::new(
-        events.max_events_per_quantum(),
-        events.max_note_expansion_per_tick(),
-        events.max_scheduled_events_in_flight(),
-        events.forward_event_horizon(),
-        queues,
-        events.shares(),
-    )
-    .expect("valid shallow event profile");
-    let limits = RenderLimits::new(
-        limits.stream(),
-        limits.graph(),
-        limits.voices(),
-        events,
-        limits.observation(),
-        limits.mixing(),
-        limits.memory(),
-        limits.script(),
-        limits.recording(),
-        limits.cost(),
-    )
-    .expect("valid limits");
-    HostProfile::new(original.capabilities(), limits).expect("valid profile")
-}
-
 #[test]
 fn shallow_ingress_profiles_refuse_arm_and_preserve_both_inputs() {
     for (holds, depth, admitted) in [
@@ -75,7 +36,7 @@ fn shallow_ingress_profiles_refuse_arm_and_preserve_both_inputs() {
         (2, 5, true),
     ] {
         let original = history_tests::mixed_profile();
-        let profile = profile_with_ingress_depth(depth);
+        let profile = history_tests::profile_with_ingress_depth(EventCount::measured(depth));
         let (prepared, candidate) = if holds == 1 {
             history_tests::one_shot_with_one_live_hold()
         } else {

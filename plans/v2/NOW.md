@@ -790,10 +790,13 @@ and a typed zero bend while an onset owns its release reservation. The selected
 bend keeps its raw handoff and stage head without minting an ID, then executes
 when the ring drains. The later peer bend waits until the first source advances
 its frontier.
-Neither fixture covers a bent-scope onset refused in the `B = H` case. Both
-assume prepared raw capacity. A raw owner's full admission is a terminal
-discontinuity, so source-side preflight/reservation and the concrete
-example-host bridge remain open.
+A third private fixture uses `C = 5`, `H = B = 2`. A bent-scope onset keeps its
+raw handoff and stage head when the caller has no inherited-bend credit, and
+mints no handle or command ID. Audio returns the bend's unused credit. The same
+handoff then reaches audio and inherits the 30-cent bend at frame 300 after the
+earlier bend entry. All three fixtures assume prepared raw capacity. A raw
+owner's full admission is a terminal discontinuity, so source-side
+preflight/reservation and the concrete example-host bridge remain open.
 
 Tests cover caller refusal without identity minting, full ordinary and bend
 budgets with Panic still serviceable, credit return after drain without another

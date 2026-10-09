@@ -194,6 +194,46 @@ pub(super) fn mixed_profile() -> HostProfile {
     .expect("profile")
 }
 
+/// The mixed harness profile with an explicit ingress depth.
+#[cfg(feature = "simulated-ingress")]
+pub(super) fn profile_with_ingress_depth(depth: EventCount) -> HostProfile {
+    use crate::profile::{EventLimits, QueueCapacities, RenderLimits};
+
+    let original = mixed_profile();
+    let limits = original.limits();
+    let events = limits.events();
+    let queues = events.queues();
+    let queues = QueueCapacities::new(
+        depth,
+        queues.command_queue_capacity(),
+        queues.event_egress_capacity(),
+    )
+    .expect("valid shallow queue");
+    let events = EventLimits::new(
+        events.max_events_per_quantum(),
+        events.max_note_expansion_per_tick(),
+        events.max_scheduled_events_in_flight(),
+        events.forward_event_horizon(),
+        queues,
+        events.shares(),
+    )
+    .expect("valid shallow event profile");
+    let limits = RenderLimits::new(
+        limits.stream(),
+        limits.graph(),
+        limits.voices(),
+        events,
+        limits.observation(),
+        limits.mixing(),
+        limits.memory(),
+        limits.script(),
+        limits.recording(),
+        limits.cost(),
+    )
+    .expect("valid limits");
+    HostProfile::new(original.capabilities(), limits).expect("valid profile")
+}
+
 fn profile_with_session_share(session: EventCount) -> HostProfile {
     use crate::profile::{EventLimits, ProducerShares, RenderLimits};
 

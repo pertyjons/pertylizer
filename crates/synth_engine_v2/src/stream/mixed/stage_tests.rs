@@ -6,7 +6,9 @@ use super::{
     EventPayload, MixedCollection, MixedCollectionEnd, MixedIngressOriginId, MixedIngressOutcome,
     MixedIngressRequest, MixedOneShotAudio, MixedOneShotControl, MixedOneShotRenderError,
     MixedOneShotTeardown, TimedEvent, history_tests, ledger_tests,
-    occurrence::{LiveOccurrenceId, MixedRetireCause, MixedRetired},
+    occurrence::{
+        LiveOccurrenceId, MixedLiveScope, MixedOnsetSubmitError, MixedRetireCause, MixedRetired,
+    },
 };
 use crate::{
     host::{
@@ -701,6 +703,55 @@ impl<R: RawBackend> RawStageBridge<R> {
             raw_issued: Vec::new(),
             next_occurrence: 1,
         }
+    }
+
+    /// A bent-scope onset remains staged, with the same raw handoff, if the
+    /// command caller lacks an inherited-bend credit. This focused path keeps
+    /// the ordinary note bridge's result and release bookkeeping intact.
+    fn try_service_onset_in_scope(
+        &mut self,
+        control: &mut MixedOneShotControl,
+        audio: &mut MixedOneShotAudio,
+        scope: MixedLiveScope,
+    ) -> Result<Option<CombinedResult>, MixedOnsetSubmitError> {
+        let Some((source, packet)) = self.stage.peek_next() else {
+            return Ok(None);
+        };
+        let Midi1Event::NoteOn { key, velocity } = packet.original.event() else {
+            panic!("the focused bridge services only an onset");
+        };
+        let origin = MixedIngressOriginId(packet.occurrence.0);
+        let (command, request) = control.submit_onset(origin, scope, packet.at, key, velocity)?;
+        self.stage.commit_next(source, packet);
+        let position = self
+            .handoffs
+            .iter()
+            .position(|&(occurrence, release, _)| occurrence == packet.occurrence && !release)
+            .unwrap();
+        let (_, _, handoff) = self.handoffs.remove(position);
+        assert_eq!(
+            (handoff.source, handoff.original, handoff.at),
+            (source, packet.original, packet.at)
+        );
+        let MixedIngressRequest::Onset {
+            occurrence: handle, ..
+        } = request
+        else {
+            unreachable!("an onset submit returns its onset request");
+        };
+        self.handles.push((packet.occurrence, handle));
+        audio.service_test_ingress_queue();
+        let result = control.collect_ingress_result().unwrap();
+        assert_eq!((result.id, result.request), (command, request));
+        if let MixedIngressOutcome::Onset(onset) = result.outcome {
+            self.onset_results.push((packet.occurrence, onset));
+        }
+        Ok(Some(CombinedResult {
+            handoff,
+            occurrence: packet.occurrence,
+            handle,
+            disposition: MixedDisposition::Result(result.outcome),
+        }))
     }
 
     fn offer(

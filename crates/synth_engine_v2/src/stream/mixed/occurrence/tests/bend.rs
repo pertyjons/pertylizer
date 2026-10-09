@@ -15,8 +15,7 @@ use super::{
     ExhaustedResource, IngressRefused, LiveOccurrenceId, MixedIngressOutcome, MixedIngressRequest,
     MixedOccurrenceState, MixedOneShotAudio, MixedOneShotControl, MixedRetireCause, MixedRetired,
     NoteIdentity, ORIGIN, accepted, collect_all, free_units, history_tests, key, outcome_for,
-    profile_with_ingress_depth, release, release_request, service_without_allocation,
-    settled_credits,
+    release, release_request, service_without_allocation, settled_credits,
     sustain::{
         armed_with, holds, onset_in, onset_request_in, pedal, render, scope, sounding, state_of,
     },
@@ -1083,7 +1082,10 @@ fn at_minimum_depth_an_inflight_bend_refuses_a_bent_onset_until_credits_return()
         EventCount::measured(2),
     );
     let (mut control, mut audio) = prepared
-        .arm_one_shot(candidate, &profile_with_ingress_depth(5))
+        .arm_one_shot(
+            candidate,
+            &history_tests::profile_with_ingress_depth(EventCount::measured(5)),
+        )
         .expect("depth 2H + 1 arms");
     // `B = max(H, C - 2H) = H`: one bend reserves the whole budget.
     assert_eq!(audio.test_ingress.mixed_bend_budget(), 2);

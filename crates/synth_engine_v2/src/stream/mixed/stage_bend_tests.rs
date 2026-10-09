@@ -396,3 +396,113 @@ fn a_full_command_ring_keeps_the_selected_bend_ahead_of_its_peer() {
     assert!(queued_bends(&audio).is_empty());
     assert!(bridge.staged.is_empty());
 }
+
+#[test]
+fn bent_onset_keeps_its_raw_and_stage_custody_at_the_minimum_bend_budget() {
+    let (prepared, candidate) = history_tests::one_shot_with_live(
+        true,
+        crate::quantities::HeldNoteCount::measured(2),
+        EventCount::measured(2),
+    );
+    let (mut control, mut audio) = prepared
+        .arm_one_shot(
+            candidate,
+            &history_tests::profile_with_ingress_depth(EventCount::measured(5)),
+        )
+        .unwrap();
+    assert_eq!(audio.test_ingress.mixed_bend_budget(), 2);
+    let scope = BendBridge::scope(Source::First);
+    let (old_command, old_request) = control
+        .submit_onset(
+            MixedIngressOriginId(60),
+            scope,
+            SampleTime::new(100),
+            crate::quantities::KeyIdentity::new(60).unwrap(),
+            crate::quantities::NoteVelocity::FULL,
+        )
+        .unwrap();
+    audio.service_test_ingress_queue();
+    let old_result = control.collect_ingress_result().unwrap();
+    assert_eq!(
+        (old_result.id, old_result.request),
+        (old_command, old_request)
+    );
+    let MixedIngressOutcome::Onset(Ok(old_identity)) = old_result.outcome else {
+        panic!("old onset accepted");
+    };
+    drain(&mut audio);
+
+    let (bend_command, bend_request) = control
+        .submit_bend(
+            MixedIngressOriginId(70),
+            scope,
+            SampleTime::new(300),
+            Cents::new(30.0).unwrap(),
+        )
+        .unwrap();
+    assert_eq!(control.bend_credits_free.as_usize(), 0);
+    let mut bridge = RawStageBridge::new(2);
+    let offered = bridge
+        .offer(Source::First, 300, input(0x90, 61, 100))
+        .unwrap();
+    bridge.frontier(Source::Second, 301);
+    let original_handoff = bridge.handoffs[0].2;
+    let old_id = control.last_ingress_id;
+    let old_handles = control.occurrence_ledger.held();
+    assert_eq!(
+        bridge.try_service_onset_in_scope(&mut control, &mut audio, scope),
+        Err(MixedOnsetSubmitError::BendCredit)
+    );
+    assert_eq!(control.last_ingress_id, old_id);
+    assert_eq!(control.occurrence_ledger.held(), old_handles);
+    assert_eq!(bridge.stage.pressure(Source::First), (1, 1));
+    assert_eq!(bridge.stage.peek_next().unwrap().1.occurrence, offered);
+    assert_eq!(bridge.handoffs, vec![(offered, false, original_handoff)]);
+
+    audio.service_test_ingress_queue();
+    let bend_result = control.collect_ingress_result().unwrap();
+    assert_eq!(
+        (bend_result.id, bend_result.request),
+        (bend_command, bend_request)
+    );
+    let MixedIngressOutcome::Bend(Ok(bent)) = bend_result.outcome else {
+        panic!("the earlier bend must apply");
+    };
+    assert_eq!(bent.written().count(), 1);
+    assert_eq!(control.bend_credit_return.pending().as_usize(), 1);
+    let accepted = bridge
+        .try_service_onset_in_scope(&mut control, &mut audio, scope)
+        .unwrap()
+        .unwrap();
+    assert_eq!(accepted.handoff, original_handoff);
+    assert_eq!(accepted.occurrence, offered);
+    let MixedDisposition::Result(MixedIngressOutcome::Onset(Ok(new_identity))) =
+        accepted.disposition
+    else {
+        panic!("retained onset accepted after unused credit returned");
+    };
+    assert_ne!(old_identity, new_identity);
+    assert_eq!(bridge.stage.pressure(Source::First), (0, 1));
+    let mut queue = vec![None; audio.test_ingress.queue_capacity_for_test()];
+    let len = audio.test_ingress.copy_queue_for_test(&mut queue).unwrap();
+    let live: Vec<_> = queue
+        .into_iter()
+        .take(len)
+        .flatten()
+        .map(|(event, _)| event)
+        .collect();
+    assert_eq!(live.len(), 3);
+    assert!(
+        matches!(live[0].payload(), EventPayload::Bend { identity, cents } if identity == old_identity && cents == Cents::new(30.0).unwrap())
+    );
+    assert!(
+        matches!(live[1].payload(), EventPayload::Note { identity, edge: NoteEdge::On { .. } } if identity == new_identity)
+    );
+    assert!(
+        matches!(live[2].payload(), EventPayload::Bend { identity, cents } if identity == new_identity && cents == Cents::new(30.0).unwrap())
+    );
+    assert!(
+        live.iter()
+            .all(|event| event.envelope().time() == SampleTime::new(300))
+    );
+}
