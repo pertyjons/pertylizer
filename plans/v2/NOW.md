@@ -812,6 +812,19 @@ split outcome. No quota or new profile value is selected here. Reserving all
 default. ADR-0054 requires full profile reselection for any production live
 adapter, regardless of its selected depth.
 
+A private actual-source fixture now reproduces this `H = 2`, `C = 20`
+head-of-line stop. Five ordered note observations cross the source ring and
+raw owner. The fourth onset retains its stage head and raw handoff on command
+`Full`; the following same-source key-up has the first onset's raw link but
+waits behind that head. Audio service and result collection alone leave the
+refusal in place. Teardown accounts for both staged packets and the three
+remaining stage release reservations. Subsequent raw settlement covers every
+issued ID: all five message receipts are delivered, while the first source's
+later frontier is cancelled.
+The sixteen pedal-downs create pressure directly in the private control
+fixture; source-to-raw pedal custody is still open. This counterexample rules
+out unconditional onset retry and does not select a terminal split policy.
+
 The budget withholds `B` queue places from ordinary traffic for the whole
 private run, leaving at most `C - B` for ordinary entries and release holds.
 When `2H + 1 <= C <= 3H`, `B = H`: one bend with all credits outstanding can

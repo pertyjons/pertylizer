@@ -1546,3 +1546,291 @@ fn bent_onset_keeps_its_raw_and_stage_custody_at_the_minimum_bend_budget() {
             .all(|event| event.envelope().time() == SampleTime::new(300))
     );
 }
+
+/// Move a source head through raw admission into the bounded note stage. This
+/// fixture uses a 1:1 clock and equal tick, arrival and mapped frame stamps.
+/// The source place is released only after the stage takes the packet.
+fn pump_concrete_note(
+    bridge: &mut RawStageBridge<SerialRaw>,
+    inbox: &mut SourceInbox,
+) -> (SourceHandoff, Occurrence) {
+    assert!(inbox.unresolved_failure().is_none());
+    let head = inbox.peek_handoff().expect("source head");
+    let InputObservation::Message {
+        tick,
+        arrival,
+        input: original,
+    } = head.observation()
+    else {
+        panic!("note fixture contains only messages");
+    };
+    let mapped = head.stamp().mapped_at();
+    assert_eq!(tick, InputTick::new(mapped.as_u64()));
+    assert_eq!(arrival, mapped);
+    let occurrence = bridge
+        .offer(Source::First, mapped.as_u64(), original)
+        .expect("raw owner and stage accept source head");
+    assert_eq!(inbox.commit_handoff(head), Ok(head));
+    (head, occurrence)
+}
+
+#[test]
+fn actual_source_key_up_waits_behind_an_onset_refused_by_open_handle_reservations() {
+    let (prepared, candidate) = history_tests::one_shot_with_live(
+        true,
+        crate::quantities::HeldNoteCount::measured(2),
+        EventCount::measured(2),
+    );
+    let (mut control, mut audio) = prepared
+        .arm_one_shot(
+            candidate,
+            &history_tests::profile_with_ingress_depth(EventCount::measured(20)),
+        )
+        .unwrap();
+    // Direct private pedal commands create the pressure; the source carries
+    // only the ordered notes and key-up tested below.
+    for channel in 1..=16 {
+        let scope = MixedLiveScope::new(MixedLiveSource::new(1), MidiChannel::new(channel));
+        assert!(matches!(
+            control
+                .submit_pedal(MixedIngressOriginId(1), scope, SampleTime::new(100), true)
+                .unwrap(),
+            MixedPedalSubmitted::Command(..)
+        ));
+        audio.service_test_ingress_queue();
+        assert!(matches!(
+            control.collect_ingress_result().unwrap().outcome,
+            MixedIngressOutcome::PedalDown(Ok(_))
+        ));
+    }
+    let (owner, generations) = ledger_tests::bridge_serial_owner_with_first_limits(
+        256,
+        InputRate::new(FrameCount::new(1), InputTickSpan::new(1)).unwrap(),
+        InputCapacity::new(64).unwrap(),
+    );
+    let clock = owner.input(generations[0]).unwrap().clock().unwrap();
+    let (mut producer, mut inbox) =
+        SourceInbox::prepare(generations[0], InputCaptureHalt::detached_for_test(), clock);
+    let mut bridge = RawStageBridge::with_raw(8, SerialRaw { owner, generations });
+    bridge.frontier(Source::Second, 200);
+    let mut queue_ids = Vec::new();
+    for (at, original) in [
+        (110, input(0x90, 60, 100)),
+        (111, input(0x90, 61, 100)),
+        (112, input(0x90, 62, 100)),
+        (113, input(0x90, 63, 100)),
+        (114, input(0x80, 60, 0)),
+    ] {
+        let accepted = producer
+            .submit_owned(InputObservation::Message {
+                tick: InputTick::new(at),
+                arrival: SampleTime::new(at),
+                input: original,
+            })
+            .unwrap();
+        queue_ids.push(accepted.parts().1);
+    }
+    assert_eq!(inbox.occupied_len(), 5);
+    let scope = MixedLiveScope::new(MixedLiveSource::new(1), MidiChannel::CH1);
+    let mut first_raw = None;
+    let mut first_occurrence = None;
+    let mut onset_raw = Vec::new();
+    let mut onset_occurrences = Vec::new();
+    for index in 0..3 {
+        let (head, occurrence) = pump_concrete_note(&mut bridge, &mut inbox);
+        assert_eq!(head.stamp().queue(), queue_ids[index]);
+        assert_eq!(
+            head.observation(),
+            InputObservation::Message {
+                tick: InputTick::new(110 + index as u64),
+                arrival: SampleTime::new(110 + index as u64),
+                input: input(0x90, 60 + u8::try_from(index).unwrap(), 100),
+            }
+        );
+        let result = bridge
+            .try_service_onset_in_scope(&mut control, &mut audio, scope)
+            .unwrap()
+            .unwrap();
+        assert_eq!(result.occurrence, occurrence);
+        onset_raw.push(result.handoff.raw);
+        onset_occurrences.push(occurrence);
+        assert!(
+            bridge
+                .raw_issued
+                .iter()
+                .any(|&(source, raw, _)| source == Source::First && raw == result.handoff.raw)
+        );
+        assert_eq!(
+            head.stamp().mapped_at(),
+            SampleTime::new(110 + index as u64)
+        );
+        if index == 0 {
+            first_raw = Some(result.handoff.raw);
+            first_occurrence = Some(occurrence);
+        }
+        if index < 2 {
+            assert!(matches!(
+                result.disposition,
+                MixedDisposition::Result(MixedIngressOutcome::Onset(Ok(_)))
+            ));
+        } else {
+            assert_eq!(
+                result.disposition,
+                MixedDisposition::Result(MixedIngressOutcome::Onset(Err(
+                    IngressRefused::Dropped {
+                        resource: ExhaustedResource::Hold
+                    }
+                )))
+            );
+        }
+    }
+    let (blocked_head, blocked) = pump_concrete_note(&mut bridge, &mut inbox);
+    assert_eq!(blocked_head.stamp().queue(), queue_ids[3]);
+    assert_eq!(
+        blocked_head.observation(),
+        InputObservation::Message {
+            tick: InputTick::new(113),
+            arrival: SampleTime::new(113),
+            input: input(0x90, 63, 100),
+        }
+    );
+    assert_eq!(inbox.occupied_len(), 1);
+    assert_eq!(control.ingress_room(), 1);
+    assert_eq!(control.ingress_outstanding.as_usize(), 0);
+    assert_eq!(control.release_reserved.as_usize(), 3);
+    assert_eq!(control.pedal_ledger.reserved(), 16);
+    assert_eq!(
+        audio.test_ingress.holds_outstanding(),
+        EventCount::measured(2)
+    );
+    let staged = bridge.stage.peek_next();
+    let command = control.last_ingress_id;
+    assert_eq!(
+        bridge.try_service_onset_in_scope(&mut control, &mut audio, scope),
+        Err(MixedOnsetSubmitError::Full)
+    );
+    assert_eq!(bridge.stage.peek_next(), staged);
+    assert_eq!(control.last_ingress_id, command);
+    let (release_head, released) = pump_concrete_note(&mut bridge, &mut inbox);
+    assert_eq!(release_head.stamp().queue(), queue_ids[4]);
+    assert_eq!(
+        release_head.observation(),
+        InputObservation::Message {
+            tick: InputTick::new(114),
+            arrival: SampleTime::new(114),
+            input: input(0x80, 60, 0),
+        }
+    );
+    assert_eq!(Some(released), first_occurrence);
+    assert_eq!(release_head.stamp().mapped_at(), SampleTime::new(114));
+    assert_eq!(bridge.handoffs.last().unwrap().2.link, first_raw);
+    assert!(inbox.peek_handoff().is_none());
+    bridge.frontier(Source::First, 201);
+    assert_eq!(bridge.stage.pressure(Source::First), (2, 3));
+    assert_eq!(bridge.stage.peek_next().unwrap().1.occurrence, blocked);
+    assert_eq!(blocked_head.stamp().mapped_at(), SampleTime::new(113));
+    audio.service_test_ingress_queue();
+    assert!(control.collect_ingress_result().is_none());
+    assert_eq!(
+        bridge.try_service_onset_in_scope(&mut control, &mut audio, scope),
+        Err(MixedOnsetSubmitError::Full)
+    );
+    assert_eq!(bridge.stage.peek_next().unwrap().1.occurrence, blocked);
+    assert!(inbox.close(producer).is_ok());
+    let blocked_raw = bridge
+        .handoffs
+        .iter()
+        .find(|&&(occurrence, release, _)| occurrence == blocked && !release)
+        .unwrap()
+        .2
+        .raw;
+    let (teardown, mut raw, ended) = bridge.tear_down(control, audio);
+    assert_eq!(teardown.raw_issued.len(), 7);
+    assert_eq!(teardown.unoffered.len(), 2);
+    assert_eq!(teardown.unoffered[0].original, input(0x90, 63, 100));
+    assert_eq!(teardown.unoffered[0].raw, blocked_raw);
+    assert_eq!(teardown.unoffered[0].link, None);
+    assert_eq!(teardown.unoffered[1].original, input(0x80, 60, 0));
+    assert_eq!(teardown.unoffered[1].link, first_raw);
+    assert_eq!(teardown.reservations.len(), 3);
+    assert!(
+        teardown
+            .reservations
+            .contains(&(Source::First, onset_occurrences[1], onset_raw[1]))
+    );
+    assert!(
+        teardown
+            .reservations
+            .contains(&(Source::First, onset_occurrences[2], onset_raw[2]))
+    );
+    assert!(
+        teardown
+            .reservations
+            .contains(&(Source::First, blocked, blocked_raw))
+    );
+    assert_eq!(teardown.onsets.len(), 3);
+    assert!(
+        matches!(teardown.onsets[0], (id, OnsetAtTeardown::Live { location: OnsetLocation::Queued, .. }) if id == onset_occurrences[0])
+    );
+    assert!(
+        matches!(teardown.onsets[1], (id, OnsetAtTeardown::Live { location: OnsetLocation::Queued, .. }) if id == onset_occurrences[1])
+    );
+    assert_eq!(
+        teardown.onsets[2],
+        (
+            onset_occurrences[2],
+            OnsetAtTeardown::Refused(IngressRefused::Dropped {
+                resource: ExhaustedResource::Hold,
+            }),
+        )
+    );
+    assert_eq!(ended.end, MixedCollectionEnd::Pending);
+    assert_eq!(ended.ingress.holds_outstanding, EventCount::measured(2));
+    let issued_count = teardown.raw_issued.len();
+    let mut remaining = teardown.raw_issued;
+    raw.owner.pump().unwrap();
+    let mut samples = [0.0_f32; 512];
+    raw.owner
+        .render(AudioBlockMut::new(&mut samples, 512, ChannelLayout::Mono).unwrap())
+        .unwrap();
+    raw.owner.pump().unwrap();
+    let mut settled = 0;
+    let mut prepared_frontiers = Vec::new();
+    for (source, generation) in [Source::First, Source::Second]
+        .into_iter()
+        .zip(raw.generations)
+    {
+        while let Some(receipt) = raw.owner.collect_input(generation).unwrap() {
+            if let Some(position) = remaining
+                .iter()
+                .position(|&(owner, id, _)| owner == source && id == receipt.id)
+            {
+                let (_, _, link) = remaining.swap_remove(position);
+                assert_eq!(receipt.matched_onset, link);
+                match (source, receipt.observation) {
+                    (_, InputObservation::Message { .. })
+                    | (Source::Second, InputObservation::Frontier { .. }) => {
+                        assert!(matches!(receipt.outcome, InputOutcome::Delivered(_)));
+                    }
+                    (Source::First, InputObservation::Frontier { tick }) => {
+                        assert_eq!(tick, InputTick::new(201));
+                        assert!(matches!(receipt.outcome, InputOutcome::Cancelled));
+                    }
+                }
+                settled += 1;
+            } else {
+                assert_eq!(
+                    receipt.observation,
+                    InputObservation::Frontier {
+                        tick: InputTick::new(0)
+                    }
+                );
+                assert!(matches!(receipt.outcome, InputOutcome::Delivered(_)));
+                prepared_frontiers.push(source);
+            }
+        }
+    }
+    assert!(remaining.is_empty());
+    assert_eq!(settled, issued_count);
+    assert_eq!(prepared_frontiers, vec![Source::First, Source::Second]);
+}
