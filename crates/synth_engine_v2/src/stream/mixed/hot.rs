@@ -1,25 +1,49 @@
 //! The bound mixed audio half's quantum-boundary operation.
-//! The renderer and ended-note storage are prepared off-thread. This path does
-//! not allocate, lock, perform I/O, log or drop an owning candidate.
+//! The renderer, ended-note storage, both range minters and the compiled token table
+//! are prepared off-thread. This path mints and releases compiled occurrences in that
+//! prepared storage only; it does not allocate, lock, perform I/O, log or drop an
+//! owning candidate.
 
 use super::{
-    MixedEffectiveEvents, MixedEffectiveTimeError, MixedOneShotAudio, MixedOneShotRenderError,
-    MixedOneShotRenderReport, MixedStreamAudio,
+    MixedCompiledEvent, MixedCompiledPayload, MixedEffectiveEvents, MixedEffectiveTimeError,
+    MixedNoteToken, MixedOneShotAudio, MixedOneShotRenderError, MixedOneShotRenderReport,
+    MixedStreamAudio,
 };
 use crate::{
+    identity::{NoteIdentity, Resolution},
     publish::ProducerClass,
-    quantities::{EventCount, QuantumCount},
-    render::{AudioBlockMut, EventEnvelope, Renderer, TimedEvent},
+    quantities::{EventCount, HeldNoteCount, QuantumCount},
+    render::{AudioBlockMut, EventEnvelope, EventPayload, NoteEdge, Renderer, TimedEvent},
     time::{PlanPosition, QUANTUM_FRAMES, SampleTime},
 };
+
+impl MixedNoteToken {
+    pub(crate) fn as_usize(self) -> usize {
+        usize::from(self.0)
+    }
+}
+
+impl MixedCompiledEvent {
+    pub(crate) const fn new(envelope: EventEnvelope, payload: MixedCompiledPayload) -> Self {
+        Self { envelope, payload }
+    }
+
+    pub(crate) const fn envelope(&self) -> EventEnvelope {
+        self.envelope
+    }
+
+    pub(crate) const fn payload(&self) -> MixedCompiledPayload {
+        self.payload
+    }
+}
 
 impl MixedEffectiveEvents<'_> {
     /// The callback's checked read stays inside the purity scan's hot region.
     pub(super) fn shifted(
         &self,
         event_index: usize,
-        event: TimedEvent,
-    ) -> Result<TimedEvent, MixedEffectiveTimeError> {
+        event: MixedCompiledEvent,
+    ) -> Result<MixedCompiledEvent, MixedEffectiveTimeError> {
         let envelope = event.envelope();
         let time = envelope.time().checked_add(self.shift).map_err(|_| {
             MixedEffectiveTimeError::EventTimeUnrepresentable {
@@ -28,7 +52,7 @@ impl MixedEffectiveEvents<'_> {
                 shift: self.shift,
             }
         })?;
-        Ok(TimedEvent::new(
+        Ok(MixedCompiledEvent::new(
             EventEnvelope::new(envelope.epoch(), time, envelope.source()),
             event.payload(),
         ))
@@ -37,7 +61,7 @@ impl MixedEffectiveEvents<'_> {
     pub(crate) fn get(
         &self,
         event_index: usize,
-    ) -> Result<Option<TimedEvent>, MixedEffectiveTimeError> {
+    ) -> Result<Option<MixedCompiledEvent>, MixedEffectiveTimeError> {
         match self.events.get(event_index).copied() {
             Some(event) => self.shifted(event_index, event).map(Some),
             None => Ok(None),
@@ -46,6 +70,115 @@ impl MixedEffectiveEvents<'_> {
 }
 
 impl MixedStreamAudio {
+    /// The occurrence an open compiled token names.
+    fn compiled_identity(
+        &self,
+        token: MixedNoteToken,
+    ) -> Result<NoteIdentity, MixedOneShotRenderError> {
+        self.compiled_tokens
+            .get(token.as_usize())
+            .copied()
+            .flatten()
+            .ok_or(MixedOneShotRenderError::CompiledToken { token })
+    }
+
+    /// Give one tokenized compiled event the occurrence it names, as it publishes.
+    ///
+    /// A note-on mints by the compiled range's lowest-free rule at this point in the
+    /// applied event order, so the identity depends on what has published, never on a
+    /// candidate that was prepared, withdrawn or refused. Its release frees the index
+    /// here, in the same order the renderer applies the edges.
+    pub(super) fn publish_compiled(
+        &mut self,
+        event: MixedCompiledEvent,
+    ) -> Result<TimedEvent, MixedOneShotRenderError> {
+        let payload = match event.payload() {
+            MixedCompiledPayload::Restore(scoped) => EventPayload::ScopedRestore(scoped),
+            MixedCompiledPayload::On {
+                token,
+                slot,
+                key,
+                velocity,
+            } => {
+                if !matches!(self.compiled_tokens.get(token.as_usize()), Some(None)) {
+                    return Err(MixedOneShotRenderError::CompiledToken { token });
+                }
+                let identity = self
+                    .compiled_minter
+                    .mint_keyed(slot, key)
+                    .map_err(|source| MixedOneShotRenderError::CompiledMint { source })?;
+                if let Some(cell) = self.compiled_tokens.get_mut(token.as_usize()) {
+                    *cell = Some(identity);
+                }
+                EventPayload::Note {
+                    identity,
+                    edge: NoteEdge::On {
+                        slot,
+                        key,
+                        velocity,
+                    },
+                }
+            }
+            MixedCompiledPayload::Off(token) => {
+                let identity = self
+                    .compiled_tokens
+                    .get_mut(token.as_usize())
+                    .and_then(Option::take)
+                    .ok_or(MixedOneShotRenderError::CompiledToken { token })?;
+                let resolution = self.compiled_minter.release(identity);
+                if resolution != Resolution::Live {
+                    return Err(MixedOneShotRenderError::CompiledRelease { resolution });
+                }
+                EventPayload::Note {
+                    identity,
+                    edge: NoteEdge::Off,
+                }
+            }
+            MixedCompiledPayload::Expression(token, expression) => EventPayload::Expression {
+                identity: self.compiled_identity(token)?,
+                expression,
+            },
+            MixedCompiledPayload::Bend(token, cents) => EventPayload::Bend {
+                identity: self.compiled_identity(token)?,
+                cents,
+            },
+        };
+        Ok(TimedEvent::new(event.envelope(), payload))
+    }
+
+    /// Release, in the audio-owned compiled minter, exactly the occurrences the
+    /// renderer's boundary release ended, and close every token of the retired list.
+    ///
+    /// The minter and the registry must then agree that no compiled occurrence remains:
+    /// a token the registry did not end, or an ended note the minter did not hold, is a
+    /// terminal custody fault. The successor list's tokens start from this empty table.
+    pub(super) fn end_compiled_custody(
+        &mut self,
+        released: HeldNoteCount,
+    ) -> Result<(), MixedOneShotRenderError> {
+        let ended = released
+            .as_usize()
+            .and_then(|count| self.compiled_ended.get(..count))
+            .ok_or(MixedOneShotRenderError::CompiledCustody { live: released })?;
+        for note in ended {
+            let Some(note) = note else {
+                return Err(MixedOneShotRenderError::CompiledCustody { live: released });
+            };
+            let resolution = self.compiled_minter.release(note.identity);
+            if resolution != Resolution::Live {
+                return Err(MixedOneShotRenderError::CompiledRelease { resolution });
+            }
+        }
+        self.compiled_tokens.fill(None);
+        let live = self.compiled_minter.live();
+        if live != 0 {
+            return Err(MixedOneShotRenderError::CompiledCustody {
+                live: HeldNoteCount::measured(live),
+            });
+        }
+        Ok(())
+    }
+
     /// Move only the compiled musical mapping at the current render boundary.
     /// Scratch was sized from the bound compiled span off-thread. The returned
     /// anchor belongs with the retired compiled list; a later schedule owner
@@ -180,6 +313,7 @@ impl MixedOneShotAudio {
             self.capsule.retired_anchor = Some(adopted.retired_anchor());
             self.capsule.retired_next = Some(self.next);
             self.released_compiled = adopted.released();
+            self.audio.end_compiled_custody(adopted.released())?;
             core::mem::swap(&mut self.events, &mut self.capsule.events);
             self.next = 0;
             self.in_force = self.capsule.sequence;
@@ -221,6 +355,7 @@ impl MixedOneShotAudio {
                 if at.quantum_index() != clock.quantum_index() {
                     break;
                 }
+                let event = self.audio.publish_compiled(event)?;
                 let class = if self.adopted && next < restoration {
                     ProducerClass::Session
                 } else {

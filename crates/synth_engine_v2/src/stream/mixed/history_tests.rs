@@ -51,7 +51,7 @@ impl MixedOneShotAudio {
         if self.test_live_share < EventCount::measured(1) {
             return Err(Refused::Share);
         }
-        let identity = self.audio.minter.mint_keyed(self.audio.note, key)?;
+        let identity = self.audio.live_minter.mint_keyed(self.audio.note, key)?;
         self.test_live = Some(TimedEvent::new(
             crate::ingress::PerformanceIngress::envelope_for(self.audio.renderer.epoch(), at),
             EventPayload::Note {
@@ -454,7 +454,7 @@ fn one_shot_rehearsal(
     let live = audio
         .arm_test_live_on(SampleTime::ZERO, key(48), NoteVelocity::FULL)
         .expect("one admitted test live onset");
-    assert_eq!(audio.audio.minter.resolve(live), Resolution::Live);
+    assert_eq!(audio.audio.live_minter.resolve(live), Resolution::Live);
     let mut samples = vec![0.0_f32; partition.iter().sum()];
     let mut offset = 0;
     for &frames in partition {
@@ -467,7 +467,7 @@ fn one_shot_rehearsal(
         assert_eq!(allocator_events, 0, "callback allocated or deallocated");
         offset = end;
     }
-    assert_eq!(audio.audio.minter.resolve(live), Resolution::Live);
+    assert_eq!(audio.audio.live_minter.resolve(live), Resolution::Live);
     (samples, audio.report())
 }
 
@@ -506,13 +506,6 @@ fn private_mixed_ingress_reuses_only_after_ordered_release() {
 
     for compiled_first in [true, false] {
         let prepared = bound_with_compiled_note_held_at_boundary(compiled_first);
-        let EventPayload::Note {
-            identity: compiled,
-            edge: NoteEdge::On { .. },
-        } = prepared.events[0].payload()
-        else {
-            panic!("compiled onset");
-        };
         let history = prepared
             .prepare_history(SampleTime::new(64), PlanPosition::new(256))
             .expect("history");
@@ -527,10 +520,6 @@ fn private_mixed_ingress_reuses_only_after_ordered_release() {
         assert_eq!(
             audio.test_ingress.holds_outstanding(),
             EventCount::measured(1)
-        );
-        assert_eq!(
-            audio.offer_test_note_off(SampleTime::new(8), compiled),
-            Err(IngressRefused::OrphanRelease { identity: compiled })
         );
         audio
             .offer_test_note_off(SampleTime::new(16), first)
@@ -572,6 +561,23 @@ fn private_mixed_ingress_reuses_only_after_ordered_release() {
                 .map(|note| note.identity)
                 .collect::<Vec<_>>(),
             vec![second]
+        );
+        // The compiled occurrence exists only once audio has published it; with a live
+        // hold outstanding, the live ingress still refuses it as an orphan.
+        let compiled = audio.audio.compiled_ended[0]
+            .expect("published compiled onset ended at the boundary")
+            .identity;
+        let held = audio
+            .offer_test_note_on(SampleTime::new(256), key(50), NoteVelocity::FULL)
+            .expect("hold for the orphan check");
+        assert_ne!(held, compiled);
+        assert_eq!(
+            audio.test_ingress.holds_outstanding(),
+            EventCount::measured(2)
+        );
+        assert_eq!(
+            audio.offer_test_note_off(SampleTime::new(256), compiled),
+            Err(IngressRefused::OrphanRelease { identity: compiled })
         );
     }
 }
@@ -685,7 +691,7 @@ fn private_mixed_ingress_counts_each_resource_and_preserves_release_slot() {
     let (_, mut audio) = prepared
         .arm_one_shot(candidate, &mixed_profile())
         .expect("private arm");
-    audio.audio.minter.retire_first_generation_for_test();
+    audio.audio.live_minter.retire_first_generation_for_test();
     for raw in [48, 49] {
         let identity = audio
             .offer_test_note_on(SampleTime::ZERO, key(raw), NoteVelocity::FULL)
@@ -1467,13 +1473,17 @@ fn private_one_shot_audio_later_quantum_fault_silences_earlier_output() {
         .shares()
         .compiled_event_share();
     let original = *audio.capsule.events.last().expect("compiled suffix");
-    let late = TimedEvent::new(
+    let MixedCompiledPayload::On { token, .. } = original.payload() else {
+        panic!("compiled suffix onset");
+    };
+    // Bends on the held suffix note resolve through the audio token table.
+    let late = MixedCompiledEvent::new(
         EventEnvelope::new(
             original.envelope().epoch(),
             SampleTime::new(128),
             original.envelope().source(),
         ),
-        original.payload(),
+        MixedCompiledPayload::Bend(token, Cents::ZERO),
     );
     // Fault injection after admission, without a producer API that could offer it.
     audio
@@ -1514,7 +1524,7 @@ fn private_one_shot_audio_displacement_fault_keeps_cause_and_counter() {
     let index = audio.capsule.events.len() - 1;
     let event = audio.capsule.events[index];
     // Fault injection after off-thread admission; the real candidate cannot overflow.
-    audio.capsule.events[index] = TimedEvent::new(
+    audio.capsule.events[index] = MixedCompiledEvent::new(
         EventEnvelope::new(
             event.envelope().epoch(),
             SampleTime::new(u64::MAX),
@@ -1595,13 +1605,6 @@ fn private_one_shot_audio_preserves_held_live_output_after_compiled_release() {
 fn private_mixed_sounding_snapshot_separates_unpublished_and_boundary_released_identities() {
     for compiled_first in [true, false] {
         let prepared = bound_with_compiled_note_held_at_boundary(compiled_first);
-        let EventPayload::Note {
-            identity: compiled,
-            edge: NoteEdge::On { .. },
-        } = prepared.events[0].payload()
-        else {
-            panic!("initial compiled onset");
-        };
         let history = prepared
             .prepare_history(SampleTime::new(64), PlanPosition::new(256))
             .expect("history");
@@ -1620,10 +1623,17 @@ fn private_mixed_sounding_snapshot_separates_unpublished_and_boundary_released_i
             .expect("bound registry");
         assert!(before.compiled().is_empty());
         assert!(before.live().is_empty(), "minting is not sounding");
+        assert!(
+            audio.audio.compiled_minter.live_identities().is_empty(),
+            "no compiled occurrence exists before audio publishes it"
+        );
 
         let mut old_output = [0.0_f32; 128];
         let block = AudioBlockMut::new(&mut old_output, 128, ChannelLayout::Mono).expect("old");
         audio.render_private(block).expect("old quantum");
+        let minted = audio.audio.compiled_minter.live_identities();
+        assert_eq!(minted.len(), 1);
+        let compiled = minted[0];
         let sounding = audio
             .audio
             .renderer
@@ -1720,12 +1730,6 @@ fn private_teardown_keeps_charged_but_unregistered_live_distinct() {
 fn private_pending_collection_classifies_sounding_compiled_and_live_separately() {
     for compiled_first in [true, false] {
         let prepared = bound_with_compiled_note_held_at_boundary(compiled_first);
-        let EventPayload::Note {
-            identity: compiled, ..
-        } = prepared.events[0].payload()
-        else {
-            panic!("compiled onset");
-        };
         let history = prepared
             .prepare_history(SampleTime::new(64), PlanPosition::new(256))
             .expect("history");
@@ -1748,6 +1752,7 @@ fn private_pending_collection_classifies_sounding_compiled_and_live_separately()
             panic!("pending owner must end");
         };
         assert_eq!(ended.end, MixedCollectionEnd::Pending);
+        assert_eq!(ended.compiled_minted.len(), 1);
         assert_eq!(
             ended
                 .sounding
@@ -1755,7 +1760,7 @@ fn private_pending_collection_classifies_sounding_compiled_and_live_separately()
                 .iter()
                 .map(|note| note.identity)
                 .collect::<Vec<_>>(),
-            vec![compiled]
+            ended.compiled_minted
         );
         assert_eq!(
             ended
@@ -1810,7 +1815,7 @@ fn private_collection_uses_birth_pairing_even_when_capsule_names_other_owner() {
         .expect("second");
     audio_b.capsule.plan = control_a.control.plan.id();
     audio_b.capsule.epoch = control_a.control.epoch;
-    audio_b.capsule.table = control_a.control.minter.id();
+    audio_b.capsule.table = control_a.control.table;
     let refused = control_a.collect(audio_b).expect_err("crossed birth pair");
     assert_eq!(refused.reason, MixedCollectionError::CrossedPair);
     let MixedCollectionRefusal {
@@ -1930,7 +1935,7 @@ fn private_resumed_terminal_pairing_fault_can_teardown_with_boundary_history() {
 }
 
 #[test]
-fn private_adopted_collection_promotes_one_authority_and_reclaims_retired_list() {
+fn private_adopted_collection_moves_only_anchor_and_sequence_and_reclaims_retired_list() {
     for compiled_first in [true, false] {
         let (prepared, candidate) =
             one_shot_with_boundary_on_at(compiled_first, SampleTime::new(65));
@@ -1982,9 +1987,19 @@ fn private_adopted_collection_promotes_one_authority_and_reclaims_retired_list()
             control.sequence,
             ActivationSequence::INITIAL.next().expect("successor")
         );
-        assert_eq!(control.outstanding, vec![successor]);
-        assert_eq!(control.control.minter.resolve(successor), Resolution::Live);
-        assert!(audio.capsule.minter.is_none());
+        // Identity custody never moved: the audio half still holds the successor.
+        assert_eq!(
+            audio.audio.compiled_minter.resolve(successor),
+            Resolution::Live
+        );
+        assert_eq!(
+            audio.audio.compiled_minter.resolve(original),
+            Resolution::Orphan(crate::identity::OrphanCause::SupersededGeneration)
+        );
+        assert_eq!(
+            audio.audio.compiled_minter.live_identities(),
+            vec![successor]
+        );
         assert!(audio.capsule.events.is_empty());
         assert_eq!(retired.event_count, 1);
         assert_eq!(retired.unconsumed_from, 1);
@@ -2007,6 +2022,7 @@ fn private_adopted_collection_promotes_one_authority_and_reclaims_retired_list()
                 .collect::<Vec<_>>(),
             vec![successor]
         );
+        assert_eq!(ended.compiled_minted, vec![successor]);
         assert_eq!(
             ended
                 .boundary_ended
@@ -2076,7 +2092,7 @@ fn private_promotion_refusal_and_terminal_fault_end_the_correct_pair() {
     audio
         .render_private(AudioBlockMut::new(&mut samples, 129, ChannelLayout::Mono).expect("block"))
         .expect("adopt");
-    audio.capsule.outstanding_count = HeldNoteCount::NONE;
+    audio.capsule.retired_anchor = None;
     let MixedCollection::Ended(ended) = control.collect(audio).expect("defensive collection")
     else {
         panic!("corrupt promotion must terminate");
@@ -2084,9 +2100,6 @@ fn private_promotion_refusal_and_terminal_fault_end_the_correct_pair() {
     assert_eq!(ended.end, MixedCollectionEnd::PromotionRefused);
 
     let (prepared, candidate) = one_shot_with_boundary_on(true);
-    let EventPayload::Note { identity: old, .. } = prepared.events[0].payload() else {
-        panic!("compiled onset");
-    };
     let restoration = candidate.restoration_count;
     let session = restoration
         .checked_add(EventCount::measured(1))
@@ -2095,11 +2108,21 @@ fn private_promotion_refusal_and_terminal_fault_end_the_correct_pair() {
         .arm_one_shot(candidate, &profile_with_session_share(session))
         .expect("arm");
     audio.capsule.restoration_count = session;
-    let mut samples = [0.0_f32; 129];
+    // The initial carry and the old quantum, then one frame opening the boundary.
+    let mut old_quantum = [0.0_f32; 128];
+    audio
+        .render_private(
+            AudioBlockMut::new(&mut old_quantum, 128, ChannelLayout::Mono).expect("old block"),
+        )
+        .expect("old quantum");
+    let old = audio.audio.compiled_minter.live_identities();
+    assert_eq!(old.len(), 1);
+    let old = old[0];
+    let mut samples = [0.0_f32; 1];
     assert!(
         audio
             .render_private(
-                AudioBlockMut::new(&mut samples, 129, ChannelLayout::Mono).expect("block")
+                AudioBlockMut::new(&mut samples, 1, ChannelLayout::Mono).expect("block")
             )
             .is_err()
     );
@@ -2117,6 +2140,10 @@ fn private_promotion_refusal_and_terminal_fault_end_the_correct_pair() {
             .collect::<Vec<_>>(),
         vec![old]
     );
+    // The suffix onset minted as it was charged, then the Session charge faulted
+    // before the renderer registered it: minted, not sounding, and not the old note.
+    assert_eq!(ended.compiled_minted.len(), 1);
+    assert_ne!(ended.compiled_minted[0], old);
 }
 
 #[test]
@@ -2583,7 +2610,7 @@ fn crossing_release_is_absent_from_private_suffix_selection() {
 }
 
 #[test]
-fn private_stamp_releases_only_its_copy_and_orders_restoration_before_destination_on() {
+fn private_stamp_pairs_tokens_without_minting_and_orders_restoration_before_destination_on() {
     for compiled_first in [true, false] {
         let prepared = bound_with_events(compiled_first, |note| {
             vec![
@@ -2612,11 +2639,8 @@ fn private_stamp_releases_only_its_copy_and_orders_restoration_before_destinatio
                 ),
             ]
         });
-        let original = prepared.outstanding[0];
-        assert_eq!(
-            prepared.owner.control.minter.resolve(original),
-            Resolution::Live
-        );
+        assert_eq!(prepared.outstanding, vec![MixedNoteToken(1)]);
+        assert!(prepared.owner.audio.compiled_minter.untouched_for_test());
         let history = prepared
             .prepare_history(SampleTime::new(64), PlanPosition::new(10))
             .expect("prefix");
@@ -2640,26 +2664,23 @@ fn private_stamp_releases_only_its_copy_and_orders_restoration_before_destinatio
             Some(restoration_count + 1)
         );
         assert_eq!(stamped.outstanding_count().get(), 1);
-        assert_eq!(stamped.minter.live(), 1);
-        assert_eq!(stamped.outstanding.len(), 1);
-        assert_eq!(
-            stamped.minter.resolve(stamped.outstanding[0]),
-            Resolution::Live
-        );
-        assert_eq!(
-            prepared.owner.control.minter.resolve(original),
-            Resolution::Live,
-            "the authoritative compiled range cannot be released by rehearsal"
+        // The suffix pairs from an empty scratch occupancy: token zero, although the
+        // initial list still holds token one at the boundary.
+        assert_eq!(stamped.outstanding, vec![MixedNoteToken(0)]);
+        assert!(
+            prepared.owner.audio.compiled_minter.untouched_for_test(),
+            "pairing a candidate mints nothing in the audio-owned compiled range"
         );
         for event in &stamped.events[..restoration_count] {
-            assert!(matches!(event.payload(), EventPayload::ScopedRestore(_)));
+            assert!(matches!(event.payload(), MixedCompiledPayload::Restore(_)));
             assert_eq!(event.envelope().time(), SampleTime::new(64));
         }
         let last = stamped.events[restoration_count];
         assert!(matches!(
             last.payload(),
-            EventPayload::Note {
-                edge: crate::render::NoteEdge::On { key: on_key, .. },
+            MixedCompiledPayload::On {
+                token: MixedNoteToken(0),
+                key: on_key,
                 ..
             } if on_key == key(72)
         ));
@@ -2698,19 +2719,8 @@ fn private_stamp_releases_only_its_copy_and_orders_restoration_before_destinatio
                 effective: SampleTime::new(last_boundary),
             })
         );
-        assert!(
-            stamped
-                .events
-                .iter()
-                .all(|event| !matches!(event.payload(), EventPayload::SetParameter { .. }))
-        );
-        assert!(stamped.outstanding.iter().all(|identity| {
-            prepared
-                .owner
-                .control
-                .minter
-                .span()
-                .contains(identity.index())
+        assert!(stamped.outstanding.iter().all(|token| {
+            token.as_usize() < prepared.owner.control.compiled_span.indices().len()
         }));
     }
 }
@@ -2731,7 +2741,6 @@ fn private_audio_capsule_is_sendable_without_moving_control_or_source_history() 
                 },
             )]
         });
-        let old = prepared.outstanding[0];
         let history = prepared
             .prepare_history(SampleTime::new(64), PlanPosition::new(10))
             .expect("prefix");
@@ -2762,28 +2771,23 @@ fn private_audio_capsule_is_sendable_without_moving_control_or_source_history() 
         assert_eq!(capsule.restoration_count, restoration_count);
         assert_eq!(capsule.outstanding_count, outstanding_count);
         assert_eq!(
-            capsule.outstanding.len(),
-            outstanding_count.as_usize().unwrap()
-        );
-        assert_eq!(
             (capsule.omitted_releases, capsule.omitted_expressions),
             omitted
         );
-        assert_eq!(
-            capsule.minter.as_ref().map(CompiledRangeMinter::live),
-            Some(outstanding_count.get())
-        );
-        assert_eq!(
-            prepared.owner.control.minter.resolve(old),
-            Resolution::Live,
-            "boxing a copied minter must not alter authoritative custody"
+        assert!(capsule.events.iter().all(|event| matches!(
+            event.payload(),
+            MixedCompiledPayload::Restore(_) | MixedCompiledPayload::On { .. }
+        )));
+        assert!(
+            prepared.owner.audio.compiled_minter.untouched_for_test(),
+            "boxing a tokenized candidate mints nothing"
         );
         drop(capsule);
     }
 }
 
 #[test]
-fn private_one_shot_arm_fixes_boundary_and_splits_identity_custody() {
+fn private_one_shot_arm_fixes_boundary_and_keeps_identity_custody_on_audio() {
     fn require_send<T: Send>() {}
     require_send::<MixedOneShotAudio>();
 
@@ -2798,7 +2802,6 @@ fn private_one_shot_arm_fixes_boundary_and_splits_identity_custody() {
                 },
             )]
         });
-        let old = prepared.outstanding[0];
         let history = prepared
             .prepare_history(SampleTime::new(65), PlanPosition::new(10))
             .expect("bound history");
@@ -2812,8 +2815,12 @@ fn private_one_shot_arm_fixes_boundary_and_splits_identity_custody() {
         let (control, audio) = prepared
             .arm_one_shot(candidate, &mixed_profile())
             .expect("one arm");
-        assert_eq!(control.control.minter.resolve(old), Resolution::Live);
-        assert_eq!(control.outstanding, vec![old]);
+        assert!(audio.audio.compiled_minter.untouched_for_test());
+        assert!(audio.audio.compiled_tokens.iter().all(Option::is_none));
+        assert_eq!(
+            audio.audio.compiled_tokens.len(),
+            control.control.compiled_span.indices().len()
+        );
         assert_eq!(audio.audio.renderer.clock(), SampleTime::ZERO);
         assert_eq!(audio.events[0].envelope().time(), SampleTime::ZERO);
         assert_eq!(audio.next, 0);
@@ -2837,14 +2844,6 @@ fn private_one_shot_arm_fixes_boundary_and_splits_identity_custody() {
         assert_eq!(
             audio.capsule.events.len(),
             audio.capsule.event_count.as_usize().unwrap()
-        );
-        assert_eq!(
-            audio.capsule.outstanding.len(),
-            audio.capsule.outstanding_count.as_usize().unwrap()
-        );
-        assert_eq!(
-            audio.capsule.minter.as_ref().map(CompiledRangeMinter::live),
-            Some(audio.capsule.outstanding_count.get())
         );
         assert_eq!(audio.capsule.restoration_count, restoration_count);
         assert_eq!(
@@ -2878,7 +2877,6 @@ fn private_one_shot_arm_returns_foreign_candidate_without_changing_owner() {
         let candidate = foreign.stamp_suffix(suffix).expect("foreign stamp");
         let epoch = prepared.epoch();
         let table = prepared.table_id();
-        let original = prepared.outstanding[0];
         let count = prepared.event_count();
         let refused = prepared
             .arm_one_shot(candidate, &mixed_profile())
@@ -2888,9 +2886,13 @@ fn private_one_shot_arm_returns_foreign_candidate_without_changing_owner() {
         assert_eq!(refused.owner.table_id(), table);
         assert_eq!(refused.owner.event_count(), count);
         assert_eq!(refused.owner.owner.audio.renderer.clock(), SampleTime::ZERO);
-        assert_eq!(
-            refused.owner.owner.control.minter.resolve(original),
-            Resolution::Live
+        assert!(
+            refused
+                .owner
+                .owner
+                .audio
+                .compiled_minter
+                .untouched_for_test()
         );
         assert_eq!(
             refused.owner.owner.audio.renderer.anchor_for_test(),
@@ -2911,10 +2913,10 @@ fn private_one_shot_arm_returns_foreign_candidate_without_changing_owner() {
             .expect("retry history");
         let suffix = returned.prepare_suffix(history).expect("retry suffix");
         let candidate = returned.stamp_suffix(suffix).expect("retry stamp");
-        let (control, audio) = returned
+        let (_, audio) = returned
             .arm_one_shot(candidate, &mixed_profile())
             .expect("retry arm");
-        assert_eq!(control.control.minter.resolve(original), Resolution::Live);
+        assert!(audio.audio.compiled_minter.untouched_for_test());
         assert_eq!(audio.timing.effective(), SampleTime::new(64));
     }
 }
@@ -2987,7 +2989,6 @@ fn private_one_shot_arm_timing_refusal_preserves_both_inputs() {
         .expect("stamp at final sample");
     let epoch = prepared.epoch();
     let count = prepared.event_count();
-    let original = prepared.outstanding[0];
     let refused = prepared
         .arm_one_shot(candidate, &mixed_profile())
         .expect_err("shift overflows");
@@ -2998,9 +2999,13 @@ fn private_one_shot_arm_timing_refusal_preserves_both_inputs() {
     assert_eq!(refused.owner.epoch(), epoch);
     assert_eq!(refused.owner.event_count(), count);
     assert_eq!(refused.owner.owner.audio.renderer.clock(), SampleTime::ZERO);
-    assert_eq!(
-        refused.owner.owner.control.minter.resolve(original),
-        Resolution::Live
+    assert!(
+        refused
+            .owner
+            .owner
+            .audio
+            .compiled_minter
+            .untouched_for_test()
     );
     assert_eq!(refused.candidate.anchor.time(), requested);
     assert_eq!(
@@ -3026,7 +3031,6 @@ fn private_one_shot_arm_refuses_short_ended_storage_and_can_retry() {
                 },
             )]
         });
-        let old = prepared.outstanding[0];
         let needed = prepared.owner.audio.compiled_ended.len();
         let history = prepared
             .prepare_history(SampleTime::new(64), PlanPosition::new(10))
@@ -3049,14 +3053,14 @@ fn private_one_shot_arm_refuses_short_ended_storage_and_can_retry() {
                 available: 0,
             })
         );
-        assert_eq!(owner.owner.control.minter.resolve(old), Resolution::Live);
+        assert!(owner.owner.audio.compiled_minter.untouched_for_test());
         assert_eq!(owner.owner.audio.renderer.clock(), SampleTime::ZERO);
         assert_eq!(candidate.anchor.time(), SampleTime::new(64));
         owner.owner.audio.compiled_ended.resize(needed, None);
-        let (control, audio) = owner
+        let (_, audio) = owner
             .arm_one_shot(candidate, &mixed_profile())
             .expect("corrected storage");
-        assert_eq!(control.control.minter.resolve(old), Resolution::Live);
+        assert!(audio.audio.compiled_minter.untouched_for_test());
         assert_eq!(audio.timing.effective(), SampleTime::new(64));
     }
 }
@@ -3074,7 +3078,6 @@ fn private_one_shot_arm_refuses_registry_partition_mismatch_without_consuming_in
                 },
             )]
         });
-        let old = prepared.outstanding[0];
         let history = prepared
             .prepare_history(SampleTime::new(64), PlanPosition::new(10))
             .expect("history");
@@ -3097,7 +3100,7 @@ fn private_one_shot_arm_refuses_registry_partition_mismatch_without_consuming_in
             reason,
             MixedOneShotArmError::Storage(crate::render::MixedBoundaryStorageError::Partition)
         );
-        assert_eq!(owner.owner.control.minter.resolve(old), Resolution::Live);
+        assert!(owner.owner.audio.compiled_minter.untouched_for_test());
         assert_eq!(owner.owner.audio.renderer.clock(), SampleTime::ZERO);
         assert_eq!(candidate.anchor.time(), SampleTime::new(64));
         owner
@@ -3105,10 +3108,10 @@ fn private_one_shot_arm_refuses_registry_partition_mismatch_without_consuming_in
             .audio
             .renderer
             .restore_mixed_registry_range_for_test();
-        let (control, audio) = owner
+        let (_, audio) = owner
             .arm_one_shot(candidate, &mixed_profile())
             .expect("restored range");
-        assert_eq!(control.control.minter.resolve(old), Resolution::Live);
+        assert!(audio.audio.compiled_minter.untouched_for_test());
         assert_eq!(audio.timing.effective(), SampleTime::new(64));
     }
 }
@@ -3299,7 +3302,7 @@ fn private_one_shot_arm_rejects_reordered_effective_suffix() {
     let (prepared, mut candidate) = one_shot_with_boundary_on(true);
     let index = candidate.restoration_count.get() as usize;
     let event = candidate.events[index];
-    candidate.events[index] = TimedEvent::new(
+    candidate.events[index] = MixedCompiledEvent::new(
         EventEnvelope::new(
             event.envelope().epoch(),
             SampleTime::new(128),
@@ -3380,7 +3383,7 @@ fn private_effective_timing_refuses_suffix_overflow_after_restoration_fits() {
         .expect("represented restoration count");
     assert!(restoration_count > 0);
     for event in &stamped.events[..restoration_count] {
-        assert!(matches!(event.payload(), EventPayload::ScopedRestore(_)));
+        assert!(matches!(event.payload(), MixedCompiledPayload::Restore(_)));
         assert_eq!(
             event.envelope().time().checked_add(shift),
             Ok(SampleTime::new(last_boundary))
@@ -3517,7 +3520,13 @@ fn private_effective_list_releases_old_compiled_notes_before_a_destination_on() 
         let suffix = prepared.prepare_suffix(history).expect("bound suffix");
         assert_eq!(suffix.omitted_release_count().get(), 1);
         let stamped = prepared.stamp_suffix(suffix).expect("private candidate");
-        let old_on = prepared.events[0];
+        assert!(prepared.owner.audio.compiled_minter.untouched_for_test());
+        // The audio half mints the old onset as it publishes it.
+        let old_on = prepared
+            .owner
+            .audio
+            .publish_compiled(prepared.events[0])
+            .expect("old onset publishes");
         let EventPayload::Note {
             identity: old_identity,
             edge: NoteEdge::On { .. },
@@ -3543,7 +3552,7 @@ fn private_effective_list_releases_old_compiled_notes_before_a_destination_on() 
         assert!(released_only.bind_mixed_partition(partition));
         let audio = &mut prepared.owner.audio;
         let live_identity = audio
-            .minter
+            .live_minter
             .mint_keyed(note, key(48))
             .expect("live range credit");
         let live_on = TimedEvent::new(
@@ -3598,37 +3607,34 @@ fn private_effective_list_releases_old_compiled_notes_before_a_destination_on() 
             .as_usize()
             .expect("restoration count");
         assert!(events[..restoration_count].iter().all(|event| {
-            matches!(event.payload(), EventPayload::ScopedRestore(_))
+            matches!(event.payload(), MixedCompiledPayload::Restore(_))
                 && event.envelope().time() == effective
         }));
-        let EventPayload::Note {
-            identity: new_identity,
-            edge: NoteEdge::On { key: new_key, .. },
+        let MixedCompiledPayload::On {
+            token: new_token,
+            key: new_key,
+            ..
         } = events[restoration_count].payload()
         else {
             panic!("destination onset follows restoration");
         };
         assert_eq!(new_key, key(72));
         assert_eq!(events[restoration_count].envelope().time(), effective);
-        assert_ne!(new_identity, old_identity);
         assert_eq!(events.len(), restoration_count + 2);
         assert_eq!(
             events.last().map(|event| event.envelope().time()),
             Some(SampleTime::new(320))
         );
-        assert!(matches!(
-            events.last().map(TimedEvent::payload),
-            Some(EventPayload::Note {
-                identity,
-                edge: NoteEdge::Off,
-            }) if identity == new_identity
-        ));
-        let boundary_events: Vec<_> = events
+        assert_eq!(
+            events.last().map(MixedCompiledEvent::payload),
+            Some(MixedCompiledPayload::Off(new_token))
+        );
+        let boundary_candidate: Vec<_> = events
             .iter()
             .copied()
             .filter(|event| event.envelope().time() == effective)
             .collect();
-        assert_eq!(boundary_events.len(), restoration_count + 1);
+        assert_eq!(boundary_candidate.len(), restoration_count + 1);
         let old_anchor = audio.renderer.anchor_for_test();
         assert_ne!(
             old_anchor.time_of(stamped.suffix.history.position),
@@ -3661,6 +3667,32 @@ fn private_effective_list_releases_old_compiled_notes_before_a_destination_on() 
         assert_eq!(allocations, 0);
         let adopted = adopted.expect("boundary result");
         assert_eq!(adopted.released().get(), 1);
+        let mut custody = Ok(());
+        let allocations = crate::render_allocation::count_allocs(|| {
+            custody = audio.end_compiled_custody(adopted.released());
+        });
+        assert_eq!(allocations, 0);
+        custody.expect("the boundary release ended the only minted compiled note");
+        assert_eq!(
+            audio.compiled_minter.resolve(old_identity),
+            Resolution::Orphan(crate::identity::OrphanCause::FreeIndex)
+        );
+        let boundary_events = boundary_candidate
+            .iter()
+            .map(|event| audio.publish_compiled(*event))
+            .collect::<Result<Vec<_>, _>>()
+            .expect("destination events publish");
+        let EventPayload::Note {
+            identity: new_identity,
+            edge: NoteEdge::On { .. },
+        } = boundary_events[restoration_count].payload()
+        else {
+            panic!("destination onset publishes as a note-on");
+        };
+        // Lowest-free selection reuses the freed index under a newer generation.
+        assert_eq!(new_identity.index(), old_identity.index());
+        assert_ne!(new_identity, old_identity);
+        assert_eq!(audio.compiled_minter.live_identities(), vec![new_identity]);
         assert_eq!(adopted.retired_anchor(), old_anchor);
         assert_eq!(
             audio.renderer.anchor_for_test(),
@@ -3754,11 +3786,7 @@ fn private_stamp_refuses_unrepresentable_suffix_time_and_invalid_selection() {
             ),
         ]
     });
-    let original = prepared.outstanding[0];
-    assert_eq!(
-        prepared.owner.control.minter.resolve(original),
-        Resolution::Live
-    );
+    assert!(prepared.owner.audio.compiled_minter.untouched_for_test());
     let history = prepared
         .prepare_history(SampleTime::new(64), PlanPosition::new(10))
         .expect("prefix");
@@ -3810,55 +3838,176 @@ fn private_stamp_refuses_unrepresentable_suffix_time_and_invalid_selection() {
         })
     );
     assert_eq!(prepared.outstanding_count(), 1);
-    assert_eq!(
-        prepared.owner.control.minter.resolve(original),
-        Resolution::Live
-    );
+    assert!(prepared.owner.audio.compiled_minter.untouched_for_test());
 }
 
 #[test]
-fn private_stamp_refuses_inconsistent_old_reservation_custody() {
-    let make_prepared = || {
-        bound_with_events(true, |note| {
-            vec![PlanEvent::new(
-                PlanPosition::ZERO,
+fn withdrawn_candidates_change_no_minter_and_never_cause_over_emission() {
+    fn published(compiled_first: bool, withdrawn: usize) -> [(u16, u32); 2] {
+        let (prepared, _) = one_shot_with_boundary_on_at(compiled_first, SampleTime::new(65));
+        let span = prepared.owner.control.compiled_span.indices().len();
+        // More withdrawn candidates than the compiled span holds: under copied
+        // custody each would have reserved its note, under tokens none mints.
+        for _ in 0..withdrawn.max(span + 1) * usize::from(withdrawn > 0) {
+            let history = prepared
+                .prepare_history(SampleTime::new(65), PlanPosition::new(10))
+                .expect("history");
+            let suffix = prepared.prepare_suffix(history).expect("suffix");
+            drop(prepared.stamp_suffix(suffix).expect("withdrawn candidate"));
+            assert!(prepared.owner.audio.compiled_minter.untouched_for_test());
+        }
+        let history = prepared
+            .prepare_history(SampleTime::new(65), PlanPosition::new(10))
+            .expect("history");
+        let suffix = prepared.prepare_suffix(history).expect("suffix");
+        let candidate = prepared.stamp_suffix(suffix).expect("armed candidate");
+        let refused = prepared
+            .arm_one_shot(
+                candidate,
+                &profile_with_session_share(EventCount::measured(1)),
+            )
+            .expect_err("refused arm");
+        assert!(matches!(
+            refused.reason,
+            MixedOneShotArmError::Admission(MixedOneShotAdmissionError::SessionShare { .. })
+        ));
+        assert!(
+            refused
+                .owner
+                .owner
+                .audio
+                .compiled_minter
+                .untouched_for_test()
+        );
+        let (_, mut audio) = refused
+            .owner
+            .arm_one_shot(refused.candidate, &mixed_profile())
+            .expect("private arm after refusal");
+        let mut samples = [0.0_f32; 256];
+        audio
+            .render_private(
+                AudioBlockMut::new(&mut samples, 256, ChannelLayout::Mono).expect("block"),
+            )
+            .expect("render");
+        assert!(audio.report().adopted);
+        let old = audio.audio.compiled_ended[0]
+            .expect("old note ended at the boundary")
+            .identity;
+        let successor = audio.audio.compiled_minter.live_identities();
+        assert_eq!(successor.len(), 1);
+        [
+            (old.index(), old.generation()),
+            (successor[0].index(), successor[0].generation()),
+        ]
+    }
+
+    for compiled_first in [true, false] {
+        let reference = published(compiled_first, 0);
+        assert_eq!(published(compiled_first, 1), reference);
+        assert_eq!(published(compiled_first, 3), reference);
+        // The successor reuses the boundary-freed index at the next generation.
+        assert_eq!(reference[0].0, reference[1].0);
+        assert_eq!(reference[1].1, reference[0].1 + 1);
+    }
+}
+
+#[test]
+fn tokens_are_bounded_by_the_compiled_span_not_the_note_count() {
+    let prepared = bound_with_events(true, |note| {
+        let mut events = Vec::new();
+        for frame in 0..10_u64 {
+            events.push(PlanEvent::new(
+                PlanPosition::new(frame * 4),
                 CompiledPayload::NoteOn {
                     slot: note,
                     key: key(60),
                     velocity: NoteVelocity::FULL,
                 },
-            )]
-        })
-    };
-    let mut missing = make_prepared();
-    missing.outstanding.clear();
-    let history = missing
-        .prepare_history(SampleTime::new(64), PlanPosition::new(10))
-        .expect("prefix");
-    let suffix = missing.prepare_suffix(history).expect("empty suffix");
-    assert_eq!(
-        missing
-            .stamp_suffix(suffix)
-            .expect_err("unlisted live index"),
-        MixedStampPrepareError::OldReservationsRemain {
-            live: HeldNoteCount::measured(1),
+            ));
+            events.push(PlanEvent::new(
+                PlanPosition::new(frame * 4 + 1),
+                CompiledPayload::NoteOn {
+                    slot: note,
+                    key: key(72),
+                    velocity: NoteVelocity::FULL,
+                },
+            ));
+            events.push(PlanEvent::new(
+                PlanPosition::new(frame * 4 + 2),
+                CompiledPayload::NoteOff {
+                    slot: note,
+                    key: key(60),
+                },
+            ));
+            events.push(PlanEvent::new(
+                PlanPosition::new(frame * 4 + 3),
+                CompiledPayload::NoteOff {
+                    slot: note,
+                    key: key(72),
+                },
+            ));
         }
+        events
+    });
+    let span = prepared.owner.control.compiled_span.indices().len();
+    assert_eq!(span, 2);
+    let mut tokens = Vec::new();
+    for event in &prepared.events {
+        match event.payload() {
+            MixedCompiledPayload::On { token, .. } => tokens.push(token),
+            MixedCompiledPayload::Off(token) => {
+                assert!(tokens.contains(&token), "a release names an open token");
+            }
+            payload => panic!("unexpected payload {payload:?}"),
+        }
+    }
+    assert_eq!(tokens.len(), 20);
+    assert!(tokens.iter().all(|token| token.as_usize() < span));
+    assert_eq!(
+        &tokens[..4],
+        &[MixedNoteToken(0), MixedNoteToken(1)].repeat(2)
     );
+    assert!(prepared.outstanding.is_empty());
+    assert!(prepared.owner.audio.compiled_minter.untouched_for_test());
+}
 
-    let mut duplicate = make_prepared();
-    let identity = duplicate.outstanding[0];
-    duplicate.outstanding.push(identity);
-    let history = duplicate
-        .prepare_history(SampleTime::new(64), PlanPosition::new(10))
-        .expect("prefix");
-    let suffix = duplicate.prepare_suffix(history).expect("empty suffix");
+#[test]
+fn tokenizer_refuses_a_span_that_disagrees_with_the_plan() {
+    let prepared = bound(true);
+    let control = &prepared.owner.control;
+    let compiled = control.compiled_producer;
+    let live = prepared.owner.audio.live_producer();
+    let placed = crate::schedule::place_admitted(&control.stream, control.anchor)
+        .expect("placed bound stream");
     assert_eq!(
-        duplicate
-            .stamp_suffix(suffix)
-            .expect_err("duplicate reservation"),
-        MixedStampPrepareError::StaleReservation {
-            identity,
-            resolution: Resolution::Orphan(crate::identity::OrphanCause::FreeIndex),
-        }
+        tokenize_compiled(
+            &control.plan,
+            live,
+            control.compiled_span,
+            control.epoch,
+            &placed,
+        )
+        .err(),
+        Some(MixedTokenizeError::Schedule(
+            SchedulePrepareError::CompiledRangeMismatch {
+                producer: compiled,
+                owned: live,
+                planned: HeldNoteCount::measured(2),
+                actual: HeldNoteCount::measured(2),
+            }
+        ))
     );
+    let short = Range::checked(control.compiled_span.start, 1).expect("short span");
+    assert_eq!(
+        tokenize_compiled(&control.plan, compiled, short, control.epoch, &placed).err(),
+        Some(MixedTokenizeError::Schedule(
+            SchedulePrepareError::CompiledRangeMismatch {
+                producer: compiled,
+                owned: compiled,
+                planned: HeldNoteCount::measured(2),
+                actual: HeldNoteCount::measured(1),
+            }
+        ))
+    );
+    assert!(prepared.owner.audio.compiled_minter.untouched_for_test());
 }

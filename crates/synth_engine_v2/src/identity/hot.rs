@@ -143,6 +143,11 @@ impl CompiledRangeMinter {
     pub fn release(&mut self, identity: NoteIdentity) -> Resolution {
         self.0.release(identity)
     }
+
+    /// How many compiled occurrences this range holds. Read at a mixed boundary.
+    pub(crate) const fn live(&self) -> u32 {
+        self.0.live
+    }
 }
 
 impl LiveRangeMinter {

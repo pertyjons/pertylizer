@@ -7,8 +7,7 @@
 
 use crate::compile::{RenderConfig, compile};
 use crate::identity::{
-    CompiledRangeMinter, IdentityError, IdentityTable, LiveRangeMinter, OrphanCause, ProducerId,
-    Resolution,
+    CompiledRangeMinter, IdentityTable, LiveRangeMinter, OrphanCause, Resolution,
 };
 use crate::ir::{
     ExecutionScope, GraphIr, IrNodeKind, NodeId, NoteProducerDeclaration, PlanDeclarations, PortId,
@@ -21,12 +20,9 @@ use crate::quantities::{
     Amplitude, Cents, ChannelLayout, EventCount, Frequency, HeldNoteCount, KeyIdentity,
     NormalizedLevel, NoteVelocity, SampleRate, Seconds,
 };
-use crate::render::{AudioBlockMut, EventPayload, PreparedRenderer};
+use crate::render::{AudioBlockMut, PreparedRenderer};
 use crate::report::{ResourceAmount, ResourceField};
-use crate::schedule::{
-    AdmittedCompiledStream, CompiledEvent, CompiledEventScheduler, CompiledPayload, PlanEvent,
-    SchedulePrepareError, stamp_all,
-};
+use crate::schedule::{AdmittedCompiledStream, CompiledEventScheduler, CompiledPayload, PlanEvent};
 use crate::stream::StreamControl;
 use crate::time::{FrameCount, PlanPosition, QUANTUM_FRAMES, SampleTime, StreamAnchor};
 
@@ -458,7 +454,7 @@ fn voice(notes: u32) -> GraphIr {
 }
 
 #[test]
-fn compiled_range_copy_commit_preserves_disjoint_live_generation() {
+fn compiled_and_live_ranges_mint_disjointly_from_one_split_table() {
     let plan = admit(&voice(4));
     let slot = plan.resolve_note(ENVELOPE).expect("playable envelope");
     let key = KeyIdentity::new(60).expect("keyboard key");
@@ -472,156 +468,33 @@ fn compiled_range_copy_commit_preserves_disjoint_live_generation() {
     let mut live = LiveRangeMinter::from_partition(second);
     let old_live = live.mint_keyed(slot, key).expect("live room");
 
-    let mut candidate = compiled.working_copy();
-    let events = [
-        CompiledEvent::new(
-            SampleTime::ZERO,
-            CompiledPayload::NoteOn {
-                slot,
-                key,
-                velocity: NoteVelocity::FULL,
-            },
-        ),
-        CompiledEvent::new(SampleTime::new(1), CompiledPayload::NoteOff { slot, key }),
-        CompiledEvent::new(
-            SampleTime::new(2),
-            CompiledPayload::NoteOn {
-                slot,
-                key,
-                velocity: NoteVelocity::FULL,
-            },
-        ),
-    ];
-    let stamped = stamp_all(
-        &mut candidate,
-        &plan,
-        crate::time::issue_epoch().expect("epoch"),
-        &events,
-    )
-    .expect("compiled range stamps");
-
+    let first_note = compiled.mint_keyed(slot, key).expect("compiled room");
+    assert_eq!(compiled.release(first_note), Resolution::Live);
     assert_eq!(live.release(old_live), Resolution::Live);
     let new_live = live
         .mint_keyed(slot, key)
         .expect("live index reuses safely");
-    compiled = candidate;
+    let second_note = compiled.mint_keyed(slot, key).expect("compiled reuse");
 
-    let identities: Vec<_> = stamped
-        .events
-        .iter()
-        .filter_map(|event| match event.payload() {
-            EventPayload::Note { identity, .. } => Some(identity),
-            _ => None,
-        })
-        .collect();
-    assert_eq!(identities.len(), 3);
-    assert!(identities.iter().all(|identity| identity.index() < 4));
+    assert!(first_note.index() < 4 && second_note.index() < 4);
     assert!(old_live.index() >= 4 && new_live.index() >= 4);
-    assert_eq!(identities[0], identities[1]);
-    assert_ne!(identities[0], identities[2]);
-    assert_eq!(stamped.outstanding, vec![identities[2]]);
-    assert_eq!(compiled.resolve(identities[2]), Resolution::Live);
+    assert_eq!(first_note.index(), second_note.index());
+    assert_ne!(first_note, second_note);
+    assert_eq!(compiled.live_identities(), vec![second_note]);
+    assert_eq!(
+        compiled.resolve(first_note),
+        Resolution::Orphan(OrphanCause::SupersededGeneration)
+    );
+    assert_eq!(compiled.resolve(second_note), Resolution::Live);
+    assert_eq!(
+        compiled.resolve(new_live),
+        Resolution::Orphan(OrphanCause::FreeIndex)
+    );
     assert_eq!(live.resolve(new_live), Resolution::Live);
     assert_eq!(
         live.resolve(old_live),
         Resolution::Orphan(OrphanCause::SupersededGeneration)
     );
-}
-
-#[test]
-fn compiled_range_stamp_refuses_a_mismatched_producer() {
-    let plan = admit(&voice(4));
-    let slot = plan.resolve_note(ENVELOPE).expect("playable envelope");
-    let table = IdentityTable::from_admitted_ranges(&[
-        HeldNoteCount::measured(4),
-        HeldNoteCount::measured(4),
-    ])
-    .expect("disjoint ranges");
-    let (_first, second) = table.split_fresh_two().expect("fresh table");
-    let mut wrong = CompiledRangeMinter::from_partition(second);
-    let events = [CompiledEvent::new(
-        SampleTime::ZERO,
-        CompiledPayload::NoteOn {
-            slot,
-            key: KeyIdentity::new(60).expect("keyboard key"),
-            velocity: NoteVelocity::FULL,
-        },
-    )];
-    let Err(error) = stamp_all(
-        &mut wrong,
-        &plan,
-        crate::time::issue_epoch().expect("epoch"),
-        &events,
-    ) else {
-        panic!("a producer cannot mint from another range");
-    };
-    assert!(matches!(
-        error,
-        SchedulePrepareError::CompiledRangeMismatch {
-            producer,
-            owned,
-            planned,
-            actual,
-        } if producer == ProducerId::new(0)
-            && owned == ProducerId::new(1)
-            && planned == HeldNoteCount::measured(4)
-            && actual == HeldNoteCount::measured(4)
-    ));
-    assert!(matches!(
-        crate::schedule::StampMinter::mint_keyed(
-            &mut wrong,
-            ProducerId::new(0),
-            slot,
-            KeyIdentity::new(60).expect("keyboard key")
-        ),
-        Err(IdentityError::WrongMinterProducer { requested, owned })
-            if requested == ProducerId::new(0) && owned == ProducerId::new(1)
-    ));
-}
-
-#[test]
-fn compiled_range_stamp_refuses_a_mismatched_capacity_before_mint() {
-    let plan = admit(&voice(4));
-    let slot = plan.resolve_note(ENVELOPE).expect("playable envelope");
-    let table = IdentityTable::from_admitted_ranges(&[
-        HeldNoteCount::measured(2),
-        HeldNoteCount::measured(4),
-    ])
-    .expect("disjoint ranges");
-    let (first, _second) = table.split_fresh_two().expect("fresh table");
-    let mut short = CompiledRangeMinter::from_partition(first);
-    let events = [CompiledEvent::new(
-        SampleTime::ZERO,
-        CompiledPayload::NoteOn {
-            slot,
-            key: KeyIdentity::new(60).expect("keyboard key"),
-            velocity: NoteVelocity::FULL,
-        },
-    )];
-    let Err(error) = stamp_all(
-        &mut short,
-        &plan,
-        crate::time::issue_epoch().expect("epoch"),
-        &events,
-    ) else {
-        panic!("the minter's span must match the plan before stamping");
-    };
-    assert!(matches!(
-        error,
-        SchedulePrepareError::CompiledRangeMismatch {
-            producer,
-            owned,
-            planned,
-            actual,
-        } if producer == ProducerId::new(0)
-            && owned == ProducerId::new(0)
-            && planned == HeldNoteCount::measured(4)
-            && actual == HeldNoteCount::measured(2)
-    ));
-    let first_mint = short
-        .mint_keyed(slot, KeyIdentity::new(60).expect("keyboard key"))
-        .expect("the failed preflight left the first index free");
-    assert_eq!(first_mint.index(), 0);
 }
 
 /// V1's fade, in frames.

@@ -1,7 +1,10 @@
 //! A split-born mixed stream before ingress, activation or loop commands are enabled.
 //!
 //! This constructor consumes one bound plan and stream. Its two range minters share a
-//! table identity but never share slots. It exposes no production mixed render or
+//! table identity but never share slots, and both belong to the audio half for the
+//! owner's whole life. The off-thread control holds no generation state: it pairs
+//! compiled note edges by bounded tokens, and the audio half mints each compiled
+//! occurrence when its note-on publishes. It exposes no production mixed render or
 //! offer while ADR-0075's combined-host laws remain open.
 
 use std::{marker::PhantomData, rc::Rc, sync::Arc};
@@ -20,13 +23,16 @@ use crate::{
     diagnostics::CompileError,
     host::mixed_targets::{MixedInstancePartition, MixedTargetAdmission},
     identity::{
-        CompiledRangeMinter, IdentityTable, LiveRangeMinter, NoteIdentity, ProducerId, Resolution,
-        TableId,
+        CompiledRangeMinter, IdentityError, IdentityTable, LiveRangeMinter, NoteIdentity,
+        ProducerId, Range, Resolution, TableId,
     },
     plan::{CompiledPlan, NoteSlot, PlanId},
     profile::HostProfile,
     publish::PublicationArbiter,
-    quantities::{EventCount, HeldNoteCount, ParameterValue, QuantumCount, VoiceCount},
+    quantities::{
+        Cents, EventCount, HeldNoteCount, KeyIdentity, NoteVelocity, ParameterValue, QuantumCount,
+        VoiceCount,
+    },
     render::{
         EventEnvelope, EventPayload, MixedSoundingSnapshot, MixedSoundingSnapshotError,
         PreparedRenderer, ScopedParameterRestore, TimedEvent,
@@ -58,24 +64,16 @@ pub enum MixedStreamOpenError {
 /// Why the bound first schedule could not be sealed before any mixed rendering exists.
 #[derive(Debug, Error)]
 pub enum MixedInitialPrepareError {
-    /// Placement or compiled note stamping refused.
+    /// Placement or compiled note pairing refused, including over-emission of the
+    /// compiled span.
     #[error(transparent)]
     Schedule(#[from] SchedulePrepareError),
-    /// A stealing policy or steal artifact appeared despite mixed no-stealing admission.
-    #[error("mixed preparation encountered a stealing policy or steal artifact")]
+    /// A stealing policy appeared despite mixed no-stealing admission.
+    #[error("mixed preparation encountered a stealing policy")]
     UnexpectedSteal,
-    /// A scoped restoration appeared in an initial schedule built from note-only input.
-    #[error("mixed initial schedule contains a scoped restoration")]
-    UnexpectedScopedRestore,
-    /// Stamping left a different number of held indices and recorded obligations.
-    #[error("compiled range holds {live} notes but the schedule records {outstanding}")]
-    OutstandingMismatch { live: u32, outstanding: usize },
-    /// A stamped note edge escaped the compiled producer's checked range.
-    #[error("stamped event {event_index} names {identity} outside the compiled range")]
-    IdentityOutsideRange {
-        event_index: usize,
-        identity: NoteIdentity,
-    },
+    /// Defensive check: a compiled parameter or controller writer escaped target admission.
+    #[error("compiled event {event_index} writes outside note targets")]
+    UnexpectedWriter { event_index: usize },
 }
 
 /// A refusal while reconstructing only the bound compiled history before a seek.
@@ -130,62 +128,22 @@ pub enum MixedSuffixPrepareError {
     CountUnrepresentable,
 }
 
-/// Why a private bound suffix could not be placed and stamped against a compiled-range copy.
+/// Why a private bound suffix could not be placed and paired into compiled tokens.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
 pub enum MixedStampPrepareError {
     /// This selection came from another prepared owner.
     #[error("mixed suffix selection belongs to another prepared owner")]
     ForeignCandidate,
-    /// Its private source indices no longer select a strict suffix in source order.
+    /// Its private source indices no longer select a strict suffix in source order,
+    /// or select a writer the suffix classifier refuses.
     #[error("mixed suffix source selection is invalid at index {event_index}")]
     InvalidSelection {
         /// The rejected source index.
         event_index: usize,
     },
-    /// An old compiled reservation was not live in the copied minter.
-    #[error("old compiled reservation {identity} resolved as {resolution:?}")]
-    StaleReservation {
-        /// The reservation that could not be released.
-        identity: NoteIdentity,
-        /// Its resolution in the copied compiled range.
-        resolution: Resolution,
-    },
-    /// Releasing the old set left another compiled index live.
-    #[error("{live} compiled notes remain after releasing the old schedule")]
-    OldReservationsRemain {
-        /// The unexpected live count.
-        live: HeldNoteCount,
-    },
-    /// Placement or stamping refused with the original source index preserved.
+    /// Placement or token pairing refused with the original source index preserved.
     #[error(transparent)]
     Schedule(#[from] SchedulePrepareError),
-    /// A no-stealing selection emitted an extra or missing stamped event.
-    #[error("mixed suffix selected {selected} source events but stamped {stamped}")]
-    EventCountMismatch {
-        /// Selected source events.
-        selected: EventCount,
-        /// Actual stamped events.
-        stamped: EventCount,
-    },
-    /// A stealing artifact appeared despite target binding's no-stealing rule.
-    #[error("mixed suffix stamping encountered a stealing artifact")]
-    UnexpectedSteal,
-    /// The copied minter and the stamped outstanding set disagree.
-    #[error("mixed suffix holds {live} notes but stamped {outstanding}")]
-    OutstandingMismatch {
-        /// Live notes in the private compiled minter.
-        live: HeldNoteCount,
-        /// Identities held by the private stamped schedule.
-        outstanding: HeldNoteCount,
-    },
-    /// A stamped note edge escaped the compiled producer's range.
-    #[error("mixed suffix source event {event_index} names {identity} outside the compiled range")]
-    IdentityOutsideRange {
-        /// Position in the owner's admitted source stream.
-        event_index: usize,
-        /// The foreign or out-of-range identity.
-        identity: NoteIdentity,
-    },
     /// A private count exceeds its typed representation.
     #[error("mixed suffix stamped count cannot be represented")]
     CountUnrepresentable,
@@ -304,6 +262,18 @@ pub(crate) enum MixedOneShotRenderError {
     InternalOutputWindow,
     #[error("mixed one-shot restoration count cannot be indexed")]
     RestorationCount,
+    /// A tokenized compiled edge disagrees with the audio token table.
+    #[error("mixed compiled token {token:?} disagrees with the audio token table")]
+    CompiledToken { token: MixedNoteToken },
+    /// The audio-owned compiled minter refused a publishing note-on.
+    #[error("mixed compiled note-on could not mint: {source}")]
+    CompiledMint { source: IdentityError },
+    /// The audio-owned compiled minter did not hold an occurrence being ended.
+    #[error("mixed compiled release resolved as {resolution:?}")]
+    CompiledRelease { resolution: Resolution },
+    /// The boundary release and the audio-owned compiled minter disagree.
+    #[error("{live} compiled occurrences remain minted after the boundary release")]
+    CompiledCustody { live: HeldNoteCount },
     #[error(transparent)]
     Boundary(#[from] crate::render::MixedBoundaryReleaseError),
     #[error(transparent)]
@@ -401,7 +371,7 @@ impl MixedEffectiveTiming {
 #[derive(Debug, Clone, Copy)]
 #[must_use]
 pub(crate) struct MixedEffectiveEvents<'a> {
-    events: &'a [TimedEvent],
+    events: &'a [MixedCompiledEvent],
     shift: FrameCount,
 }
 
@@ -414,13 +384,231 @@ impl MixedEffectiveEvents<'_> {
     #[allow(dead_code)] // Full-list inspection is exercised only by private tests.
     pub(crate) fn iter(
         &self,
-    ) -> impl ExactSizeIterator<Item = Result<TimedEvent, MixedEffectiveTimeError>> + '_ {
+    ) -> impl ExactSizeIterator<Item = Result<MixedCompiledEvent, MixedEffectiveTimeError>> + '_
+    {
         self.events
             .iter()
             .copied()
             .enumerate()
             .map(|(index, event)| self.shifted(index, event))
     }
+}
+
+/// A compiled note's pairing key inside one tokenized list.
+///
+/// Bounded by the compiled span rather than by the note count: preparation frees a token
+/// when it places the paired release, and reuses the lowest free one. A token is never an
+/// index or a generation. The audio half chooses the occurrence by ADR-0058 clause 2's
+/// lowest-free rule when the note-on publishes, and its release, expression and bend name
+/// the same token.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[must_use]
+pub(crate) struct MixedNoteToken(u16);
+
+/// What one tokenized compiled event does. It names no [`NoteIdentity`]: off-thread
+/// preparation holds no generation state, so it cannot know one.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) enum MixedCompiledPayload {
+    /// Restore only the compiled instances of one admitted parameter group.
+    Restore(ScopedParameterRestore),
+    /// Mint and play one compiled occurrence, keyed by its token.
+    On {
+        token: MixedNoteToken,
+        slot: NoteSlot,
+        key: KeyIdentity,
+        velocity: NoteVelocity,
+    },
+    /// End the occurrence the token names.
+    Off(MixedNoteToken),
+    /// A typed per-note update for the occurrence the token names.
+    Expression(MixedNoteToken, crate::controller::NoteExpression),
+    /// A pitch offset for the occurrence the token names.
+    Bend(MixedNoteToken, Cents),
+}
+
+/// One placed compiled event of a mixed owner, before the audio half resolves its token.
+#[derive(Debug, Clone, Copy, PartialEq)]
+#[must_use]
+pub(crate) struct MixedCompiledEvent {
+    envelope: EventEnvelope,
+    payload: MixedCompiledPayload,
+}
+
+/// A tokenized compiled list and the tokens it leaves open at its end.
+struct MixedTokenized {
+    events: Vec<MixedCompiledEvent>,
+    open: Vec<MixedNoteToken>,
+}
+
+/// Why a compiled list could not be paired into tokens off-thread.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum MixedTokenizeError {
+    Schedule(SchedulePrepareError),
+    UnexpectedWriter { event_index: usize },
+}
+
+/// Pair one no-stealing compiled list by token, minting nothing.
+///
+/// A scratch occupancy of the compiled span stands in for the minter: a note-on takes the
+/// lowest free token and its paired release frees it, so a list that would over-emit the
+/// span is refused here, at the event where stamping refused it. Pass one refuses foreign,
+/// unpaired and producer-less edges before any token is taken, as stamping does.
+fn tokenize_compiled(
+    plan: &CompiledPlan,
+    producer: ProducerId,
+    span: Range,
+    epoch: StreamEpoch,
+    events: &[CompiledEvent],
+) -> Result<MixedTokenized, MixedTokenizeError> {
+    use MixedTokenizeError::{Schedule, UnexpectedWriter};
+
+    let expected = plan.id();
+    let capacity = span.len;
+    let compiled_producer = plan.compiled_note_producer();
+    if let Some(planned) = compiled_producer {
+        let planned_len = plan
+            .note_producer_ranges()
+            .get(usize::from(planned.as_u16()))
+            .map_or(0, |range| range.get());
+        if planned != producer || planned_len != capacity {
+            return Err(Schedule(SchedulePrepareError::CompiledRangeMismatch {
+                producer: planned,
+                owned: producer,
+                planned: HeldNoteCount::measured(planned_len),
+                actual: HeldNoteCount::measured(capacity),
+            }));
+        }
+    }
+    let foreign = |event_index, actual: PlanId| {
+        Schedule(SchedulePrepareError::ForeignPlan {
+            event_index,
+            expected,
+            actual,
+        })
+    };
+
+    let mut sounding: OpenNotes<()> = OpenNotes::new(capacity, crate::ir::StealingPolicy::None);
+    for (event_index, event) in events.iter().copied().enumerate() {
+        let now = event.time().as_u64();
+        match event.payload() {
+            CompiledPayload::Controller(_) | CompiledPayload::SetParameter { .. } => {
+                return Err(UnexpectedWriter { event_index });
+            }
+            CompiledPayload::NoteOn { slot, key, .. } => {
+                if slot.plan() != expected {
+                    return Err(foreign(event_index, slot.plan()));
+                }
+                if compiled_producer.is_none() {
+                    return Err(Schedule(SchedulePrepareError::NoCompiledNoteProducer {
+                        event_index,
+                    }));
+                }
+                // Over-emission is pass two's to report; pairing continues as stamping's does.
+                if sounding.open(now, slot, key, ()) == Opened::Refused {
+                    sounding.record(now, slot, key, ());
+                }
+            }
+            CompiledPayload::NoteOff { slot, key } => {
+                if slot.plan() != expected {
+                    return Err(foreign(event_index, slot.plan()));
+                }
+                if sounding.close(now, slot, key) == Closed::Unmatched {
+                    return Err(Schedule(SchedulePrepareError::UnmatchedRelease {
+                        event_index,
+                    }));
+                }
+            }
+            CompiledPayload::Expression { slot, key, .. }
+            | CompiledPayload::Bend { slot, key, .. } => {
+                if slot.plan() != expected {
+                    return Err(foreign(event_index, slot.plan()));
+                }
+                if sounding.find(now, slot, key).is_none() {
+                    return Err(Schedule(SchedulePrepareError::UnmatchedExpression {
+                        event_index,
+                    }));
+                }
+            }
+        }
+    }
+
+    let over_emitted = |event_index| {
+        Schedule(SchedulePrepareError::Identity {
+            event_index,
+            source: IdentityError::ProducerOverEmitted {
+                producer,
+                admitted: HeldNoteCount::measured(capacity),
+            },
+        })
+    };
+    let mut open: OpenNotes<MixedNoteToken> =
+        OpenNotes::new(capacity, crate::ir::StealingPolicy::None);
+    let mut occupied = vec![false; span.indices().len()];
+    let mut tokenized = Vec::with_capacity(events.len());
+    for (event_index, event) in events.iter().copied().enumerate() {
+        let now = event.time().as_u64();
+        let unmatched = Schedule(SchedulePrepareError::UnmatchedExpression { event_index });
+        let payload = match event.payload() {
+            CompiledPayload::Controller(_) | CompiledPayload::SetParameter { .. } => {
+                return Err(UnexpectedWriter { event_index });
+            }
+            CompiledPayload::NoteOn {
+                slot,
+                key,
+                velocity,
+            } => {
+                let free = occupied.iter().position(|held| !held);
+                let Some((cell, token)) =
+                    free.and_then(|free| Some((free, MixedNoteToken(u16::try_from(free).ok()?))))
+                else {
+                    return Err(over_emitted(event_index));
+                };
+                if open.open(now, slot, key, token) != Opened::Admitted {
+                    return Err(over_emitted(event_index));
+                }
+                if let Some(held) = occupied.get_mut(cell) {
+                    *held = true;
+                }
+                MixedCompiledPayload::On {
+                    token,
+                    slot,
+                    key,
+                    velocity,
+                }
+            }
+            CompiledPayload::NoteOff { slot, key } => {
+                let Closed::Paired(note) = open.close(now, slot, key) else {
+                    return Err(Schedule(SchedulePrepareError::UnmatchedRelease {
+                        event_index,
+                    }));
+                };
+                if let Some(held) = occupied.get_mut(note.tag.as_usize()) {
+                    *held = false;
+                }
+                MixedCompiledPayload::Off(note.tag)
+            }
+            CompiledPayload::Expression {
+                slot,
+                key,
+                expression,
+            } => match open.find(now, slot, key) {
+                Some(note) => MixedCompiledPayload::Expression(note.tag, expression),
+                None => return Err(unmatched),
+            },
+            CompiledPayload::Bend { slot, key, cents } => match open.find(now, slot, key) {
+                Some(note) => MixedCompiledPayload::Bend(note.tag, cents),
+                None => return Err(unmatched),
+            },
+        };
+        tokenized.push(MixedCompiledEvent::new(
+            EventEnvelope::new(epoch, event.time(), TimeSource::Compiled),
+            payload,
+        ));
+    }
+    Ok(MixedTokenized {
+        events: tokenized,
+        open: open.entries().into_iter().map(|note| note.tag).collect(),
+    })
 }
 
 /// One private, off-thread compiled prefix and scoped restoration batch.
@@ -471,29 +659,29 @@ pub struct MixedSuffixCandidate {
 ///
 /// Its ordered events contain scoped restoration before any equal-time suffix edge.
 /// The restoration batch moves out of the retained suffix history into that list,
-/// leaving the history's restoration count at zero. Promotion is possible only
-/// after a private arm, successful boundary render and off-thread collection;
-/// the combined host still has no offer path.
+/// leaving the history's restoration count at zero. Its note edges carry pairing
+/// tokens, not identities, so withdrawing or refusing it changes no minter. Only
+/// the anchor and activation sequence pass to control at collection; the combined
+/// host still has no offer path.
 #[must_use]
 pub struct MixedStampedCandidate {
     #[allow(dead_code)]
     suffix: MixedSuffixCandidate,
     anchor: StreamAnchor,
     supersedes: ActivationSequence,
-    events: Vec<TimedEvent>,
+    events: Vec<MixedCompiledEvent>,
     event_count: EventCount,
     restoration_count: EventCount,
     #[allow(dead_code)]
-    outstanding: Vec<NoteIdentity>,
+    outstanding: Vec<MixedNoteToken>,
     outstanding_count: HeldNoteCount,
-    #[allow(dead_code)]
-    minter: CompiledRangeMinter,
 }
 
 /// Sendable, boxed custody for one private audio-side mixed transition.
 ///
-/// Source-selection history stays off-thread. Collection drops the retired
-/// event list off-thread; the box remains with audio until final teardown.
+/// Source-selection history stays off-thread. Its events carry tokens; the audio
+/// half's own minter gives them identities as they publish. Collection drops the
+/// retired event list off-thread; the box remains with audio until final teardown.
 #[must_use]
 #[allow(dead_code)] // Private collection has no production host caller.
 pub(crate) struct MixedAudioCandidate {
@@ -507,17 +695,13 @@ pub(crate) struct MixedAudioCandidate {
     sequence: ActivationSequence,
     omitted_releases: EventCount,
     omitted_expressions: EventCount,
-    events: Vec<TimedEvent>,
+    events: Vec<MixedCompiledEvent>,
     /// The candidate's admitted list size, retained as historical metadata
     /// after the list moves to audio at the boundary.
     event_count: EventCount,
     restoration_count: EventCount,
-    outstanding: Vec<NoteIdentity>,
-    /// The candidate's admitted obligation count, retained after promotion
-    /// moves the actual outstanding vector to control.
+    /// Tokens the candidate's list leaves open at its end, as admitted metadata.
     outstanding_count: HeldNoteCount,
-    /// Present until off-thread promotion. The callback never reads it.
-    minter: Option<CompiledRangeMinter>,
 }
 
 impl std::fmt::Debug for MixedAudioCandidate {
@@ -573,7 +757,7 @@ impl std::fmt::Debug for MixedHistoryCandidate {
     }
 }
 
-/// An off-thread joined mixed stream, before its one bound initial stamp.
+/// An off-thread joined mixed stream, before its one bound initial schedule is sealed.
 /// It cannot be transferred to the audio thread or split through its public API.
 ///
 /// ```compile_fail
@@ -605,7 +789,7 @@ pub struct MixedJoinedStream {
 }
 
 /// The sealed first schedule and both owners, still off-thread and not renderable.
-/// No stamped event or mutable half escapes this value.
+/// No tokenized event or mutable half escapes this value, and sealing minted nothing.
 ///
 /// ```compile_fail
 /// use synth_engine_v2::stream::MixedJoinedPrepared;
@@ -627,8 +811,8 @@ pub struct MixedJoinedStream {
 #[must_use]
 pub struct MixedJoinedPrepared {
     owner: MixedJoinedStream,
-    events: Vec<TimedEvent>,
-    outstanding: Vec<NoteIdentity>,
+    events: Vec<MixedCompiledEvent>,
+    outstanding: Vec<MixedNoteToken>,
 }
 
 /// An off-thread arm refusal retains both inputs for correction or disposal.
@@ -641,13 +825,13 @@ pub(crate) struct MixedOneShotArmRefusal {
     candidate: MixedStampedCandidate,
 }
 
-/// Retained off-thread compiled identity authority while one private transition runs.
+/// Retained off-thread control while one private transition runs. It holds no
+/// identity or generation state; both minters stay with the audio half.
 #[derive(Debug)]
 #[must_use]
 #[allow(dead_code)] // The one-shot retirement path is the next slice.
 pub(crate) struct MixedOneShotControl {
     control: MixedStreamControl,
-    outstanding: Vec<NoteIdentity>,
     #[cfg(all(test, feature = "simulated-ingress"))]
     ingress_commands: OpaqueQueue<HeapProd<MixedIngressCommand>>,
     #[cfg(all(test, feature = "simulated-ingress"))]
@@ -780,13 +964,13 @@ impl MixedOneShotControl {
     }
 }
 
-/// The sole compiled authority after a private adopted owner has rejoined.
+/// Control after a private adopted owner has rejoined: the collected anchor and
+/// activation sequence, and still no identity or generation state.
 #[derive(Debug)]
 #[must_use]
 #[allow(dead_code)] // Private collection has no production host caller.
 pub(crate) struct MixedResumedControl {
     control: MixedStreamControl,
-    outstanding: Vec<NoteIdentity>,
     sequence: ActivationSequence,
     off_thread: PhantomData<Rc<()>>,
 }
@@ -807,13 +991,17 @@ pub(crate) struct MixedRetiredList {
 pub(crate) enum MixedCollectionEnd {
     Pending,
     Faulted,
+    /// The adopted capsule's plan, epoch, table, sequence or anchor disagreed, so
+    /// control received neither its anchor nor its sequence.
     PromotionRefused,
     ResumedTeardown,
 }
 
 /// Final stopped-state classification. Boundary-ended and still-sounding notes
 /// remain separate, as do uncharged and charged test-live reservations that
-/// never entered the renderer registry.
+/// never entered the renderer registry. `compiled_minted` lists the compiled
+/// occurrences the audio minter still holds; a note-on charged in a callback that
+/// then faulted appears there but not in `sounding`.
 #[derive(Debug)]
 #[must_use]
 #[allow(dead_code)]
@@ -824,6 +1012,7 @@ pub(crate) struct MixedOneShotTeardown {
     boundary_ended: Vec<crate::identity::EndedNote>,
     unpublished_live: Option<NoteIdentity>,
     charged_unregistered_live: Option<NoteIdentity>,
+    compiled_minted: Vec<NoteIdentity>,
     #[cfg(all(test, feature = "simulated-ingress"))]
     ingress: MixedIngressTeardown,
 }
@@ -847,7 +1036,7 @@ pub(crate) enum MixedCollection {
         audio: Box<MixedOneShotAudio>,
         retired: MixedRetiredList,
     },
-    Ended(MixedOneShotTeardown),
+    Ended(Box<MixedOneShotTeardown>),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
@@ -859,8 +1048,8 @@ pub(crate) enum MixedCollectionError {
     Snapshot(#[from] MixedSoundingSnapshotError),
     #[error("mixed boundary-ended storage lost its recorded prefix")]
     EndedPrefix,
-    #[error("mixed audio half has not completed compiled authority promotion")]
-    UnpromotedAudio,
+    #[error("mixed audio half has not been collected")]
+    UncollectedAudio,
     #[cfg(all(test, feature = "simulated-ingress"))]
     #[error("private mixed ingress journal lost the registered queue")]
     IngressJournal,
@@ -887,7 +1076,7 @@ pub(crate) struct MixedCollectionRefusal<C> {
 pub(crate) struct MixedOneShotAudio {
     audio: MixedStreamAudio,
     arbiter: PublicationArbiter,
-    events: Vec<TimedEvent>,
+    events: Vec<MixedCompiledEvent>,
     next: usize,
     capsule: Box<MixedAudioCandidate>,
     timing: MixedEffectiveTiming,
@@ -971,7 +1160,7 @@ impl MixedOneShotAudio {
         }
         self.test_ingress.adopt(self.audio.renderer.epoch())?;
         self.test_ingress.offer_mixed_note_on(
-            &mut self.audio.minter,
+            &mut self.audio.live_minter,
             at,
             self.audio.note,
             key,
@@ -993,12 +1182,37 @@ impl MixedOneShotAudio {
         }
         self.test_ingress.adopt(self.audio.renderer.epoch())?;
         self.test_ingress
-            .offer_mixed_note_off(&mut self.audio.minter, at, identity)
+            .offer_mixed_note_off(&mut self.audio.live_minter, at, identity)
     }
 }
 
-/// Off-thread compiled-range custody for one bound mixed plan and stream.
+/// Off-thread control for one bound mixed plan and stream.
+///
+/// It holds the compiled range's table, producer and span as plain values and no
+/// generation state, so it can pair edges by token but cannot mint, stamp or release.
 /// It exposes no independent schedule or activation builder.
+///
+/// ```compile_fail
+/// use synth_engine_v2::stream::MixedStreamControl;
+/// fn mint(control: &mut MixedStreamControl) { let _ = control.minter(); }
+/// ```
+///
+/// ```compile_fail
+/// use synth_engine_v2::stream::MixedStreamControl;
+/// use synth_engine_v2::plan::NoteSlot;
+/// use synth_engine_v2::quantities::KeyIdentity;
+/// fn mint(control: &mut MixedStreamControl, slot: NoteSlot, key: KeyIdentity) {
+///     let _ = control.mint_keyed(slot, key);
+/// }
+/// ```
+///
+/// ```compile_fail
+/// use synth_engine_v2::stream::MixedStreamControl;
+/// use synth_engine_v2::identity::NoteIdentity;
+/// fn release(control: &mut MixedStreamControl, identity: NoteIdentity) {
+///     let _ = control.release(identity);
+/// }
+/// ```
 #[derive(Debug)]
 #[must_use]
 pub struct MixedStreamControl {
@@ -1006,18 +1220,24 @@ pub struct MixedStreamControl {
     anchor: StreamAnchor,
     plan: Arc<CompiledPlan>,
     stream: AdmittedCompiledStream,
-    minter: CompiledRangeMinter,
+    table: TableId,
+    compiled_producer: ProducerId,
+    compiled_span: Range,
     compiled_slots: Vec<NoteSlot>,
     partition: Arc<MixedInstancePartition>,
 }
 
-/// Audio-side live-range custody and renderer for a split-born mixed stream.
-/// It exposes no mixed rendering until release and parameter ownership are proved.
+/// Audio-side custody and renderer for a split-born mixed stream: both range minters
+/// for the owner's whole life, and the compiled token table bounded by the compiled
+/// span. It exposes no mixed rendering until release and parameter ownership are proved.
 #[derive(Debug)]
 #[must_use]
 pub struct MixedStreamAudio {
     renderer: PreparedRenderer,
-    minter: LiveRangeMinter,
+    live_minter: LiveRangeMinter,
+    compiled_minter: CompiledRangeMinter,
+    /// The occurrence each open compiled token names; `None` for a free token.
+    compiled_tokens: Vec<Option<NoteIdentity>>,
     note: NoteSlot,
     partition: Arc<MixedInstancePartition>,
     compiled_ended: Vec<Option<crate::identity::EndedNote>>,
@@ -1028,12 +1248,15 @@ fn mixed_collection_pair(control: &MixedStreamControl, audio: &MixedOneShotAudio
     Arc::ptr_eq(&control.partition, &rendered.partition)
         && rendered.renderer.plan().id() == control.plan.id()
         && rendered.renderer.epoch() == control.epoch
-        && rendered.renderer.table_id() == control.minter.id()
-        && rendered.minter.id() == control.minter.id()
-        && control.partition.compiled_producer() == control.minter.producer()
-        && control.partition.spans().0 == control.minter.span()
-        && control.partition.live_producer() == rendered.minter.producer()
-        && control.partition.spans().1 == rendered.minter.span()
+        && rendered.renderer.table_id() == control.table
+        && rendered.live_minter.id() == control.table
+        && rendered.compiled_minter.id() == control.table
+        && control.partition.compiled_producer() == control.compiled_producer
+        && rendered.compiled_minter.producer() == control.compiled_producer
+        && control.partition.spans().0 == control.compiled_span
+        && rendered.compiled_minter.span() == control.compiled_span
+        && control.partition.live_producer() == rendered.live_minter.producer()
+        && control.partition.spans().1 == rendered.live_minter.span()
 }
 
 struct MixedTeardownParts {
@@ -1041,6 +1264,7 @@ struct MixedTeardownParts {
     boundary_ended: Vec<crate::identity::EndedNote>,
     unpublished_live: Option<NoteIdentity>,
     charged_unregistered_live: Option<NoteIdentity>,
+    compiled_minted: Vec<NoteIdentity>,
     #[cfg(all(test, feature = "simulated-ingress"))]
     ingress: MixedIngressTeardown,
 }
@@ -1096,7 +1320,7 @@ fn mixed_teardown_parts(
                 .copied()
                 .flatten()
                 .collect(),
-            minted_live: audio.audio.minter.live_identities_for_test(),
+            minted_live: audio.audio.live_minter.live_identities_for_test(),
             holds_outstanding: audio.test_ingress.holds_outstanding(),
             counters: audio.test_ingress.counters(),
         }
@@ -1106,6 +1330,7 @@ fn mixed_teardown_parts(
         boundary_ended,
         unpublished_live,
         charged_unregistered_live,
+        compiled_minted: audio.audio.compiled_minter.live_identities(),
         #[cfg(all(test, feature = "simulated-ingress"))]
         ingress,
     })
@@ -1126,6 +1351,7 @@ fn mixed_finish_teardown(
         boundary_ended: parts.boundary_ended,
         unpublished_live: parts.unpublished_live,
         charged_unregistered_live: parts.charged_unregistered_live,
+        compiled_minted: parts.compiled_minted,
         #[cfg(all(test, feature = "simulated-ingress"))]
         ingress: parts.ingress,
     }
@@ -1175,73 +1401,26 @@ impl MixedOneShotControl {
                 }
             };
             drop(self);
-            return Ok(MixedCollection::Ended(mixed_finish_teardown(
+            return Ok(MixedCollection::Ended(Box::new(mixed_finish_teardown(
                 audio, end, parts,
-            )));
+            ))));
         }
+        // Both minters stayed with audio, so collection moves only plain values to
+        // control: the effective anchor and the in-force activation sequence.
         let capsule = &audio.capsule;
-        let minter = capsule.minter.as_ref();
-        let promotable = minter.is_some_and(|minter| {
-            minter.id() == self.control.minter.id()
-                && minter.producer() == self.control.minter.producer()
-                && minter.span() == self.control.minter.span()
-                && minter.live() == capsule.outstanding_count.get()
-                && capsule.outstanding_count.as_usize() == Some(capsule.outstanding.len())
-                && capsule
-                    .outstanding
-                    .iter()
-                    .all(|identity| minter.resolve(*identity) == Resolution::Live)
-        }) && capsule.plan == self.control.plan.id()
+        let consistent = capsule.plan == self.control.plan.id()
             && capsule.epoch == self.control.epoch
-            && capsule.table == self.control.minter.id()
+            && capsule.table == self.control.table
             && audio.in_force == capsule.sequence
             && capsule.supersedes == ActivationSequence::INITIAL
-            && capsule.retired_anchor.is_some()
-            && capsule
-                .retired_next
-                .is_some_and(|next| next <= capsule.events.len())
             && audio.audio.renderer.mixed_anchor() == audio.effective_anchor;
-        if !promotable {
-            let parts = match mixed_teardown_parts(&audio) {
-                Ok(parts) => parts,
-                Err(reason) => {
-                    return Err(Box::new(MixedCollectionRefusal {
-                        reason,
-                        control: self,
-                        audio,
-                    }));
-                }
-            };
-            drop(self);
-            return Ok(MixedCollection::Ended(mixed_finish_teardown(
-                audio,
-                MixedCollectionEnd::PromotionRefused,
-                parts,
-            )));
-        }
-        // The checks above prove these fields exist. Keep a defensive terminal
-        // branch so a future change cannot guess an old anchor or cursor.
-        let (Some(retired_anchor), Some(retired_next)) =
-            (audio.capsule.retired_anchor, audio.capsule.retired_next)
-        else {
-            let parts = match mixed_teardown_parts(&audio) {
-                Ok(parts) => parts,
-                Err(reason) => {
-                    return Err(Box::new(MixedCollectionRefusal {
-                        reason,
-                        control: self,
-                        audio,
-                    }));
-                }
-            };
-            drop(self);
-            return Ok(MixedCollection::Ended(mixed_finish_teardown(
-                audio,
-                MixedCollectionEnd::PromotionRefused,
-                parts,
-            )));
+        let retired = match (capsule.retired_anchor, capsule.retired_next) {
+            (Some(anchor), Some(next)) if consistent && next <= capsule.events.len() => {
+                Some((anchor, next))
+            }
+            _ => None,
         };
-        let Some(promoted_minter) = audio.capsule.minter.take() else {
+        let Some((retired_anchor, retired_next)) = retired else {
             let parts = match mixed_teardown_parts(&audio) {
                 Ok(parts) => parts,
                 Err(reason) => {
@@ -1253,16 +1432,13 @@ impl MixedOneShotControl {
                 }
             };
             drop(self);
-            return Ok(MixedCollection::Ended(mixed_finish_teardown(
+            return Ok(MixedCollection::Ended(Box::new(mixed_finish_teardown(
                 audio,
                 MixedCollectionEnd::PromotionRefused,
                 parts,
-            )));
+            ))));
         };
-        let old_minter = std::mem::replace(&mut self.control.minter, promoted_minter);
-        drop(old_minter);
         self.control.anchor = audio.effective_anchor;
-        let outstanding = std::mem::take(&mut audio.capsule.outstanding);
         let retired = MixedRetiredList {
             anchor: retired_anchor,
             unconsumed_from: retired_next,
@@ -1270,11 +1446,9 @@ impl MixedOneShotControl {
         };
         audio.capsule.retired_next = None;
         drop(std::mem::take(&mut audio.capsule.events));
-        drop(self.outstanding);
         Ok(MixedCollection::Resumed {
             control: MixedResumedControl {
                 control: self.control,
-                outstanding,
                 sequence: audio.in_force,
                 off_thread: PhantomData,
             },
@@ -1298,9 +1472,9 @@ impl MixedResumedControl {
                 audio,
             }));
         }
-        if audio.capsule.minter.is_some() {
+        if !audio.adopted || audio.capsule.retired_next.is_some() {
             return Err(Box::new(MixedCollectionRefusal {
-                reason: MixedCollectionError::UnpromotedAudio,
+                reason: MixedCollectionError::UncollectedAudio,
                 control: self,
                 audio,
             }));
@@ -1406,19 +1580,24 @@ impl MixedStreamControl {
         let parts = binding.into_parts();
         let audio_partition = Arc::clone(&parts.partition);
         let compiled_ended = vec![None; compiled_span.indices().len()];
+        let compiled_tokens = vec![None; compiled_span.indices().len()];
         Ok((
             Self {
                 epoch,
                 anchor,
                 plan: parts.plan,
                 stream: parts.stream,
-                minter: compiled,
+                table: table_id,
+                compiled_producer: compiled.producer(),
+                compiled_span,
                 compiled_slots: parts.compiled_slots,
                 partition: parts.partition,
             },
             MixedStreamAudio {
                 renderer,
-                minter: live,
+                live_minter: live,
+                compiled_minter: compiled,
+                compiled_tokens,
                 note: parts.live_slot,
                 partition: audio_partition,
                 compiled_ended,
@@ -1431,7 +1610,7 @@ impl MixedStreamControl {
         &self.plan
     }
 
-    /// The only compiled stream this owner may later stamp.
+    /// The only compiled stream this owner may later place and pair by token.
     pub const fn stream(&self) -> &AdmittedCompiledStream {
         &self.stream
     }
@@ -1448,12 +1627,13 @@ impl MixedStreamControl {
 
     /// The single table identity shared with the audio owner.
     pub const fn table_id(&self) -> TableId {
-        self.minter.id()
+        self.table
     }
 
-    /// The compiled producer this control alone may mint for.
+    /// The compiled producer whose edges this control pairs by token. Only the audio
+    /// half mints for it.
     pub const fn compiled_producer(&self) -> ProducerId {
-        self.minter.producer()
+        self.compiled_producer
     }
 
     /// The note slots reached by the owned compiled stream.
@@ -1466,13 +1646,26 @@ impl MixedStreamControl {
         &self.partition
     }
 
-    /// Check the bound stream against this control's compiled range off-thread.
-    /// The copied identities and events are discarded; no schedule or reservation is published.
-    pub(crate) fn check_bound_stamp(&self) -> Result<(), SchedulePrepareError> {
+    /// Place the bound stream at this control's anchor and pair it by token.
+    /// Nothing is minted; the result is discarded or sealed by the caller.
+    fn tokenize_bound(&self) -> Result<MixedTokenized, MixedInitialPrepareError> {
+        if self.plan.stealing() != crate::ir::StealingPolicy::None {
+            return Err(MixedInitialPrepareError::UnexpectedSteal);
+        }
         let placed = crate::schedule::place_admitted(&self.stream, self.anchor)?;
-        let mut minter = self.minter.working_copy();
-        crate::schedule::stamp_all(&mut minter, &self.plan, self.epoch, &placed)?;
-        Ok(())
+        tokenize_compiled(
+            &self.plan,
+            self.compiled_producer,
+            self.compiled_span,
+            self.epoch,
+            &placed,
+        )
+        .map_err(|error| match error {
+            MixedTokenizeError::Schedule(error) => error.into(),
+            MixedTokenizeError::UnexpectedWriter { event_index } => {
+                MixedInitialPrepareError::UnexpectedWriter { event_index }
+            }
+        })
     }
 }
 
@@ -1500,13 +1693,14 @@ impl MixedJoinedStream {
         &self.audio
     }
 
-    /// Check the fixed compiled stream without creating any schedule or reservation.
-    pub fn check_bound_stamp(&self) -> Result<(), SchedulePrepareError> {
-        self.control.check_bound_stamp()
+    /// Check the fixed compiled stream's pairing and compiled-span occupancy without
+    /// creating any schedule or reservation.
+    pub fn check_bound_stamp(&self) -> Result<(), MixedInitialPrepareError> {
+        self.control.tokenize_bound().map(drop)
     }
 
-    /// Seal the bound initial schedule exactly once, off-thread.
-    /// A refusal returns this owner with its compiled minter unchanged.
+    /// Seal the bound initial schedule exactly once, off-thread, as a tokenized list.
+    /// Nothing is minted, so a refusal returns this owner unchanged.
     ///
     /// No separate plan, stream or anchor can be supplied:
     ///
@@ -1526,83 +1720,16 @@ impl MixedJoinedStream {
     /// }
     /// ```
     pub fn prepare_initial(
-        mut self,
+        self,
     ) -> Result<MixedJoinedPrepared, Box<(MixedInitialPrepareError, Self)>> {
-        if self.control.plan.stealing() != crate::ir::StealingPolicy::None {
-            return Err(Box::new((MixedInitialPrepareError::UnexpectedSteal, self)));
+        match self.control.tokenize_bound() {
+            Ok(tokenized) => Ok(MixedJoinedPrepared {
+                owner: self,
+                events: tokenized.events,
+                outstanding: tokenized.open,
+            }),
+            Err(error) => Err(Box::new((error, self))),
         }
-        let placed =
-            match crate::schedule::place_admitted(&self.control.stream, self.control.anchor) {
-                Ok(placed) => placed,
-                Err(error) => return Err(Box::new((error.into(), self))),
-            };
-        let mut minter = self.control.minter.working_copy();
-        let stamped = match crate::schedule::stamp_all(
-            &mut minter,
-            &self.control.plan,
-            self.control.epoch,
-            &placed,
-        ) {
-            Ok(stamped) => stamped,
-            Err(error) => return Err(Box::new((error.into(), self))),
-        };
-        if stamped.released_after_steal != 0
-            || stamped.expressions_after_steal != 0
-            || stamped.events.iter().any(|event| {
-                matches!(
-                    event.payload(),
-                    EventPayload::Fade { .. } | EventPayload::Reset { .. }
-                )
-            })
-        {
-            return Err(Box::new((MixedInitialPrepareError::UnexpectedSteal, self)));
-        }
-        if usize::try_from(minter.live()).ok() != Some(stamped.outstanding.len()) {
-            return Err(Box::new((
-                MixedInitialPrepareError::OutstandingMismatch {
-                    live: minter.live(),
-                    outstanding: stamped.outstanding.len(),
-                },
-                self,
-            )));
-        }
-        let span = minter.span();
-        for (event_index, event) in stamped.events.iter().enumerate() {
-            let identity = match event.payload() {
-                EventPayload::ScopedRestore(_) => {
-                    return Err(Box::new((
-                        MixedInitialPrepareError::UnexpectedScopedRestore,
-                        self,
-                    )));
-                }
-                EventPayload::Note { identity, .. }
-                | EventPayload::Expression { identity, .. }
-                | EventPayload::Bend { identity, .. }
-                | EventPayload::Fade { identity, .. }
-                | EventPayload::Reset { identity } => Some(identity),
-                EventPayload::ReleaseGroup(_)
-                | EventPayload::Controller(_)
-                | EventPayload::RestoreController(_)
-                | EventPayload::SetParameter { .. } => None,
-            };
-            if let Some(identity) = identity
-                && (identity.table() != minter.id() || !span.contains(identity.index()))
-            {
-                return Err(Box::new((
-                    MixedInitialPrepareError::IdentityOutsideRange {
-                        event_index,
-                        identity,
-                    },
-                    self,
-                )));
-            }
-        }
-        self.control.minter = minter;
-        Ok(MixedJoinedPrepared {
-            owner: self,
-            events: stamped.events,
-            outstanding: stamped.outstanding,
-        })
     }
 }
 
@@ -1620,7 +1747,7 @@ impl MixedJoinedPrepared {
         let history = &candidate.suffix.history;
         if history.plan != control.plan.id()
             || history.epoch != control.epoch
-            || history.table != control.minter.id()
+            || history.table != control.table
         {
             return Err(Box::new(MixedOneShotArmRefusal {
                 reason: MixedOneShotArmError::ForeignCandidate,
@@ -1630,8 +1757,14 @@ impl MixedJoinedPrepared {
         }
         if audio.renderer.plan().id() != control.plan.id()
             || audio.renderer.epoch() != control.epoch
-            || audio.renderer.table_id() != control.minter.id()
-            || audio.table_id() != control.minter.id()
+            || audio.renderer.table_id() != control.table
+            || audio.table_id() != control.table
+            || audio.compiled_minter.id() != control.table
+            || audio.compiled_minter.producer() != control.compiled_producer
+            || audio.compiled_minter.span() != control.compiled_span
+            || audio.compiled_minter.live() != 0
+            || audio.compiled_tokens.len() != control.compiled_span.indices().len()
+            || audio.compiled_tokens.iter().any(Option::is_some)
         {
             return Err(Box::new(MixedOneShotArmRefusal {
                 reason: MixedOneShotArmError::ForeignAudio,
@@ -1710,7 +1843,7 @@ impl MixedJoinedPrepared {
         let test_ingress = match PerformanceIngress::prepare_mixed_test(
             profile,
             &control.plan,
-            &audio.minter,
+            &audio.live_minter,
             &audio.renderer,
         ) {
             Ok(ingress) => ingress,
@@ -1754,10 +1887,12 @@ impl MixedJoinedPrepared {
             events,
             outstanding,
         } = self;
+        // The initial list's open tokens are pairing state only; audio publishes
+        // that list and mints its occurrences itself.
+        drop(outstanding);
         Ok((
             MixedOneShotControl {
                 control,
-                outstanding,
                 #[cfg(all(test, feature = "simulated-ingress"))]
                 ingress_commands: OpaqueQueue(ingress_command_writer),
                 #[cfg(all(test, feature = "simulated-ingress"))]
@@ -1820,10 +1955,10 @@ impl MixedJoinedPrepared {
 
     /// The table shared by the compiled and live ranges.
     pub const fn table_id(&self) -> TableId {
-        self.owner.control.minter.id()
+        self.owner.control.table
     }
 
-    /// How many stamped events remain privately owned by this prepared stream.
+    /// How many tokenized events remain privately owned by this prepared stream.
     pub fn event_count(&self) -> usize {
         self.events.len()
     }
@@ -1849,8 +1984,7 @@ impl MixedJoinedPrepared {
         let plan = &control.plan;
         let stream = control.stream.events();
         let prefix_end = stream.partition_point(|event| event.position() < position);
-        let span = control.minter.span().indices();
-        let capacity = span.end - span.start;
+        let capacity = control.compiled_span.len;
         let mut book = OpenNotes::new(capacity, crate::ir::StealingPolicy::None);
         let mut values = vec![None; plan.parameter_targets().len()];
         let gates = super::gate_rows(plan);
@@ -1880,7 +2014,7 @@ impl MixedJoinedPrepared {
                     super::write_gate(&mut values, &gates, slot, ParameterValue::ZERO);
                 }
                 // An occurrence's expression and bend end at the boundary. The initial
-                // full stamp already checked their pairing with a note.
+                // token pairing already checked their pairing with a note.
                 CompiledPayload::Expression { .. } | CompiledPayload::Bend { .. } => {}
                 CompiledPayload::Controller(_) | CompiledPayload::SetParameter { .. } => {
                     return Err(MixedHistoryPrepareError::UnexpectedWriter { event_index });
@@ -1935,7 +2069,7 @@ impl MixedJoinedPrepared {
         Ok(MixedHistoryCandidate {
             plan: plan.id(),
             epoch: control.epoch,
-            table: control.minter.id(),
+            table: control.table,
             requested,
             position,
             prefix_end,
@@ -1960,7 +2094,7 @@ impl MixedJoinedPrepared {
         let control = &self.owner.control;
         if candidate.plan != control.plan.id()
             || candidate.epoch != control.epoch
-            || candidate.table != control.minter.id()
+            || candidate.table != control.table
         {
             return Err(MixedSuffixPrepareError::ForeignCandidate);
         }
@@ -1970,8 +2104,7 @@ impl MixedJoinedPrepared {
         {
             return Err(MixedSuffixPrepareError::PrefixMismatch);
         }
-        let span = control.minter.span().indices();
-        let mut suffix = OpenNotes::new(span.end - span.start, crate::ir::StealingPolicy::None);
+        let mut suffix = OpenNotes::new(control.compiled_span.len, crate::ir::StealingPolicy::None);
         let mut included = Vec::with_capacity(stream.len() - candidate.prefix_end);
         let mut omitted_releases = 0_usize;
         let mut omitted_expressions = 0_usize;
@@ -2030,11 +2163,11 @@ impl MixedJoinedPrepared {
         })
     }
 
-    /// Place and stamp a private first-activation suffix against only a compiled-range copy.
+    /// Place a private first-activation suffix and pair its note edges by token.
     ///
-    /// The old initial schedule's reservations are released in that copy before stamping.
-    /// The returned list orders requested-time restoration before suffix events at the
-    /// destination. There is still no producer-scoped boundary release or offer path.
+    /// Pairing runs against a scratch occupancy of the compiled span and refuses
+    /// over-emission there; nothing is minted. The returned list orders requested-time
+    /// restoration before suffix events at the destination. There is still no offer path.
     pub fn stamp_suffix(
         &self,
         mut suffix: MixedSuffixCandidate,
@@ -2043,7 +2176,7 @@ impl MixedJoinedPrepared {
         let history = &suffix.history;
         if history.plan != control.plan.id()
             || history.epoch != control.epoch
-            || history.table != control.minter.id()
+            || history.table != control.table
         {
             return Err(MixedStampPrepareError::ForeignCandidate);
         }
@@ -2095,89 +2228,48 @@ impl MixedJoinedPrepared {
             return Err(MixedStampPrepareError::InvalidRestoration);
         }
 
-        let mut minter = control.minter.working_copy();
-        for &identity in &self.outstanding {
-            let resolution = minter.release(identity);
-            if resolution != Resolution::Live {
-                return Err(MixedStampPrepareError::StaleReservation {
-                    identity,
-                    resolution,
-                });
+        // The boundary release ends every old compiled occurrence on audio before
+        // this list publishes, so pairing starts from an empty scratch occupancy.
+        // No old reservation, copy or generation is consulted or changed.
+        let tokenized = tokenize_compiled(
+            &control.plan,
+            control.compiled_producer,
+            control.compiled_span,
+            control.epoch,
+            &placed,
+        )
+        .map_err(|error| match error {
+            MixedTokenizeError::Schedule(error) => {
+                MixedStampPrepareError::Schedule(super::rebase(error, &suffix.included))
             }
-        }
-        if minter.live() != 0 {
-            return Err(MixedStampPrepareError::OldReservationsRemain {
-                live: HeldNoteCount::measured(minter.live()),
-            });
-        }
-        let stamped =
-            crate::schedule::stamp_all(&mut minter, &control.plan, control.epoch, &placed)
-                .map_err(|error| {
-                    MixedStampPrepareError::Schedule(super::rebase(error, &suffix.included))
-                })?;
-        if stamped.released_after_steal != 0
-            || stamped.expressions_after_steal != 0
-            || stamped.events.iter().any(|event| {
-                matches!(
-                    event.payload(),
-                    EventPayload::Fade { .. } | EventPayload::Reset { .. }
-                )
-            })
-        {
-            return Err(MixedStampPrepareError::UnexpectedSteal);
-        }
-        let stamped_count = EventCount::measured(
-            u32::try_from(stamped.events.len())
-                .map_err(|_| MixedStampPrepareError::CountUnrepresentable)?,
-        );
-        if stamped_count != suffix.included_count {
-            return Err(MixedStampPrepareError::EventCountMismatch {
-                selected: suffix.included_count,
-                stamped: stamped_count,
-            });
-        }
+            MixedTokenizeError::UnexpectedWriter { event_index } => {
+                MixedStampPrepareError::InvalidSelection {
+                    event_index: suffix
+                        .included
+                        .get(event_index)
+                        .copied()
+                        .unwrap_or(event_index),
+                }
+            }
+        })?;
         let outstanding_count = HeldNoteCount::measured(
-            u32::try_from(stamped.outstanding.len())
+            u32::try_from(tokenized.open.len())
                 .map_err(|_| MixedStampPrepareError::CountUnrepresentable)?,
         );
-        if minter.live() != outstanding_count.get() {
-            return Err(MixedStampPrepareError::OutstandingMismatch {
-                live: HeldNoteCount::measured(minter.live()),
-                outstanding: outstanding_count,
-            });
-        }
-        let span = minter.span();
-        for (stamped_index, event) in stamped.events.iter().enumerate() {
-            let identity = match event.payload() {
-                EventPayload::Note { identity, .. }
-                | EventPayload::Expression { identity, .. }
-                | EventPayload::Bend { identity, .. }
-                | EventPayload::Fade { identity, .. }
-                | EventPayload::Reset { identity } => Some(identity),
-                EventPayload::ScopedRestore(_)
-                | EventPayload::ReleaseGroup(_)
-                | EventPayload::Controller(_)
-                | EventPayload::RestoreController(_)
-                | EventPayload::SetParameter { .. } => None,
-            };
-            if let Some(identity) = identity
-                && (identity.table() != minter.id() || !span.contains(identity.index()))
-            {
-                let event_index = suffix.included.get(stamped_index).copied().ok_or(
-                    MixedStampPrepareError::InvalidSelection {
-                        event_index: stamped_index,
-                    },
-                )?;
-                return Err(MixedStampPrepareError::IdentityOutsideRange {
-                    event_index,
-                    identity,
-                });
-            }
-        }
         let restoration_count = suffix.history.restoration_count;
-        let mut events = std::mem::take(&mut suffix.history.restoration);
+        let restoration = std::mem::take(&mut suffix.history.restoration);
         suffix.history.restoration_count = EventCount::NONE;
-        events.extend(stamped.events);
+        let mut events = Vec::with_capacity(restoration.len() + tokenized.events.len());
+        for event in restoration {
+            let EventPayload::ScopedRestore(scoped) = event.payload() else {
+                return Err(MixedStampPrepareError::InvalidRestoration);
+            };
+            events.push(MixedCompiledEvent::new(
+                event.envelope(),
+                MixedCompiledPayload::Restore(scoped),
+            ));
+        }
+        events.extend(tokenized.events);
         check_mixed_event_order(&events)?;
         let event_count = EventCount::measured(
             u32::try_from(events.len())
@@ -2190,14 +2282,13 @@ impl MixedJoinedPrepared {
             events,
             event_count,
             restoration_count,
-            outstanding: stamped.outstanding,
+            outstanding: tokenized.open,
             outstanding_count,
-            minter,
         })
     }
 }
 
-fn check_mixed_event_order(events: &[TimedEvent]) -> Result<(), MixedStampPrepareError> {
+fn check_mixed_event_order(events: &[MixedCompiledEvent]) -> Result<(), MixedStampPrepareError> {
     for (index, pair) in events.windows(2).enumerate() {
         if pair[1].envelope().time() < pair[0].envelope().time() {
             return Err(MixedStampPrepareError::EventOrder {
@@ -2268,7 +2359,7 @@ fn prepare_one_shot_arbiter(
         }
         last_time = Some(at);
         if index < restoration {
-            let EventPayload::ScopedRestore(scoped) = event.payload() else {
+            let MixedCompiledPayload::Restore(scoped) = event.payload() else {
                 return Err(Refused::CandidateShape { event_index: index });
             };
             let Some(group) = partition.restoration_groups().get(index) else {
@@ -2296,7 +2387,8 @@ fn prepare_one_shot_arbiter(
                 }
             }
         } else {
-            if matches!(event.payload(), EventPayload::ScopedRestore(_)) || at < timing.effective()
+            if matches!(event.payload(), MixedCompiledPayload::Restore(_))
+                || at < timing.effective()
             {
                 return Err(Refused::CandidateShape { event_index: index });
             }
@@ -2423,7 +2515,6 @@ impl MixedStampedCandidate {
             restoration_count,
             outstanding,
             outstanding_count,
-            minter,
         } = self;
         let plan = suffix.history.plan;
         let epoch = suffix.history.epoch;
@@ -2431,9 +2522,10 @@ impl MixedStampedCandidate {
         let omitted_releases = suffix.omitted_releases;
         let omitted_expressions = suffix.omitted_expressions;
         // `history` contains a PhantomData<Rc<()>> marker and source-selection
-        // vectors. The vectors are finally dropped here, before the sendable
-        // capsule can reach audio.
+        // vectors. They and the open-token list are finally dropped here, before
+        // the sendable capsule can reach audio.
         drop(suffix);
+        drop(outstanding);
         Ok(Box::new(MixedAudioCandidate {
             plan,
             epoch,
@@ -2448,9 +2540,7 @@ impl MixedStampedCandidate {
             events,
             event_count,
             restoration_count,
-            outstanding,
             outstanding_count,
-            minter: Some(minter),
         }))
     }
 
@@ -2535,7 +2625,7 @@ impl MixedStampedCandidate {
         self.restoration_count
     }
 
-    /// Notes the privately stamped suffix leaves reserved in its compiled range.
+    /// Tokens the privately paired suffix leaves open at its end.
     pub const fn outstanding_count(&self) -> HeldNoteCount {
         self.outstanding_count
     }
@@ -2554,12 +2644,13 @@ impl MixedStreamAudio {
 
     /// The same table identity as the compiled control.
     pub const fn table_id(&self) -> TableId {
-        self.minter.id()
+        self.live_minter.id()
     }
 
-    /// The live producer this audio owner alone may mint for.
+    /// The live producer this audio owner alone may mint for. It alone also mints for
+    /// the compiled producer.
     pub const fn live_producer(&self) -> ProducerId {
-        self.minter.producer()
+        self.live_minter.producer()
     }
 
     /// The one live note target proven disjoint from compiled targets.

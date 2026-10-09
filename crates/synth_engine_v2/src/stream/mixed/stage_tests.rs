@@ -1099,7 +1099,7 @@ impl<R: RawBackend> RawStageBridge<R> {
             };
             teardown.onsets.push((occurrence, state));
         }
-        (teardown, self.sources, ended)
+        (teardown, self.sources, *ended)
     }
 }
 

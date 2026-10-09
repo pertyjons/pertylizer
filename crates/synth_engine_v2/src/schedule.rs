@@ -33,15 +33,10 @@ use crate::render::{EventEnvelope, EventPayload, NoteEdge, TimedEvent};
 use crate::stream::StreamControl;
 use crate::time::{Located, PlanPosition, SampleTime, StreamAnchor, StreamEpoch, TimeSource};
 
-/// Internal minter operations shared by ordinary and compiled-range stamping.
-/// Mixed custody supplies only its compiled range.
+/// Internal minter operations used by off-thread stamping. A mixed owner does not
+/// stamp: its audio half mints compiled occurrences from pairing tokens.
 pub(crate) trait StampMinter {
     fn table_id(&self) -> crate::identity::TableId;
-    fn validate_compiled_range(
-        &self,
-        producer: crate::identity::ProducerId,
-        planned: crate::quantities::HeldNoteCount,
-    ) -> Result<(), SchedulePrepareError>;
     fn mint_keyed(
         &mut self,
         producer: crate::identity::ProducerId,
@@ -56,15 +51,6 @@ impl StampMinter for crate::identity::IdentityTable {
         self.id()
     }
 
-    fn validate_compiled_range(
-        &self,
-        _producer: crate::identity::ProducerId,
-        _planned: crate::quantities::HeldNoteCount,
-    ) -> Result<(), SchedulePrepareError> {
-        // Preserve the ordinary whole-table path's existing validation boundary.
-        Ok(())
-    }
-
     fn mint_keyed(
         &mut self,
         producer: crate::identity::ProducerId,
@@ -72,48 +58,6 @@ impl StampMinter for crate::identity::IdentityTable {
         key: crate::quantities::KeyIdentity,
     ) -> Result<crate::identity::NoteIdentity, crate::identity::IdentityError> {
         Self::mint_keyed(self, producer, note, key)
-    }
-
-    fn release(&mut self, identity: crate::identity::NoteIdentity) -> crate::identity::Resolution {
-        Self::release(self, identity)
-    }
-}
-
-impl StampMinter for crate::identity::CompiledRangeMinter {
-    fn table_id(&self) -> crate::identity::TableId {
-        self.id()
-    }
-
-    fn validate_compiled_range(
-        &self,
-        producer: crate::identity::ProducerId,
-        planned: crate::quantities::HeldNoteCount,
-    ) -> Result<(), SchedulePrepareError> {
-        let actual = crate::quantities::HeldNoteCount::measured(self.span().len);
-        if producer != self.producer() || planned != actual {
-            return Err(SchedulePrepareError::CompiledRangeMismatch {
-                producer,
-                owned: self.producer(),
-                planned,
-                actual,
-            });
-        }
-        Ok(())
-    }
-
-    fn mint_keyed(
-        &mut self,
-        producer: crate::identity::ProducerId,
-        note: crate::plan::NoteSlot,
-        key: crate::quantities::KeyIdentity,
-    ) -> Result<crate::identity::NoteIdentity, crate::identity::IdentityError> {
-        if producer != self.producer() {
-            return Err(crate::identity::IdentityError::WrongMinterProducer {
-                requested: producer,
-                owned: self.producer(),
-            });
-        }
-        Self::mint_keyed(self, note, key)
     }
 
     fn release(&mut self, identity: crate::identity::NoteIdentity) -> crate::identity::Resolution {
@@ -368,18 +312,19 @@ impl CompiledEvent {
 /// Why a compiled schedule could not be prepared.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
 pub enum SchedulePrepareError {
-    /// The plan's compiled producer and capacity do not match this split minter.
+    /// The plan's compiled producer and capacity do not match a mixed owner's
+    /// compiled span.
     #[error(
-        "compiled {producer} plans {planned} indices, but this minter owns {actual} for {owned}"
+        "compiled {producer} plans {planned} indices, but this span holds {actual} for {owned}"
     )]
     CompiledRangeMismatch {
         /// The producer named by the compiled plan.
         producer: crate::identity::ProducerId,
-        /// The producer whose range this minter owns.
+        /// The producer whose span the mixed owner pairs.
         owned: crate::identity::ProducerId,
         /// The held-note capacity declared by the plan.
         planned: crate::quantities::HeldNoteCount,
-        /// The extent of this minter's range.
+        /// The extent of the compiled span.
         actual: crate::quantities::HeldNoteCount,
     },
     /// A release names a node with no unreleased note-on before it.
@@ -1244,12 +1189,6 @@ pub(crate) fn stamp_all<M: StampMinter>(
                 .get(usize::from(producer.as_u16()))
         })
         .map_or(0, |range| range.get());
-    if let Some(producer) = compiled_producer {
-        minter.validate_compiled_range(
-            producer,
-            crate::quantities::HeldNoteCount::measured(capacity),
-        )?;
-    }
     let policy = plan.stealing();
 
     // Pass one: everything that can refuse, before a mint. A foreign **parameter** slot is

@@ -245,24 +245,50 @@ impl IdentityTable {
     }
 }
 
+impl RangeMinter {
+    /// Off-thread classification of the occurrences this range still holds.
+    fn live_identities(&self) -> Vec<NoteIdentity> {
+        self.slots
+            .iter()
+            .enumerate()
+            .filter_map(|(offset, slot)| {
+                let Slot::Live { generation, .. } = slot else {
+                    return None;
+                };
+                let absolute = self.span.start.checked_add(u32::try_from(offset).ok()?)?;
+                Some(NoteIdentity {
+                    table: self.id,
+                    index: u16::try_from(absolute).ok()?,
+                    generation: *generation,
+                })
+            })
+            .collect()
+    }
+}
+
 impl CompiledRangeMinter {
     pub(crate) const fn from_partition(partition: RangeMinter) -> Self {
         Self(partition)
     }
 
-    /// Copy only the compiled range for off-thread commit-or-discard stamping.
-    /// The live owner's slots are never part of this value or its copy.
-    pub(crate) fn working_copy(&self) -> Self {
-        Self(RangeMinter {
-            id: self.0.id,
-            producer: self.0.producer,
-            span: self.0.span,
-            slots: self.0.slots.clone(),
-            generation_ceiling: self.0.generation_ceiling,
-            retired: self.0.retired,
-            live: self.0.live,
-            minted: self.0.minted,
-        })
+    /// The compiled occurrences still minted, for off-thread teardown classification.
+    /// There is no copy: in a mixed owner this value stays with the audio half.
+    pub(crate) fn live_identities(&self) -> Vec<NoteIdentity> {
+        self.0.live_identities()
+    }
+
+    /// Whether this range has never minted: every index free at its first generation.
+    /// A withdrawn or refused mixed candidate must leave it so.
+    #[cfg(test)]
+    pub(crate) fn untouched_for_test(&self) -> bool {
+        self.0.minted == 0
+            && self.0.live == 0
+            && self.0.retired == 0
+            && self
+                .0
+                .slots
+                .iter()
+                .all(|slot| *slot == Slot::Free { next_generation: 0 })
     }
 
     /// This mixed stream's table identity.
@@ -277,10 +303,6 @@ impl CompiledRangeMinter {
 
     pub(crate) const fn span(&self) -> Range {
         self.0.span
-    }
-
-    pub(crate) const fn live(&self) -> u32 {
-        self.0.live
     }
 }
 
@@ -306,22 +328,7 @@ impl LiveRangeMinter {
     /// Off-thread classification of occurrences still held by the private rehearsal.
     #[cfg(all(test, feature = "simulated-ingress"))]
     pub(crate) fn live_identities_for_test(&self) -> Vec<NoteIdentity> {
-        self.0
-            .slots
-            .iter()
-            .enumerate()
-            .filter_map(|(offset, slot)| {
-                let Slot::Live { generation, .. } = slot else {
-                    return None;
-                };
-                let absolute = self.0.span.start.checked_add(u32::try_from(offset).ok()?)?;
-                Some(NoteIdentity {
-                    table: self.0.id,
-                    index: u16::try_from(absolute).ok()?,
-                    generation: *generation,
-                })
-            })
-            .collect()
+        self.0.live_identities()
     }
 
     /// Force the first released generation to retire for a bounded rehearsal.

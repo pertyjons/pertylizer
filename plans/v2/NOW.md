@@ -561,16 +561,15 @@ The audio-side `NonMonotoneStamp` and original-custody checks remain defense in
 depth. The selector would hold the peer onset while the first source lacks a
 frontier. The new model fixture schedules A's release before that frontier;
 the concrete source-ring and callback path remain open.
-An off-thread check now places and stamps the bound stream against
-a disposable copy of only the compiled range. It publishes no events or
-reservations. Tests cover wrong-producer and wrong-capacity refusals, disjoint
-compiled and live indices through copy/commit, and a post-mint refusal.
-Runtime schedule output custody remains open.
+The bound stream's off-thread check now places events and pairs compiled note
+edges into bounded tokens without minting identities. The audio half owns both
+range minters and mints compiled notes at publication. Tests cover producer and
+capacity refusals, disjoint ranges, withdrawn candidates and callback-partition
+invariance. Production mixed-stream custody remains open.
 The bound halves now enter a joined off-thread owner. It can seal the one
-initial schedule with private events and a committed compiled-range minter,
-or return the unchanged owner on refusal. The sealed value has no render,
-offer, split or event-extraction API; cross-thread handoff and retirement are
-still unbuilt.
+initial schedule with private tokenized events or return the unchanged owner
+on refusal. The sealed value has no public render, offer, split or
+event-extraction API; the private handoff and retirement are described below.
 The binding now retains lowering's step classification: local voice steps,
 shared voice-sum steps and global steps, including rowless inserted work. It
 derives typed parameter rows from the classified nodes, and both joined halves
@@ -602,19 +601,17 @@ no event extraction, render, ingress or activation path. A suffix builder now
 classifies the bound source indices and counts crossing releases and
 expressions without producing the exclusive whole-group gate write. Repeated
 keys pair suffix occurrences before prefix occurrences. A private first-activation
-candidate now places that selection at the requested anchor, releases old
-compiled reservations in a compiled-range copy and stamps the suffix there.
-It retains the new outstanding set and initial sequence baseline, with scoped
-restoration before a suffix onset at the destination sample. It has no offer
+candidate now places that selection at the requested anchor and pairs its
+compiled suffix by bounded token. It retains the tokenized outstanding count
+and initial sequence baseline, with scoped restoration before a suffix onset
+at the destination sample. It has no offer
 path. A private timing check now validates one possible effective quantum
 boundary and one displacement across the complete list, including refusal if
-only a later suffix event overflows engine time. Stamping checks the list's time
+only a later suffix event overflows engine time. Placement checks the list's time
 order off-thread, so effective-boundary preflight checks only its last event.
-An audio owner still must
-select the boundary, read the shifted list as its schedule, end old compiled
-occurrences before rendering it, suppress the old schedule, account for other
-same-quantum contributors, and settle shared/global influence, handoff and
-retirement.
+The private callback now adopts the fixed boundary, reads the shifted list, ends
+old compiled occurrences and suppresses the old schedule. Other same-quantum
+contributors, shared/global influence and the combined host remain open.
 The boundary-release design read also found that the renderer's final timed-control
 scratch reserved one write per ended identity while its pending queue reserved a
 gate plus trigger writes. The scratch and its admission charge now reserve the
@@ -645,9 +642,9 @@ renderer rehearsal changes the musical mapping and verifies the new anchor
 and retained live audio in both producer orders. Its buffer still needs a
 combined-host resource charge; the private one-shot callback now calls this
 operation at its fixed boundary.
-The privately stamped candidate can now shed its non-sendable source history
+The private tokenized candidate can now shed its non-sendable source history
 off-thread into a boxed, sendable audio capsule. A joined prepared owner can arm
-one stamped candidate while stopped: it checks plan, epoch, table and initial
+one candidate while stopped: it checks plan, epoch, table and initial
 sequence, fixes the effective boundary and displacement from the renderer clock,
 then splits the retained control from the audio half and old event list. A
 refusal returns both inputs unchanged. Arm checks the renderer registry's
@@ -667,9 +664,9 @@ the complete callback and retain the capsule, with the terminal cause, boundary
 release and restoration charges, cumulative suffix charges, and completed
 quanta reported.
 Stopped private owners now collect off-thread. Collection checks the original
-control/audio pair before consuming either half. A healthy adopted pair promotes
-the copied compiled minter, outstanding identities, effective anchor and successor
-sequence together, then drops the retired event list off-thread; its audio half
+control/audio pair before consuming either half. A healthy adopted pair retains
+the audio-owned compiled minter and promotes the effective anchor and successor
+sequence, then drops the retired event list off-thread; its audio half
 can continue rendering and later tear down. Pending, faulted and defensively
 refused pairs return no runnable control. Teardown separates still-sounding
 compiled and live identities from compiled notes ended at the boundary and from

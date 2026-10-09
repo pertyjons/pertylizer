@@ -2914,7 +2914,7 @@ fn mixed_stream_opens_split_owners_from_the_bound_plan_and_stream() {
 }
 
 #[test]
-fn mixed_bound_stamp_check_discards_a_copy_after_mint_failure() {
+fn mixed_bound_pairing_check_refuses_over_emission_without_minting() {
     let plan = compiled_and_live_producers();
     let slot = plan.resolve_note(ENVELOPE).expect("playable envelope");
     let events: Vec<_> = (0..5).map(|position| note(&plan, position, true)).collect();
@@ -2924,14 +2924,16 @@ fn mixed_bound_stamp_check_discards_a_copy_after_mint_failure() {
 
     assert!(matches!(
         owner.check_bound_stamp(),
-        Err(synth_engine_v2::schedule::SchedulePrepareError::Identity {
-            event_index: 4,
-            source: synth_engine_v2::identity::IdentityError::ProducerOverEmitted { .. }
-        })
+        Err(MixedInitialPrepareError::Schedule(
+            synth_engine_v2::schedule::SchedulePrepareError::Identity {
+                event_index: 4,
+                source: synth_engine_v2::identity::IdentityError::ProducerOverEmitted { .. }
+            }
+        ))
     ));
     let table = owner.control().table_id();
     let Err(failure) = owner.prepare_initial() else {
-        panic!("the fifth note must fail after four private mints");
+        panic!("the fifth note must over-emit the four-token compiled span");
     };
     let (error, retained) = *failure;
     assert!(matches!(
@@ -2946,10 +2948,12 @@ fn mixed_bound_stamp_check_discards_a_copy_after_mint_failure() {
     assert_eq!(retained.control().table_id(), table);
     assert!(matches!(
         retained.check_bound_stamp(),
-        Err(synth_engine_v2::schedule::SchedulePrepareError::Identity {
-            event_index: 4,
-            source: synth_engine_v2::identity::IdentityError::ProducerOverEmitted { .. }
-        })
+        Err(MixedInitialPrepareError::Schedule(
+            synth_engine_v2::schedule::SchedulePrepareError::Identity {
+                event_index: 4,
+                source: synth_engine_v2::identity::IdentityError::ProducerOverEmitted { .. }
+            }
+        ))
     ));
 }
 
