@@ -841,6 +841,21 @@ changes, including pedal lifts, ordered through the combined selector and a
 complete capacity/profile decision before `PerformanceIngress::prepare` can
 admit mixed producers instead of returning `MixedProducerPlan`.
 
+An actual-source private fixture now carries the split path through the same
+`SourceProducer` and `SourceInbox` used by the example host. Two same-key
+onsets and their two key-ups commit in source queue order. Their raw handoffs
+retain each original and mapped time through the stage. Both key-ups are staged
+behind the second onset before its split `Full` result; neither can be serviced
+past that head. The first onset receives an audio result, while the second
+receives the per-occurrence refusal without a mixed command or handle. The
+first raw-linked key-up uses the first handle, and the second consumes the
+refused onset's tombstone. The source ring closes, no stage charge remains at
+mixed teardown, and cancellation settlement covers every issued raw ID with
+its recorded link. This fixture uses standalone raw owners and cancelled raw
+receipts, so it does not prove recorder delivery. Pedal pressure is still
+injected directly at private control; ordered source-to-raw pedal edges and a
+production combined host remain open.
+
 The budget withholds `B` queue places from ordinary traffic for the whole
 private run, leaving at most `C - B` for ordinary entries and release holds.
 When `2H + 1 <= C <= 3H`, `B = H`: one bend with all credits outstanding can

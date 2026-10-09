@@ -1550,8 +1550,8 @@ fn bent_onset_keeps_its_raw_and_stage_custody_at_the_minimum_bend_budget() {
 /// Move a source head through raw admission into the bounded note stage. This
 /// fixture uses a 1:1 clock and equal tick, arrival and mapped frame stamps.
 /// The source place is released only after the stage takes the packet.
-fn pump_concrete_note(
-    bridge: &mut RawStageBridge<SerialRaw>,
+fn pump_concrete_note<R: RawBackend>(
+    bridge: &mut RawStageBridge<R>,
     inbox: &mut SourceInbox,
 ) -> (SourceHandoff, Occurrence) {
     assert!(inbox.unresolved_failure().is_none());
@@ -1833,4 +1833,153 @@ fn actual_source_key_up_waits_behind_an_onset_refused_by_open_handle_reservation
     assert!(remaining.is_empty());
     assert_eq!(settled, issued_count);
     assert_eq!(prepared_frontiers, vec![Source::First, Source::Second]);
+}
+
+#[test]
+fn actual_source_split_refusal_releases_its_same_key_head_without_mixed_identity() {
+    let (prepared, candidate) = history_tests::one_shot_with_live(
+        true,
+        crate::quantities::HeldNoteCount::measured(1),
+        EventCount::measured(1),
+    );
+    let (mut control, mut audio) = prepared
+        .arm_one_shot(
+            candidate,
+            &history_tests::profile_with_ingress_depth(EventCount::measured(3)),
+        )
+        .unwrap();
+    let scope = super::super::TEST_SCOPE;
+    let pedal = control
+        .submit_pedal(MixedIngressOriginId(1), scope, SampleTime::new(100), true)
+        .unwrap();
+    assert!(matches!(pedal, MixedPedalSubmitted::Command(..)));
+    audio.service_test_ingress_queue();
+    assert!(matches!(
+        control.collect_ingress_result().unwrap().outcome,
+        MixedIngressOutcome::PedalDown(Ok(_))
+    ));
+
+    let raw = [raw_source_with_cells(0, 32), raw_source(1)];
+    let generation = raw[0].generation;
+    let clock = raw[0].input.clock().unwrap();
+    let (mut producer, mut inbox) =
+        SourceInbox::prepare(generation, InputCaptureHalt::detached_for_test(), clock);
+    let mut bridge = RawStageBridge::with_raw(4, raw);
+    bridge.frontier(Source::Second, 200);
+    let mut queue_ids = Vec::new();
+    for (at, original) in [
+        (110, input(0x90, 60, 100)),
+        (111, input(0x90, 60, 100)),
+        (112, input(0x80, 60, 0)),
+        (113, input(0x80, 60, 0)),
+    ] {
+        let accepted = producer
+            .submit_owned(InputObservation::Message {
+                tick: InputTick::new(at),
+                arrival: SampleTime::new(at),
+                input: original,
+            })
+            .unwrap();
+        queue_ids.push(accepted.parts().1);
+    }
+    assert_eq!(inbox.occupied_len(), 4);
+
+    let (first_head, first) = pump_concrete_note(&mut bridge, &mut inbox);
+    assert_eq!(first_head.stamp().queue(), queue_ids[0]);
+    let admitted = bridge
+        .service_onset_or_refuse_full(&mut control, &mut audio, scope)
+        .unwrap()
+        .unwrap();
+    let OnsetDecision::Admitted(admitted) = admitted else {
+        panic!("the first same-key onset has room");
+    };
+    assert_eq!(admitted.occurrence, first);
+    assert_eq!(admitted.handoff.original, input(0x90, 60, 100));
+    assert_eq!(admitted.handoff.at, first_head.stamp().mapped_at());
+    assert!(matches!(
+        admitted.disposition,
+        MixedDisposition::Result(MixedIngressOutcome::Onset(Ok(_)))
+    ));
+    let (second_head, second) = pump_concrete_note(&mut bridge, &mut inbox);
+    assert_eq!(second_head.stamp().queue(), queue_ids[1]);
+    let (first_up_head, first_up) = pump_concrete_note(&mut bridge, &mut inbox);
+    let (second_up_head, second_up) = pump_concrete_note(&mut bridge, &mut inbox);
+    assert_eq!(first_up_head.stamp().queue(), queue_ids[2]);
+    assert_eq!(second_up_head.stamp().queue(), queue_ids[3]);
+    assert_eq!((first_up, second_up), (first, second));
+    assert_eq!(bridge.handoffs[1].2.link, Some(admitted.handoff.raw));
+    assert_eq!(bridge.handoffs[2].2.link, Some(bridge.handoffs[0].2.raw));
+    assert_eq!(bridge.stage.pressure(Source::First), (3, 0));
+    assert_eq!(bridge.stage.peek_next().unwrap().1.occurrence, second);
+    assert!(bridge.service_refused_key_up().is_none());
+    assert_eq!(
+        (
+            control.ingress_room(),
+            control.ingress_outstanding.as_usize()
+        ),
+        (1, 0)
+    );
+    let command = control.last_ingress_id;
+    let held = control.occurrence_ledger.held();
+    let split = bridge
+        .service_onset_or_refuse_full(&mut control, &mut audio, scope)
+        .unwrap()
+        .unwrap();
+    let OnsetDecision::Refused(split) = split else {
+        panic!("the selected second onset has no command place");
+    };
+    assert_eq!(split.occurrence, second);
+    assert_eq!(
+        split.disposition,
+        SplitDisposition::Onset {
+            reason: MixedOnsetSubmitError::Full,
+        }
+    );
+    assert_eq!(control.last_ingress_id, command);
+    assert_eq!(control.occurrence_ledger.held(), held);
+    assert_eq!(split.handoff.original, input(0x90, 60, 100));
+    assert_eq!(split.handoff.at, second_head.stamp().mapped_at());
+    assert_eq!(bridge.handoffs.len(), 2);
+    assert_eq!(bridge.refused_onsets[0].onset_raw, split.handoff.raw);
+    assert_eq!(bridge.handoffs[0].2.link, Some(admitted.handoff.raw));
+    assert_eq!(bridge.handoffs[1].2.link, Some(split.handoff.raw));
+    assert_eq!(bridge.handoffs[0].2.original, input(0x80, 60, 0));
+    assert_eq!(bridge.handoffs[0].2.at, first_up_head.stamp().mapped_at());
+    assert_eq!(bridge.handoffs[1].2.original, input(0x80, 60, 0));
+    assert_eq!(bridge.handoffs[1].2.at, second_up_head.stamp().mapped_at());
+    assert_eq!(bridge.stage.pressure(Source::First), (2, 0));
+    assert_eq!(bridge.stage.peek_next().unwrap().1.occurrence, first);
+    assert!(bridge.service_refused_key_up().is_none());
+    let first_result = bridge.service(&mut control, &mut audio).unwrap();
+    assert_eq!(first_result.occurrence, first);
+    assert_eq!(first_result.handle, admitted.handle);
+    assert_eq!(first_result.handoff.link, Some(admitted.handoff.raw));
+    assert_eq!(
+        first_result.disposition,
+        MixedDisposition::Result(MixedIngressOutcome::Sustained(admitted.handle))
+    );
+    let second_result = bridge.service_refused_key_up().unwrap();
+    assert_eq!(second_result.occurrence, second);
+    assert_eq!(second_result.handoff.link, Some(split.handoff.raw));
+    assert_eq!(
+        second_result.disposition,
+        SplitDisposition::KeyUpAfterOnset {
+            onset_raw: split.handoff.raw,
+            reason: MixedOnsetSubmitError::Full,
+        }
+    );
+    assert!(bridge.refused_onsets.is_empty());
+    assert_eq!(bridge.stage.pressure(Source::First), (0, 0));
+    assert!(inbox.peek_handoff().is_none());
+    assert!(inbox.close(producer).is_ok());
+
+    let (teardown, raw, ended) = bridge.tear_down(control, audio);
+    assert_eq!(ended.end, MixedCollectionEnd::Pending);
+    assert!(teardown.unoffered.is_empty());
+    assert!(teardown.reservations.is_empty());
+    assert!(teardown.onsets.is_empty());
+    assert!(teardown.refused_onsets.is_empty());
+    let issued = teardown.raw_issued.clone();
+    let settlement = settle_raw_by_cancellation(raw, &issued);
+    assert_eq!(settlement.bridge.len(), issued.len());
 }
