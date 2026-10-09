@@ -511,6 +511,40 @@ enum MixedDisposition {
     Result(MixedIngressOutcome),
 }
 
+/// A private split decision at a selected stage head. The bridge removes its
+/// handoff copy and returns it here; the tombstone keeps only its raw ID.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum SplitDisposition {
+    Onset {
+        reason: MixedOnsetSubmitError,
+    },
+    KeyUpAfterOnset {
+        onset_raw: InputEventId,
+        reason: MixedOnsetSubmitError,
+    },
+}
+
+#[derive(Debug, PartialEq)]
+struct SplitRefusal {
+    handoff: RawHandoff,
+    occurrence: Occurrence,
+    disposition: SplitDisposition,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct RefusedOnsetTombstone {
+    source: Source,
+    occurrence: Occurrence,
+    onset_raw: InputEventId,
+    reason: MixedOnsetSubmitError,
+}
+
+#[derive(Debug, PartialEq)]
+enum OnsetDecision {
+    Admitted(CombinedResult),
+    Refused(SplitRefusal),
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct CombinedResult {
     handoff: RawHandoff,
@@ -725,6 +759,9 @@ struct RawStageBridge<R = [RawSource; 2]> {
     onset_results: Vec<(Occurrence, Result<NoteIdentity, IngressRefused>)>,
     /// The merger-minted handle of every staged onset whose release is not yet offered.
     handles: Vec<(Occurrence, LiveOccurrenceId)>,
+    /// A refused onset has no mixed handle. Its raw handoff belongs to the
+    /// returned split result, while this cell links its future key-up.
+    refused_onsets: Vec<RefusedOnsetTombstone>,
     /// Every raw ID a raw owner issued to this bridge, with its admission link.
     raw_issued: Vec<(Source, InputEventId, Option<InputEventId>)>,
     next_occurrence: u64,
@@ -745,6 +782,7 @@ impl<R: RawBackend> RawStageBridge<R> {
             handoffs: Vec::new(),
             onset_results: Vec::new(),
             handles: Vec::new(),
+            refused_onsets: Vec::new(),
             raw_issued: Vec::new(),
             next_occurrence: 1,
         }
@@ -797,6 +835,87 @@ impl<R: RawBackend> RawStageBridge<R> {
             handle,
             disposition: MixedDisposition::Result(result.outcome),
         }))
+    }
+
+    /// At the stage's selected head, a settled command-ring shortage may be
+    /// reported as a per-occurrence split refusal. This is a private policy
+    /// choice at this service point, not a claim that a later lift cannot free
+    /// room. The existing stage selector chooses the service head.
+    fn service_onset_or_refuse_full(
+        &mut self,
+        control: &mut MixedOneShotControl,
+        audio: &mut MixedOneShotAudio,
+        scope: MixedLiveScope,
+    ) -> Result<Option<OnsetDecision>, MixedOnsetSubmitError> {
+        match self.try_service_onset_in_scope(control, audio, scope) {
+            Ok(Some(result)) => Ok(Some(OnsetDecision::Admitted(result))),
+            Ok(None) => Ok(None),
+            Err(MixedOnsetSubmitError::Full)
+                if control.ingress_outstanding == super::MixedIngressQueueCount::NONE
+                    && control.ingress_room() < 2 =>
+            {
+                let (source, packet) = self
+                    .stage
+                    .peek_next()
+                    .expect("a refused onset remains the selected stage head");
+                let position = self
+                    .handoffs
+                    .iter()
+                    .position(|&(occurrence, release, _)| {
+                        occurrence == packet.occurrence && !release
+                    })
+                    .expect("the selected onset keeps its raw handoff");
+                self.stage.commit_next(source, packet);
+                let (_, _, handoff) = self.handoffs.remove(position);
+                self.refused_onsets.push(RefusedOnsetTombstone {
+                    source,
+                    occurrence: packet.occurrence,
+                    onset_raw: handoff.raw,
+                    reason: MixedOnsetSubmitError::Full,
+                });
+                Ok(Some(OnsetDecision::Refused(SplitRefusal {
+                    handoff,
+                    occurrence: packet.occurrence,
+                    disposition: SplitDisposition::Onset {
+                        reason: MixedOnsetSubmitError::Full,
+                    },
+                })))
+            }
+            Err(error) => Err(error),
+        }
+    }
+
+    /// Redeem one raw-linked key-up against its refused onset, in stage order.
+    /// A key-up for an admitted onset stays on the ordinary mixed path.
+    fn service_refused_key_up(&mut self) -> Option<SplitRefusal> {
+        let (source, packet) = self.stage.peek_next()?;
+        if !packet.release {
+            return None;
+        }
+        let tombstone = self
+            .refused_onsets
+            .iter()
+            .position(|cell| cell.source == source && cell.occurrence == packet.occurrence)?;
+        let handoff = self
+            .handoffs
+            .iter()
+            .position(|&(occurrence, release, handoff)| {
+                occurrence == packet.occurrence
+                    && release
+                    && handoff.link == Some(self.refused_onsets[tombstone].onset_raw)
+            })
+            .expect("a refused onset's staged key-up keeps its raw handoff");
+        self.stage.commit_next(source, packet);
+        let (_, _, handoff) = self.handoffs.remove(handoff);
+        let ended = self.refused_onsets.swap_remove(tombstone);
+        Some(SplitRefusal {
+            handoff,
+            occurrence: packet.occurrence,
+            disposition: SplitDisposition::KeyUpAfterOnset {
+                onset_raw: ended.onset_raw,
+                reason: ended.reason,
+            },
+        })
     }
 
     fn offer(
@@ -1202,14 +1321,22 @@ enum OnsetAtTeardown {
     Refused(IngressRefused),
 }
 
-/// Every bridge credit outstanding at teardown, one entry per charge: a stage
-/// packet cell, a stage release reservation, or a retained onset result.
+/// Stage packet cells, stage release reservations and retained onset results
+/// are distinct charges. Refused-onset records cross-reference one stage
+/// charge; they are not additional credits.
 #[derive(Debug, PartialEq)]
 struct BridgeTeardown {
     raw_issued: Vec<(Source, InputEventId, Option<InputEventId>)>,
     unoffered: Vec<RawHandoff>,
     reservations: Vec<(Source, Occurrence, InputEventId)>,
     onsets: Vec<(Occurrence, OnsetAtTeardown)>,
+    refused_onsets: Vec<(RefusedOnsetTombstone, RefusedOnsetPending)>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum RefusedOnsetPending {
+    ReservedKeyUp,
+    StagedKeyUp(InputEventId),
 }
 
 fn onset_edges(events: &[(TimedEvent, bool)], identity: NoteIdentity) -> usize {
@@ -1273,6 +1400,7 @@ impl<R: RawBackend> RawStageBridge<R> {
             unoffered: Vec::new(),
             reservations: Vec::new(),
             onsets: Vec::new(),
+            refused_onsets: Vec::new(),
         };
         for (lane, source) in self
             .stage
@@ -1301,6 +1429,26 @@ impl<R: RawBackend> RawStageBridge<R> {
                 let (_, raw, _) = self.staged_onsets.remove(position);
                 teardown.reservations.push((source, occurrence, raw));
             }
+        }
+        for tombstone in self.refused_onsets.drain(..) {
+            let reserved = teardown
+                .reservations
+                .iter()
+                .any(|&(source, occurrence, raw)| {
+                    (source, occurrence, raw)
+                        == (tombstone.source, tombstone.occurrence, tombstone.onset_raw)
+                });
+            let staged = teardown.unoffered.iter().find(|handoff| {
+                handoff.source == tombstone.source
+                    && handoff.link == Some(tombstone.onset_raw)
+                    && matches!(handoff.original.event(), Midi1Event::KeyRelease { .. })
+            });
+            let pending = match (reserved, staged) {
+                (true, None) => RefusedOnsetPending::ReservedKeyUp,
+                (false, Some(handoff)) => RefusedOnsetPending::StagedKeyUp(handoff.raw),
+                _ => panic!("one stage charge for each refused onset"),
+            };
+            teardown.refused_onsets.push((tombstone, pending));
         }
         assert!(self.handoffs.is_empty() && self.staged_onsets.is_empty());
         for (occurrence, result) in self.onset_results.drain(..) {
@@ -1762,6 +1910,233 @@ fn a_silent_peer_saturating_the_stage_never_refuses_raw_capture() {
         let split = recorded_occurrence(&delivered, shortage.raw);
         assert_eq!(recorded_occurrence(&delivered, orphan.raw), split);
         assert_ne!(combined, split);
+    }
+}
+
+#[test]
+fn in_flight_full_keeps_the_source_head_for_retry() {
+    let (prepared, candidate) = history_tests::one_shot_with_live(
+        true,
+        crate::quantities::HeldNoteCount::measured(1),
+        EventCount::measured(1),
+    );
+    let (mut control, mut audio) = prepared
+        .arm_one_shot(
+            candidate,
+            &history_tests::profile_with_ingress_depth(EventCount::measured(3)),
+        )
+        .unwrap();
+    let _prior = control
+        .submit_onset(
+            MixedIngressOriginId(1),
+            super::TEST_SCOPE,
+            SampleTime::new(100),
+            crate::quantities::KeyIdentity::new(60).unwrap(),
+            crate::quantities::NoteVelocity::FULL,
+        )
+        .unwrap();
+    assert_eq!(control.ingress_outstanding.as_usize(), 1);
+    assert_eq!(control.ingress_room(), 1);
+    let mut bridge = RawStageBridge::new(4);
+    bridge.frontier(Source::Second, 200);
+    let waiting = bridge
+        .offer(Source::First, 101, input(0x90, 61, 100))
+        .unwrap();
+    let selected = bridge.stage.peek_next();
+    let handoff = bridge.handoffs[0].2;
+    let command = control.last_ingress_id;
+    assert_eq!(
+        bridge.service_onset_or_refuse_full(&mut control, &mut audio, super::TEST_SCOPE),
+        Err(MixedOnsetSubmitError::Full)
+    );
+    assert_eq!(bridge.stage.peek_next(), selected);
+    assert_eq!(bridge.handoffs[0].2, handoff);
+    assert_eq!(control.last_ingress_id, command);
+    assert!(bridge.refused_onsets.is_empty());
+    audio.service_test_ingress_queue();
+    let prior = control.collect_ingress_result().unwrap();
+    assert!(matches!(prior.outcome, MixedIngressOutcome::Onset(Ok(_))));
+    assert_eq!(control.ingress_room(), 2);
+    let retried = bridge
+        .service_onset_or_refuse_full(&mut control, &mut audio, super::TEST_SCOPE)
+        .unwrap()
+        .unwrap();
+    let OnsetDecision::Admitted(retried) = retried else {
+        panic!("draining the earlier command restores onset room");
+    };
+    assert_eq!(retried.occurrence, waiting);
+    assert_eq!(retried.handoff, handoff);
+    assert!(bridge.refused_onsets.is_empty());
+    let (teardown, raw, _ended) = bridge.tear_down(control, audio);
+    assert!(teardown.refused_onsets.is_empty());
+    let issued = teardown.raw_issued.clone();
+    assert_eq!(
+        settle_raw_by_cancellation(raw, &issued).bridge.len(),
+        issued.len()
+    );
+}
+
+#[test]
+fn refused_onset_split_accounts_for_raw_link_and_both_teardown_states() {
+    #[derive(Clone, Copy)]
+    enum Tail {
+        Absent,
+        Staged,
+        Settled,
+    }
+
+    for tail in [Tail::Absent, Tail::Staged, Tail::Settled] {
+        let (prepared, candidate) = history_tests::one_shot_with_live(
+            true,
+            crate::quantities::HeldNoteCount::measured(1),
+            EventCount::measured(1),
+        );
+        let (mut control, mut audio) = prepared
+            .arm_one_shot(
+                candidate,
+                &history_tests::profile_with_ingress_depth(EventCount::measured(3)),
+            )
+            .unwrap();
+        let scope = super::TEST_SCOPE;
+        let pedal = control
+            .submit_pedal(MixedIngressOriginId(1), scope, SampleTime::new(100), true)
+            .unwrap();
+        assert!(matches!(pedal, super::MixedPedalSubmitted::Command(..)));
+        audio.service_test_ingress_queue();
+        assert!(matches!(
+            control.collect_ingress_result().unwrap().outcome,
+            MixedIngressOutcome::PedalDown(Ok(_))
+        ));
+
+        let mut bridge = RawStageBridge::new(4);
+        bridge.frontier(Source::Second, 200);
+        let first = bridge
+            .offer(Source::First, 110, input(0x90, 60, 100))
+            .unwrap();
+        let admitted = bridge
+            .service_onset_or_refuse_full(&mut control, &mut audio, scope)
+            .unwrap()
+            .unwrap();
+        assert!(matches!(
+            &admitted,
+            OnsetDecision::Admitted(CombinedResult {
+                occurrence,
+                disposition: MixedDisposition::Result(MixedIngressOutcome::Onset(Ok(_))),
+                ..
+            }) if *occurrence == first
+        ));
+        let OnsetDecision::Admitted(admitted) = admitted else {
+            panic!("first onset must be admitted");
+        };
+        let blocked = bridge
+            .offer(Source::First, 111, input(0x90, 60, 100))
+            .unwrap();
+        assert_eq!(control.ingress_room(), 1);
+        let command = control.last_ingress_id;
+        let handles = control.occurrence_ledger.held();
+        let split_onset = bridge
+            .service_onset_or_refuse_full(&mut control, &mut audio, scope)
+            .unwrap()
+            .unwrap();
+        let OnsetDecision::Refused(split_onset) = split_onset else {
+            panic!("the selected onset has no ordinary command place");
+        };
+        assert_eq!(split_onset.occurrence, blocked);
+        assert_eq!(
+            split_onset.disposition,
+            SplitDisposition::Onset {
+                reason: MixedOnsetSubmitError::Full,
+            }
+        );
+        assert_eq!(split_onset.handoff.original, input(0x90, 60, 100));
+        assert_eq!(control.last_ingress_id, command);
+        assert_eq!(control.occurrence_ledger.held(), handles);
+        assert!(bridge.handoffs.is_empty());
+        assert_eq!(bridge.refused_onsets.len(), 1);
+        assert_eq!(bridge.refused_onsets[0].onset_raw, split_onset.handoff.raw);
+        assert_eq!(bridge.stage.pressure(Source::First), (0, 2));
+
+        if !matches!(tail, Tail::Absent) {
+            let first_release = bridge
+                .offer(Source::First, 112, input(0x80, 60, 0))
+                .unwrap();
+            let refused_release = bridge
+                .offer(Source::First, 113, input(0x80, 60, 0))
+                .unwrap();
+            assert_eq!(first_release, first);
+            assert_eq!(refused_release, blocked);
+            assert_eq!(bridge.handoffs[0].2.link, Some(admitted.handoff.raw));
+            assert_eq!(bridge.handoffs[1].2.link, Some(split_onset.handoff.raw));
+            assert_eq!(bridge.stage.pressure(Source::First), (2, 0));
+            if matches!(tail, Tail::Settled) {
+                let first_result = bridge.service(&mut control, &mut audio).unwrap();
+                assert_eq!(first_result.occurrence, first);
+                assert_eq!(first_result.handoff.link, Some(admitted.handoff.raw));
+                let split = bridge.service_refused_key_up().unwrap();
+                assert_eq!(split.occurrence, blocked);
+                assert_eq!(split.handoff.link, Some(split_onset.handoff.raw));
+                assert_eq!(
+                    split.disposition,
+                    SplitDisposition::KeyUpAfterOnset {
+                        onset_raw: split_onset.handoff.raw,
+                        reason: MixedOnsetSubmitError::Full,
+                    }
+                );
+                assert!(bridge.refused_onsets.is_empty());
+                assert_eq!(bridge.stage.pressure(Source::First), (0, 0));
+            }
+        }
+
+        let (teardown, raw, ended) = bridge.tear_down(control, audio);
+        assert_eq!(ended.end, MixedCollectionEnd::Pending);
+        assert_eq!(
+            teardown.onsets.len(),
+            usize::from(!matches!(tail, Tail::Settled))
+        );
+        assert_eq!(
+            teardown.reservations.len(),
+            2 * usize::from(matches!(tail, Tail::Absent))
+        );
+        match tail {
+            Tail::Absent => {
+                assert_eq!(
+                    teardown.refused_onsets,
+                    vec![(
+                        RefusedOnsetTombstone {
+                            source: Source::First,
+                            occurrence: blocked,
+                            onset_raw: split_onset.handoff.raw,
+                            reason: MixedOnsetSubmitError::Full,
+                        },
+                        RefusedOnsetPending::ReservedKeyUp,
+                    )]
+                );
+            }
+            Tail::Staged => {
+                assert_eq!(teardown.unoffered.len(), 2);
+                assert_eq!(teardown.unoffered[0].link, Some(admitted.handoff.raw));
+                assert_eq!(teardown.unoffered[1].link, Some(split_onset.handoff.raw));
+                assert_eq!(
+                    teardown.refused_onsets,
+                    vec![(
+                        RefusedOnsetTombstone {
+                            source: Source::First,
+                            occurrence: blocked,
+                            onset_raw: split_onset.handoff.raw,
+                            reason: MixedOnsetSubmitError::Full,
+                        },
+                        RefusedOnsetPending::StagedKeyUp(teardown.unoffered[1].raw),
+                    )]
+                );
+            }
+            Tail::Settled => {
+                assert!(teardown.unoffered.is_empty());
+                assert!(teardown.refused_onsets.is_empty());
+            }
+        }
+        let issued = teardown.raw_issued.clone();
+        let settled = settle_raw_by_cancellation(raw, &issued);
+        assert_eq!(settled.bridge.len(), issued.len());
     }
 }
 

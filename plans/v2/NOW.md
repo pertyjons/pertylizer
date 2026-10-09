@@ -823,7 +823,23 @@ issued ID: all five message receipts are delivered, while the first source's
 later frontier is cancelled.
 The sixteen pedal-downs create pressure directly in the private control
 fixture; source-to-raw pedal custody is still open. This counterexample rules
-out unconditional onset retry and does not select a terminal split policy.
+out unconditional onset retry but does not by itself select a split policy.
+
+A further private bridge prototype now distinguishes an in-flight `Full`, whose
+same stage head and raw handoff retry after command collection, from a selected
+head offered when no command remains outstanding and fewer than two ordinary
+places are free. The latter may receive a named per-occurrence split refusal at
+that service point; it does not claim the shortage is permanent. No mixed
+command or handle is minted. The returned result owns the onset handoff, while
+a tombstone keeps only its source, occurrence, raw ID and `Full` reason. Two
+same-key onsets prove that the later raw-linked key-up selects the refused
+occurrence and consumes its tombstone without a mixed command. Teardown reports
+the tombstone against either an unspent stage release reservation or a staged
+key-up; these are references to one existing charge, not extra credits. This
+remains a test-only split policy. Production still needs all earlier capacity
+changes, including pedal lifts, ordered through the combined selector and a
+complete capacity/profile decision before `PerformanceIngress::prepare` can
+admit mixed producers instead of returning `MixedProducerPlan`.
 
 The budget withholds `B` queue places from ordinary traffic for the whole
 private run, leaving at most `C - B` for ordinary entries and release holds.
