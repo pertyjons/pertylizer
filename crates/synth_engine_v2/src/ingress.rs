@@ -89,6 +89,8 @@ use crate::time::{SampleTime, StreamEpoch};
 pub(crate) mod hot;
 mod offers;
 mod release;
+#[cfg(all(test, feature = "simulated-ingress"))]
+pub(crate) use offers::MixedBendWrite;
 pub(crate) use release::RELEASE_GROUP_CAPACITY;
 pub use release::{ReleaseCause, ReleaseGroup};
 
@@ -189,6 +191,10 @@ pub enum IngressRefused {
     #[cfg(all(test, feature = "simulated-ingress"))]
     #[error("private test live and mixed ingress cannot share one audio half")]
     MixedTestConflict,
+    /// A private mixed channel bend named more members than one group, or one twice.
+    #[cfg(all(test, feature = "simulated-ingress"))]
+    #[error("mixed channel bend is not a distinct set of at most eight live notes")]
+    MixedBendFanout,
     /// Invalid, oversized or deferred group; no obligation is changed.
     #[error("release group is not a distinct owned set of at most eight non-deferred notes")]
     ReleaseGroup,
@@ -324,6 +330,8 @@ pub enum IngressRefused {
 struct IngressEntry {
     event: TimedEvent,
     redeems_hold: bool,
+    #[cfg(all(test, feature = "simulated-ingress"))]
+    inherited_bend: bool,
 }
 
 /// A note that took a voice by ADR-0058's fade-then-start and has not yet started, or has

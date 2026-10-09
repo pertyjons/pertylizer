@@ -29,7 +29,21 @@
 //! entitlement by one group, so the group is never split. A sustained occurrence's cell
 //! retires with the Panic; a key-down occurrence's cell becomes a tombstone that
 //! consumes and counts its later key-up. Panic leaves pedals, refusal tombstones,
-//! compiled occurrences and the transport unchanged. Bend is not handled here yet.
+//! compiled occurrences and the transport unchanged.
+//!
+//! Bend is scoped like sustain. The audio half owns each scope's bend value; a bend
+//! command names its scope, never a handle, and audio resolves its members: every
+//! sounding and sustained occurrence of the scope, which arm bounds by one group. Each
+//! member gets one bend entry at the command's stamp. If its last undrained bend entry
+//! lies in the same quantum, that entry takes the new value and stamp in place, except
+//! when it was inherited by an onset at an earlier stamp. Superseded values are counted;
+//! an inherited entry remains, so a note can spend more than one bend slot in a quantum.
+//! Until the per-scope marker is implemented, notes on one scope can also have
+//! different values between an intervening onset and the next bend. No value
+//! applies before its own stamp. An onset on a bent scope writes the bend after
+//! its note-on and is accepted or refused whole with it. A refused bend changes
+//! neither the scope's value nor any entry. Panic and lifts leave the scope's
+//! value unchanged.
 
 use synth_core::MidiChannel;
 use thiserror::Error;
@@ -37,8 +51,8 @@ use thiserror::Error;
 use super::{MixedIngressCommandId, MixedIngressQueueCount};
 use crate::{
     identity::NoteIdentity,
-    ingress::{IngressRefused, RELEASE_GROUP_CAPACITY},
-    quantities::EventCount,
+    ingress::{IngressRefused, MixedBendWrite, RELEASE_GROUP_CAPACITY},
+    quantities::{Cents, EventCount},
     time::SampleTime,
 };
 
@@ -75,7 +89,7 @@ impl MixedLiveSource {
     }
 }
 
-/// What a sustain pedal reaches: one source's one channel.
+/// What a sustain pedal or a bend reaches: one source's one channel.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[must_use]
 pub(super) struct MixedLiveScope {
@@ -244,6 +258,41 @@ pub(super) enum MixedHandleRefused {
     Sustained,
     #[error("live occurrence cell has spent its generations")]
     Exhausted,
+}
+
+/// How a bend command wrote each member, in cell order.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) struct MixedBent {
+    members: [Option<(LiveOccurrenceId, MixedBendWrite)>; RELEASE_GROUP_CAPACITY],
+}
+
+impl MixedBent {
+    pub(super) fn written(&self) -> impl Iterator<Item = (LiveOccurrenceId, MixedBendWrite)> + '_ {
+        self.members.iter().flatten().copied()
+    }
+}
+
+/// A bend's member writes, or a refusal that changed no value and no entry.
+pub(super) type MixedBendResult = Result<MixedBent, MixedBendRefused>;
+
+/// Why the audio half refused a bend. The scope keeps its value and every entry stays.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Error)]
+pub(super) enum MixedBendRefused {
+    #[error("no prepared bend cell is free for another scope")]
+    BendTableFull,
+    #[error("more live occurrences in the scope than one bend fanout carries")]
+    GroupCapacity,
+    #[error(transparent)]
+    Ingress(IngressRefused),
+}
+
+/// Why the merger could not submit a bend. The caller keeps its input.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Error)]
+pub(super) enum MixedBendSubmitError {
+    #[error("no command-ring place for a bend")]
+    Full,
+    #[error("mixed ingress command identity is exhausted")]
+    IdentityExhausted,
 }
 
 /// Why the merger could not stage an onset. The caller keeps its input; nothing was
@@ -641,24 +690,35 @@ struct Occupant {
 }
 
 /// The audio half's fixed occurrence table: the authority on what each handle names,
-/// and on which scopes' pedals are down.
+/// on which scopes' pedals are down, and on each scope's bend.
 #[derive(Debug)]
 pub(super) struct MixedOccurrenceTable {
     cells: Vec<CellUse<Occupant>>,
     pedals: Vec<Option<MixedLiveScope>>,
+    /// Scopes whose bend is not zero; a zero bend frees its cell.
+    bends: Vec<Option<(MixedLiveScope, Cents)>>,
     released_after_refusal: EventCount,
     released_after_panic: EventCount,
+    bends_superseded: EventCount,
 }
 
 impl MixedOccurrenceTable {
-    /// Allocated off-thread at arm, with the merger ledgers' widths.
-    pub(super) fn prepare(width: MixedIngressQueueCount, pedals: MixedIngressQueueCount) -> Self {
+    /// Allocated off-thread at arm, with the merger ledgers' widths. Pedal and bend
+    /// tables are each as wide as `scopes`.
+    pub(super) fn prepare(width: MixedIngressQueueCount, scopes: MixedIngressQueueCount) -> Self {
         Self {
             cells: vec![CellUse::Free(LiveOccurrenceGeneration::FIRST); width.as_usize()],
-            pedals: vec![None; pedals.as_usize()],
+            pedals: vec![None; scopes.as_usize()],
+            bends: vec![None; scopes.as_usize()],
             released_after_refusal: EventCount::NONE,
             released_after_panic: EventCount::NONE,
+            bends_superseded: EventCount::NONE,
         }
+    }
+
+    /// Bend values a later bend in the same quantum replaced before publication.
+    pub(super) const fn bends_superseded(&self) -> EventCount {
+        self.bends_superseded
     }
 
     /// Scopes whose pedal is down, in cell order, for an off-thread teardown.

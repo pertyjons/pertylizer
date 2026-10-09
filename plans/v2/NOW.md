@@ -741,7 +741,23 @@ cover a full ordinary ring and ingress queue, same-key reuse, refusal and
 retirement order, allocation-free service, and live audio parity. Panic keeps
 the pedal and compiled notes unchanged. The multi-group amendment to draft
 rule 1.5, compiled Panic scope, source/stage protection and timestamped merge
-selection remain open with bend and the concrete two-source bridge.
+selection remain open with the concrete two-source bridge.
+A private channel bend now names its scope, not a handle. Audio owns each
+scope's value and writes every sounding and sustained member, never a tombstone
+or a compiled note. An onset on a bent scope writes its bend after its note-on
+and is refused whole when both do not fit. A member's undrained bend in the
+same quantum takes the new value and stamp in place, except an inherited bend
+at an earlier onset stamp, which keeps its slot and value. Superseded values are
+counted. No value applies before its own stamp, so this rehearses draft rule
+1.7 without its queue-order exception. Tests cover same-stamp order, a full
+ingress queue, four wheel messages over an eight-note chord, an intervening
+onset, refused, released and Panic-ended occurrences, and allocation-free
+service. Until the per-scope marker exists, two notes in one scope can carry
+different bend values for part of a quantum after an intervening onset. Still
+open: a bend needing new slots in a full queue, or a place in a full command
+ring, is refused and its value is lost. The draft's reserved per-scope marker
+would close that, but it needs a queue-accounting amendment and a fanout
+payload charged once at publication.
 This slice does not lift the production mixed-plan refusal.
 
 ### Selected work — ordered transport through live I/O

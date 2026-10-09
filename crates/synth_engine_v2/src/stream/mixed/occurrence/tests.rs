@@ -502,5 +502,6 @@ fn teardown_classifies_every_held_handle_by_its_audio_state() {
     assert_eq!(teardown.ingress.holds_outstanding, EventCount::measured(2));
 }
 
+mod bend;
 mod panic;
 mod sustain;

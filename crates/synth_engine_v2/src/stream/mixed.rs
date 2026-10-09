@@ -54,10 +54,10 @@ mod occurrence;
 
 #[cfg(all(test, feature = "simulated-ingress"))]
 use occurrence::{
-    LiveOccurrenceId, MixedLiftResult, MixedLiveScope, MixedOccurrenceLedger, MixedOccurrenceState,
-    MixedOccurrenceTable, MixedOnsetSubmitError, MixedPanicResult, MixedPanicSubmitError,
-    MixedPedalDown, MixedPedalEdge, MixedPedalLedger, MixedPedalRefused, MixedPedalSubmitError,
-    MixedReleaseSubmitError, MixedRetired,
+    LiveOccurrenceId, MixedBendResult, MixedBendSubmitError, MixedLiftResult, MixedLiveScope,
+    MixedOccurrenceLedger, MixedOccurrenceState, MixedOccurrenceTable, MixedOnsetSubmitError,
+    MixedPanicResult, MixedPanicSubmitError, MixedPedalDown, MixedPedalEdge, MixedPedalLedger,
+    MixedPedalRefused, MixedPedalSubmitError, MixedReleaseSubmitError, MixedRetired,
 };
 
 /// Why a bound mixed stream could not be prepared.
@@ -959,6 +959,14 @@ enum MixedIngressRequest {
         origin: MixedIngressOriginId,
         at: SampleTime,
     },
+    /// A channel bend for one scope. It names no occurrence: audio resolves the scope's
+    /// sounding and sustained members from its own table.
+    Bend {
+        origin: MixedIngressOriginId,
+        scope: MixedLiveScope,
+        at: SampleTime,
+        cents: Cents,
+    },
 }
 
 #[cfg(all(test, feature = "simulated-ingress"))]
@@ -988,6 +996,8 @@ enum MixedIngressOutcome {
     /// The occurrences Panic ended and its execution stamp, or a refusal that changed
     /// nothing.
     Panic(MixedPanicResult),
+    /// How the bend wrote each member, or a refusal that changed nothing.
+    Bend(MixedBendResult),
 }
 
 /// What the merger did with one pedal edge.
@@ -1161,6 +1171,30 @@ impl MixedOneShotControl {
         Ok((command, request))
     }
 
+    /// Submit one channel bend for `scope` into an ordinary ring place. Bends are not
+    /// coalesced here: a full ring refuses one at the caller boundary.
+    fn submit_bend(
+        &mut self,
+        origin: MixedIngressOriginId,
+        scope: MixedLiveScope,
+        at: SampleTime,
+        cents: Cents,
+    ) -> Result<(MixedIngressCommandId, MixedIngressRequest), MixedBendSubmitError> {
+        let request = MixedIngressRequest::Bend {
+            origin,
+            scope,
+            at,
+            cents,
+        };
+        let command = self.submit_ingress(request).map_err(|error| match error {
+            MixedIngressSubmitError::Full(_) => MixedBendSubmitError::Full,
+            MixedIngressSubmitError::IdentityExhausted(_) => {
+                MixedBendSubmitError::IdentityExhausted
+            }
+        })?;
+        Ok((command, request))
+    }
+
     /// Submit one sustain edge for `scope`. Only an edge that changes the merger's
     /// pedal state is pushed. An effective pedal-down needs its own place and one more
     /// that it reserves for the scope's lift; the lift then always fits.
@@ -1252,7 +1286,8 @@ impl MixedOneShotControl {
                     | MixedIngressOutcome::Sustained(_)
                     | MixedIngressOutcome::PedalDown(_)
                     | MixedIngressOutcome::Lift(_)
-                    | MixedIngressOutcome::Panic(_) => None,
+                    | MixedIngressOutcome::Panic(_)
+                    | MixedIngressOutcome::Bend(_) => None,
                 };
                 if self
                     .occurrence_ledger
@@ -1281,7 +1316,9 @@ impl MixedOneShotControl {
                 self.pedal_ledger
                     .settle_lift(result.id, scope, lifted.is_none());
             }
-            MixedIngressRequest::Onset { .. } | MixedIngressRequest::Panic { .. } => {}
+            MixedIngressRequest::Onset { .. }
+            | MixedIngressRequest::Panic { .. }
+            | MixedIngressRequest::Bend { .. } => {}
         }
         Some(result)
     }
