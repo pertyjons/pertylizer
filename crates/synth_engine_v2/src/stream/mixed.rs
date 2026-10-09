@@ -209,10 +209,20 @@ pub(crate) enum MixedOneShotArmError {
     #[cfg(all(test, feature = "simulated-ingress"))]
     #[error(transparent)]
     Ingress(#[from] IngressPrepareError),
-    /// A live onset and its protected release need distinct command-ring places.
+    /// The ingress queue cannot realize every declared live hold with its release and
+    /// bend places plus the final onset's own entry.
     #[cfg(all(test, feature = "simulated-ingress"))]
-    #[error("mixed occurrence ingress depth {capacity} cannot reserve an onset and release")]
-    OccurrenceCapacity { capacity: usize },
+    #[error(
+        "mixed ingress depth {capacity} cannot serve {holds} live holds; need {required}",
+        capacity = .capacity.get(),
+        holds = .holds.get(),
+        required = .required.get()
+    )]
+    BendPlaceCapacity {
+        capacity: EventCount,
+        holds: EventCount,
+        required: EventCount,
+    },
     /// A sustain lift ends its scope's sustained occurrences, and Panic every live
     /// occurrence, as one release group, so the live hold entitlement may not exceed
     /// one group's members.
@@ -2160,16 +2170,6 @@ impl MixedJoinedPrepared {
         #[cfg(all(test, feature = "simulated-ingress"))]
         let ingress_capacity =
             MixedIngressQueueCount::capacity(test_ingress.queue_capacity_for_test());
-        #[cfg(all(test, feature = "simulated-ingress"))]
-        if ingress_capacity.as_usize() < 2 {
-            return Err(Box::new(MixedOneShotArmRefusal {
-                reason: MixedOneShotArmError::OccurrenceCapacity {
-                    capacity: ingress_capacity.as_usize(),
-                },
-                owner: self,
-                candidate,
-            }));
-        }
         // A sustained occurrence owns a release hold instead of a ring place, so the
         // occurrence tables cover the ring plus the live hold entitlement. A lift ends
         // its scope's sustained occurrences, and Panic every live occurrence, as one
@@ -2199,6 +2199,28 @@ impl MixedJoinedPrepared {
                 candidate,
             }));
         };
+        // With H-1 live notes held after their onsets drain, their release and bend
+        // places use 2(H-1) units. The Hth onset takes three more, so 2H + 1 is the
+        // smallest ingress depth that can realize every declared live hold.
+        // H is at most one group here, so the arithmetic is bounded by 17.
+        #[cfg(all(test, feature = "simulated-ingress"))]
+        let required = EventCount::measured(live_holds.get() * 2 + 1);
+        #[cfg(all(test, feature = "simulated-ingress"))]
+        if ingress_capacity.as_usize() < required.as_usize().unwrap_or(usize::MAX) {
+            return Err(Box::new(MixedOneShotArmRefusal {
+                reason: MixedOneShotArmError::BendPlaceCapacity {
+                    capacity: profile
+                        .limits()
+                        .events()
+                        .queues()
+                        .performance_ingress_capacity(),
+                    holds: live_holds,
+                    required,
+                },
+                owner: self,
+                candidate,
+            }));
+        }
         // Both rings carry one protected place beyond the ordinary capacity: the merger
         // keeps it for one Panic, which ordinary commands and results cannot take.
         #[cfg(all(test, feature = "simulated-ingress"))]

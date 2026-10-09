@@ -27,54 +27,94 @@ fn armed(compiled_first: bool) -> (MixedOneShotControl, MixedOneShotAudio) {
 }
 
 #[test]
-fn a_one_slot_ingress_profile_refuses_arm_and_preserves_both_inputs() {
+fn shallow_ingress_profiles_refuse_arm_and_preserve_both_inputs() {
     use crate::profile::{EventLimits, HostProfile, QueueCapacities, RenderLimits};
 
-    let original = history_tests::mixed_profile();
-    let limits = original.limits();
-    let events = limits.events();
-    let queues = events.queues();
-    let queues = QueueCapacities::new(
-        EventCount::measured(1),
-        queues.command_queue_capacity(),
-        queues.event_egress_capacity(),
-    )
-    .expect("valid one-slot queue");
-    let events = EventLimits::new(
-        events.max_events_per_quantum(),
-        events.max_note_expansion_per_tick(),
-        events.max_scheduled_events_in_flight(),
-        events.forward_event_horizon(),
-        queues,
-        events.shares(),
-    )
-    .expect("valid one-slot event profile");
-    let limits = RenderLimits::new(
-        limits.stream(),
-        limits.graph(),
-        limits.voices(),
-        events,
-        limits.observation(),
-        limits.mixing(),
-        limits.memory(),
-        limits.script(),
-        limits.recording(),
-        limits.cost(),
-    )
-    .expect("valid limits");
-    let profile = HostProfile::new(original.capabilities(), limits).expect("valid profile");
-    let (prepared, candidate) = history_tests::one_shot_with_one_live_hold();
-    let refused = prepared
-        .arm_one_shot(candidate, &profile)
-        .expect_err("one slot cannot reserve onset plus release");
-    assert_eq!(
-        refused.reason,
-        MixedOneShotArmError::OccurrenceCapacity { capacity: 1 }
-    );
-    let _armed = refused
-        .owner
-        .arm_one_shot(refused.candidate, &original)
-        .expect("both inputs survive the refusal");
+    for (holds, depth, admitted) in [
+        (1, 1, false),
+        (1, 2, false),
+        (1, 3, true),
+        (2, 4, false),
+        (2, 5, true),
+    ] {
+        let original = history_tests::mixed_profile();
+        let limits = original.limits();
+        let events = limits.events();
+        let queues = events.queues();
+        let queues = QueueCapacities::new(
+            EventCount::measured(depth),
+            queues.command_queue_capacity(),
+            queues.event_egress_capacity(),
+        )
+        .expect("valid shallow queue");
+        let events = EventLimits::new(
+            events.max_events_per_quantum(),
+            events.max_note_expansion_per_tick(),
+            events.max_scheduled_events_in_flight(),
+            events.forward_event_horizon(),
+            queues,
+            events.shares(),
+        )
+        .expect("valid shallow event profile");
+        let limits = RenderLimits::new(
+            limits.stream(),
+            limits.graph(),
+            limits.voices(),
+            events,
+            limits.observation(),
+            limits.mixing(),
+            limits.memory(),
+            limits.script(),
+            limits.recording(),
+            limits.cost(),
+        )
+        .expect("valid limits");
+        let profile = HostProfile::new(original.capabilities(), limits).expect("valid profile");
+        let (prepared, candidate) = if holds == 1 {
+            history_tests::one_shot_with_one_live_hold()
+        } else {
+            history_tests::one_shot_with_live(
+                true,
+                crate::quantities::HeldNoteCount::measured(holds),
+                EventCount::measured(holds),
+            )
+        };
+        if admitted {
+            let (_control, mut audio) = prepared
+                .arm_one_shot(candidate, &profile)
+                .expect("boundary depth admits the declared holds");
+            for index in 0..holds {
+                let at = SampleTime::new(100 + u64::from(index) * 300);
+                let raw = u8::try_from(60 + index).expect("small key");
+                let _identity = audio
+                    .offer_test_note_on(at, key(raw), NoteVelocity::FULL)
+                    .expect("the next declared hold fits after earlier onsets drain");
+                if index + 1 < holds {
+                    sustain::render(&mut audio);
+                }
+            }
+            assert_eq!(
+                audio.test_ingress.holds_outstanding(),
+                EventCount::measured(holds)
+            );
+        } else {
+            let refused = prepared
+                .arm_one_shot(candidate, &profile)
+                .expect_err("shallow queue cannot reserve onset, release and bend");
+            assert_eq!(
+                refused.reason,
+                MixedOneShotArmError::BendPlaceCapacity {
+                    capacity: EventCount::measured(depth),
+                    holds: EventCount::measured(holds),
+                    required: EventCount::measured(2 * holds + 1),
+                }
+            );
+            let _armed = refused
+                .owner
+                .arm_one_shot(refused.candidate, &original)
+                .expect("both inputs survive the refusal");
+        }
+    }
 }
 
 fn key(raw: u8) -> KeyIdentity {

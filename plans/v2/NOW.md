@@ -764,12 +764,14 @@ This is a private experiment, not the draft's D5 marker. D5 is unapproved and
 proposes one coalescing marker per `(source, channel)`, a fanout payload charged
 once at publication, and early application of at most one quantum under a named
 amendment of ADR-0023 clause 1 and SOUND-INV-020. This rehearsal costs one queue
-unit per live note instead. Its early application is bounded only by how far an
-undrained entry lies before the bend, which is at most the forward event horizon.
+unit per live note instead. Private arm now requires at least `2H + 1` ingress
+places for `H` declared live holds. This is the ingress bound after earlier
+onsets drain; command-ring pedal reservations can still prevent a later onset.
+The rehearsal's early bend application is bounded by how far an undrained entry
+lies before the bend, at most the forward event horizon.
 No amendment is approved for that behaviour, so it stays confined to the private
 owner. Still open: a full command ring refuses a bend at the caller boundary;
-two notes in one scope can carry different values after an intervening onset;
-and arm does not yet relate queue depth to the extra unit per live hold.
+two notes in one scope can carry different values after an intervening onset.
 This slice does not lift the production mixed-plan refusal.
 
 ### Selected work — ordered transport through live I/O
