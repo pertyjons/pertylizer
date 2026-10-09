@@ -1216,6 +1216,110 @@ fn pre_ring_attribution_error_preserves_the_producer_reason() {
 }
 
 #[test]
+fn a_source_head_keeps_its_queue_identity_until_exact_commit() {
+    use super::source::{SourceHeadError, SourceInbox, SourceOwnedSendError};
+
+    let (mut control, audio, generations) = fixture();
+    let epoch = audio.core.acknowledged().epoch;
+    let (mut first, mut first_inbox) = SourceInbox::prepare(
+        generations[0],
+        control.halt_handle(),
+        prepare::simulated_clock(epoch, 0).unwrap(),
+    );
+    let (mut second, mut second_inbox) = SourceInbox::prepare(
+        generations[1],
+        control.halt_handle(),
+        prepare::simulated_clock(epoch, 0).unwrap(),
+    );
+    let first_bend = InputObservation::Message {
+        tick: InputTick::new(1),
+        arrival: SampleTime::new(1),
+        input: Midi1Input::from_bytes([0xe0, 127, 127]).unwrap(),
+    };
+    let first_id = first.submit_owned(first_bend).unwrap().parts().1;
+    let repeated_id = first.submit_owned(first_bend).unwrap().parts().1;
+    for at in 2..=15 {
+        let accepted = first
+            .submit_owned(InputObservation::Frontier {
+                tick: InputTick::new(at),
+            })
+            .unwrap();
+        assert_eq!(accepted.parts().1.serial(), at + 1);
+    }
+    let later_bend = InputObservation::Message {
+        tick: InputTick::new(16),
+        arrival: SampleTime::new(16),
+        input: Midi1Input::from_bytes([0xe0, 0, 0]).unwrap(),
+    };
+    let retry = match first.submit_owned(later_bend) {
+        Err(SourceOwnedSendError::Retry(token)) => token,
+        other => panic!("full ring must retain the owned bend: {other:?}"),
+    };
+    assert_eq!(retry.observation(), later_bend);
+    let original_attempt = retry.attempt();
+    first_inbox.record_failure(&mut control, |_| panic!("no source failure"));
+    second_inbox.record_failure(&mut control, |_| panic!("no source failure"));
+    let head = first_inbox.peek_handoff().unwrap();
+    assert_eq!(head.stamp().queue(), first_id);
+    assert_eq!(head.observation(), first_bend);
+    let foreign = second.submit_owned(first_bend).unwrap().parts().1;
+    let wrong = second_inbox.peek_handoff().unwrap();
+    assert_eq!(wrong.stamp().queue(), foreign);
+    assert_eq!(wrong.observation(), head.observation());
+    assert_eq!(wrong.stamp().mapped_at(), head.stamp().mapped_at());
+    assert_eq!(
+        first_inbox.commit_handoff(wrong),
+        Err(SourceHeadError::Mismatched {
+            expected: wrong,
+            actual: head,
+        })
+    );
+    assert_eq!(first_inbox.peek_handoff(), Some(head));
+    let retry = match first.retry_owned(retry) {
+        Err(SourceOwnedSendError::Retry(token)) => token,
+        other => panic!("wrong commit must not release source capacity: {other:?}"),
+    };
+    let raw = control.offer_source_queued(generations[0], first_id, first_bend);
+    assert!(raw.offer.result.is_ok());
+    assert_eq!(first_inbox.peek_handoff(), Some(head));
+    assert_eq!(first_inbox.commit_handoff(head), Ok(head));
+    let repeated = first_inbox.peek_handoff().unwrap();
+    assert_eq!(repeated.stamp().queue(), repeated_id);
+    assert_eq!(repeated.observation(), head.observation());
+    assert_eq!(repeated.stamp().mapped_at(), head.stamp().mapped_at());
+    assert_eq!(
+        first_inbox.commit_handoff(head),
+        Err(SourceHeadError::Mismatched {
+            expected: head,
+            actual: repeated,
+        })
+    );
+    let accepted = first.retry_owned(retry).unwrap();
+    let (attempt, queue) = accepted.parts();
+    assert_eq!(attempt, original_attempt);
+    assert_eq!(queue.serial(), 17);
+
+    let mut delivered = Vec::new();
+    first_inbox.service_handoff_identified(&mut control, |handoff, report| {
+        let handoff = handoff.unwrap();
+        assert!(report.offer.result.is_ok());
+        delivered.push(handoff.stamp().queue().serial());
+    });
+    assert_eq!(delivered, (2..=17).collect::<Vec<_>>());
+    assert_eq!(first_inbox.peek_handoff(), None);
+    assert_eq!(
+        first_inbox.commit_handoff(head),
+        Err(SourceHeadError::Empty)
+    );
+    assert!(first_inbox.close(first).is_ok());
+    second_inbox.service_handoff_identified(&mut control, |handoff, report| {
+        assert_eq!(handoff.unwrap().stamp().queue(), foreign);
+        assert!(report.offer.result.is_ok());
+    });
+    assert!(second_inbox.close(second).is_ok());
+}
+
+#[test]
 fn owned_retry_preserves_attempt_and_mints_queue_id_only_after_push() {
     use super::source::{SourceInbox, SourceOwnedSendError};
     let (mut control, audio, generations) = fixture();

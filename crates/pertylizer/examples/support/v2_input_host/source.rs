@@ -91,6 +91,19 @@ impl SourceHandoff {
     }
 }
 
+/// A source head may be committed only by the consumer that still owns it.
+#[derive(Debug, Error, PartialEq)]
+#[must_use]
+pub enum SourceHeadError {
+    #[error("source inbox has no head to commit")]
+    Empty,
+    #[error("source inbox head changed before commit")]
+    Mismatched {
+        expected: SourceHandoff,
+        actual: SourceHandoff,
+    },
+}
+
 #[derive(Debug)]
 #[must_use]
 pub struct SourceAccepted {
@@ -315,6 +328,43 @@ impl SourceInbox {
             );
             receive(handoff.map(|item| item.stamp().queue()), report.offer);
         });
+    }
+
+    /// Observe the exact queued head without releasing its ring place. The
+    /// merger must call [`Self::record_failure`] before servicing any head.
+    /// A later stage or command refusal may leave it here for a same-identity
+    /// retry.
+    pub fn peek_handoff(&self) -> Option<SourceHandoff> {
+        self.queue.try_peek().copied().map(|packet| SourceHandoff {
+            stamp: SourceQueueStamp {
+                queue: packet.id,
+                mapped_at: packet.mapped_at,
+            },
+            observation: packet.observation,
+        })
+    }
+
+    /// Release one ring place only for the exact head a downstream owner took.
+    /// Call after that owner accepts the handoff or records its terminal
+    /// disposition, and after [`Self::record_failure`] for the service pass.
+    /// A wrong or stale handoff changes neither the head nor producer capacity.
+    #[allow(dead_code)] // Reserved for the concrete mixed-stage host bridge.
+    pub fn commit_handoff(
+        &mut self,
+        expected: SourceHandoff,
+    ) -> Result<SourceHandoff, SourceHeadError> {
+        let actual = self.peek_handoff().ok_or(SourceHeadError::Empty)?;
+        if actual != expected {
+            return Err(SourceHeadError::Mismatched { expected, actual });
+        }
+        let packet = self.queue.try_pop().ok_or(SourceHeadError::Empty)?;
+        Ok(SourceHandoff {
+            stamp: SourceQueueStamp {
+                queue: packet.id,
+                mapped_at: packet.mapped_at,
+            },
+            observation: packet.observation,
+        })
     }
 
     /// A queued original and its validated nominal engine time remain available

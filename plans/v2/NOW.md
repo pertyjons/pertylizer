@@ -797,6 +797,12 @@ handoff then reaches audio and inherits the 30-cent bend at frame 300 after the
 earlier bend entry. All three fixtures assume prepared raw capacity. A raw
 owner's full admission is a terminal discontinuity, so source-side
 preflight/reservation and the concrete example-host bridge remain open.
+The non-shipping example's actual `SourceInbox` now offers an exact
+peek/commit handoff. A wrong or stale handoff cannot pop the head; committing
+the matching bend releases one source-ring place, and an owned producer retry
+keeps its source attempt and next queue identity. This prepares source custody
+for the concrete bridge. It does not yet attach the example's source ring to
+the mixed stage or reserve raw admission before a terminal raw-capacity fault.
 
 Tests cover caller refusal without identity minting, full ordinary and bend
 budgets with Panic still serviceable, credit return after drain without another
