@@ -2125,12 +2125,15 @@ fn actual_source_bend_retries_behind_note_and_pedal_without_a_second_raw_id() {
     let (mut control, mut audio) = prepared
         .arm_one_shot(candidate, &history_tests::mixed_profile())
         .unwrap();
-    let raw = [raw_source_with_cells(0, 32), raw_source(1)];
-    let generation = raw[0].generation;
-    let clock = raw[0].input.clock().unwrap();
+    let (owner, generations) = ledger_tests::bridge_serial_owner_with_first_limits(
+        256,
+        InputRate::new(FrameCount::new(1), InputTickSpan::new(1)).unwrap(),
+        InputCapacity::new(64).unwrap(),
+    );
+    let clock = owner.input(generations[0]).unwrap().clock().unwrap();
     let (mut producer, mut inbox) =
-        SourceInbox::prepare(generation, InputCaptureHalt::detached_for_test(), clock);
-    let mut bridge = RawStageBridge::with_raw(4, raw);
+        SourceInbox::prepare(generations[0], InputCaptureHalt::detached_for_test(), clock);
+    let mut bridge = RawStageBridge::with_raw(4, SerialRaw { owner, generations });
     let observations = [
         (100, input(0xb0, 64, 127)),
         (101, input(0x90, 60, 100)),
@@ -2265,12 +2268,43 @@ fn actual_source_bend_retries_behind_note_and_pedal_without_a_second_raw_id() {
     };
     assert_eq!(retired.retired().collect::<Vec<_>>(), vec![onset.handle]);
     assert_eq!(bridge.stage.pressure(Source::First), (0, 0));
-    let (teardown, raw, _ended) = bridge.tear_down(control, audio);
+    let (teardown, mut raw, _ended) = bridge.tear_down(control, audio);
     assert!(teardown.unoffered.is_empty() && teardown.pedal_lifts.is_empty());
-    let issued = teardown.raw_issued.clone();
+    let mut remaining = teardown.raw_issued;
+    for (source, generation) in [Source::First, Source::Second]
+        .into_iter()
+        .zip(raw.generations)
+    {
+        let frontier = raw
+            .owner
+            .advance_frontier(generation, InputTick::new(256))
+            .unwrap();
+        remaining.push((source, frontier, None));
+    }
+    let delivered = publish_serial(&mut raw, remaining);
+    let bend_receipt = delivered
+        .iter()
+        .find(|receipt| receipt.id == bend_raw.raw)
+        .unwrap();
     assert_eq!(
-        settle_raw_by_cancellation(raw, &issued).bridge.len(),
-        issued.len()
+        bend_receipt.observation,
+        InputObservation::Message {
+            tick: InputTick::new(102),
+            arrival: SampleTime::new(102),
+            input: bend_raw.original,
+        }
+    );
+    let InputOutcome::Delivered(SessionSourceOutcome::Published(record)) = &bend_receipt.outcome
+    else {
+        panic!("the accepted bend must reach the serial recorder: {bend_receipt:?}");
+    };
+    assert_eq!(
+        record.capture,
+        crate::recording::notes::CaptureDisposition::Recorded
+    );
+    assert_eq!(
+        recorded_occurrence(&delivered, onset.handoff.raw),
+        recorded_occurrence(&delivered, release.handoff.raw)
     );
 }
 
