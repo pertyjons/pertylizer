@@ -8,7 +8,7 @@
 //! sustained member as one release group. Panic ends every sounding and sustained
 //! occurrence as one release group and leaves a tombstone for each key still down. A
 //! bend appends one entry per sounding and sustained member of its scope at its
-//! execution stamp, and an onset inherits its scope's non-zero bend whole. Each command
+//! nominal stamp, and an onset inherits its scope's non-zero bend whole. Each command
 //! spends at most the bend credits it carries; the rest return to the merger at once
 //! through the lock-free credit counter. It works in prepared storage only: it does not
 //! allocate, lock, perform I/O, log or panic.
@@ -478,9 +478,9 @@ impl MixedOneShotAudio {
     /// A bend appends one entry for every sounding and sustained occurrence of its scope,
     /// in cell order, then becomes the scope's value for later onsets. Refusal and Panic
     /// tombstones are not members. Each entry spends one of the credits the command
-    /// carries, so no bend is refused for a queue slot. The offer executes at the later
-    /// of its nominal stamp and the ingress order fence. A refused bend changes neither
-    /// the value nor any entry.
+    /// carries, so no bend is refused for a queue slot. The offer keeps its nominal
+    /// stamp; an earlier accepted event with a later stamp refuses it. A refused bend
+    /// changes neither the value nor any entry.
     fn service_bend(
         &mut self,
         scope: MixedLiveScope,
@@ -522,7 +522,7 @@ impl MixedOneShotAudio {
                 members: count,
             });
         }
-        let executed_at = self.test_ingress.mixed_execution_stamp(at);
+        let executed_at = at;
         let offered = match members.first().copied().flatten() {
             Some((_, first)) => {
                 let mut identities = [first; RELEASE_GROUP_CAPACITY];

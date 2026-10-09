@@ -883,10 +883,10 @@ pub(crate) struct MixedOneShotControl {
     /// Effective pedal state per scope and the ring places reserved for lifts.
     #[cfg(all(test, feature = "simulated-ingress"))]
     pedal_ledger: MixedPedalLedger,
-    /// Scopes entitled to audio's bounded bend table. A successful zero result may
-    /// release a cell only when no later bend for that scope has been submitted.
+    /// Scopes entitled to audio's bounded bend table. Results track the last
+    /// accepted value so a refused latest bend releases a never-bent scope.
     #[cfg(all(test, feature = "simulated-ingress"))]
-    bend_scopes: Vec<Option<(MixedLiveScope, MixedIngressCommandId)>>,
+    bend_scopes: Vec<Option<MixedBendScopeCell>>,
     /// Credits one bend reserves: the live hold entitlement `H`, which bounds the
     /// sounding and sustained members audio can find at service.
     #[cfg(all(test, feature = "simulated-ingress"))]
@@ -936,6 +936,15 @@ const TEST_SCOPE: MixedLiveScope = MixedLiveScope::new(
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd)]
 #[must_use]
 struct MixedIngressQueueCount(usize);
+
+/// One merger reservation for a scope that is bent or has an uncollected bend.
+#[cfg(all(test, feature = "simulated-ingress"))]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct MixedBendScopeCell {
+    scope: MixedLiveScope,
+    latest: MixedIngressCommandId,
+    accepted_nonzero: bool,
+}
 
 #[cfg(all(test, feature = "simulated-ingress"))]
 impl MixedIngressQueueCount {
@@ -1140,7 +1149,7 @@ impl MixedOneShotControl {
     fn scope_may_bend(&self, scope: MixedLiveScope) -> bool {
         self.bend_scopes
             .iter()
-            .any(|cell| cell.is_some_and(|(held, _)| held == scope))
+            .any(|cell| cell.is_some_and(|cell| cell.scope == scope))
     }
 
     /// Submit a host Panic into the protected ring place. Both rings carry one place
@@ -1278,7 +1287,7 @@ impl MixedOneShotControl {
         let existing = self
             .bend_scopes
             .iter()
-            .position(|cell| cell.is_some_and(|(held, _)| held == scope));
+            .position(|cell| cell.is_some_and(|cell| cell.scope == scope));
         let vacant = if cents == Cents::ZERO || existing.is_some() {
             None
         } else {
@@ -1310,8 +1319,14 @@ impl MixedOneShotControl {
                 });
             }
         };
-        if let Some(index) = existing.or(vacant) {
-            self.bend_scopes[index] = Some((scope, command));
+        if let Some(index) = existing.or(vacant)
+            && let Some(cell) = self.bend_scopes.get_mut(index)
+        {
+            *cell = Some(MixedBendScopeCell {
+                scope,
+                latest: command,
+                accepted_nonzero: cell.is_some_and(|cell| cell.accepted_nonzero),
+            });
         }
         Ok((command, request))
     }
@@ -1375,8 +1390,8 @@ impl MixedOneShotControl {
     /// place to the merger. A lift result frees every cell it retired and settles the
     /// scope's lift reservation; a pedal-down result settles its reservation. A Panic
     /// result frees every sustained cell it retired and the protected place; the cells
-    /// it tombstoned stay open for their key-ups. A successful zero bend releases
-    /// its scope cell only if no later bend for that scope is pending.
+    /// it tombstoned stay open for their key-ups. The latest bend result releases
+    /// its scope cell when the last accepted value is zero.
     fn collect_ingress_result(&mut self) -> Option<MixedIngressResult> {
         let result = self.ingress_results.0.try_pop()?;
         if let MixedIngressRequest::Panic { .. } = result.request {
@@ -1439,13 +1454,18 @@ impl MixedOneShotControl {
                     .settle_lift(result.id, scope, lifted.is_none());
             }
             MixedIngressRequest::Bend { scope, cents, .. } => {
-                if cents == Cents::ZERO
-                    && matches!(result.outcome, MixedIngressOutcome::Bend(Ok(_)))
-                    && let Some(cell) = self.bend_scopes.iter_mut().find(|cell| {
-                        cell.is_some_and(|(held, latest)| held == scope && latest == result.id)
-                    })
+                if let Some(cell) = self
+                    .bend_scopes
+                    .iter_mut()
+                    .find(|cell| cell.is_some_and(|cell| cell.scope == scope))
+                    && let Some(held) = cell.as_mut()
                 {
-                    *cell = None;
+                    if matches!(result.outcome, MixedIngressOutcome::Bend(Ok(_))) {
+                        held.accepted_nonzero = cents != Cents::ZERO;
+                    }
+                    if held.latest == result.id && !held.accepted_nonzero {
+                        *cell = None;
+                    }
                 }
             }
             MixedIngressRequest::Onset { .. } | MixedIngressRequest::Panic { .. } => {}

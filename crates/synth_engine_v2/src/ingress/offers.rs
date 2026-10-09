@@ -17,7 +17,7 @@ use crate::{
 pub(crate) enum MixedBendOrigin {
     /// An onset on a bent scope wrote its scope's value at its own stamp.
     Inherited,
-    /// A channel bend wrote the entry at its own execution stamp.
+    /// A channel bend wrote the entry at its nominal stamp.
     Ordinary,
 }
 

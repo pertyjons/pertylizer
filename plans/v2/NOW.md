@@ -756,19 +756,22 @@ identity; an unbent scope needs none. Exhausted credits refuse at the caller,
 without minting a command identity or handle. Audio returns unused credits
 after service through a lock-free counter, and a written entry returns its
 credit only when it drains. Every accepted bend appends a distinct entry per
-member at its execution stamp. An inherited bend follows its onset at that
+member at its nominal stamp. An inherited bend follows its onset at that
 onset's stamp. No earlier entry is rewritten, coalesced or applied early.
 Releases, sustain lifts and Panic leave undrained bend entries and their
 credits in the queue until drain.
 
-Like the private Panic, a bend nominally behind the ingress order fence
-executes at that fence and reports its execution stamp. The private rehearsal
-sets no fixed delay bound for a stale nominal stamp; the timestamped merger
-rule remains open. Panic needs no bend credit and retains its protected
-command place. The control half also reserves one bounded bend-table cell
-before submitting a new non-zero scope, releasing it only after a successful
-zero result with no later bend pending. A full scope table or command ring
-still refuses a bend at the caller boundary.
+Unlike the private Panic, a bend nominally behind the ingress order fence
+is refused with `NonMonotoneStamp` at its original stamp. Refusal changes
+neither its scope value nor any queue entry. The combined host's rule for
+source arrival after its audible deadline remains open. Panic needs no bend
+credit and retains its protected command place. The control half also reserves
+one bounded bend-table cell before submitting a new non-zero scope. A result
+releases that cell when no later bend is pending and the last accepted scope
+value is zero, including after a refused latest bend. The private bridge
+settles a late bend's raw handoff and stage place on its terminal result, then
+serves the next source bend. A full scope table or command ring still refuses
+a bend at the caller boundary and leaves the source head for retry.
 
 The budget withholds `B` queue places from ordinary traffic for the whole
 private run, leaving at most `C - B` for ordinary entries and release holds.

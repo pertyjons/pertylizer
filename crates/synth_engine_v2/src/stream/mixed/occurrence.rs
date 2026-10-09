@@ -40,7 +40,7 @@
 //! command's identity: `H` for a bend, covering every possible member at service even if
 //! membership grows after submission, and one for an onset whose scope reservation says
 //! it may inherit a non-zero bend. Exhausted credits refuse the caller. Each accepted
-//! bend appends one entry per member at its execution stamp, and an onset on a bent scope
+//! bend appends one entry per member at its nominal stamp, and an onset on a bent scope
 //! appends its inherited bend right after its note-on at the onset's stamp; no entry is
 //! rewritten or coalesced, so every value applies at its own stamp and all members of a
 //! scope carry the same value at every sample. Audio returns a command's unused credits
@@ -310,7 +310,7 @@ pub(super) struct MixedBent {
 }
 
 impl MixedBent {
-    /// The nominal stamp, or the ingress store's later order fence at acceptance.
+    /// The bend command's nominal stamp, unchanged by the ingress order fence.
     pub(super) const fn executed_at(&self) -> SampleTime {
         self.executed_at
     }

@@ -1,7 +1,7 @@
 //! Channel bend tests for the private mixed owner.
 //!
 //! Every test inspects the registered ingress queue after service: a bend appends one
-//! entry per sounding or sustained member of its scope at its execution stamp, and an
+//! entry per sounding or sustained member of its scope at its nominal stamp, and an
 //! onset on a bent scope writes its inherited bend right after its note-on. No entry is
 //! rewritten or coalesced. Each bend reserves `H` credits and a possibly bent onset one
 //! before its command identity is minted. Rendering then proves each bend resolved
@@ -441,20 +441,23 @@ fn commands_at_one_stamp_apply_in_command_order() {
             ]
         );
 
-        // A bend behind the order fence executes at the fence. Its request keeps
-        // the nominal stamp, while the result reports the stamp actually offered.
+        // A bend behind the order fence is refused at its nominal stamp. It
+        // cannot silently take a later place or change the scope's value.
         let late = bend_at(&mut control, s, 199, 90.0);
         audio = service_without_allocation(audio);
         let results = collect_all(&mut control);
-        let MixedIngressOutcome::Bend(Ok(bent)) = outcome_for(&results, late) else {
-            panic!("late bend must execute at the order fence");
-        };
-        assert_eq!(bent.executed_at(), SampleTime::new(200));
-        assert_eq!(bent.written().collect::<Vec<_>>(), vec![second]);
-        assert_eq!(audio.test_ingress.counters().non_monotone(), 0);
-        assert_eq!(audio.occurrences.bend_of(s), cents(90.0));
-        assert_eq!(entries(&audio).len(), 7);
-        assert!(entries(&audio).ends_with(&[Entry::Bend(isecond, 90.0, 200)]));
+        assert_eq!(
+            outcome_for(&results, late),
+            MixedIngressOutcome::Bend(Err(MixedBendRefused::Ingress(
+                IngressRefused::NonMonotoneStamp {
+                    time: SampleTime::new(199),
+                    last: SampleTime::new(200),
+                }
+            )))
+        );
+        assert_eq!(audio.test_ingress.counters().non_monotone(), 1);
+        assert_eq!(audio.occurrences.bend_of(s), cents(70.0));
+        assert_eq!(entries(&audio).len(), 6);
 
         // Each bend resolves after its note-on and before its note-off at one sample.
         render(&mut audio);
@@ -466,7 +469,7 @@ fn commands_at_one_stamp_apply_in_command_order() {
 }
 
 #[test]
-fn a_late_bend_executes_at_the_fence_and_an_empty_scope_keeps_it() {
+fn late_bends_on_held_and_empty_scopes_keep_their_stamps_and_are_refused() {
     let (held_scope, empty_scope) = (scope(1, 1), scope(2, 1));
     let (mut control, audio) = armed_with(true, 1);
     let note = onset_in(&mut control, held_scope, 200, 60);
@@ -478,25 +481,61 @@ fn a_late_bend_executes_at_the_fence_and_an_empty_scope_keeps_it() {
         &results,
         onset_request_in(note, held_scope, 200, 60),
     ));
-    let MixedIngressOutcome::Bend(Ok(held)) = outcome_for(&results, held_bend) else {
-        panic!("held bend must execute at the order fence");
-    };
-    assert_eq!(held.executed_at(), SampleTime::new(200));
-    assert_eq!(held.written().collect::<Vec<_>>(), vec![note]);
-    let MixedIngressOutcome::Bend(Ok(empty)) = outcome_for(&results, empty_bend) else {
-        panic!("empty-scope bend must set the value");
-    };
-    assert_eq!(empty.executed_at(), SampleTime::new(200));
-    assert_eq!(empty.written().count(), 0);
-    assert_eq!(audio.occurrences.bend_of(empty_scope), cents(45.0));
-    assert_eq!(audio.test_ingress.counters().non_monotone(), 0);
-    assert_eq!(
-        entries(&audio),
-        vec![Entry::On(identity, 200), Entry::Bend(identity, 35.0, 200)]
-    );
+    for (request, time) in [(held_bend, 100), (empty_bend, 50)] {
+        assert_eq!(
+            outcome_for(&results, request),
+            MixedIngressOutcome::Bend(Err(MixedBendRefused::Ingress(
+                IngressRefused::NonMonotoneStamp {
+                    time: SampleTime::new(time),
+                    last: SampleTime::new(200),
+                }
+            )))
+        );
+    }
+    assert_eq!(audio.occurrences.bend_of(held_scope), Cents::ZERO);
+    assert_eq!(audio.occurrences.bend_of(empty_scope), Cents::ZERO);
+    assert!(!control.scope_may_bend(held_scope));
+    assert!(!control.scope_may_bend(empty_scope));
+    assert_eq!(audio.test_ingress.counters().non_monotone(), 2);
+    assert_eq!(entries(&audio), vec![Entry::On(identity, 200)]);
+    let _credits = settled_credits(&control, &audio);
     render(&mut audio);
     render(&mut audio);
     assert!(sounding(&audio).contains(&identity));
+}
+
+#[test]
+fn a_refused_latest_bend_releases_only_a_scope_without_an_accepted_value() {
+    let (zero_scope, bent_scope) = (scope(1, 1), scope(2, 1));
+    let (mut control, audio) = armed_with(true, 1);
+    let zero = bend_at(&mut control, zero_scope, 200, 0.0);
+    let late_zero_scope = bend_at(&mut control, zero_scope, 199, 45.0);
+    let bent = bend_at(&mut control, bent_scope, 200, 35.0);
+    let late_bent_scope = bend_at(&mut control, bent_scope, 199, 0.0);
+    let audio = service_without_allocation(audio);
+    let results = collect_all(&mut control);
+    for request in [zero, bent] {
+        assert!(matches!(
+            outcome_for(&results, request),
+            MixedIngressOutcome::Bend(Ok(_))
+        ));
+    }
+    for request in [late_zero_scope, late_bent_scope] {
+        assert_eq!(
+            outcome_for(&results, request),
+            MixedIngressOutcome::Bend(Err(MixedBendRefused::Ingress(
+                IngressRefused::NonMonotoneStamp {
+                    time: SampleTime::new(199),
+                    last: SampleTime::new(200),
+                }
+            )))
+        );
+    }
+    assert!(!control.scope_may_bend(zero_scope));
+    assert!(control.scope_may_bend(bent_scope));
+    assert_eq!(audio.occurrences.bend_of(zero_scope), Cents::ZERO);
+    assert_eq!(audio.occurrences.bend_of(bent_scope), cents(35.0));
+    let _credits = settled_credits(&control, &audio);
 }
 
 /// The value `identity` carries at `frame` from the bends in `published`, in queue order.

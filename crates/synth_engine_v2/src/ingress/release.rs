@@ -111,8 +111,8 @@ impl PerformanceIngress {
         Ok(())
     }
 
-    /// The stamp a mixed Panic or bend is queued at: its nominal stamp, or the last
-    /// stamp this store accepted when that is later, so the order fence cannot refuse it.
+    /// The stamp a mixed Panic is queued at: its nominal stamp, or the last stamp
+    /// this store accepted when that is later, so the order fence cannot refuse it.
     #[cfg(all(test, feature = "simulated-ingress"))]
     pub(crate) const fn mixed_execution_stamp(&self, nominal: SampleTime) -> SampleTime {
         match self.last_accepted {

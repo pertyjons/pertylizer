@@ -195,7 +195,7 @@ impl<R: RawBackend> BendBridge<R> {
         self.stage.frontier(source, SampleTime::new(at)).unwrap();
     }
 
-    /// A refused command does not commit the stage head or its raw handoff.
+    /// A refused command submission does not commit the stage head or its raw handoff.
     fn service(
         &mut self,
         control: &mut MixedOneShotControl,
@@ -240,6 +240,58 @@ fn queued_bends(audio: &MixedOneShotAudio) -> Vec<(SampleTime, Cents)> {
             _ => None,
         })
         .collect()
+}
+
+#[test]
+fn a_late_bend_returns_a_terminal_result_and_releases_its_stage_place() {
+    let (prepared, candidate) = history_tests::one_shot_with_live(
+        true,
+        crate::quantities::HeldNoteCount::measured(1),
+        EventCount::measured(1),
+    );
+    let (mut control, mut audio) = prepared
+        .arm_one_shot(candidate, &history_tests::mixed_profile())
+        .unwrap();
+    let scope = BendBridge::scope(Source::First);
+    let _onset = control
+        .submit_onset(
+            MixedIngressOriginId(1),
+            scope,
+            SampleTime::new(200),
+            crate::quantities::KeyIdentity::new(60).unwrap(),
+            crate::quantities::NoteVelocity::FULL,
+        )
+        .unwrap();
+    audio.service_test_ingress_queue();
+    assert!(matches!(
+        control.collect_ingress_result().unwrap().outcome,
+        MixedIngressOutcome::Onset(Ok(_))
+    ));
+
+    let mut bridge = BendBridge::new(2);
+    let early = bridge.enqueue(Source::First, 100, input(0xe0, 127, 127));
+    let later = bridge.enqueue(Source::First, 201, input(0xe0, 0, 0));
+    let early_raw = bridge.pump(Source::First).unwrap().unwrap();
+    let later_raw = bridge.pump(Source::First).unwrap().unwrap();
+    bridge.frontier(Source::First, 202);
+    bridge.frontier(Source::Second, 202);
+
+    let (seen, handoff, outcome) = bridge.service(&mut control, &mut audio).unwrap().unwrap();
+    assert_eq!((seen, handoff), (early, early_raw));
+    assert!(matches!(
+        outcome,
+        MixedIngressOutcome::Bend(Err(super::super::occurrence::MixedBendRefused::Ingress(
+            IngressRefused::NonMonotoneStamp { time, last }
+        ))) if time == SampleTime::new(100) && last == SampleTime::new(200)
+    ));
+    assert_eq!(bridge.stage.peek_next().unwrap().1.occurrence, later);
+    assert_eq!(bridge.staged, vec![(later, later_raw)]);
+
+    let (seen, handoff, outcome) = bridge.service(&mut control, &mut audio).unwrap().unwrap();
+    assert_eq!((seen, handoff), (later, later_raw));
+    assert!(matches!(outcome, MixedIngressOutcome::Bend(Ok(_))));
+    assert!(bridge.stage.peek_next().is_none());
+    assert!(bridge.staged.is_empty());
 }
 
 /// Feed the actual producer's validated head into the existing private raw,
