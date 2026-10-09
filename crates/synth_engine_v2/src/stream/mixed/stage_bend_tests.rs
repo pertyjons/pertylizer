@@ -75,6 +75,7 @@ enum BendPumpRefusal {
 
 struct BendBridge<R = [RawSource; 2]> {
     raw: R,
+    source_set: MixedSourceSet,
     source_heads: [BendSourceRing; 2],
     raw_pending: [Option<RawHandoff>; 2],
     raw_issued: Vec<(Source, InputEventId)>,
@@ -105,8 +106,14 @@ impl BendBridge {
 
 impl<R: RawBackend> BendBridge<R> {
     fn with_raw(cells_per_source: usize, raw: R) -> Self {
+        let source_set = MixedSourceSet::prepare(
+            raw.generation(Source::First),
+            raw.generation(Source::Second),
+        )
+        .expect("the bend bridge requires two distinct raw connections");
         Self {
             raw,
+            source_set,
             source_heads: [BendSourceRing::new(), BendSourceRing::new()],
             raw_pending: [None, None],
             raw_issued: Vec::new(),
@@ -161,6 +168,10 @@ impl<R: RawBackend> BendBridge<R> {
                 .raw
                 .offer(source, packet.at, packet.original)
                 .map_err(BendPumpRefusal::RawOffer)?;
+            assert_eq!(
+                self.source_set.resolve(raw.generation()),
+                Ok(source.bound())
+            );
             self.raw_issued.push((source, raw));
             self.raw_pending[index] = Some(RawHandoff {
                 source,
@@ -188,6 +199,10 @@ impl<R: RawBackend> BendBridge<R> {
         assert!(self.source_heads[source.index()].is_empty());
         assert!(self.raw_pending[source.index()].is_none());
         let frontier = self.raw.frontier(source, SampleTime::new(at));
+        assert_eq!(
+            self.source_set.resolve(frontier.generation()),
+            Ok(source.bound())
+        );
         assert_eq!(self.raw.matched_onset(source, frontier), Ok(None));
         self.stage.frontier(source, SampleTime::new(at)).unwrap();
     }
@@ -212,18 +227,21 @@ impl<R: RawBackend> BendBridge<R> {
             panic!("bend stage contains only bends");
         };
         let cents = Cents::new(value.as_f32() * 200.0).unwrap();
+        let position = self
+            .staged
+            .iter()
+            .position(|(occurrence, handoff)| {
+                *occurrence == packet.occurrence && handoff.source == source
+            })
+            .expect("a selected bend keeps its raw handoff");
+        let raw = self.staged[position].1.raw;
         let (command, request) = control.submit_bend(
             MixedIngressOriginId(packet.occurrence.0),
-            source_scope(source, packet.original),
+            bound_scope(self.source_set, source, raw, packet.original),
             packet.at,
             cents,
         )?;
         self.stage.commit_next(source, packet);
-        let position = self
-            .staged
-            .iter()
-            .position(|(occurrence, _)| *occurrence == packet.occurrence)
-            .unwrap();
         let (_, handoff) = self.staged.remove(position);
         Ok(Some((packet.occurrence, handoff, command, request)))
     }
@@ -473,6 +491,10 @@ fn pump_concrete_bend(
             .offer_message(generation, tick, arrival, original)
             .map_err(raw_admission)
             .map_err(BendPumpRefusal::RawOffer)?;
+        assert_eq!(
+            bridge.source_set.resolve(raw.generation()),
+            Ok(source.bound())
+        );
         bridge.raw_issued.push((source, raw));
         bridge.raw_pending[0] = Some(RawHandoff {
             source,

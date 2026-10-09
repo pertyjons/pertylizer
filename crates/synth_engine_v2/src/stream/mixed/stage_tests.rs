@@ -12,6 +12,7 @@ use super::{
         LiveOccurrenceId, MixedBendSubmitError, MixedLiveScope, MixedLiveSource,
         MixedOnsetSubmitError, MixedPedalSubmitError, MixedRetireCause, MixedRetired,
     },
+    source_set::{MixedBoundSource, MixedSourceSet},
 };
 use crate::{
     host::{
@@ -48,6 +49,13 @@ impl Source {
             Self::Second => 1,
         }
     }
+
+    const fn bound(self) -> MixedBoundSource {
+        match self {
+            Self::First => MixedBoundSource::First,
+            Self::Second => MixedBoundSource::Second,
+        }
+    }
 }
 
 /// The private raw bridge maps each source and MIDI channel to one live scope.
@@ -57,6 +65,19 @@ fn source_scope(source: Source, original: Midi1Input) -> MixedLiveScope {
         Source::Second => MixedLiveSource::new(2),
     };
     MixedLiveScope::new(owner, original.channel())
+}
+
+fn bound_scope(
+    source_set: MixedSourceSet,
+    source: Source,
+    raw: InputEventId,
+    original: Midi1Input,
+) -> MixedLiveScope {
+    let bound = source_set
+        .resolve(raw.generation())
+        .expect("a raw ID belongs to the admitted source set");
+    assert_eq!(bound, source.bound());
+    MixedLiveScope::new(MixedLiveSource::new(bound.ordinal()), original.channel())
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -738,6 +759,8 @@ fn raw_source_with_cells(index: usize, cells: u32) -> RawSource {
 /// The raw side of the bridge: either standalone raw owners or the raw inputs
 /// of one serial capture session feeding the actual recorder.
 trait RawBackend {
+    fn generation(&self, source: Source) -> ConnectionGeneration;
+
     fn preflight(
         &self,
         source: Source,
@@ -760,6 +783,10 @@ trait RawBackend {
 }
 
 impl RawBackend for [RawSource; 2] {
+    fn generation(&self, source: Source) -> ConnectionGeneration {
+        self[source.index()].generation
+    }
+
     fn preflight(
         &self,
         source: Source,
@@ -820,6 +847,10 @@ fn raw_admission(error: InputCaptureError) -> InputError {
 }
 
 impl RawBackend for SerialRaw {
+    fn generation(&self, source: Source) -> ConnectionGeneration {
+        self.generations[source.index()]
+    }
+
     fn preflight(
         &self,
         source: Source,
@@ -882,6 +913,7 @@ impl RawBackend for SerialRaw {
 struct RawStageBridge<R = [RawSource; 2]> {
     stage: Stage,
     sources: R,
+    source_set: MixedSourceSet,
     staged_onsets: Vec<(Source, InputEventId, Occurrence)>,
     /// Source pedal-downs whose stage lift place has not yet been redeemed.
     pedal_downs: Vec<(Source, MidiChannel, Occurrence, InputEventId)>,
@@ -913,9 +945,15 @@ impl RawStageBridge {
 
 impl<R: RawBackend> RawStageBridge<R> {
     fn with_raw(cells_per_source: usize, sources: R) -> Self {
+        let source_set = MixedSourceSet::prepare(
+            sources.generation(Source::First),
+            sources.generation(Source::Second),
+        )
+        .expect("the bridge requires two distinct raw connections");
         Self {
             stage: Stage::new(cells_per_source),
             sources,
+            source_set,
             staged_onsets: Vec::new(),
             pedal_downs: Vec::new(),
             paired_pedal_lifts: Vec::new(),
@@ -931,6 +969,20 @@ impl<R: RawBackend> RawStageBridge<R> {
         }
     }
 
+    fn scope_for_selected(&self, source: Source, packet: Packet) -> MixedLiveScope {
+        let raw = self
+            .handoffs
+            .iter()
+            .find(|&&(occurrence, release, handoff)| {
+                occurrence == packet.occurrence
+                    && release == packet.release
+                    && handoff.source == source
+            })
+            .map(|&(_, _, handoff)| handoff.raw)
+            .expect("the selected packet keeps its raw handoff");
+        bound_scope(self.source_set, source, raw, packet.original)
+    }
+
     /// A bent-scope onset remains staged, with the same raw handoff, if the
     /// command caller lacks an inherited-bend credit. This focused path keeps
     /// the ordinary note bridge's result and release bookkeeping intact.
@@ -943,7 +995,7 @@ impl<R: RawBackend> RawStageBridge<R> {
         let Some((source, packet)) = self.stage.peek_next() else {
             return Ok(None);
         };
-        assert_eq!(scope, source_scope(source, packet.original));
+        assert_eq!(scope, self.scope_for_selected(source, packet));
         let Midi1Event::NoteOn { key, velocity } = packet.original.event() else {
             panic!("the focused bridge services only an onset");
         };
@@ -1089,6 +1141,11 @@ impl<R: RawBackend> RawStageBridge<R> {
                 at,
                 error,
             })?;
+        assert_eq!(
+            self.source_set.resolve(raw.generation()),
+            Ok(source.bound()),
+            "raw admission changed the bound source identity"
+        );
         let mut handoff = RawHandoff {
             source,
             raw,
@@ -1257,6 +1314,10 @@ impl<R: RawBackend> RawStageBridge<R> {
             "a frontier cannot overtake a source-owned pending bend"
         );
         let frontier = self.sources.frontier(source, SampleTime::new(at));
+        assert_eq!(
+            self.source_set.resolve(frontier.generation()),
+            Ok(source.bound())
+        );
         assert_eq!(self.sources.matched_onset(source, frontier), Ok(None));
         self.raw_issued.push((source, frontier, None));
         self.stage.frontier(source, SampleTime::new(at)).unwrap();
@@ -1308,7 +1369,7 @@ impl<R: RawBackend> RawStageBridge<R> {
         );
         let submitted = control.submit_pedal(
             MixedIngressOriginId(packet.occurrence.0),
-            source_scope(source, packet.original),
+            self.scope_for_selected(source, packet),
             packet.at,
             down,
         )?;
@@ -1435,7 +1496,7 @@ impl<R: RawBackend> RawStageBridge<R> {
             .expect("a validated MIDI bend has finite cents");
         let (command, request) = control.submit_bend(
             MixedIngressOriginId(packet.occurrence.0),
-            source_scope(source, packet.original),
+            self.scope_for_selected(source, packet),
             packet.at,
             cents,
         )?;
@@ -1494,7 +1555,7 @@ impl<R: RawBackend> RawStageBridge<R> {
                 let submitted = control
                     .submit_onset(
                         origin,
-                        source_scope(source, packet.original),
+                        bound_scope(self.source_set, source, handoff.raw, packet.original),
                         packet.at,
                         key,
                         velocity,

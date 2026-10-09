@@ -51,6 +51,8 @@ use crate::{
 mod hot;
 #[cfg(all(test, feature = "simulated-ingress"))]
 mod occurrence;
+#[allow(dead_code, reason = "the production mixed host has not been activated")]
+mod source_set;
 
 #[cfg(all(test, feature = "simulated-ingress"))]
 use occurrence::{
@@ -947,7 +949,7 @@ struct MixedBendScopeCapacity(usize);
 
 #[cfg(all(test, feature = "simulated-ingress"))]
 impl MixedBendScopeCapacity {
-    const TWO_SOURCE_MIDI1_FLOOR: usize = 2 * 16;
+    const TWO_SOURCE_MIDI1_FLOOR: usize = source_set::MixedSourceSet::MAX_SCOPES;
 
     fn for_two_source_midi1(ingress: MixedIngressQueueCount) -> Self {
         Self(ingress.as_usize().max(Self::TWO_SOURCE_MIDI1_FLOOR))

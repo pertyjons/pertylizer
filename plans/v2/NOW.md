@@ -781,10 +781,16 @@ serial fixture sends six non-zero channel bends followed by zero on channel
 one through source ring, raw capture, stage, command and audio; all seven
 reach the recorder.
 The old five-cell `ScopeCapacity` stop no longer applies to that bridge.
-Direct private control still accepts arbitrary `MixedLiveSource(u64)` values,
-so production admission must bind the source set before this becomes a
-general place guarantee. An out-of-set source needs a named split result and
-retained raw receipt under ADR-0075.
+The [bound source set](../../crates/synth_engine_v2/src/stream/mixed/source_set.rs)
+now compiles outside tests. It refuses duplicate connection generations and an
+out-of-set generation, maps the two admitted raw connections to distinct
+logical live sources, and supplies the 32-scope floor. The private
+`RawStageBridge` and `BendBridge` fixtures derive submitted mixed scopes from
+each staged handoff's raw ID and check message and frontier generations against
+that binding. Direct private control still accepts arbitrary
+`MixedLiveSource(u64)` values, and no production host admits or uses the bound
+set yet. An out-of-set source still needs a named sound-path split and retained
+raw receipt under ADR-0075 before a general production place guarantee.
 
 At `H = 2`, `C = 5`, four collected pedal-downs reserve four lift places and
 leave one ordinary command place. A private test admits a memberless bend in
