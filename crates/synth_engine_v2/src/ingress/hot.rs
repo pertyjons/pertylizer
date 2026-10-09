@@ -27,6 +27,8 @@
 
 use super::PerformanceIngress;
 use crate::publish::{ProducerClass, Publication, PublicationFault};
+#[cfg(all(test, feature = "simulated-ingress"))]
+use crate::quantities::EventCount;
 use crate::time::SampleTime;
 
 impl PerformanceIngress {
@@ -141,6 +143,15 @@ impl PerformanceIngress {
             }
             self.tail = next(self.tail, capacity);
             self.len = self.len.saturating_sub(1);
+            // The slot returns to the live mixed note whose bend place it held. A retired
+            // note's entry no longer carries the mark, so its place is not restored.
+            #[cfg(all(test, feature = "simulated-ingress"))]
+            if entry.bend_place {
+                self.mixed_bend_reserved = self
+                    .mixed_bend_reserved
+                    .checked_add(EventCount::measured(1))
+                    .unwrap_or(self.mixed_bend_reserved);
+            }
         }
 
         // **No hold is discharged here.** The reservation keeps a queue slot free for a

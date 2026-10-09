@@ -123,6 +123,7 @@ impl PerformanceIngress {
 
     /// Test-only mixed group release through the audio owner's live range, with the
     /// same preflight, hold conversion and single queue entry as the exclusive path.
+    /// Each member also gives up its bend place.
     #[cfg(all(test, feature = "simulated-ingress"))]
     pub(crate) fn offer_mixed_release_group(
         &mut self,
@@ -161,6 +162,8 @@ impl PerformanceIngress {
             if minter.release(identity) != Resolution::Live {
                 return Err(IngressRefused::ReleaseGroup);
             }
+            // A lifted or panicked note is no longer a bend member.
+            self.retire_mixed_bend_place(identity);
             group.indices[index] = identity.index;
             group.generations[index] = identity.generation;
         }

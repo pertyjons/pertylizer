@@ -34,16 +34,20 @@
 //! Bend is scoped like sustain. The audio half owns each scope's bend value; a bend
 //! command names its scope, never a handle, and audio resolves its members: every
 //! sounding and sustained occurrence of the scope, which arm bounds by one group. Each
-//! member gets one bend entry at the command's stamp. If its last undrained bend entry
-//! lies in the same quantum, that entry takes the new value and stamp in place, except
-//! when it was inherited by an onset at an earlier stamp. Superseded values are counted;
-//! an inherited entry remains, so a note can spend more than one bend slot in a quantum.
-//! Until the per-scope marker is implemented, notes on one scope can also have
-//! different values between an intervening onset and the next bend. No value
-//! applies before its own stamp. An onset on a bent scope writes the bend after
-//! its note-on and is accepted or refused whole with it. A refused bend changes
-//! neither the scope's value nor any entry. Panic and lifts leave the scope's
-//! value unchanged.
+//! accepted onset precharges one bend place in the ingress queue beside its note-on and
+//! release hold, and an onset on a bent scope fills it at once with that bend, written
+//! after its note-on at its own stamp; the onset is accepted or refused whole. A member
+//! without an undrained bend entry writes one into its place at the command's stamp, so
+//! an admitted bend is never dropped for a queue slot. A member with one coalesces into
+//! it: an ordinary entry in the same quantum takes the new value and stamp, and an
+//! inherited entry at the same stamp the value. Any other entry keeps its stamp and its
+//! inherited or ordinary origin, so its new value applies early; the result names that
+//! stamp and the table counts it. Superseded values are counted. A retired occurrence
+//! gives its place up: released, lifted and panicked notes keep any undrained entry, which
+//! no longer restores a place when it drains. Until a per-scope marker exists, notes on
+//! one scope can have different values between an intervening onset and the next bend.
+//! A refused bend changes neither the scope's value nor any entry. Panic and lifts leave
+//! the scope's value unchanged.
 
 use synth_core::MidiChannel;
 use thiserror::Error;
@@ -700,6 +704,7 @@ pub(super) struct MixedOccurrenceTable {
     released_after_refusal: EventCount,
     released_after_panic: EventCount,
     bends_superseded: EventCount,
+    bends_applied_early: EventCount,
 }
 
 impl MixedOccurrenceTable {
@@ -713,12 +718,19 @@ impl MixedOccurrenceTable {
             released_after_refusal: EventCount::NONE,
             released_after_panic: EventCount::NONE,
             bends_superseded: EventCount::NONE,
+            bends_applied_early: EventCount::NONE,
         }
     }
 
-    /// Bend values a later bend in the same quantum replaced before publication.
+    /// Member values a later bend replaced in an undrained entry before publication.
     pub(super) const fn bends_superseded(&self) -> EventCount {
         self.bends_superseded
+    }
+
+    /// Member values that took an undrained entry's earlier stamp, and so apply before
+    /// their own bend's stamp.
+    pub(super) const fn bends_applied_early(&self) -> EventCount {
+        self.bends_applied_early
     }
 
     /// Scopes whose pedal is down, in cell order, for an off-thread teardown.

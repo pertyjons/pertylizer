@@ -14,7 +14,8 @@ use super::{
     MixedIngressOutcome, MixedIngressRequest, MixedIngressResult, MixedOccurrenceState,
     MixedOneShotArmError, MixedOneShotAudio, MixedOneShotControl, MixedReleaseSubmitError,
     MixedRetireCause, MixedRetired, NoteIdentity, ORIGIN, Resolution, accepted, collect_all, forge,
-    history_tests, key, outcome_for, release, release_request, service_without_allocation,
+    free_units, history_tests, key, outcome_for, release, release_request,
+    service_without_allocation,
 };
 use crate::{
     quantities::{ChannelLayout, EventCount, HeldNoteCount, NoteVelocity},
@@ -703,9 +704,9 @@ fn a_lift_needs_no_ingress_place_when_the_queue_is_full_and_every_hold_is_out() 
     let (s, other) = (scope(1, 1), scope(2, 1));
     let (mut control, mut audio) = armed_with(true, 6);
     let depth = audio.test_ingress.queue_capacity_for_test();
-    let pairs = (depth - 12) / 2;
+    let pairs = (depth - 18) / 2;
     // Ordinary onset/release pairs on an unpedalled scope fill the ingress queue up to
-    // the six sustained notes' entries and holds.
+    // the six sustained notes' entries, holds and bend places.
     for raw in 0..pairs {
         let raw = u8::try_from(raw).expect("small key");
         let note = onset_in(&mut control, other, 100, raw);
@@ -729,8 +730,9 @@ fn a_lift_needs_no_ingress_place_when_the_queue_is_full_and_every_hold_is_out() 
     audio.service_test_ingress_queue();
     let results = collect_all(&mut control);
     assert_eq!(holds(&audio), 6);
-    assert_eq!(audio.test_ingress.len(), depth - 6);
-    // Slot refusal: entries plus outstanding holds already fill the queue.
+    assert_eq!(audio.test_ingress.len(), depth - 12);
+    // Slot refusal: entries, outstanding holds and bend places already fill the queue.
+    assert_eq!(free_units(&audio), 0);
     assert_eq!(
         outcome_for(&results, onset_request_in(starved, other, 122, 100)),
         MixedIngressOutcome::Onset(Err(IngressRefused::Dropped {
@@ -759,9 +761,10 @@ fn a_lift_needs_no_ingress_place_when_the_queue_is_full_and_every_hold_is_out() 
         )),
         identities.iter().map(|(note, _)| *note).collect::<Vec<_>>()
     );
-    // Six reservations became one group entry.
+    // Six reservations became one group entry, and the six bend places are retired.
     assert_eq!(holds(&audio), 0);
-    assert_eq!(audio.test_ingress.len(), depth - 5);
+    assert_eq!(audio.test_ingress.len(), depth - 11);
+    assert_eq!(free_units(&audio), 11);
     assert_eq!(
         queued(&audio).last(),
         Some(&Queued::Group(

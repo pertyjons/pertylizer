@@ -7,9 +7,10 @@
 //! scope's pedal is down offers nothing and keeps the hold; the scope's lift ends every
 //! sustained member as one release group. Panic ends every sounding and sustained
 //! occurrence as one release group and leaves a tombstone for each key still down. A
-//! bend writes every sounding and sustained member of its scope, coalescing in place
-//! within one quantum, and an onset inherits its scope's non-zero bend whole. It works
-//! in prepared storage only: it does not allocate, lock, perform I/O, log or panic.
+//! bend writes every sounding and sustained member of its scope into the member's
+//! precharged bend place or coalesces into its undrained entry, and an onset inherits
+//! its scope's non-zero bend whole. It works in prepared storage only: it does not
+//! allocate, lock, perform I/O, log or panic.
 
 use ringbuf::traits::{Consumer, Producer};
 
@@ -183,6 +184,13 @@ impl MixedOccurrenceTable {
             .bends_superseded
             .checked_add(EventCount::measured(1))
             .unwrap_or(self.bends_superseded);
+    }
+
+    fn count_early_bend(&mut self) {
+        self.bends_applied_early = self
+            .bends_applied_early
+            .checked_add(EventCount::measured(1))
+            .unwrap_or(self.bends_applied_early);
     }
 
     fn count_release_after_refusal(&mut self) {
@@ -445,7 +453,8 @@ impl MixedOneShotAudio {
 
     /// A bend writes every sounding and sustained occurrence of its scope, in cell order,
     /// then becomes the scope's value for later onsets. Refusal and Panic tombstones are
-    /// not members. A refused bend changes neither the value nor any entry.
+    /// not members. Each member's precharged place guarantees its write, so no bend is
+    /// refused for a queue slot. A refused bend changes neither the value nor any entry.
     fn service_bend(
         &mut self,
         scope: MixedLiveScope,
@@ -503,8 +512,13 @@ impl MixedOneShotAudio {
             let (Some((occurrence, _)), Some(write)) = (member, write) else {
                 continue;
             };
-            if write == MixedBendWrite::Coalesced {
-                self.occurrences.count_superseded_bend();
+            match write {
+                MixedBendWrite::Queued => {}
+                MixedBendWrite::Coalesced => self.occurrences.count_superseded_bend(),
+                MixedBendWrite::Early { .. } => {
+                    self.occurrences.count_superseded_bend();
+                    self.occurrences.count_early_bend();
+                }
             }
             *written = Some((occurrence, write));
         }
@@ -522,7 +536,7 @@ impl MixedOneShotAudio {
     }
 
     /// [`Self::offer_test_note_on`] with the scope's non-zero bend written after it.
-    fn offer_test_note_on_inheriting(
+    pub(crate) fn offer_test_note_on_inheriting(
         &mut self,
         at: SampleTime,
         key: KeyIdentity,

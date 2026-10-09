@@ -178,6 +178,29 @@ fn queued_edges(audio: &MixedOneShotAudio) -> Vec<(NoteIdentity, bool)> {
         .collect()
 }
 
+/// Check the queue's bend-place accounting and return its free units: every live note
+/// owns exactly one hold and one bend place, held in reserve or by one undrained entry,
+/// and `len + holds + reserved bend places <= capacity`.
+fn free_units(audio: &MixedOneShotAudio) -> usize {
+    let ingress = &audio.test_ingress;
+    let places = ingress.mixed_bend_places_for_test();
+    let holds = ingress.holds_outstanding().get() as usize;
+    assert_eq!(
+        audio.audio.live_minter.live_identities_for_test().len(),
+        holds,
+        "one hold per live note"
+    );
+    assert_eq!(
+        places.reserved + places.queued,
+        holds,
+        "one bend place per live note: {places:?}"
+    );
+    let used = ingress.ring_len_for_test() + holds + places.reserved;
+    let capacity = ingress.queue_capacity_for_test();
+    assert!(used <= capacity, "{used} units exceed capacity {capacity}");
+    capacity - used
+}
+
 fn accepted(outcome: MixedIngressOutcome) -> NoteIdentity {
     let MixedIngressOutcome::Onset(Ok(identity)) = outcome else {
         panic!("onset must be accepted, got {outcome:?}");
@@ -503,5 +526,6 @@ fn teardown_classifies_every_held_handle_by_its_audio_state() {
 }
 
 mod bend;
+mod bend_places;
 mod panic;
 mod sustain;

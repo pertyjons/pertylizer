@@ -90,7 +90,7 @@ pub(crate) mod hot;
 mod offers;
 mod release;
 #[cfg(all(test, feature = "simulated-ingress"))]
-pub(crate) use offers::MixedBendWrite;
+pub(crate) use offers::{MixedBendOrigin, MixedBendWrite};
 pub(crate) use release::RELEASE_GROUP_CAPACITY;
 pub use release::{ReleaseCause, ReleaseGroup};
 
@@ -195,6 +195,12 @@ pub enum IngressRefused {
     #[cfg(all(test, feature = "simulated-ingress"))]
     #[error("mixed channel bend is not a distinct set of at most eight live notes")]
     MixedBendFanout,
+    /// A private mixed bend member has neither an undrained bend entry nor a reserved
+    /// bend place. Every accepted mixed onset precharges one, so this is an accounting
+    /// defect, reported rather than dropped. Nothing was written.
+    #[cfg(all(test, feature = "simulated-ingress"))]
+    #[error("mixed bend member has no reserved bend place")]
+    MixedBendPlace,
     /// Invalid, oversized or deferred group; no obligation is changed.
     #[error("release group is not a distinct owned set of at most eight non-deferred notes")]
     ReleaseGroup,
@@ -330,8 +336,15 @@ pub enum IngressRefused {
 struct IngressEntry {
     event: TimedEvent,
     redeems_hold: bool,
+    /// A private mixed bend an onset inherited at its own stamp. Kept when a later bend
+    /// coalesces into the entry, so the entry's origin stays explicit.
     #[cfg(all(test, feature = "simulated-ingress"))]
     inherited_bend: bool,
+    /// The entry occupies a live mixed note's precharged bend place. Draining it returns
+    /// the place to the note's reservation; retiring the note clears this first, so a
+    /// retired note's entry drains as an ordinary one and restores nothing.
+    #[cfg(all(test, feature = "simulated-ingress"))]
+    bend_place: bool,
 }
 
 /// A note that took a voice by ADR-0058's fade-then-start and has not yet started, or has
@@ -523,6 +536,14 @@ pub struct PerformanceIngress {
     stolen_transferred: Vec<Option<NoteIdentity>>,
     /// Where the next transferred record goes when the list is full.
     stolen_next: usize,
+    /// Precharged bend places of live private mixed notes that hold no queued entry.
+    ///
+    /// Each accepted mixed onset takes one bend place beside its note-on and hold, and an
+    /// inherited bend fills it at once. The queue keeps
+    /// `len + holds_outstanding + mixed_bend_reserved <= capacity`, so a member's bend
+    /// always has its entry. Retiring the note gives the place up.
+    #[cfg(all(test, feature = "simulated-ingress"))]
+    mixed_bend_reserved: EventCount,
 }
 
 /// Why a store could not be prepared.
@@ -808,6 +829,8 @@ impl PerformanceIngress {
             stolen_with_hold: vec![None; hold_entitlement.get() as usize],
             stolen_transferred: vec![None; partition.saturating_mul(4)],
             stolen_next: 0,
+            #[cfg(all(test, feature = "simulated-ingress"))]
+            mixed_bend_reserved: EventCount::NONE,
             producer,
             hold_entitlement,
             forward_event_horizon: profile.limits().events().forward_event_horizon(),

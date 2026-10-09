@@ -1,6 +1,6 @@
 # Core V2: Current Work
 
-Last updated: 2026-10-05
+Last updated: 2026-10-09
 
 This file contains only active Core V2 state, blockers and next actions. Durable
 contracts live in ADRs and specifications; completed Phase 3 coordination
@@ -744,20 +744,32 @@ rule 1.5, compiled Panic scope, source/stage protection and timestamped merge
 selection remain open with the concrete two-source bridge.
 A private channel bend now names its scope, not a handle. Audio owns each
 scope's value and writes every sounding and sustained member, never a tombstone
-or a compiled note. An onset on a bent scope writes its bend after its note-on
-and is refused whole when both do not fit. A member's undrained bend in the
-same quantum takes the new value and stamp in place, except an inherited bend
-at an earlier onset stamp, which keeps its slot and value. Superseded values are
-counted. No value applies before its own stamp, so this rehearses draft rule
-1.7 without its queue-order exception. Tests cover same-stamp order, a full
-ingress queue, four wheel messages over an eight-note chord, an intervening
-onset, refused, released and Panic-ended occurrences, and allocation-free
-service. Until the per-scope marker exists, two notes in one scope can carry
-different bend values for part of a quantum after an intervening onset. Still
-open: a bend needing new slots in a full queue, or a place in a full command
-ring, is refused and its value is lost. The draft's reserved per-scope marker
-would close that, but it needs a queue-accounting amendment and a fanout
-payload charged once at publication.
+or a compiled note. Each accepted private onset precharges one bend place in the
+ingress queue beside its note-on and release hold, so the private queue keeps
+`len + holds + reserved bend places <= capacity` and an onset needs three free
+units. An onset on a bent scope fills its place at once with its inherited bend,
+written after its note-on at its own stamp, and is accepted or refused whole. A
+member with no undrained bend entry writes into its place at the bend's stamp,
+so an admitted bend is never dropped for an ingress slot. A member with one
+coalesces into it: an ordinary entry in the same quantum takes the new value and
+stamp, and an inherited entry at the same stamp takes the value. Any other entry
+keeps its stamp and its inherited or ordinary origin, and the new value applies
+early. The result names that stamp and origin, and audio counts early and
+superseded values. Releases, sustain lifts and Panic retire their notes' places;
+an undrained entry is still published but restores no place when it drains.
+Tests cover saturation, cross-quantum and inherited early application, all three
+retirements, audio under four host partitions and a 4,000-step invariant storm;
+a temporary mutation of each accounting rule failed them.
+This is a private experiment, not the draft's D5 marker. D5 is unapproved and
+proposes one coalescing marker per `(source, channel)`, a fanout payload charged
+once at publication, and early application of at most one quantum under a named
+amendment of ADR-0023 clause 1 and SOUND-INV-020. This rehearsal costs one queue
+unit per live note instead. Its early application is bounded only by how far an
+undrained entry lies before the bend, which is at most the forward event horizon.
+No amendment is approved for that behaviour, so it stays confined to the private
+owner. Still open: a full command ring refuses a bend at the caller boundary;
+two notes in one scope can carry different values after an intervening onset;
+and arm does not yet relate queue depth to the extra unit per live hold.
 This slice does not lift the production mixed-plan refusal.
 
 ### Selected work — ordered transport through live I/O

@@ -12,7 +12,7 @@ use super::{
     ExhaustedResource, IngressRefused, LiveOccurrenceId, MixedCollection, MixedHandleRefused,
     MixedIngressOutcome, MixedIngressRequest, MixedOccurrenceState, MixedOneShotAudio,
     MixedOneShotControl, MixedRetireCause, MixedRetired, NoteIdentity, ORIGIN, Resolution,
-    accepted, collect_all, forge, key, outcome_for, release, release_request,
+    accepted, collect_all, forge, free_units, key, outcome_for, release, release_request,
     service_without_allocation,
     sustain::{
         Queued, armed_with, holds, onset_in, onset_request_in, pedal, pedal_request, queued,
@@ -309,7 +309,8 @@ fn panic_needs_no_ingress_place_with_the_queue_full_and_every_hold_out() {
     let (s, other) = (scope(1, 1), scope(2, 1));
     let (mut control, mut audio) = armed_with(true, 8);
     let depth = audio.test_ingress.queue_capacity_for_test();
-    let pairs = (depth - 16) / 2;
+    // Eight live notes each hold a note-on entry, a hold and a bend place.
+    let pairs = (depth - 24) / 2;
     for raw in 0..pairs {
         let raw = u8::try_from(raw).expect("small key");
         let note = onset_in(&mut control, other, 100, raw);
@@ -337,7 +338,8 @@ fn panic_needs_no_ingress_place_with_the_queue_full_and_every_hold_out() {
     audio = service_without_allocation(audio);
     let results = collect_all(&mut control);
     assert_eq!(holds(&audio), 8);
-    assert_eq!(audio.test_ingress.len(), depth - 8);
+    assert_eq!(audio.test_ingress.len(), depth - 16);
+    assert_eq!(free_units(&audio), 0);
     assert_eq!(
         outcome_for(&results, onset_request_in(starved, other, 133, 100)),
         MixedIngressOutcome::Onset(Err(IngressRefused::Dropped {
@@ -366,9 +368,10 @@ fn panic_needs_no_ingress_place_with_the_queue_full_and_every_hold_out() {
     for (note, _) in &down {
         assert!(panicked.contains(&MixedPanicEnd::Tombstoned(*note)));
     }
-    // Eight reservations became one group entry.
+    // Eight reservations became one group entry, and the eight bend places are retired.
     assert_eq!(holds(&audio), 0);
-    assert_eq!(audio.test_ingress.len(), depth - 7);
+    assert_eq!(audio.test_ingress.len(), depth - 15);
+    assert_eq!(free_units(&audio), 15);
     let (cause, members) = groups(&audio).pop().expect("the Panic group");
     assert_eq!(cause, ReleaseCause::Panic);
     assert_eq!(members.len(), 8);
@@ -397,7 +400,8 @@ fn panic_needs_no_ingress_place_with_the_queue_full_and_every_hold_out() {
         );
     }
     assert_eq!(holds(&audio), 1);
-    assert_eq!(audio.test_ingress.len(), depth - 6);
+    assert_eq!(audio.test_ingress.len(), depth - 14);
+    assert_eq!(free_units(&audio), 12);
     render(&mut audio);
     let live = sounding(&audio);
     assert!(
