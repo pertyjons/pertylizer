@@ -796,6 +796,22 @@ collection cannot clear the refusal. The combined host still needs an
 admission or terminal-disposition law for this prefix, including its raw
 handoff, before it can promise progress for ordered source-owned retry.
 
+A larger queue alone also leaves an open-handle deadlock. With one source,
+`H = 2` and `C = 20`, sixteen distinct pedal-downs and three key-downs can
+leave sixteen lift reservations and three key-up reservations after service
+and result collection. Audio refuses the third onset for hold capacity, but
+its handle still needs its key-up. The next onset sees only one ordinary place
+and returns `Full`; a later key-up for an earlier open handle cannot pass that
+head in the same source FIFO. Even a hypothetical depth of `16 + H + 2`
+cannot guarantee progress: the command ring does not partition its places by
+scope or cap open-handle release reservations at `H`. Any production capacity
+candidate must separately bound open key-down handles, including audio-refused
+and Panic tombstones. Excess onsets and their same-key releases need a named
+split outcome. No quota or new profile value is selected here. Reserving all
+32 two-source channel scopes plus note handles exceeds today's 32-place
+default. ADR-0054 requires full profile reselection for any production live
+adapter, regardless of its selected depth.
+
 The budget withholds `B` queue places from ordinary traffic for the whole
 private run, leaving at most `C - B` for ordinary entries and release holds.
 When `2H + 1 <= C <= 3H`, `B = H`: one bend with all credits outstanding can
