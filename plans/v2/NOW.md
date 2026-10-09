@@ -777,12 +777,12 @@ temporarily refuse a bent-scope onset, and any undrained bend entry prevents
 another full-`H` bend. The source must retain and retry caller refusals in
 the later concrete bridge.
 
-A private two-source bend fixture uses `H = 2` and `B >= 6`. It carries one
-source head through actual raw admission, a bounded packet stage, the typed
-command ring, audio service and ingress drain. A stage-full bend retains its
-raw handoff and source head; a credit-refused staged bend retains its selected
-packet and raw handoff, mints no command ID, and prevents later same-source
-bends from passing it. After drain, the fixture retries the credit-refused
+A private two-source bend fixture uses `H = 2` and `B >= 6`. Its bend heads
+cross a real bounded SPSC source ring before raw admission, then a bounded
+packet stage, the typed command ring, audio service and ingress drain. A
+stage-full bend retains its raw handoff and source head; a credit-refused staged
+bend retains its selected packet and raw handoff, mints no command ID, and
+prevents later same-source bends from passing it. After drain, the fixture retries the credit-refused
 bend at frame 320, first submits the already staged bend at 321, and retries
 the stage-refused bend at 322. Each live member gets a separate ordered entry.
 Another private fixture fills ordinary command capacity with typed pedal-downs
@@ -790,13 +790,19 @@ and a typed zero bend while an onset owns its release reservation. The selected
 bend keeps its raw handoff and stage head without minting an ID, then executes
 when the ring drains. The later peer bend waits until the first source advances
 its frontier.
+A further scenario on the first fixture fills its source ring. The full ring
+returns an unsent bend without minting its identity. After an exact head commit,
+the retry takes that identity and keeps its nominal order through raw, stage
+and command service. Both ring endpoints still live in the private test process;
+this is not the example host's `SourceInbox` or a joined host command outcome.
 A third private fixture uses `C = 5`, `H = B = 2`. A bent-scope onset keeps its
 raw handoff and stage head when the caller has no inherited-bend credit, and
 mints no handle or command ID. Audio returns the bend's unused credit. The same
 handoff then reaches audio and inherits the 30-cent bend at frame 300 after the
 earlier bend entry. All three fixtures assume prepared raw capacity. A raw
-owner's full admission is a terminal discontinuity, so source-side
-preflight/reservation and the concrete example-host bridge remain open.
+owner's full admission is a terminal discontinuity. The example source's raw
+preflight is now present, while reservation across a mixed-stage handoff and
+the concrete example-host bridge remain open.
 The non-shipping example's actual `SourceInbox` now offers an exact
 peek/commit handoff. A wrong or stale handoff cannot pop the head; committing
 the matching bend releases one source-ring place, and an owned producer retry
