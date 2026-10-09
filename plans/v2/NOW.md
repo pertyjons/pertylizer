@@ -825,8 +825,11 @@ for the concrete bridge. The private mixed fixture now imports the same
 passes through raw admission with its original tick and arrival, then a bounded
 stage and the private command queue at its validated mapped time. Stage refusal
 holds the exact queue head and its already issued raw ID; retry submits it once,
-and later raw receipts retain the three original observations. The fixture
-uses a detached test halt and does not install a production mixed host or
+and later raw receipts retain the three original observations. With the
+command ring already full, a second fixture stages two actual source bends.
+Refusal keeps both stage places and raw handoffs without minting a command ID; draining
+the ring admits both bends in source order at frames 320 and 321. Both fixtures
+use a detached test halt and do not install a production mixed host or
 reserve raw admission across the stage handoff.
 The concrete source service now preflights the actual raw owner before taking
 that head. It waits only when completed local raw receipts can free enough

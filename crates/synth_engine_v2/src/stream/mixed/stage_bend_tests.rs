@@ -471,6 +471,138 @@ fn actual_source_head_keeps_its_stamp_and_raw_original_through_stage_refusal() {
 }
 
 #[test]
+fn actual_source_bends_keep_stage_places_and_order_when_the_command_ring_is_full() {
+    let (prepared, candidate) = history_tests::one_shot_with_live(
+        true,
+        crate::quantities::HeldNoteCount::measured(2),
+        EventCount::measured(2),
+    );
+    let (mut control, mut audio) = prepared
+        .arm_one_shot(candidate, &history_tests::mixed_profile())
+        .unwrap();
+    let scope = BendBridge::scope(Source::First);
+    let (onset, request) = control
+        .submit_onset(
+            MixedIngressOriginId(100),
+            scope,
+            SampleTime::new(100),
+            crate::quantities::KeyIdentity::new(60).unwrap(),
+            crate::quantities::NoteVelocity::FULL,
+        )
+        .unwrap();
+    audio.service_test_ingress_queue();
+    let result = control.collect_ingress_result().unwrap();
+    assert_eq!((result.id, result.request), (onset, request));
+    assert!(matches!(result.outcome, MixedIngressOutcome::Onset(Ok(_))));
+
+    let mut pressed = 0;
+    while control.ingress_room() > 1 {
+        let id = u64::try_from(1000 + pressed).unwrap();
+        let peer_scope = MixedLiveScope::new(MixedLiveSource::new(id), MidiChannel::new(1));
+        assert!(matches!(
+            control
+                .submit_pedal(
+                    MixedIngressOriginId(id),
+                    peer_scope,
+                    SampleTime::new(110),
+                    true
+                )
+                .unwrap(),
+            MixedPedalSubmitted::Command(..)
+        ));
+        pressed += 1;
+    }
+    let (filler, _) = control
+        .submit_bend(
+            MixedIngressOriginId(2000),
+            BendBridge::scope(Source::Second),
+            SampleTime::new(110),
+            Cents::ZERO,
+        )
+        .unwrap();
+    assert_eq!(control.ingress_room(), 0);
+
+    let (owner, generations) = ledger_tests::bridge_serial_owner(512);
+    let clock = owner.input(generations[0]).unwrap().clock().unwrap();
+    let (mut producer, mut inbox) =
+        SourceInbox::prepare(generations[0], InputCaptureHalt::detached_for_test(), clock);
+    let mut bridge = BendBridge::with_raw(2, SerialRaw { owner, generations });
+    let mut pending_head = None;
+    let originals = [
+        (320, 330, input(0xe0, 127, 127)),
+        (321, 331, input(0xe0, 0, 0)),
+    ]
+    .map(|(tick, arrival, input)| InputObservation::Message {
+        tick: InputTick::new(tick),
+        arrival: SampleTime::new(arrival),
+        input,
+    });
+    let queues = originals.map(|observation| producer.submit_owned(observation).unwrap().parts().1);
+    bridge.frontier(Source::Second, 322);
+    let (first, first_raw) = pump_concrete_bend(&mut bridge, &mut inbox, &mut pending_head)
+        .unwrap()
+        .unwrap();
+    let (second, second_raw) = pump_concrete_bend(&mut bridge, &mut inbox, &mut pending_head)
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        (first.stamp().queue(), second.stamp().queue()),
+        (queues[0], queues[1])
+    );
+    assert_eq!(bridge.raw_issued.len(), 2);
+    assert!(inbox.is_empty());
+    assert!(inbox.close(producer).is_ok());
+
+    let before = control.last_ingress_id;
+    let credits_before = control.bend_credits_free;
+    assert_eq!(
+        bridge.service(&mut control, &mut audio),
+        Err(MixedBendSubmitError::Full)
+    );
+    assert_eq!(control.last_ingress_id, before);
+    assert_eq!(control.bend_credits_free, credits_before);
+    assert_eq!(
+        bridge.stage.peek_next().unwrap().1.occurrence,
+        Occurrence(1)
+    );
+    assert_eq!(
+        bridge.staged,
+        vec![(Occurrence(1), first_raw), (Occurrence(2), second_raw)]
+    );
+
+    audio.service_test_ingress_queue();
+    for _ in 0..pressed {
+        assert!(matches!(
+            control.collect_ingress_result().unwrap().outcome,
+            MixedIngressOutcome::PedalDown(Ok(_))
+        ));
+    }
+    let filler_result = control.collect_ingress_result().unwrap();
+    assert_eq!(filler_result.id, filler);
+    assert!(matches!(
+        filler_result.outcome,
+        MixedIngressOutcome::Bend(Ok(_))
+    ));
+    assert!(control.collect_ingress_result().is_none());
+
+    for (expected, raw) in [(Occurrence(1), first_raw), (Occurrence(2), second_raw)] {
+        let (occurrence, returned, outcome) =
+            bridge.service(&mut control, &mut audio).unwrap().unwrap();
+        assert_eq!((occurrence, returned), (expected, raw));
+        assert!(matches!(outcome, MixedIngressOutcome::Bend(Ok(_))));
+    }
+    assert_eq!(bridge.service(&mut control, &mut audio), Ok(None));
+    assert!(bridge.staged.is_empty());
+    assert_eq!(
+        queued_bends(&audio),
+        vec![
+            (SampleTime::new(320), Cents::new(200.0).unwrap()),
+            (SampleTime::new(321), Cents::new(-200.0).unwrap()),
+        ]
+    );
+}
+
+#[test]
 fn completed_frontier_receipt_releases_the_same_waiting_source_bend() {
     let (prepared, candidate) = history_tests::one_shot_with_live(
         true,
