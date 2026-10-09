@@ -875,6 +875,8 @@ struct RawStageBridge<R = [RawSource; 2]> {
     refused_onsets: Vec<RefusedOnsetTombstone>,
     /// Every raw ID a raw owner issued to this bridge, with its admission link.
     raw_issued: Vec<(Source, InputEventId, Option<InputEventId>)>,
+    /// A source-owned bend pending outside the ring blocks that source's frontier.
+    pending_source_bends: [Option<InputEventId>; 2],
     next_occurrence: u64,
 }
 
@@ -898,6 +900,7 @@ impl<R: RawBackend> RawStageBridge<R> {
             handles: Vec::new(),
             refused_onsets: Vec::new(),
             raw_issued: Vec::new(),
+            pending_source_bends: [None; 2],
             next_occurrence: 1,
         }
     }
@@ -1039,7 +1042,18 @@ impl<R: RawBackend> RawStageBridge<R> {
         at: u64,
         original: Midi1Input,
     ) -> Result<Occurrence, BridgeRefused> {
-        let at = SampleTime::new(at);
+        let handoff = self.admit_raw(source, SampleTime::new(at), original)?;
+        self.stage_handoff(handoff)
+    }
+
+    /// Raw admission is unique even when a later stage refusal retains this
+    /// handoff. The matched release link is captured before raw reaping.
+    fn admit_raw(
+        &mut self,
+        source: Source,
+        at: SampleTime,
+        original: Midi1Input,
+    ) -> Result<RawHandoff, BridgeRefused> {
         let raw = self
             .sources
             .offer(source, at, original)
@@ -1063,6 +1077,19 @@ impl<R: RawBackend> RawStageBridge<R> {
             handoff,
             reason: LaneRefusal::Link(error),
         })?;
+        Ok(handoff)
+    }
+
+    /// Stage one already raw-admitted packet. Only a clean bend capacity
+    /// refusal may be retried with this exact handoff in the source bridge.
+    fn stage_handoff(&mut self, handoff: RawHandoff) -> Result<Occurrence, BridgeRefused> {
+        let RawHandoff {
+            source,
+            raw,
+            original,
+            at,
+            ..
+        } = handoff;
         let refuse = |reason| BridgeRefused::Lane { handoff, reason };
         match original.event() {
             Midi1Event::NoteOn { .. } => {
@@ -1199,6 +1226,10 @@ impl<R: RawBackend> RawStageBridge<R> {
     }
 
     fn frontier(&mut self, source: Source, at: u64) {
+        assert!(
+            self.pending_source_bends[source.index()].is_none(),
+            "a frontier cannot overtake a source-owned pending bend"
+        );
         let frontier = self.sources.frontier(source, SampleTime::new(at));
         assert_eq!(self.sources.matched_onset(source, frontier), Ok(None));
         self.raw_issued.push((source, frontier, None));
@@ -1720,6 +1751,10 @@ impl<R: RawBackend> RawStageBridge<R> {
         control: MixedOneShotControl,
         audio: MixedOneShotAudio,
     ) -> (BridgeTeardown, R, MixedOneShotTeardown) {
+        assert!(
+            self.pending_source_bends.iter().all(Option::is_none),
+            "source-owned pending bends require joined teardown first"
+        );
         let MixedCollection::Ended(ended) = control.collect(audio).unwrap() else {
             panic!("a pending or faulted mixed owner must end at teardown");
         };

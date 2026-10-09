@@ -854,8 +854,8 @@ refused onset's tombstone. The source ring closes, no stage charge remains at
 mixed teardown, and cancellation settlement covers every issued raw ID with
 its recorded link. This fixture uses standalone raw owners and cancelled raw
 receipts, so it does not prove recorder delivery. In this source-ring fixture,
-pedal pressure enters at private control; ordered source-ring pedal edges and a
-production combined host remain open.
+pedal pressure enters at private control; this fixture does not exercise
+source-ring pedal edges or a production combined host.
 
 The private raw bridge now maps each source and MIDI channel to its own live
 scope when submitting an onset. A three-note fixture confirms that a
@@ -885,8 +885,8 @@ pedal-down. These fixtures offer directly to standalone raw owners. The lane
 refusal is still reported at offer time, so it can precede an older staged
 command's result;
 an ordered combined disposition that attributes each later note to this
-raw/mixed pedal split, source-ring pedal custody, a settled mixed `Full` split
-outcome and recorder delivery remain open.
+raw/mixed pedal split, production source-ring pedal custody, a settled mixed
+`Full` split outcome and recorder delivery remain open.
 
 The private raw bridge also stages bends alongside pedal and note edges.
 One five-cell lane holds a pedal-down, note-on, bend, key-up and pedal lift
@@ -898,6 +898,18 @@ lift retires that same handle. A stage-full bend keeps its raw ID in a
 separate refusal fixture. Raw IDs stay paired to their original messages.
 This fixture has no source ring and still uses separate test service calls
 instead of a production combined dispatcher.
+
+A newer private source-ring policy candidate carries pedal, note, bend,
+key-up and lift through exact-head commits. A stage-full bend commits its
+source-ring head after raw admission. If no younger head is queued, it keeps
+one source-owned pending handoff with the same raw ID. Each service pass
+retries that bend first; if stage is still full and a younger message or
+frontier is queued, the bend receives an explicit sound-path split and raw
+capture advances.
+A stage-full pedal-down splits immediately so its protected key-up and later
+raw lift advance. A private shutdown fixture reports the pending bend's
+source queue identity and raw ID before closing both owners. Ordered combined
+reporting, recorder delivery and shared production admission remain open.
 
 The budget withholds `B` queue places from ordinary traffic for the whole
 private run, leaving at most `C - B` for ordinary entries and release holds.
