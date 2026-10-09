@@ -797,6 +797,30 @@ The current one-place-per-note coalescing rule proves neither. A replacement
 needs an explicit timing rule for interleaved bends and onsets, including an
 undrained inherited entry reached by a later bend, plus a capacity proof for
 whatever events that rule emits.
+One exact-order candidate replaces each note's reserved bend place with a fixed
+budget `B` of bend-entry credits charged to the same ingress queue. For queue
+depth `C` and live hold entitlement `H`, the proposed arm rule is `C >= 2H + 1`
+and `B = max(H, C - 2H)` when `H > 0`, or zero when `H = 0`. Its queue invariant
+is `(len - queued_bends) + holds + B <= C` and `queued_bends <= B`. A bend
+reserves `H` credits before its command identity is minted, covering every
+possible member at audio service even if membership grows after submission.
+An onset whose control-side scope reservation may carry a non-zero bend
+reserves one credit before its command identity is minted; an unbent scope
+needs none. Audio returns unused credits after service and each written credit
+only after its entry drains. Each accepted bend would append a separate entry
+per sounding or sustained member at its execution stamp; an inherited entry
+follows its onset at that onset's stamp. Exhausted credits refuse the caller,
+while Panic keeps its protected command place. The budget withholds `B` queue
+places from ordinary traffic, leaving at most `C - B` for non-bend entries and
+release holds. At the minimum depth `C = 2H + 1`, an in-flight bend reserves
+all `H` credits and can temporarily refuse a bent-scope onset at the caller;
+its source would have to retain and retry that onset. This candidate is neither
+implemented nor accepted. Its falsifiers include the drained-entry variant at
+frames 300–319 as a same-scope, per-sample equality test; caller refusal under
+a full credit budget without minting an identity or losing source custody;
+admission of an unbent-scope onset while credits are exhausted; credit recovery
+after drain without any other command; no early bend application; and Panic service
+with the ordinary ring and credit budget full.
 This slice does not lift the production mixed-plan refusal.
 
 ### Selected work — ordered transport through live I/O
