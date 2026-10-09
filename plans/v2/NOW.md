@@ -710,11 +710,21 @@ pending, faulted and resumed teardown. A two-quantum terminal test proves the
 callback journal retains entries charged before and during the fault, including
 a release whose hold was spent at offer. The stopped registry separately reports
 what reached sounding state.
-This remains an internal rehearsal with no result-channel or source receipt,
-FIFO tombstone, source-ring, raw-input or recorder bridge. Those require a
-later shared charge and explicit contract amendments. Release-at-offer timing
-is private to this rehearsal; a production mixed owner needs the
-ADR-0046/0047/0050/0072 amendments first.
+That direct-offer path remains an internal rehearsal with no source receipt,
+source-ring, raw-input or recorder bridge. Those require a later shared charge
+and explicit contract amendments. Release-at-offer timing is private to this
+rehearsal; a production mixed owner needs the ADR-0046/0047/0050/0072
+amendments first.
+The private test-only mixed command ring now accepts merger-minted occurrence
+handles. Its audio half records an accepted identity or the first onset refusal
+in a fixed table, consumes a refused onset's release without reaching a newer
+same-key note, and acknowledges cell retirement before the merger reuses that
+cell. Each open handle reserves a release place; a one-slot ingress profile
+refuses arm while retaining both inputs. Tests cover release before onset-result
+collection, stale generations, same-key refusal and reuse, teardown accounting,
+and allocation-free command service. Sustain, pedal lift, Panic, bend and the
+concrete two-source bridge remain open. This slice does not lift the production
+mixed-plan refusal.
 
 ### Selected work — ordered transport through live I/O
 

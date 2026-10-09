@@ -49,6 +49,14 @@ use crate::{
 };
 
 mod hot;
+#[cfg(all(test, feature = "simulated-ingress"))]
+mod occurrence;
+
+#[cfg(all(test, feature = "simulated-ingress"))]
+use occurrence::{
+    LiveOccurrenceId, MixedOccurrenceLedger, MixedOccurrenceState, MixedOccurrenceTable,
+    MixedOnsetSubmitError, MixedReleaseSubmitError, MixedRetired,
+};
 
 /// Why a bound mixed stream could not be prepared.
 #[derive(Debug, Error)]
@@ -199,6 +207,10 @@ pub(crate) enum MixedOneShotArmError {
     #[cfg(all(test, feature = "simulated-ingress"))]
     #[error(transparent)]
     Ingress(#[from] IngressPrepareError),
+    /// A live onset and its protected release need distinct command-ring places.
+    #[cfg(all(test, feature = "simulated-ingress"))]
+    #[error("mixed occurrence ingress depth {capacity} cannot reserve an onset and release")]
+    OccurrenceCapacity { capacity: usize },
 }
 
 /// Off-thread admission for the closed private one-shot schedule.
@@ -825,8 +837,10 @@ pub(crate) struct MixedOneShotArmRefusal {
     candidate: MixedStampedCandidate,
 }
 
-/// Retained off-thread control while one private transition runs. It holds no
-/// identity or generation state; both minters stay with the audio half.
+/// Retained off-thread control while one private transition runs. It holds no note
+/// identity or identity-generation state; both minters stay with the audio half. Its
+/// test-only occurrence ledger names live onsets by merger-minted handles, whose cell
+/// generations say nothing about the identity audio mints for them.
 #[derive(Debug)]
 #[must_use]
 #[allow(dead_code)] // The one-shot retirement path is the next slice.
@@ -840,8 +854,13 @@ pub(crate) struct MixedOneShotControl {
     ingress_capacity: MixedIngressQueueCount,
     #[cfg(all(test, feature = "simulated-ingress"))]
     ingress_outstanding: MixedIngressQueueCount,
+    /// Ring places reserved for the releases of open handles.
+    #[cfg(all(test, feature = "simulated-ingress"))]
+    release_reserved: MixedIngressQueueCount,
     #[cfg(all(test, feature = "simulated-ingress"))]
     last_ingress_id: Option<MixedIngressCommandId>,
+    #[cfg(all(test, feature = "simulated-ingress"))]
+    occurrence_ledger: MixedOccurrenceLedger,
     off_thread: PhantomData<Rc<()>>,
 }
 
@@ -888,16 +907,19 @@ impl MixedIngressQueueCount {
 #[derive(Clone, Copy, Debug, PartialEq)]
 #[must_use]
 enum MixedIngressRequest {
+    /// Stage one live onset under the handle the merger minted for it.
     Onset {
         origin: MixedIngressOriginId,
+        occurrence: LiveOccurrenceId,
         at: SampleTime,
         key: crate::quantities::KeyIdentity,
         velocity: crate::quantities::NoteVelocity,
     },
+    /// End the occurrence the handle names; it never names an identity.
     Release {
         origin: MixedIngressOriginId,
+        occurrence: LiveOccurrenceId,
         at: SampleTime,
-        identity: NoteIdentity,
     },
 }
 
@@ -911,8 +933,13 @@ struct MixedIngressCommand {
 #[cfg(all(test, feature = "simulated-ingress"))]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum MixedIngressOutcome {
+    /// The onset's identity, or the refusal its handle's tombstone now carries.
     Onset(Result<NoteIdentity, IngressRefused>),
-    Release(Result<(), IngressRefused>),
+    /// The audio half's retirement of the handle's cell, or a refused release offer
+    /// that leaves the occurrence sounding and its cell held.
+    Release(Result<MixedRetired, IngressRefused>),
+    /// The handle named no cell the command could use; no cell changed.
+    Handle(occurrence::MixedHandleRefused),
 }
 
 #[cfg(all(test, feature = "simulated-ingress"))]
@@ -935,11 +962,20 @@ enum MixedIngressSubmitError {
 
 #[cfg(all(test, feature = "simulated-ingress"))]
 impl MixedOneShotControl {
+    /// Ring places neither carrying a command or result nor reserved for a release.
+    fn ingress_room(&self) -> usize {
+        self.ingress_capacity
+            .as_usize()
+            .saturating_sub(self.ingress_outstanding.as_usize())
+            .saturating_sub(self.release_reserved.as_usize())
+    }
+
+    /// Push one command. Callers other than the two typed submits below forge requests.
     fn submit_ingress(
         &mut self,
         request: MixedIngressRequest,
     ) -> Result<MixedIngressCommandId, MixedIngressSubmitError> {
-        if self.ingress_outstanding >= self.ingress_capacity {
+        if self.ingress_room() == 0 {
             return Err(MixedIngressSubmitError::Full(request));
         }
         let serial = self
@@ -956,10 +992,99 @@ impl MixedOneShotControl {
         Ok(id)
     }
 
+    /// Mint a handle and stage its onset, reserving one ring place for its release so
+    /// the release can follow at once, before the onset's result is collected.
+    fn submit_onset(
+        &mut self,
+        origin: MixedIngressOriginId,
+        at: SampleTime,
+        key: crate::quantities::KeyIdentity,
+        velocity: crate::quantities::NoteVelocity,
+    ) -> Result<(MixedIngressCommandId, MixedIngressRequest), MixedOnsetSubmitError> {
+        if self.ingress_room() < 2 {
+            return Err(MixedOnsetSubmitError::Full);
+        }
+        // The ledger is as wide as the ring and each held cell owns at least one ring
+        // place, so a ring with two free places always has a vacant cell.
+        let occurrence = self
+            .occurrence_ledger
+            .vacant()
+            .ok_or(MixedOnsetSubmitError::Full)?;
+        let request = MixedIngressRequest::Onset {
+            origin,
+            occurrence,
+            at,
+            key,
+            velocity,
+        };
+        let command = self.submit_ingress(request).map_err(|error| match error {
+            MixedIngressSubmitError::Full(_) => MixedOnsetSubmitError::Full,
+            MixedIngressSubmitError::IdentityExhausted(_) => {
+                MixedOnsetSubmitError::IdentityExhausted
+            }
+        })?;
+        let opened = self.occurrence_ledger.open(occurrence);
+        debug_assert!(opened, "the vacant handle stays vacant until opened");
+        self.release_reserved.0 += 1;
+        Ok((command, request))
+    }
+
+    /// Submit the release of an open handle into the place its onset reserved.
+    fn submit_release(
+        &mut self,
+        origin: MixedIngressOriginId,
+        occurrence: LiveOccurrenceId,
+        at: SampleTime,
+    ) -> Result<(MixedIngressCommandId, MixedIngressRequest), MixedReleaseSubmitError> {
+        if !self.occurrence_ledger.is_open(occurrence) {
+            return Err(MixedReleaseSubmitError::NotOpen(occurrence));
+        }
+        let request = MixedIngressRequest::Release {
+            origin,
+            occurrence,
+            at,
+        };
+        self.release_reserved.0 -= 1;
+        let command = match self.submit_ingress(request) {
+            Ok(command) => command,
+            Err(error) => {
+                self.release_reserved.0 += 1;
+                return Err(match error {
+                    MixedIngressSubmitError::Full(_) => {
+                        unreachable!("an open handle's reserved place is free")
+                    }
+                    MixedIngressSubmitError::IdentityExhausted(_) => {
+                        MixedReleaseSubmitError::IdentityExhausted(occurrence)
+                    }
+                });
+            }
+        };
+        let releasing = self.occurrence_ledger.begin_release(occurrence, command);
+        debug_assert!(releasing, "an open handle accepts its release");
+        Ok((command, request))
+    }
+
+    /// Collect one result. A release result settles its handle: `Retired` frees the
+    /// ledger cell for reuse; a refused release returns custody and its reserved place
+    /// to the merger.
     fn collect_ingress_result(&mut self) -> Option<MixedIngressResult> {
         let result = self.ingress_results.0.try_pop()?;
         assert!(self.ingress_outstanding > MixedIngressQueueCount::NONE);
         self.ingress_outstanding.0 -= 1;
+        if let MixedIngressRequest::Release { occurrence, .. } = result.request {
+            let retired = match result.outcome {
+                MixedIngressOutcome::Release(Ok(retired)) => Some(retired),
+                MixedIngressOutcome::Release(Err(_))
+                | MixedIngressOutcome::Handle(_)
+                | MixedIngressOutcome::Onset(_) => None,
+            };
+            if self
+                .occurrence_ledger
+                .settle_release(result.id, occurrence, retired)
+            {
+                self.release_reserved.0 += 1;
+            }
+        }
         Some(result)
     }
 }
@@ -1025,6 +1150,9 @@ struct MixedIngressTeardown {
     minted_live: Vec<NoteIdentity>,
     holds_outstanding: EventCount,
     counters: IngressCounters,
+    /// Every handle the audio table still holds, sounding or tombstoned.
+    occurrences: Vec<(LiveOccurrenceId, MixedOccurrenceState)>,
+    released_after_refusal: EventCount,
 }
 
 #[derive(Debug)]
@@ -1094,6 +1222,9 @@ pub(crate) struct MixedOneShotAudio {
     render_started: bool,
     #[cfg(all(test, feature = "simulated-ingress"))]
     test_ingress: PerformanceIngress,
+    /// What each live handle names; the merger's ledger has the same width.
+    #[cfg(all(test, feature = "simulated-ingress"))]
+    occurrences: MixedOccurrenceTable,
     #[cfg(all(test, feature = "simulated-ingress"))]
     ingress_commands: OpaqueQueue<HeapCons<MixedIngressCommand>>,
     #[cfg(all(test, feature = "simulated-ingress"))]
@@ -1112,78 +1243,6 @@ pub(crate) struct MixedOneShotAudio {
     test_live_spent: bool,
     #[cfg(test)]
     test_live_share: EventCount,
-}
-
-#[cfg(all(test, feature = "simulated-ingress"))]
-impl MixedOneShotAudio {
-    /// Serve only the preallocated command prefix; each result retains its request.
-    fn service_test_ingress_queue(&mut self) {
-        if let Some(pending) = self.ingress_result_pending.take()
-            && let Err(pending) = self.ingress_results.0.try_push(pending)
-        {
-            self.ingress_result_pending = Some(pending);
-            return;
-        }
-        while let Some(command) = self.ingress_commands.0.try_pop() {
-            let outcome = match command.request {
-                MixedIngressRequest::Onset {
-                    at, key, velocity, ..
-                } => MixedIngressOutcome::Onset(self.offer_test_note_on(at, key, velocity)),
-                MixedIngressRequest::Release { at, identity, .. } => {
-                    MixedIngressOutcome::Release(self.offer_test_note_off(at, identity))
-                }
-            };
-            let result = MixedIngressResult {
-                id: command.id,
-                request: command.request,
-                outcome,
-            };
-            if let Err(result) = self.ingress_results.0.try_push(result) {
-                self.ingress_result_pending = Some(result);
-                break;
-            }
-        }
-    }
-
-    /// Private ingress acceptance; the returned identity is the release token.
-    fn offer_test_note_on(
-        &mut self,
-        at: SampleTime,
-        key: crate::quantities::KeyIdentity,
-        velocity: crate::quantities::NoteVelocity,
-    ) -> Result<NoteIdentity, IngressRefused> {
-        if self.fault.is_some() || self.audio.renderer.diagnostics().needs_reprepare() {
-            return Err(IngressRefused::TerminalOwner);
-        }
-        if self.test_live.is_some() {
-            return Err(IngressRefused::MixedTestConflict);
-        }
-        self.test_ingress.adopt(self.audio.renderer.epoch())?;
-        self.test_ingress.offer_mixed_note_on(
-            &mut self.audio.live_minter,
-            at,
-            self.audio.note,
-            key,
-            velocity,
-        )
-    }
-
-    /// The exact accepted occurrence redeems its release hold.
-    fn offer_test_note_off(
-        &mut self,
-        at: SampleTime,
-        identity: NoteIdentity,
-    ) -> Result<(), IngressRefused> {
-        if self.fault.is_some() || self.audio.renderer.diagnostics().needs_reprepare() {
-            return Err(IngressRefused::TerminalOwner);
-        }
-        if self.test_live.is_some() {
-            return Err(IngressRefused::MixedTestConflict);
-        }
-        self.test_ingress.adopt(self.audio.renderer.epoch())?;
-        self.test_ingress
-            .offer_mixed_note_off(&mut self.audio.live_minter, at, identity)
-    }
 }
 
 /// Off-thread control for one bound mixed plan and stream.
@@ -1323,6 +1382,8 @@ fn mixed_teardown_parts(
             minted_live: audio.audio.live_minter.live_identities_for_test(),
             holds_outstanding: audio.test_ingress.holds_outstanding(),
             counters: audio.test_ingress.counters(),
+            occurrences: audio.occurrences.occupied(),
+            released_after_refusal: audio.occurrences.released_after_refusal(),
         }
     };
     Ok(MixedTeardownParts {
@@ -1859,6 +1920,16 @@ impl MixedJoinedPrepared {
         let ingress_capacity =
             MixedIngressQueueCount::capacity(test_ingress.queue_capacity_for_test());
         #[cfg(all(test, feature = "simulated-ingress"))]
+        if ingress_capacity.as_usize() < 2 {
+            return Err(Box::new(MixedOneShotArmRefusal {
+                reason: MixedOneShotArmError::OccurrenceCapacity {
+                    capacity: ingress_capacity.as_usize(),
+                },
+                owner: self,
+                candidate,
+            }));
+        }
+        #[cfg(all(test, feature = "simulated-ingress"))]
         let (ingress_command_writer, ingress_command_reader) =
             HeapRb::<MixedIngressCommand>::new(ingress_capacity.as_usize()).split();
         #[cfg(all(test, feature = "simulated-ingress"))]
@@ -1902,7 +1973,11 @@ impl MixedJoinedPrepared {
                 #[cfg(all(test, feature = "simulated-ingress"))]
                 ingress_outstanding: MixedIngressQueueCount::NONE,
                 #[cfg(all(test, feature = "simulated-ingress"))]
+                release_reserved: MixedIngressQueueCount::NONE,
+                #[cfg(all(test, feature = "simulated-ingress"))]
                 last_ingress_id: None,
+                #[cfg(all(test, feature = "simulated-ingress"))]
+                occurrence_ledger: MixedOccurrenceLedger::prepare(ingress_capacity),
                 off_thread: PhantomData,
             },
             MixedOneShotAudio {
@@ -1932,6 +2007,8 @@ impl MixedJoinedPrepared {
                 test_fail_after_ingress_at: None,
                 #[cfg(all(test, feature = "simulated-ingress"))]
                 test_ingress,
+                #[cfg(all(test, feature = "simulated-ingress"))]
+                occurrences: MixedOccurrenceTable::prepare(ingress_capacity),
                 #[cfg(all(test, feature = "simulated-ingress"))]
                 ingress_commands: OpaqueQueue(ingress_command_reader),
                 #[cfg(all(test, feature = "simulated-ingress"))]

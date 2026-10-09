@@ -149,7 +149,15 @@ fn bound_with_events(
     compiled_first: bool,
     events: impl FnOnce(NoteSlot) -> Vec<PlanEvent>,
 ) -> MixedJoinedPrepared {
-    let plan = mixed_plan(compiled_first);
+    bound_with_events_and_holds(compiled_first, EventCount::measured(2), events)
+}
+
+fn bound_with_events_and_holds(
+    compiled_first: bool,
+    live_holds: EventCount,
+    events: impl FnOnce(NoteSlot) -> Vec<PlanEvent>,
+) -> MixedJoinedPrepared {
+    let plan = mixed_plan_with_live_holds(compiled_first, live_holds);
     let note = plan.resolve_note(ENVELOPE).expect("playable envelope");
     let events = events(note);
     let stream = AdmittedCompiledStream::admit(&plan, &events).expect("admitted stream");
@@ -266,6 +274,26 @@ pub(super) fn one_shot_with_boundary_on(
     one_shot_with_boundary_on_at(compiled_first, SampleTime::new(64))
 }
 
+#[cfg(feature = "simulated-ingress")]
+pub(super) fn one_shot_with_one_live_hold() -> (MixedJoinedPrepared, MixedStampedCandidate) {
+    let prepared = bound_with_events_and_holds(true, EventCount::measured(1), |note| {
+        vec![PlanEvent::new(
+            PlanPosition::new(10),
+            CompiledPayload::NoteOn {
+                slot: note,
+                key: key(60),
+                velocity: NoteVelocity::FULL,
+            },
+        )]
+    });
+    let history = prepared
+        .prepare_history(SampleTime::new(64), PlanPosition::new(10))
+        .expect("history");
+    let suffix = prepared.prepare_suffix(history).expect("suffix");
+    let candidate = prepared.stamp_suffix(suffix).expect("stamp");
+    (prepared, candidate)
+}
+
 fn one_shot_with_boundary_on_at(
     compiled_first: bool,
     requested: SampleTime,
@@ -328,6 +356,10 @@ fn one_shot_at_compiled_share(
 }
 
 fn mixed_plan(compiled_first: bool) -> CompiledPlan {
+    mixed_plan_with_live_holds(compiled_first, EventCount::measured(2))
+}
+
+fn mixed_plan_with_live_holds(compiled_first: bool, live_holds: EventCount) -> CompiledPlan {
     let compiled = NoteProducerDeclaration {
         compiled: true,
         simultaneous_notes: HeldNoteCount::measured(2),
@@ -336,7 +368,7 @@ fn mixed_plan(compiled_first: bool) -> CompiledPlan {
     let live = NoteProducerDeclaration {
         compiled: false,
         simultaneous_notes: HeldNoteCount::measured(2),
-        simultaneous_holds: EventCount::measured(2),
+        simultaneous_holds: live_holds,
     };
     let ir = GraphIr::builder()
         .node(
@@ -481,13 +513,14 @@ fn private_mixed_channel_reports_conflict_with_direct_test_live_ownership() {
     let _identity = audio
         .arm_test_live_on(SampleTime::ZERO, key(48), NoteVelocity::FULL)
         .expect("direct test live owner");
-    let request = MixedIngressRequest::Onset {
-        origin: MixedIngressOriginId(1),
-        at: SampleTime::ZERO,
-        key: key(49),
-        velocity: NoteVelocity::FULL,
-    };
-    let id = control.submit_ingress(request).expect("queued request");
+    let (id, request) = control
+        .submit_onset(
+            MixedIngressOriginId(1),
+            SampleTime::ZERO,
+            key(49),
+            NoteVelocity::FULL,
+        )
+        .expect("queued request");
     audio.service_test_ingress_queue();
     assert_eq!(
         control.collect_ingress_result(),

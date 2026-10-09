@@ -6,6 +6,7 @@ use super::{
     EventPayload, MixedCollection, MixedCollectionEnd, MixedIngressOriginId, MixedIngressOutcome,
     MixedIngressRequest, MixedOneShotAudio, MixedOneShotControl, MixedOneShotRenderError,
     MixedOneShotTeardown, TimedEvent, history_tests, ledger_tests,
+    occurrence::{LiveOccurrenceId, MixedRetireCause, MixedRetired},
 };
 use crate::{
     host::{
@@ -312,13 +313,21 @@ fn bounded_stage_feeds_actual_mixed_command_results_in_time_order() {
         let Midi1Event::NoteOn { key, velocity } = first.original.event() else {
             panic!("first staged packet must be an onset");
         };
-        let first_request = MixedIngressRequest::Onset {
-            origin: MixedIngressOriginId(first.occurrence.0),
-            at: first.at,
-            key,
-            velocity,
+        let (first_command, first_request) = control
+            .submit_onset(
+                MixedIngressOriginId(first.occurrence.0),
+                first.at,
+                key,
+                velocity,
+            )
+            .unwrap();
+        let MixedIngressRequest::Onset {
+            occurrence: first_handle,
+            ..
+        } = first_request
+        else {
+            panic!("onset request");
         };
-        let first_command = control.submit_ingress(first_request).unwrap();
         audio.service_test_ingress_queue();
         let first_result = control.collect_ingress_result().unwrap();
         assert_eq!(
@@ -331,32 +340,47 @@ fn bounded_stage_feeds_actual_mixed_command_results_in_time_order() {
 
         let (source, second) = stage.pop_next().unwrap();
         assert_eq!((source, second), (Source::Second, release(2, 145)));
-        let second_request = MixedIngressRequest::Release {
-            origin: MixedIngressOriginId(second.occurrence.0),
-            at: second.at,
-            identity: first_identity,
-        };
-        let second_command = control.submit_ingress(second_request).unwrap();
+        let (second_command, second_request) = control
+            .submit_release(
+                MixedIngressOriginId(second.occurrence.0),
+                first_handle,
+                second.at,
+            )
+            .unwrap();
         audio.service_test_ingress_queue();
         let second_result = control.collect_ingress_result().unwrap();
         assert_eq!(
             (second_result.id, second_result.request),
             (second_command, second_request)
         );
-        assert_eq!(second_result.outcome, MixedIngressOutcome::Release(Ok(())));
+        assert_eq!(
+            second_result.outcome,
+            MixedIngressOutcome::Release(Ok(MixedRetired {
+                occurrence: first_handle,
+                cause: MixedRetireCause::Released(first_identity),
+            }))
+        );
 
         let (source, third) = stage.pop_next().unwrap();
         assert_eq!((source, third), (Source::First, onset(1, 150)));
         let Midi1Event::NoteOn { key, velocity } = third.original.event() else {
             panic!("waiting staged packet must be an onset");
         };
-        let third_request = MixedIngressRequest::Onset {
-            origin: MixedIngressOriginId(third.occurrence.0),
-            at: third.at,
-            key,
-            velocity,
+        let (third_command, third_request) = control
+            .submit_onset(
+                MixedIngressOriginId(third.occurrence.0),
+                third.at,
+                key,
+                velocity,
+            )
+            .unwrap();
+        let MixedIngressRequest::Onset {
+            occurrence: third_handle,
+            ..
+        } = third_request
+        else {
+            panic!("onset request");
         };
-        let third_command = control.submit_ingress(third_request).unwrap();
         audio.service_test_ingress_queue();
         let third_result = control.collect_ingress_result().unwrap();
         assert_eq!(
@@ -374,19 +398,26 @@ fn bounded_stage_feeds_actual_mixed_command_results_in_time_order() {
             .unwrap();
         let (source, last) = stage.pop_next().unwrap();
         assert_eq!((source, last), (Source::First, release(1, 160)));
-        let last_request = MixedIngressRequest::Release {
-            origin: MixedIngressOriginId(last.occurrence.0),
-            at: last.at,
-            identity: third_identity,
-        };
-        let last_command = control.submit_ingress(last_request).unwrap();
+        let (last_command, last_request) = control
+            .submit_release(
+                MixedIngressOriginId(last.occurrence.0),
+                third_handle,
+                last.at,
+            )
+            .unwrap();
         audio.service_test_ingress_queue();
         let last_result = control.collect_ingress_result().unwrap();
         assert_eq!(
             (last_result.id, last_result.request),
             (last_command, last_request)
         );
-        assert_eq!(last_result.outcome, MixedIngressOutcome::Release(Ok(())));
+        assert_eq!(
+            last_result.outcome,
+            MixedIngressOutcome::Release(Ok(MixedRetired {
+                occurrence: third_handle,
+                cause: MixedRetireCause::Released(third_identity),
+            }))
+        );
         assert!(control.collect_ingress_result().is_none());
         assert_eq!(stage.pressure(Source::First), (0, 0));
         assert_eq!(stage.pressure(Source::Second), (0, 0));
@@ -431,17 +462,18 @@ enum BridgeRefused {
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum MixedDisposition {
-    /// The actual audio-side result for this staged packet's request.
+    /// The actual audio-side result for this staged packet's request. A release
+    /// names its onset's handle, so a refused onset's release is offered too and
+    /// retired against the onset's tombstone.
     Result(MixedIngressOutcome),
-    /// The release's onset was refused by mixed ingress, so no identity exists
-    /// to release. The release is not offered; it carries that onset refusal.
-    OnsetRefused(IngressRefused),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct CombinedResult {
     handoff: RawHandoff,
     occurrence: Occurrence,
+    /// The merger-minted handle the request named.
+    handle: LiveOccurrenceId,
     disposition: MixedDisposition,
 }
 
@@ -452,7 +484,11 @@ impl CombinedResult {
         matches!(
             self.disposition,
             MixedDisposition::Result(
-                MixedIngressOutcome::Onset(Ok(_)) | MixedIngressOutcome::Release(Ok(()))
+                MixedIngressOutcome::Onset(Ok(_))
+                    | MixedIngressOutcome::Release(Ok(MixedRetired {
+                        cause: MixedRetireCause::Released(_),
+                        ..
+                    }))
             )
         )
     }
@@ -596,6 +632,8 @@ struct RawStageBridge<R = [RawSource; 2]> {
     staged_onsets: Vec<(Source, InputEventId, Occurrence)>,
     handoffs: Vec<(Occurrence, bool, RawHandoff)>,
     onset_results: Vec<(Occurrence, Result<NoteIdentity, IngressRefused>)>,
+    /// The merger-minted handle of every staged onset whose release is not yet offered.
+    handles: Vec<(Occurrence, LiveOccurrenceId)>,
     /// Every raw ID a raw owner issued to this bridge, with its admission link.
     raw_issued: Vec<(Source, InputEventId, Option<InputEventId>)>,
     next_occurrence: u64,
@@ -615,6 +653,7 @@ impl<R: RawBackend> RawStageBridge<R> {
             staged_onsets: Vec::new(),
             handoffs: Vec::new(),
             onset_results: Vec::new(),
+            handles: Vec::new(),
             raw_issued: Vec::new(),
             next_occurrence: 1,
         }
@@ -705,9 +744,9 @@ impl<R: RawBackend> RawStageBridge<R> {
         self.stage.frontier(source, SampleTime::new(at)).unwrap();
     }
 
-    /// Offer the next time-ordered staged packet to mixed ingress. A lane
-    /// selects an onset before its release, so the onset's mixed result is
-    /// known here; a refused onset's release is disposed without an offer.
+    /// Offer the next time-ordered staged packet to mixed ingress. A release
+    /// names the handle its onset was staged under, whatever that onset's result,
+    /// so it never waits for the result and never resolves through a key.
     fn service(
         &mut self,
         control: &mut MixedOneShotControl,
@@ -727,38 +766,42 @@ impl<R: RawBackend> RawStageBridge<R> {
             (source, packet.original, packet.at)
         );
         let origin = MixedIngressOriginId(occurrence.0);
-        let request = match packet.original.event() {
-            Midi1Event::NoteOn { key, velocity } => MixedIngressRequest::Onset {
-                origin,
-                at: packet.at,
-                key,
-                velocity,
-            },
+        let (handle, (command, request)) = match packet.original.event() {
+            Midi1Event::NoteOn { key, velocity } => {
+                let submitted = control
+                    .submit_onset(origin, packet.at, key, velocity)
+                    .unwrap();
+                let MixedIngressRequest::Onset {
+                    occurrence: handle, ..
+                } = submitted.1
+                else {
+                    unreachable!("an onset submit returns its onset request");
+                };
+                self.handles.push((occurrence, handle));
+                (handle, submitted)
+            }
             Midi1Event::KeyRelease { .. } => {
+                let position = self
+                    .handles
+                    .iter()
+                    .position(|&(id, _)| id == occurrence)
+                    .expect("a lane selects each onset before its release");
+                let (_, handle) = self.handles.swap_remove(position);
+                // The synchronous lane collected the onset's result before this
+                // release; the release does not read it.
                 let position = self
                     .onset_results
                     .iter()
                     .position(|&(id, _)| id == occurrence)
-                    .expect("a lane selects each onset before its release");
-                let identity = match self.onset_results.swap_remove(position).1 {
-                    Ok(identity) => identity,
-                    Err(refusal) => {
-                        return Some(CombinedResult {
-                            handoff,
-                            occurrence,
-                            disposition: MixedDisposition::OnsetRefused(refusal),
-                        });
-                    }
-                };
-                MixedIngressRequest::Release {
-                    origin,
-                    at: packet.at,
-                    identity,
-                }
+                    .expect("the onset's result was collected before its release");
+                let (_, _onset) = self.onset_results.swap_remove(position);
+                (
+                    handle,
+                    control.submit_release(origin, handle, packet.at).unwrap(),
+                )
             }
             _ => unreachable!("the stage holds only note packets"),
         };
-        let command = control.submit_ingress(request).unwrap();
         audio.service_test_ingress_queue();
         let result = control.collect_ingress_result().unwrap();
         assert_eq!((result.id, result.request), (command, request));
@@ -768,6 +811,7 @@ impl<R: RawBackend> RawStageBridge<R> {
         Some(CombinedResult {
             handoff,
             occurrence,
+            handle,
             disposition: MixedDisposition::Result(result.outcome),
         })
     }
@@ -895,7 +939,7 @@ fn lane_refusals_after_raw_admission_keep_the_raw_handoff_and_its_link() {
 }
 
 #[test]
-fn mixed_onset_refusal_disposes_its_raw_linked_release_without_an_offer() {
+fn mixed_onset_refusal_retires_its_raw_linked_release_against_the_tombstone() {
     let on = input(0x90, 60, 100);
     let off = input(0x80, 60, 0);
     let hold = IngressRefused::Dropped {
@@ -945,8 +989,25 @@ fn mixed_onset_refusal_disposes_its_raw_linked_release_without_an_offer() {
             ),
             (a_dropped, Some(dropped.handoff.raw), SampleTime::new(151))
         );
-        assert_eq!(disposed.disposition, MixedDisposition::OnsetRefused(hold));
+        // The release names the refused onset's handle; audio consumes it against
+        // the tombstone and retires the cell without touching the ingress queue.
+        assert_eq!(disposed.handle, dropped.handle);
+        assert_eq!(
+            disposed.disposition,
+            MixedDisposition::Result(MixedIngressOutcome::Release(Ok(MixedRetired {
+                occurrence: dropped.handle,
+                cause: MixedRetireCause::AfterRefusal(hold),
+            })))
+        );
         assert!(!disposed.accepted());
+        assert_eq!(
+            audio.occurrences.released_after_refusal(),
+            crate::quantities::EventCount::measured(1)
+        );
+        assert_eq!(
+            audio.test_ingress.holds_outstanding(),
+            crate::quantities::EventCount::measured(1)
+        );
         assert!(control.collect_ingress_result().is_none());
         assert_eq!(bridge.stage.pressure(Source::First), (0, 0));
 
@@ -1418,21 +1479,32 @@ fn delivered_raw_receipts_join_bridge_results_to_recorder_occurrences() {
         bridge.frontier(Source::First, 153);
         let releases: Vec<_> =
             std::iter::from_fn(|| bridge.service(&mut control, &mut audio)).collect();
+        let released = |onset: &CombinedResult| {
+            let MixedDisposition::Result(MixedIngressOutcome::Onset(Ok(identity))) =
+                onset.disposition
+            else {
+                panic!("an accepted onset");
+            };
+            MixedDisposition::Result(MixedIngressOutcome::Release(Ok(MixedRetired {
+                occurrence: onset.handle,
+                cause: MixedRetireCause::Released(identity),
+            })))
+        };
         assert_eq!(
             releases
                 .iter()
                 .map(|result| (result.occurrence, result.disposition))
                 .collect::<Vec<_>>(),
             vec![
+                (a_live, released(&onsets[0])),
                 (
-                    a_live,
-                    MixedDisposition::Result(MixedIngressOutcome::Release(Ok(())))
+                    a_refused,
+                    MixedDisposition::Result(MixedIngressOutcome::Release(Ok(MixedRetired {
+                        occurrence: onsets[2].handle,
+                        cause: MixedRetireCause::AfterRefusal(hold),
+                    })))
                 ),
-                (a_refused, MixedDisposition::OnsetRefused(hold)),
-                (
-                    b_live,
-                    MixedDisposition::Result(MixedIngressOutcome::Release(Ok(())))
-                ),
+                (b_live, released(&onsets[1])),
             ]
         );
 

@@ -6,6 +6,10 @@ use super::{
     EventPayload, MixedCollection, MixedCollectionEnd, MixedIngressCommandId, MixedIngressOriginId,
     MixedIngressOutcome, MixedIngressRequest, MixedIngressResult, MixedIngressSubmitError,
     MixedOneShotControl, MixedOneShotRenderError, history_tests,
+    occurrence::{
+        LiveOccurrenceId, MixedOnsetSubmitError, MixedReleaseSubmitError, MixedRetireCause,
+        MixedRetired,
+    },
 };
 use crate::identity::NoteIdentity;
 use crate::ingress::{ExhaustedResource, IngressRefused};
@@ -247,8 +251,10 @@ struct Entry {
     ingress_held: bool,
     ingress_disposition: IngressDisposition,
     ingress_command: Option<(MixedIngressCommandId, MixedIngressRequest)>,
+    /// The handle the merger minted when it staged this entry's onset.
+    ingress_occurrence: Option<LiveOccurrenceId>,
     ingress_release_command: Option<(MixedIngressCommandId, MixedIngressRequest)>,
-    ingress_release_result: Option<Result<(), IngressRefused>>,
+    ingress_release_result: Option<Result<MixedRetired, IngressRefused>>,
     result_held: bool,
 }
 
@@ -265,7 +271,7 @@ enum IngressResultBindError {
 enum IngressReleaseSubmitError {
     State,
     TerminalRefused(IngressRefused),
-    Submit(MixedIngressSubmitError),
+    Submit(MixedReleaseSubmitError),
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -737,6 +743,7 @@ impl Model {
                 IngressDisposition::FakeRefused
             },
             ingress_command: None,
+            ingress_occurrence: None,
             ingress_release_command: None,
             ingress_release_result: None,
             result_held: true,
@@ -1140,8 +1147,16 @@ impl Model {
             || !entry.ingress_held
             || entry.ingress_command.is_some()
             || entry.ingress_release_command.is_some()
-            || !matches!(entry.ingress_disposition, IngressDisposition::Accepted(_))
-            || entry.ingress_release_result != Some(Ok(()))
+            || !matches!(
+                (entry.ingress_disposition, entry.ingress_release_result),
+                (
+                    IngressDisposition::Accepted(accepted),
+                    Some(Ok(MixedRetired {
+                        occurrence,
+                        cause: MixedRetireCause::Released(released),
+                    })),
+                ) if accepted == released && entry.ingress_occurrence == Some(occurrence)
+            )
         {
             return Err(IngressResultBindError::State);
         }
@@ -1171,7 +1186,7 @@ impl Model {
         &mut self,
         control: &mut MixedOneShotControl,
         occurrence: OccurrenceId,
-    ) -> Result<(MixedIngressCommandId, MixedIngressRequest), MixedIngressSubmitError> {
+    ) -> Result<(MixedIngressCommandId, MixedIngressRequest), MixedOnsetSubmitError> {
         let entry = self.entry_mut(occurrence);
         assert!(
             entry.ingress_held
@@ -1184,14 +1199,13 @@ impl Model {
         let at = entry
             .mapped_at
             .expect("source onset must retain mapped time");
-        let request = MixedIngressRequest::Onset {
-            origin: MixedIngressOriginId(entry.id.0),
-            at,
-            key,
-            velocity,
+        let (command, request) =
+            control.submit_onset(MixedIngressOriginId(entry.id.0), at, key, velocity)?;
+        let MixedIngressRequest::Onset { occurrence, .. } = request else {
+            panic!("an onset submit returns its onset request");
         };
-        let command = control.submit_ingress(request)?;
         entry.ingress_command = Some((command, request));
+        entry.ingress_occurrence = Some(occurrence);
         Ok((command, request))
     }
 
@@ -1257,7 +1271,10 @@ impl Model {
         if self.host_halted {
             return Err(IngressReleaseSubmitError::State);
         }
-        let IngressDisposition::Accepted(identity) = entry.ingress_disposition else {
+        let IngressDisposition::Accepted(_) = entry.ingress_disposition else {
+            return Err(IngressReleaseSubmitError::State);
+        };
+        let Some(occurrence) = entry.ingress_occurrence else {
             return Err(IngressReleaseSubmitError::State);
         };
         if !entry.released
@@ -1271,13 +1288,8 @@ impl Model {
         let Some((_, Some(at))) = entry.source_release else {
             return Err(IngressReleaseSubmitError::State);
         };
-        let request = MixedIngressRequest::Release {
-            origin: MixedIngressOriginId(entry.id.0),
-            at,
-            identity,
-        };
-        let command = control
-            .submit_ingress(request)
+        let (command, request) = control
+            .submit_release(MixedIngressOriginId(entry.id.0), occurrence, at)
             .map_err(IngressReleaseSubmitError::Submit)?;
         entry.ingress_release_command = Some((command, request));
         Ok((command, request))
@@ -1988,20 +2000,36 @@ fn mixed_audio_queue_returns_exact_ingress_results_without_audio_service_allocat
     let (mut control, mut audio) = prepared
         .arm_one_shot(candidate, &history_tests::mixed_profile())
         .unwrap();
-    let first = MixedIngressRequest::Onset {
-        origin: MixedIngressOriginId(1),
-        at: SampleTime::new(140),
-        key: KeyIdentity::new(60).unwrap(),
-        velocity: NoteVelocity::FULL,
+    let (first_id, first) = control
+        .submit_onset(
+            MixedIngressOriginId(1),
+            SampleTime::new(140),
+            KeyIdentity::new(60).unwrap(),
+            NoteVelocity::FULL,
+        )
+        .unwrap();
+    let (second_id, second) = control
+        .submit_onset(
+            MixedIngressOriginId(2),
+            SampleTime::new(150),
+            KeyIdentity::new(60).unwrap(),
+            NoteVelocity::FULL,
+        )
+        .unwrap();
+    let (
+        MixedIngressRequest::Onset {
+            occurrence: first_occurrence,
+            ..
+        },
+        MixedIngressRequest::Onset {
+            occurrence: second_occurrence,
+            ..
+        },
+    ) = (first, second)
+    else {
+        panic!("onset submits return onset requests");
     };
-    let second = MixedIngressRequest::Onset {
-        origin: MixedIngressOriginId(2),
-        at: SampleTime::new(150),
-        key: KeyIdentity::new(60).unwrap(),
-        velocity: NoteVelocity::FULL,
-    };
-    let first_id = control.submit_ingress(first).unwrap();
-    let second_id = control.submit_ingress(second).unwrap();
+    assert_ne!(first_occurrence, second_occurrence);
     assert!(control.collect_ingress_result().is_none());
     audio = std::thread::spawn(move || {
         assert_eq!(
@@ -2028,18 +2056,20 @@ fn mixed_audio_queue_returns_exact_ingress_results_without_audio_service_allocat
     assert_ne!(first_identity, second_identity);
     assert!(control.collect_ingress_result().is_none());
 
-    let first_release = MixedIngressRequest::Release {
-        origin: MixedIngressOriginId(1),
-        at: SampleTime::new(160),
-        identity: first_identity,
-    };
-    let second_release = MixedIngressRequest::Release {
-        origin: MixedIngressOriginId(2),
-        at: SampleTime::new(170),
-        identity: second_identity,
-    };
-    let first_release_id = control.submit_ingress(first_release).unwrap();
-    let second_release_id = control.submit_ingress(second_release).unwrap();
+    let (first_release_id, first_release) = control
+        .submit_release(
+            MixedIngressOriginId(1),
+            first_occurrence,
+            SampleTime::new(160),
+        )
+        .unwrap();
+    let (second_release_id, second_release) = control
+        .submit_release(
+            MixedIngressOriginId(2),
+            second_occurrence,
+            SampleTime::new(170),
+        )
+        .unwrap();
     audio = std::thread::spawn(move || {
         assert_eq!(
             crate::render_allocation::count_allocs(|| audio.service_test_ingress_queue()),
@@ -2054,7 +2084,10 @@ fn mixed_audio_queue_returns_exact_ingress_results_without_audio_service_allocat
         Some(super::MixedIngressResult {
             id: first_release_id,
             request: first_release,
-            outcome: MixedIngressOutcome::Release(Ok(())),
+            outcome: MixedIngressOutcome::Release(Ok(MixedRetired {
+                occurrence: first_occurrence,
+                cause: MixedRetireCause::Released(first_identity),
+            })),
         })
     );
     assert_eq!(
@@ -2062,7 +2095,10 @@ fn mixed_audio_queue_returns_exact_ingress_results_without_audio_service_allocat
         Some(super::MixedIngressResult {
             id: second_release_id,
             request: second_release,
-            outcome: MixedIngressOutcome::Release(Ok(())),
+            outcome: MixedIngressOutcome::Release(Ok(MixedRetired {
+                occurrence: second_occurrence,
+                cause: MixedRetireCause::Released(second_identity),
+            })),
         })
     );
     assert_eq!(audio.test_ingress.holds_outstanding(), EventCount::NONE);
@@ -2075,38 +2111,70 @@ fn mixed_ingress_result_reservation_returns_full_request_until_collected() {
     let (mut control, mut audio) = prepared
         .arm_one_shot(candidate, &history_tests::mixed_profile())
         .unwrap();
-    let request = MixedIngressRequest::Onset {
-        origin: MixedIngressOriginId(1),
-        at: SampleTime::new(140),
-        key: KeyIdentity::new(60).unwrap(),
+    let origin = MixedIngressOriginId(1);
+    let at = SampleTime::new(140);
+    let key = KeyIdentity::new(60).unwrap();
+    let capacity = control.ingress_capacity.as_usize();
+    assert!(capacity >= 2 && capacity % 2 == 0);
+    // Each onset takes its own place and reserves one for its release.
+    let mut submitted = Vec::new();
+    let mut open = Vec::new();
+    for _ in 0..capacity / 2 {
+        let (id, request) = control
+            .submit_onset(origin, at, key, NoteVelocity::FULL)
+            .unwrap();
+        let MixedIngressRequest::Onset { occurrence, .. } = request else {
+            panic!("onset request");
+        };
+        submitted.push((id, request));
+        open.push(occurrence);
+    }
+    assert_eq!(
+        control.submit_onset(origin, at, key, NoteVelocity::FULL),
+        Err(MixedOnsetSubmitError::Full)
+    );
+    let forged = MixedIngressRequest::Onset {
+        origin,
+        occurrence: open[0],
+        at,
+        key,
         velocity: NoteVelocity::FULL,
     };
-    let capacity = control.ingress_capacity.as_usize();
-    assert!(capacity > 0);
-    for _ in 0..capacity {
-        let _id = control.submit_ingress(request).unwrap();
+    assert_eq!(
+        control.submit_ingress(forged),
+        Err(MixedIngressSubmitError::Full(forged))
+    );
+    audio.service_test_ingress_queue();
+    assert_eq!(
+        control.submit_onset(origin, at, key, NoteVelocity::FULL),
+        Err(MixedOnsetSubmitError::Full)
+    );
+    // A full ring still carries every open handle's release.
+    submitted.push(control.submit_release(origin, open[0], at).unwrap());
+    assert_eq!(
+        control.submit_onset(origin, at, key, NoteVelocity::FULL),
+        Err(MixedOnsetSubmitError::Full)
+    );
+    // Each result returns the full request its command carried.
+    for expected in &submitted[..2] {
+        let result = control.collect_ingress_result().unwrap();
+        assert_eq!((result.id, result.request), *expected);
     }
-    assert_eq!(
-        control.submit_ingress(request),
-        Err(MixedIngressSubmitError::Full(request))
+    submitted.push(
+        control
+            .submit_onset(origin, at, key, NoteVelocity::FULL)
+            .unwrap(),
     );
     audio.service_test_ingress_queue();
-    assert_eq!(
-        control.submit_ingress(request),
-        Err(MixedIngressSubmitError::Full(request))
-    );
-    let first = control.collect_ingress_result().unwrap();
-    assert_eq!(first.request, request);
-    let next = control.submit_ingress(request).unwrap();
-    audio.service_test_ingress_queue();
-    let mut found = false;
+    let mut remaining = submitted[2..].to_vec();
     while let Some(result) = control.collect_ingress_result() {
-        if result.id == next {
-            found = true;
-            assert_eq!(result.request, request);
-        }
+        let position = remaining
+            .iter()
+            .position(|expected| *expected == (result.id, result.request))
+            .expect("every result returns its own submitted request");
+        let _settled = remaining.remove(position);
     }
-    assert!(found);
+    assert!(remaining.is_empty());
 }
 
 #[test]
@@ -2115,26 +2183,41 @@ fn mixed_ingress_command_id_exhaustion_retains_original_request() {
     let (mut control, mut audio) = prepared
         .arm_one_shot(candidate, &history_tests::mixed_profile())
         .unwrap();
-    let request = MixedIngressRequest::Onset {
-        origin: MixedIngressOriginId(1),
-        at: SampleTime::new(140),
-        key: KeyIdentity::new(60).unwrap(),
-        velocity: NoteVelocity::FULL,
+    let submit = |control: &mut MixedOneShotControl| {
+        control.submit_onset(
+            MixedIngressOriginId(1),
+            SampleTime::new(140),
+            KeyIdentity::new(60).unwrap(),
+            NoteVelocity::FULL,
+        )
+    };
+    let (_, open) = submit(&mut control).unwrap();
+    let MixedIngressRequest::Onset { occurrence, .. } = open else {
+        panic!("onset request");
     };
     control.last_ingress_id = Some(super::MixedIngressCommandId(u64::MAX));
     assert_eq!(
-        control.submit_ingress(request),
-        Err(MixedIngressSubmitError::IdentityExhausted(request))
+        submit(&mut control),
+        Err(MixedOnsetSubmitError::IdentityExhausted)
+    );
+    assert_eq!(
+        control.submit_release(MixedIngressOriginId(1), occurrence, SampleTime::new(150)),
+        Err(MixedReleaseSubmitError::IdentityExhausted(occurrence))
     );
     assert_eq!(
         control.ingress_outstanding,
-        super::MixedIngressQueueCount::NONE
+        super::MixedIngressQueueCount(1)
     );
+    // Neither refusal minted a handle or spent the open handle's reserved place.
+    assert_eq!(control.occurrence_ledger.held(), 1);
+    assert_eq!(control.release_reserved, super::MixedIngressQueueCount(1));
+    assert!(control.occurrence_ledger.is_open(occurrence));
     audio.service_test_ingress_queue();
+    assert!(control.collect_ingress_result().is_some());
     assert!(control.collect_ingress_result().is_none());
     assert_eq!(
-        control.submit_ingress(request),
-        Err(MixedIngressSubmitError::IdentityExhausted(request))
+        submit(&mut control),
+        Err(MixedOnsetSubmitError::IdentityExhausted)
     );
 }
 
@@ -2144,20 +2227,22 @@ fn mixed_ingress_result_channel_returns_non_monotone_refusal_with_original() {
     let (mut control, mut audio) = prepared
         .arm_one_shot(candidate, &history_tests::mixed_profile())
         .unwrap();
-    let later = MixedIngressRequest::Onset {
-        origin: MixedIngressOriginId(1),
-        at: SampleTime::new(150),
-        key: KeyIdentity::new(60).unwrap(),
-        velocity: NoteVelocity::FULL,
-    };
-    let earlier = MixedIngressRequest::Onset {
-        origin: MixedIngressOriginId(2),
-        at: SampleTime::new(140),
-        key: KeyIdentity::new(60).unwrap(),
-        velocity: NoteVelocity::FULL,
-    };
-    let _later_id = control.submit_ingress(later).unwrap();
-    let earlier_id = control.submit_ingress(earlier).unwrap();
+    let _later = control
+        .submit_onset(
+            MixedIngressOriginId(1),
+            SampleTime::new(150),
+            KeyIdentity::new(60).unwrap(),
+            NoteVelocity::FULL,
+        )
+        .unwrap();
+    let (earlier_id, earlier) = control
+        .submit_onset(
+            MixedIngressOriginId(2),
+            SampleTime::new(140),
+            KeyIdentity::new(60).unwrap(),
+            NoteVelocity::FULL,
+        )
+        .unwrap();
     audio.service_test_ingress_queue();
     let _accepted = control.collect_ingress_result().unwrap();
     assert_eq!(
@@ -2179,13 +2264,14 @@ fn mixed_collection_retains_unresolved_ingress_command_and_result_owners() {
     let (mut control, audio) = prepared
         .arm_one_shot(candidate, &history_tests::mixed_profile())
         .unwrap();
-    let request = MixedIngressRequest::Onset {
-        origin: MixedIngressOriginId(1),
-        at: SampleTime::new(140),
-        key: KeyIdentity::new(60).unwrap(),
-        velocity: NoteVelocity::FULL,
-    };
-    let id = control.submit_ingress(request).unwrap();
+    let (id, request) = control
+        .submit_onset(
+            MixedIngressOriginId(1),
+            SampleTime::new(140),
+            KeyIdentity::new(60).unwrap(),
+            NoteVelocity::FULL,
+        )
+        .unwrap();
     let refusal = control.collect(audio).unwrap_err();
     assert_eq!(
         refusal.reason,
@@ -2293,7 +2379,7 @@ fn merger_credit_alone_cannot_admit_out_of_order_mixed_ingress() {
         model.apply_ingress_onset_result(
             first_id,
             MixedIngressResult {
-                outcome: MixedIngressOutcome::Release(Ok(())),
+                outcome: MixedIngressOutcome::Release(Err(IngressRefused::ReleaseGroup)),
                 ..first_result
             }
         ),
@@ -2455,12 +2541,13 @@ fn merged_release_precedes_later_peer_onset_and_keeps_its_identity() {
             .map(|(source, route)| (source, route.id)),
         Some((ModelSource::First, first))
     );
+    let first_occurrence = model.entry_mut(first).ingress_occurrence.unwrap();
     let (release_command, release_request) =
         model.submit_ingress_release(&mut control, first).unwrap();
     assert!(matches!(
         release_request,
-        MixedIngressRequest::Release { identity, at, .. }
-            if identity == first_identity && at == SampleTime::new(145)
+        MixedIngressRequest::Release { occurrence, at, .. }
+            if occurrence == first_occurrence && at == SampleTime::new(145)
     ));
     assert_eq!(model.next_merged_stamped(), None);
     assert!(model.advance_merge_frontier(ModelSource::First, SampleTime::new(149)));
@@ -2485,7 +2572,13 @@ fn merged_release_precedes_later_peer_onset_and_keeps_its_identity() {
         (release_result.id, release_result.request),
         (release_command, release_request)
     );
-    assert_eq!(release_result.outcome, MixedIngressOutcome::Release(Ok(())));
+    assert_eq!(
+        release_result.outcome,
+        MixedIngressOutcome::Release(Ok(MixedRetired {
+            occurrence: first_occurrence,
+            cause: MixedRetireCause::Released(first_identity),
+        }))
+    );
     model
         .apply_ingress_release_result(first, release_result)
         .unwrap();
@@ -2946,10 +3039,10 @@ fn mixed_onset_result_after_source_release_keeps_exact_release_owner() {
     let result = control.collect_ingress_result().unwrap();
     assert_eq!((result.id, result.request), (command, request));
     model.apply_ingress_onset_result(id, result).unwrap();
-    assert!(matches!(
-        model.entry_mut(id).ingress_disposition,
-        IngressDisposition::Accepted(_)
-    ));
+    let IngressDisposition::Accepted(identity) = model.entry_mut(id).ingress_disposition else {
+        panic!("the onset must be accepted");
+    };
+    let occurrence = model.entry_mut(id).ingress_occurrence.unwrap();
     let (release_command, release) = model.submit_ingress_release(&mut control, id).unwrap();
     assert_eq!(
         model.settle_ingress_release(id),
@@ -2962,7 +3055,10 @@ fn mixed_onset_result_after_source_release_keeps_exact_release_owner() {
         MixedIngressResult {
             id: release_command,
             request: release,
-            outcome: MixedIngressOutcome::Release(Ok(())),
+            outcome: MixedIngressOutcome::Release(Ok(MixedRetired {
+                occurrence,
+                cause: MixedRetireCause::Released(identity),
+            })),
         }
     );
     assert_eq!(
@@ -3012,13 +3108,14 @@ fn mixed_refusal_after_source_release_reaps_settled_entry() {
     let (mut control, mut audio) = prepared
         .arm_one_shot(candidate, &history_tests::mixed_profile())
         .unwrap();
-    let first = MixedIngressRequest::Onset {
-        origin: MixedIngressOriginId(999),
-        at: SampleTime::new(150),
-        key: KeyIdentity::new(60).unwrap(),
-        velocity: NoteVelocity::FULL,
-    };
-    let first_command = control.submit_ingress(first).unwrap();
+    let (first_command, first) = control
+        .submit_onset(
+            MixedIngressOriginId(999),
+            SampleTime::new(150),
+            KeyIdentity::new(60).unwrap(),
+            NoteVelocity::FULL,
+        )
+        .unwrap();
     audio.service_test_ingress_queue();
     let first_result = control.collect_ingress_result().unwrap();
     assert_eq!(
@@ -3080,13 +3177,14 @@ fn mixed_onset_refusal_after_halt_retains_ingress_credit() {
     let (mut control, mut audio) = prepared
         .arm_one_shot(candidate, &history_tests::mixed_profile())
         .unwrap();
-    let first = MixedIngressRequest::Onset {
-        origin: MixedIngressOriginId(999),
-        at: SampleTime::new(150),
-        key: KeyIdentity::new(60).unwrap(),
-        velocity: NoteVelocity::FULL,
-    };
-    let first_command = control.submit_ingress(first).unwrap();
+    let (first_command, first) = control
+        .submit_onset(
+            MixedIngressOriginId(999),
+            SampleTime::new(150),
+            KeyIdentity::new(60).unwrap(),
+            NoteVelocity::FULL,
+        )
+        .unwrap();
     audio.service_test_ingress_queue();
     let first_result = control.collect_ingress_result().unwrap();
     assert_eq!(
@@ -3323,15 +3421,17 @@ fn refused_mixed_release_retains_original_and_halts_model_credit() {
     );
     assert_eq!(model.service_release(ModelSource::First).id, id);
     let (command, request) = model.submit_ingress_release(&mut control, id).unwrap();
+    let identity = match model.entry_mut(id).ingress_disposition {
+        IngressDisposition::Accepted(identity) => identity,
+        other => panic!("accepted identity required, got {other:?}"),
+    };
+    let occurrence = model.entry_mut(id).ingress_occurrence.unwrap();
     assert_eq!(
         request,
         MixedIngressRequest::Release {
             origin: MixedIngressOriginId(id.0),
+            occurrence,
             at: SampleTime::new(145),
-            identity: match model.entry_mut(id).ingress_disposition {
-                IngressDisposition::Accepted(identity) => identity,
-                other => panic!("accepted identity required, got {other:?}"),
-            },
         }
     );
     audio.service_test_ingress_queue();
@@ -3342,6 +3442,15 @@ fn refused_mixed_release_retains_original_and_halts_model_credit() {
         last: SampleTime::new(150),
     };
     assert_eq!(result.outcome, MixedIngressOutcome::Release(Err(reason)));
+    // A refused release offer leaves the occurrence sounding and returns the open
+    // handle, with its reserved place, to the merger.
+    assert!(control.occurrence_ledger.is_open(occurrence));
+    assert!(
+        audio
+            .occurrences
+            .occupied()
+            .contains(&(occurrence, super::MixedOccurrenceState::Sounding(identity)))
+    );
     model.apply_ingress_release_result(id, result).unwrap();
     assert_eq!(
         model.terminal_fault,
@@ -3475,6 +3584,7 @@ fn equal_source_payloads_keep_distinct_mixed_origins_and_results() {
         model.submit_ingress_onset(&mut control, second).unwrap();
     let MixedIngressRequest::Onset {
         origin: first_origin,
+        occurrence: first_occurrence,
         at: first_at,
         key: first_key,
         velocity: first_velocity,
@@ -3484,6 +3594,7 @@ fn equal_source_payloads_keep_distinct_mixed_origins_and_results() {
     };
     let MixedIngressRequest::Onset {
         origin: second_origin,
+        occurrence: second_occurrence,
         at: second_at,
         key: second_key,
         velocity: second_velocity,
@@ -3498,6 +3609,7 @@ fn equal_source_payloads_keep_distinct_mixed_origins_and_results() {
     assert_eq!(first_origin, MixedIngressOriginId(first.0));
     assert_eq!(second_origin, MixedIngressOriginId(second.0));
     assert_ne!(first_origin, second_origin);
+    assert_ne!(first_occurrence, second_occurrence);
     assert_ne!(first_command, second_command);
     audio.service_test_ingress_queue();
     let first_result = control.collect_ingress_result().unwrap();
@@ -3628,7 +3740,19 @@ fn mixed_hold_refusal_and_later_fault_leave_serial_capture_receipts_independent(
             mixed.service_test_ingress_queue();
             let result = control.collect_ingress_result().unwrap();
             assert_eq!((result.id, result.request), (command, request));
-            assert_eq!(result.outcome, MixedIngressOutcome::Release(Ok(())));
+            let entry = model.entry_mut(route.id);
+            let (IngressDisposition::Accepted(identity), Some(occurrence)) =
+                (entry.ingress_disposition, entry.ingress_occurrence)
+            else {
+                panic!("an ingress release follows an accepted onset");
+            };
+            assert_eq!(
+                result.outcome,
+                MixedIngressOutcome::Release(Ok(MixedRetired {
+                    occurrence,
+                    cause: MixedRetireCause::Released(identity),
+                }))
+            );
             model
                 .apply_ingress_release_result(route.id, result)
                 .unwrap();

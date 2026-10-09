@@ -52,8 +52,9 @@ use std::path::{Path, PathBuf};
 /// ADR-0069 adds synthetic input admission, clock arithmetic and callback delegation.
 /// ADR-0070 adds the borrowed terminal signal and split input/audio callback wrapper.
 /// The private mixed boundary operation joins when the bound audio half first moves
-/// its compiled anchor and release state together.
-const REGION: [&str; 42] = [
+/// its compiled anchor and release state together. Its live command service joins
+/// with the occurrence table that resolves live handles on the audio half.
+const REGION: [&str; 43] = [
     "src/recording/notes/loop_capture/ordered/input/capture/transfer/hot.rs",
     "src/recording/notes/loop_capture/ordered/input/hot.rs",
     "src/recording/notes/loop_capture/ordered/input/clock.rs",
@@ -84,6 +85,7 @@ const REGION: [&str; 42] = [
     "src/ingress/release.rs",
     "src/stream/live.rs",
     "src/stream/mixed/hot.rs",
+    "src/stream/mixed/occurrence/hot.rs",
     "src/host/live/hot.rs",
     "src/host/live/parameter_hot.rs",
     "src/host/live/swap_hot.rs",
@@ -811,6 +813,14 @@ fn every_call_the_render_loop_makes_is_inside_the_checked_region() {
         // slot lookup that follows is fallible too — chaining is what keeps both bounds
         // checks rather than indexing past one. The closure is a slice `get`.
         "and_then",
+        // `ringbuf`'s single-producer single-consumer `try_pop` and `try_push`, in the
+        // private mixed owner's live command service. Both rings are allocated with their
+        // fixed capacity at arm, off-thread; each call moves one `Copy` value through
+        // that storage and one atomic index, and returns `None` or the rejected value
+        // rather than waiting, growing or panicking. The service's allocation test covers
+        // them behaviourally.
+        "try_pop",
+        "try_push",
     ];
 
     // This crate's own `const fn` accessors and `Copy` constructors: field reads on the
