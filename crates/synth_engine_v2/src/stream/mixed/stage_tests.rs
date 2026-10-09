@@ -14,9 +14,9 @@ use crate::{
     host::{
         ConnectionGeneration, EndpointId,
         input::{
-            InputCapacity, InputCaptureError, InputCaptureSession, InputError, InputEventId,
-            InputLimits, InputObservation, InputOutcome, InputRate, InputReceipt, InputTick,
-            InputTickSpan, SimulatedInputClock, SimulatedNoteInput,
+            InputCapacity, InputCaptureError, InputCaptureSession, InputCustodyPreflight,
+            InputError, InputEventId, InputLimits, InputObservation, InputOutcome, InputRate,
+            InputReceipt, InputTick, InputTickSpan, SimulatedInputClock, SimulatedNoteInput,
         },
         session::SessionSourceOutcome,
     },
@@ -574,6 +574,13 @@ fn raw_source_with_cells(index: usize, cells: u32) -> RawSource {
 /// The raw side of the bridge: either standalone raw owners or the raw inputs
 /// of one serial capture session feeding the actual recorder.
 trait RawBackend {
+    fn preflight(
+        &self,
+        source: Source,
+        at: SampleTime,
+        original: Midi1Input,
+    ) -> Result<InputCustodyPreflight, InputError>;
+
     fn offer(
         &mut self,
         source: Source,
@@ -589,6 +596,23 @@ trait RawBackend {
 }
 
 impl RawBackend for [RawSource; 2] {
+    fn preflight(
+        &self,
+        source: Source,
+        at: SampleTime,
+        original: Midi1Input,
+    ) -> Result<InputCustodyPreflight, InputError> {
+        let owner = &self[source.index()];
+        owner.input.preflight_observation_custody(
+            owner.generation,
+            InputObservation::Message {
+                tick: InputTick::new(at.as_u64()),
+                arrival: at,
+                input: original,
+            },
+        )
+    }
+
     fn offer(
         &mut self,
         source: Source,
@@ -632,6 +656,26 @@ fn raw_admission(error: InputCaptureError) -> InputError {
 }
 
 impl RawBackend for SerialRaw {
+    fn preflight(
+        &self,
+        source: Source,
+        at: SampleTime,
+        original: Midi1Input,
+    ) -> Result<InputCustodyPreflight, InputError> {
+        let generation = self.generations[source.index()];
+        self.owner
+            .input(generation)
+            .ok_or(InputError::Stale)?
+            .preflight_observation_custody(
+                generation,
+                InputObservation::Message {
+                    tick: InputTick::new(at.as_u64()),
+                    arrival: at,
+                    input: original,
+                },
+            )
+    }
+
     fn offer(
         &mut self,
         source: Source,

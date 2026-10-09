@@ -801,9 +801,20 @@ A third private fixture uses `C = 5`, `H = B = 2`. A bent-scope onset keeps its
 raw handoff and stage head when the caller has no inherited-bend credit, and
 mints no handle or command ID. Audio returns the bend's unused credit. The same
 handoff then reaches audio and inherits the 30-cent bend at frame 300 after the
-earlier bend entry. All three fixtures assume prepared raw capacity. A raw
-owner's full admission is a terminal discontinuity. The example source's raw
-preflight is now present, while reservation across a mixed-stage handoff and
+earlier bend entry. All earlier scenarios assume prepared raw capacity. A raw
+owner's full admission is a terminal discontinuity. The private bend bridge now
+preflights its exclusive raw owner immediately before each new offer. With six
+raw cells, four bends reach ordered command results; the fifth returns `Full`
+without a new raw ID, source-head commit or raw fault, including on retry. A
+raw handoff already accepted before stage refusal stays paired with that head
+and is not offered twice. The check reserves no raw cell; the fixture has no
+concurrent raw mutator between check and offer. In a serial capture variant, a
+completed initial-frontier receipt makes the seventh bend head wait; collecting
+that receipt admits the same head with the next raw serial and an ordered
+command result. A current preflight `Full` can therefore become `Await` after
+backend progress; the bridge distinguishes that refusal from a failed raw
+offer. The example source also preflights raw admission. Reservation across a
+mixed-stage handoff, terminal disposition of a permanently full raw owner and
 the concrete example-host bridge remain open.
 The non-shipping example's actual `SourceInbox` now offers an exact
 peek/commit handoff. A wrong or stale handoff cannot pop the head; committing
