@@ -115,6 +115,19 @@ impl std::fmt::Debug for FinishFailure {
 }
 
 impl ManagedRun {
+    #[cfg(test)]
+    pub(super) fn from_parts_for_test(
+        control: LiveControl,
+        inboxes: [SourceInbox; 2],
+        generations: [ConnectionGeneration; 2],
+    ) -> Self {
+        Self {
+            control,
+            inboxes,
+            generations,
+        }
+    }
+
     /// The live plan's latest acknowledgement, for tests of the outer callback.
     #[cfg(test)]
     pub fn swap_acknowledgement(&mut self) -> Option<super::swaps::SwapReport> {
@@ -233,6 +246,10 @@ impl ManagedRun {
         self.control.halt_handle()
     }
 
+    pub fn has_queued_source_heads(&self) -> bool {
+        self.inboxes.iter().any(|inbox| !inbox.is_empty())
+    }
+
     #[cfg(test)]
     pub(crate) fn source_discontinuity(
         &self,
@@ -299,7 +316,7 @@ impl ManagedRun {
     }
 
     /// Keep each queued original and its checked engine time beside its raw result.
-    /// Raw capture still drains source prefixes independently.
+    /// Each source prefix stops at a head awaiting completed raw receipts.
     pub fn service_handoff_identified(
         &mut self,
         mut input: impl FnMut(Option<SourceHandoff>, SourceOfferReport),
@@ -309,13 +326,23 @@ impl ManagedRun {
         for inbox in &mut self.inboxes {
             inbox.record_failure(&mut self.control, |report| input(None, report));
         }
+        let mut collection_error = None;
+        while self.control.has_completions() {
+            match self.control.collect() {
+                Ok(Some((id, outcome))) => command(id, outcome),
+                Ok(None) => {}
+                Err(error) => {
+                    self.control.halt.request_invalid();
+                    collection_error = Some(error);
+                    break;
+                }
+            }
+        }
         for inbox in &mut self.inboxes {
             inbox.service_handoff_identified(&mut self.control, &mut input);
         }
-        while self.control.has_completions() {
-            if let Some((id, outcome)) = self.control.collect()? {
-                command(id, outcome);
-            }
+        if let Some(error) = collection_error {
+            return Err(error);
         }
         for generation in self.generations {
             while let Some(outcome) = self

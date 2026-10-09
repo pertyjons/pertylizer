@@ -10,8 +10,8 @@ use synth_engine_v2::{
         ConnectionGeneration,
         input::{
             InputCaptureAudio, InputCaptureControl, InputCaptureError, InputCaptureHalt,
-            InputCaptureSession, InputError, InputEventId, InputObservation, InputReceipt,
-            InputReuniteError,
+            InputCaptureSession, InputCustodyPreflight, InputError, InputEventId, InputObservation,
+            InputReceipt, InputReuniteError,
         },
         live::AuditionId,
         session::{
@@ -308,6 +308,26 @@ impl LiveControl {
             );
         }
         self.offer_inner(generation, observation, SourceOfferOrigin::Queued)
+    }
+
+    /// Read-only check for one exact source head. Only completed raw receipts
+    /// may justify waiting; audition capacity retains its terminal policy.
+    fn preflight_source_head(
+        &self,
+        generation: ConnectionGeneration,
+        queue: source::SourceQueueId,
+        observation: InputObservation,
+    ) -> Result<InputCustodyPreflight, InputError> {
+        if queue.generation() != generation || self.halt.is_requested() {
+            return Err(InputError::State);
+        }
+        if let Some(audition) = &self.audition {
+            let _prepared = audition.preflight(generation, observation)?;
+        }
+        self.core
+            .input(generation)
+            .ok_or(InputError::Stale)?
+            .preflight_observation_custody(generation, observation)
     }
 
     fn offer_inner(

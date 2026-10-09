@@ -57,6 +57,16 @@ pub enum InputError {
     Retained,
 }
 
+/// Read-only raw admission result for a source head that retains queue custody.
+/// Await requires already completed receipts to release enough cells; it grants
+/// no reservation and must be checked again before the offer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[must_use]
+pub enum InputCustodyPreflight {
+    Admit,
+    Await(InputError),
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[must_use]
 pub struct InputCapacity(u32);

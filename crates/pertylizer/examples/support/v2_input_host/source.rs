@@ -3,7 +3,7 @@ use super::*;
 use std::sync::OnceLock;
 use synth_engine_v2::host::input::{InputTick, SimulatedInputClock};
 
-const SOURCE_CELLS: usize = 16;
+pub const SOURCE_CELLS: usize = 16;
 pub const SOURCE_OUTSTANDING: synth_engine_v2::quantities::EventCount =
     synth_engine_v2::quantities::EventCount::measured(64);
 
@@ -348,7 +348,6 @@ impl SourceInbox {
     /// Call after that owner accepts the handoff or records its terminal
     /// disposition, and after [`Self::record_failure`] for the service pass.
     /// A wrong or stale handoff changes neither the head nor producer capacity.
-    #[allow(dead_code)] // Reserved for the concrete mixed-stage host bridge.
     pub fn commit_handoff(
         &mut self,
         expected: SourceHandoff,
@@ -369,6 +368,8 @@ impl SourceInbox {
 
     /// A queued original and its validated nominal engine time remain available
     /// beside the raw offer result. A pre-ring failure has no queued handoff.
+    /// A head waits only when completed raw receipts can free its needed cells;
+    /// the same head is retried after those receipts are collected.
     pub fn service_handoff_identified(
         &mut self,
         control: &mut LiveControl,
@@ -377,19 +378,35 @@ impl SourceInbox {
         self.record_failure(control, |report| receive(None, report));
         let prefix = self.queue.occupied_len();
         for _ in 0..prefix {
-            let Some(packet) = self.queue.try_pop() else {
+            let Some(head) = self.peek_handoff() else {
                 break;
             };
-            receive(
-                Some(SourceHandoff {
-                    stamp: SourceQueueStamp {
-                        queue: packet.id,
-                        mapped_at: packet.mapped_at,
-                    },
-                    observation: packet.observation,
-                }),
-                control.offer_source_queued(self.generation, packet.id, packet.observation),
+            if matches!(
+                control.preflight_source_head(
+                    self.generation,
+                    head.stamp().queue(),
+                    head.observation(),
+                ),
+                Ok(InputCustodyPreflight::Await(_))
+            ) {
+                break;
+            }
+            let report = control.offer_source_queued(
+                self.generation,
+                head.stamp().queue(),
+                head.observation(),
             );
+            match self.commit_handoff(head) {
+                Ok(committed) => receive(Some(committed), report),
+                Err(error) => {
+                    // The sole consumer cannot change the head across this
+                    // call. Preserve the raw report and halt further offers.
+                    control.halt.request_invalid();
+                    eprintln!("source head commit failed after raw offer: {error}");
+                    receive(Some(head), report);
+                    break;
+                }
+            }
         }
     }
     /// Only an empty queue AFTER the producer joins permits source acknowledgement.

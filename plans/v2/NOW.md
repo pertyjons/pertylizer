@@ -802,7 +802,17 @@ peek/commit handoff. A wrong or stale handoff cannot pop the head; committing
 the matching bend releases one source-ring place, and an owned producer retry
 keeps its source attempt and next queue identity. This prepares source custody
 for the concrete bridge. It does not yet attach the example's source ring to
-the mixed stage or reserve raw admission before a terminal raw-capacity fault.
+the mixed stage or reserve raw admission across that handoff.
+The concrete source service now preflights the actual raw owner before taking
+that head. It waits only when completed local raw receipts can free enough
+cells. The managed host reconciles callback completions before source service,
+collects those raw receipts afterward, and retries the same source queue
+identity on its next service pass. A full owner with no such receipts keeps
+the existing terminal discontinuity. Joined shutdown repeats bounded service
+passes until these retained heads have advanced; a collection fault halts and
+drains them through the existing terminal path. This read-only check is not a
+raw reservation. Audition capacity remains terminal, and the concrete mixed
+stage and joined command outcome remain open.
 
 Tests cover caller refusal without identity minting, full ordinary and bend
 budgets with Panic still serviceable, credit return after drain without another

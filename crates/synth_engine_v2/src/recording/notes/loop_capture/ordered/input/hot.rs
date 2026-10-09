@@ -1,7 +1,8 @@
 //! Fixed-storage synthetic input callback operations.
 use super::{
-    InputDiscontinuity, InputEntry, InputError, InputEventId, InputObservation, InputOutcome,
-    InputReceipt, InputTick, RawHeldOnset, SimulatedNoteInput, SourceFaultStage,
+    InputCustodyPreflight, InputDiscontinuity, InputEntry, InputError, InputEventId,
+    InputObservation, InputOutcome, InputReceipt, InputTick, RawHeldOnset, SimulatedNoteInput,
+    SourceFaultStage,
 };
 use crate::{
     host::{ConnectionGeneration, ConnectionState},
@@ -191,6 +192,36 @@ impl SimulatedNoteInput {
         }
         self.plan(generation, observation).map(|_| ())
     }
+    /// Classify a capacity refusal as awaitable only when completed local
+    /// receipts can free enough cells without another source observation.
+    /// The caller must collect those receipts and preflight again; this check
+    /// does not reserve capacity or change the input's fault state.
+    pub fn preflight_observation_custody(
+        &self,
+        generation: ConnectionGeneration,
+        observation: InputObservation,
+    ) -> Result<InputCustodyPreflight, InputError> {
+        self.check(generation)?;
+        if self.state != ConnectionState::Running {
+            return Err(InputError::State);
+        }
+        match self.plan(generation, observation) {
+            Ok(_) => Ok(InputCustodyPreflight::Admit),
+            Err(error @ (InputError::Full | InputError::ProtectedCapacity))
+                if self
+                    .slots
+                    .iter()
+                    .flatten()
+                    .any(|entry| entry.outcome.is_some())
+                    && self
+                        .plan_after_completed_receipts(generation, observation)
+                        .is_ok() =>
+            {
+                Ok(InputCustodyPreflight::Await(error))
+            }
+            Err(error) => Err(error),
+        }
+    }
     fn admit(
         &mut self,
         generation: ConnectionGeneration,
@@ -205,6 +236,21 @@ impl SimulatedNoteInput {
         &self,
         generation: ConnectionGeneration,
         observation: InputObservation,
+    ) -> Result<AdmitPlan, InputError> {
+        self.plan_with_completed_receipts(generation, observation, false)
+    }
+    fn plan_after_completed_receipts(
+        &self,
+        generation: ConnectionGeneration,
+        observation: InputObservation,
+    ) -> Result<AdmitPlan, InputError> {
+        self.plan_with_completed_receipts(generation, observation, true)
+    }
+    fn plan_with_completed_receipts(
+        &self,
+        generation: ConnectionGeneration,
+        observation: InputObservation,
+        ignore_completed: bool,
     ) -> Result<AdmitPlan, InputError> {
         let clock = self.clock.ok_or(InputError::State)?;
         let (tick, arrival) = match observation {
@@ -231,7 +277,10 @@ impl SimulatedNoteInput {
         let mut held: usize = 0;
         let mut vacant = None;
         for (index, slot) in self.slots.iter().enumerate() {
-            if slot.is_some() {
+            if slot
+                .as_ref()
+                .is_some_and(|entry| !ignore_completed || entry.outcome.is_none())
+            {
                 held += 1;
             } else if vacant.is_none() {
                 vacant = Some(index);

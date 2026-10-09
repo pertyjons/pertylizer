@@ -5,7 +5,7 @@ use crate::input_host::{
     managed::ManagedRun,
     prepare::PreparedAttempt,
     source::{
-        SourceOwnedSendError, SourceProducer, SourceRetiredAttempt, SourceRetryToken,
+        SOURCE_CELLS, SourceOwnedSendError, SourceProducer, SourceRetiredAttempt, SourceRetryToken,
         SourceSendError,
     },
 };
@@ -457,6 +457,36 @@ fn service(managed: &mut ManagedRun, stopped: &mut bool) -> Result<(), Box<dyn s
     Ok(())
 }
 
+/// A joined producer cannot add heads. Each pass either drains a fixed prefix
+/// or collects the receipts that let its oldest head advance on the next pass.
+pub(crate) fn service_joined_sources(
+    managed: &mut ManagedRun,
+) -> Option<Box<dyn std::error::Error>> {
+    let mut first_error = None;
+    for _ in 0..=(SOURCE_CELLS * 2) {
+        if let Err(error) = service(managed, &mut false) {
+            eprintln!("joined_service={error}");
+            if first_error.is_none() {
+                first_error = Some(error);
+            }
+        }
+        if !managed.has_queued_source_heads() {
+            return first_error;
+        }
+    }
+    managed.halt_handle().request_invalid();
+    if let Err(error) = service(managed, &mut false) {
+        eprintln!("joined_service_after_halt={error}");
+        if first_error.is_none() {
+            first_error = Some(error);
+        }
+    }
+    if managed.has_queued_source_heads() && first_error.is_none() {
+        first_error = Some(error("joined source heads remain after halt"));
+    }
+    first_error
+}
+
 struct TransportProgram {
     start: SampleTime,
     stop: SampleTime,
@@ -642,12 +672,10 @@ pub fn run(device: &Device, target: u64) -> Result<(), Box<dyn std::error::Error
             device_run.backend_kinds.load(Ordering::Acquire)
         );
         // Draining producer observations is mandatory even after a terminal fault.
-        // service reports each original refusal before it returns a pump error.
-        if let Err(failure) = service(&mut managed, &mut false) {
-            eprintln!("joined_service={failure}");
-            if run_error.is_none() {
-                run_error = Some(failure);
-            }
+        if let Some(failure) = service_joined_sources(&mut managed)
+            && run_error.is_none()
+        {
+            run_error = Some(failure);
         }
         let mut unresolved = Vec::new();
         for producer in producers {

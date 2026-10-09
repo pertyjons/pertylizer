@@ -1320,6 +1320,368 @@ fn a_source_head_keeps_its_queue_identity_until_exact_commit() {
 }
 
 #[test]
+fn raw_capacity_without_completed_receipts_disposes_the_source_head() {
+    use super::source::SourceInbox;
+
+    let (mut control, audio, generations) = fixture();
+    let epoch = audio.core.acknowledged().epoch;
+    let (mut producer, mut inbox) = SourceInbox::prepare(
+        generations[0],
+        control.halt_handle(),
+        prepare::simulated_clock(epoch, 0).unwrap(),
+    );
+    let bend = Midi1Input::from_bytes([0xe0, 0, 64]).unwrap();
+    for tick in 1..=30 {
+        let _id = control
+            .core
+            .offer_observation(
+                generations[0],
+                InputObservation::Message {
+                    tick: InputTick::new(tick),
+                    arrival: SampleTime::new(tick),
+                    input: bend,
+                },
+            )
+            .unwrap();
+    }
+    let head = InputObservation::Message {
+        tick: InputTick::new(31),
+        arrival: SampleTime::new(31),
+        input: bend,
+    };
+    let queue = producer.submit_owned(head).unwrap().parts().1;
+    assert_eq!(
+        control.preflight_source_head(generations[0], queue, head),
+        Err(InputError::Full)
+    );
+    let mut reports = Vec::new();
+    inbox.service_handoff_identified(&mut control, |handoff, report| {
+        reports.push((handoff, report.offer.result));
+    });
+    assert_eq!(reports.len(), 1);
+    assert_eq!(reports[0].0.unwrap().stamp().queue(), queue);
+    assert!(matches!(
+        reports.pop().unwrap().1,
+        Err(InputOfferError::Refused(original, InputError::Full)) if original == head
+    ));
+    assert!(inbox.is_empty());
+    assert!(control.halt_handle().is_requested());
+    let fault = control
+        .core
+        .input(generations[0])
+        .unwrap()
+        .discontinuity()
+        .unwrap();
+    assert_eq!(
+        (fault.reason, fault.observation),
+        (InputError::Full, Some(head))
+    );
+    assert_eq!(
+        control
+            .core
+            .input(generations[0])
+            .unwrap()
+            .pre_ring_failure(),
+        None
+    );
+    assert_eq!(
+        control
+            .core
+            .input(generations[0])
+            .unwrap()
+            .post_source_ring_failure(),
+        None
+    );
+    assert!(inbox.close(producer).is_ok());
+}
+
+fn full_raw_bend_receipts() -> (LiveControl, LiveAudio, [ConnectionGeneration; 2], u64) {
+    let (mut control, mut audio, generations) = fixture();
+    let bend = Midi1Input::from_bytes([0xe0, 0, 64]).unwrap();
+    let _play = control
+        .command(SampleTime::new(256), SessionCommand::Play)
+        .unwrap();
+    for (generation, tick) in [(generations[0], 256), (generations[1], 512)] {
+        let _frontier = control
+            .core
+            .offer_observation(
+                generation,
+                InputObservation::Frontier {
+                    tick: InputTick::new(tick),
+                },
+            )
+            .unwrap();
+    }
+    for tick in 270..299 {
+        let _id = control
+            .core
+            .offer_observation(
+                generations[0],
+                InputObservation::Message {
+                    tick: InputTick::new(tick),
+                    arrival: SampleTime::new(tick),
+                    input: bend,
+                },
+            )
+            .unwrap();
+    }
+    let frontier = control
+        .core
+        .offer_observation(
+            generations[0],
+            InputObservation::Frontier {
+                tick: InputTick::new(300),
+            },
+        )
+        .unwrap();
+    let _peer_frontier = control
+        .core
+        .offer_observation(
+            generations[1],
+            InputObservation::Frontier {
+                tick: InputTick::new(602),
+            },
+        )
+        .unwrap();
+    control.pump().unwrap();
+    let _samples = render(&mut audio, 512, &[64]);
+    (control, audio, generations, frontier.serial())
+}
+
+#[test]
+fn completed_raw_receipts_keep_one_bend_head_until_the_next_service_pass() {
+    use super::{managed::ManagedRun, source::SourceInbox};
+
+    let (control, audio, generations, serial) = full_raw_bend_receipts();
+    let epoch = audio.core.acknowledged().epoch;
+    let (mut producer, inbox) = SourceInbox::prepare(
+        generations[0],
+        control.halt_handle(),
+        prepare::simulated_clock(epoch, 0).unwrap(),
+    );
+    let (peer_producer, peer_inbox) = SourceInbox::prepare(
+        generations[1],
+        control.halt_handle(),
+        prepare::simulated_clock(epoch, 1).unwrap(),
+    );
+    let bend = Midi1Input::from_bytes([0xe0, 0, 64]).unwrap();
+    let halt = control.halt_handle();
+
+    let first = InputObservation::Message {
+        tick: InputTick::new(301),
+        arrival: SampleTime::new(301),
+        input: bend,
+    };
+    let second = InputObservation::Message {
+        tick: InputTick::new(302),
+        arrival: SampleTime::new(302),
+        input: bend,
+    };
+    let first_queue = producer.submit_owned(first).unwrap().parts().1;
+    let second_queue = producer.submit_owned(second).unwrap().parts().1;
+    assert_eq!(
+        control.preflight_source_head(generations[0], first_queue, first),
+        Err(InputError::Full)
+    );
+    let mut managed = ManagedRun::from_parts_for_test(control, [inbox, peer_inbox], generations);
+    let mut collected = 0;
+    managed
+        .service_handoff_identified(
+            |_, _| panic!("completed raw receipts must retain the source head"),
+            |_, _| {},
+            |_| collected += 1,
+        )
+        .unwrap();
+    assert!(collected > 0);
+    assert!(!halt.is_requested());
+    let mut delivered = Vec::new();
+    managed
+        .service_handoff_identified(
+            |handoff, report| {
+                delivered.push((
+                    handoff.unwrap().stamp().queue(),
+                    report.offer.result.unwrap(),
+                ));
+            },
+            |_, _| {},
+            |_| {},
+        )
+        .unwrap();
+    assert_eq!(delivered.len(), 2);
+    assert_eq!(delivered[0].0, first_queue);
+    assert_eq!(delivered[1].0, second_queue);
+    assert_eq!(delivered[0].1.serial(), serial + 1);
+    assert_eq!(delivered[1].1.serial(), serial + 2);
+    assert!(managed.close_source(producer).is_ok());
+    assert!(managed.close_source(peer_producer).is_ok());
+}
+
+#[test]
+fn full_audition_stays_terminal_even_when_raw_receipts_could_free_room() {
+    use super::source::SourceInbox;
+
+    let (mut control, mut audio, generations, _serial) = full_raw_bend_receipts();
+    let epoch = audio.core.acknowledged().epoch;
+    let clocks = [
+        prepare::simulated_clock(epoch, 0).unwrap(),
+        prepare::simulated_clock(epoch, 1).unwrap(),
+    ];
+    let profile = HostProfile::harness(
+        SampleRate::new(48000.0).unwrap(),
+        FrameCount::new(8192),
+        ChannelLayout::Mono,
+    )
+    .unwrap();
+    let (mut audition, audition_audio, _bytes) =
+        super::audition::AuditionControl::prepare(profile, generations, clocks).unwrap();
+    let head = InputObservation::Message {
+        tick: InputTick::new(301),
+        arrival: SampleTime::new(301),
+        input: Midi1Input::from_bytes([0xe0, 0, 64]).unwrap(),
+    };
+    for _ in 0..128 {
+        let prepared = audition.preflight(generations[0], head).unwrap().unwrap();
+        let _trace = audition.commit(prepared).unwrap();
+    }
+    control.audition = Some(audition);
+    audio.audition = Some(audition_audio);
+    while control.has_completions() {
+        let _outcome = control.collect().unwrap();
+    }
+    assert_eq!(
+        control
+            .core
+            .input(generations[0])
+            .unwrap()
+            .preflight_observation_custody(generations[0], head),
+        Ok(InputCustodyPreflight::Await(InputError::Full))
+    );
+    let pressure = control.core.input(generations[0]).unwrap().pressure();
+    let (mut producer, mut inbox) = SourceInbox::prepare(
+        generations[0],
+        control.halt_handle(),
+        prepare::simulated_clock(epoch, 0).unwrap(),
+    );
+    let queue = producer.submit_owned(head).unwrap().parts().1;
+    let mut reports = Vec::new();
+    inbox.service_handoff_identified(&mut control, |handoff, report| {
+        reports.push((handoff, report));
+    });
+    assert_eq!(reports.len(), 1);
+    let (handoff, report) = reports.pop().unwrap();
+    assert_eq!(handoff.unwrap().stamp().queue(), queue);
+    assert_eq!(
+        report.offer.audition_packet,
+        AuditionPacketCustody::NotQueued
+    );
+    assert_eq!(report.attribution_error, None);
+    assert!(matches!(
+        report.offer.result,
+        Err(InputOfferError::Refused(original, InputError::Full)) if original == head
+    ));
+    assert_eq!(
+        control.core.input(generations[0]).unwrap().pressure(),
+        pressure
+    );
+    let fault = control
+        .core
+        .input(generations[0])
+        .unwrap()
+        .post_source_ring_failure()
+        .unwrap();
+    assert_eq!(
+        (fault.reason, fault.observation),
+        (InputError::Full, Some(head))
+    );
+    assert!(control.halt_handle().is_requested());
+    assert!(inbox.close(producer).is_ok());
+}
+
+#[test]
+fn joined_source_drain_retries_a_head_after_collecting_raw_receipts() {
+    use super::{managed::ManagedRun, source::SourceInbox};
+
+    let (control, audio, generations, _serial) = full_raw_bend_receipts();
+    let epoch = audio.core.acknowledged().epoch;
+    let halt = control.halt_handle();
+    let (mut producer, inbox) = SourceInbox::prepare(
+        generations[0],
+        halt.clone(),
+        prepare::simulated_clock(epoch, 0).unwrap(),
+    );
+    let (peer, peer_inbox) = SourceInbox::prepare(
+        generations[1],
+        halt.clone(),
+        prepare::simulated_clock(epoch, 1).unwrap(),
+    );
+    let head = InputObservation::Message {
+        tick: InputTick::new(301),
+        arrival: SampleTime::new(301),
+        input: Midi1Input::from_bytes([0xe0, 0, 64]).unwrap(),
+    };
+    let _queue = producer.submit_owned(head).unwrap().parts().1;
+    let mut managed = ManagedRun::from_parts_for_test(control, [inbox, peer_inbox], generations);
+    assert!(crate::input_driver::service_joined_sources(&mut managed).is_none());
+    assert!(!managed.has_queued_source_heads());
+    assert!(!halt.is_requested());
+    assert!(managed.close_source(producer).is_ok());
+    assert!(managed.close_source(peer).is_ok());
+}
+
+#[test]
+fn failed_completion_collection_still_drains_joined_source_heads() {
+    use super::{managed::ManagedRun, source::SourceInbox};
+
+    let (mut foreign, mut foreign_audio, _) = fixture();
+    let _command = foreign
+        .command(SampleTime::new(256), SessionCommand::Play)
+        .unwrap();
+    foreign.pump().unwrap();
+    let _samples = render(&mut foreign_audio, 512, &[64]);
+    let foreign_completion = foreign.completions.try_pop().unwrap();
+
+    let (mut control, audio, generations) = fixture();
+    let epoch = audio.core.acknowledged().epoch;
+    control.failed_collection = Some(foreign_completion);
+    let halt = control.halt_handle();
+    let (mut producer, inbox) = SourceInbox::prepare(
+        generations[0],
+        halt.clone(),
+        prepare::simulated_clock(epoch, 0).unwrap(),
+    );
+    let (peer, peer_inbox) = SourceInbox::prepare(
+        generations[1],
+        halt.clone(),
+        prepare::simulated_clock(epoch, 1).unwrap(),
+    );
+    let original = InputObservation::Frontier {
+        tick: InputTick::new(1),
+    };
+    let queue = producer.submit_owned(original).unwrap().parts().1;
+    let mut managed = ManagedRun::from_parts_for_test(control, [inbox, peer_inbox], generations);
+    let mut reported = Vec::new();
+    assert!(
+        managed
+            .service_handoff_identified(
+                |handoff, report| reported.push((handoff, report.offer.result)),
+                |_, _| {},
+                |_| {},
+            )
+            .is_err()
+    );
+    assert!(halt.is_requested());
+    assert_eq!(reported.len(), 1);
+    assert_eq!(reported[0].0.unwrap().stamp().queue(), queue);
+    assert!(matches!(
+        reported.pop().unwrap().1,
+        Err(InputOfferError::Refused(observation, InputError::State)) if observation == original
+    ));
+    assert!(!managed.has_queued_source_heads());
+    assert!(managed.close_source(producer).is_ok());
+    assert!(managed.close_source(peer).is_ok());
+}
+
+#[test]
 fn owned_retry_preserves_attempt_and_mints_queue_id_only_after_push() {
     use super::source::{SourceInbox, SourceOwnedSendError};
     let (mut control, audio, generations) = fixture();

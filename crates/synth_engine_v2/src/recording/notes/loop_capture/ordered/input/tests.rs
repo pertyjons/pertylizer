@@ -450,6 +450,122 @@ fn raw_preflight_matches_immediate_offer_without_spending_credit_or_faulting() {
         Err(InputError::State)
     );
 }
+
+#[test]
+fn custody_preflight_waits_only_for_completed_raw_receipts() {
+    let (mut input, generation) = ready_with_cells(0, 6);
+    let bend = Midi1Input::from_bytes([0xe0, 0, 64]).unwrap();
+    for tick in 10..14 {
+        let _id = input
+            .offer_message(
+                generation,
+                InputTick::new(tick),
+                SampleTime::new(tick),
+                bend,
+            )
+            .unwrap();
+    }
+    let head = InputObservation::Message {
+        tick: InputTick::new(14),
+        arrival: SampleTime::new(14),
+        input: bend,
+    };
+    assert_eq!(
+        input.preflight_observation_custody(generation, head),
+        Err(InputError::Full)
+    );
+    assert_eq!(input.discontinuity(), None);
+    let serial = input.serial;
+    input.slots[1].as_mut().unwrap().outcome = Some(InputOutcome::Cancelled);
+    assert_eq!(
+        input.preflight_observation_custody(generation, head),
+        Ok(InputCustodyPreflight::Await(InputError::Full))
+    );
+    assert_eq!(input.serial, serial);
+    assert_eq!(
+        input.preflight_observation(generation, head),
+        Err(InputError::Full)
+    );
+    assert_eq!(input.collect().unwrap().id.serial(), 2);
+    assert_eq!(
+        input.preflight_observation_custody(generation, head),
+        Ok(InputCustodyPreflight::Admit)
+    );
+    let accepted = input
+        .offer_message(generation, InputTick::new(14), SampleTime::new(14), bend)
+        .unwrap();
+    assert_eq!(accepted.serial(), serial + 1);
+    assert_eq!(input.discontinuity(), None);
+}
+
+#[test]
+fn custody_preflight_does_not_wait_for_a_release_behind_the_head() {
+    let (mut input, generation) = ready_with_cells(0, 6);
+    let onset = Midi1Input::from_bytes([0x90, 60, 100]).unwrap();
+    let _onset_id = input
+        .offer_message(generation, InputTick::new(10), SampleTime::new(10), onset)
+        .unwrap();
+    input.slots[0].as_mut().unwrap().outcome = Some(InputOutcome::Cancelled);
+    let _receipt = input.collect().unwrap();
+    assert_eq!(input.release_reservations, 1);
+    let bend = Midi1Input::from_bytes([0xe0, 0, 64]).unwrap();
+    for tick in 11..13 {
+        let _id = input
+            .offer_message(
+                generation,
+                InputTick::new(tick),
+                SampleTime::new(tick),
+                bend,
+            )
+            .unwrap();
+    }
+    let head = InputObservation::Message {
+        tick: InputTick::new(13),
+        arrival: SampleTime::new(13),
+        input: bend,
+    };
+    assert_eq!(
+        input.preflight_observation_custody(generation, head),
+        Err(InputError::ProtectedCapacity)
+    );
+    assert_eq!(input.discontinuity(), None);
+}
+
+#[test]
+fn custody_preflight_needs_enough_completed_cells_for_the_same_head() {
+    let (mut input, generation) = ready_with_cells(0, 6);
+    let bend = Midi1Input::from_bytes([0xe0, 0, 64]).unwrap();
+    for tick in 10..14 {
+        let _id = input
+            .offer_message(
+                generation,
+                InputTick::new(tick),
+                SampleTime::new(tick),
+                bend,
+            )
+            .unwrap();
+    }
+    let _frontier = input
+        .advance_frontier(generation, InputTick::new(14))
+        .unwrap();
+    let head = InputObservation::Message {
+        tick: InputTick::new(15),
+        arrival: SampleTime::new(15),
+        input: bend,
+    };
+    input.slots[1].as_mut().unwrap().outcome = Some(InputOutcome::Cancelled);
+    assert_eq!(
+        input.preflight_observation_custody(generation, head),
+        Err(InputError::Full)
+    );
+    input.slots[2].as_mut().unwrap().outcome = Some(InputOutcome::Cancelled);
+    assert_eq!(
+        input.preflight_observation_custody(generation, head),
+        Ok(InputCustodyPreflight::Await(InputError::Full))
+    );
+    assert_eq!(input.discontinuity(), None);
+}
+
 #[test]
 fn failed_preparation_is_retained_and_retry_is_explicit() {
     let mut input = SimulatedNoteInput::new(
