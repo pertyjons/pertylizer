@@ -54,10 +54,11 @@ mod occurrence;
 
 #[cfg(all(test, feature = "simulated-ingress"))]
 use occurrence::{
-    LiveOccurrenceId, MixedBendResult, MixedBendSubmitError, MixedLiftResult, MixedLiveScope,
-    MixedOccurrenceLedger, MixedOccurrenceState, MixedOccurrenceTable, MixedOnsetSubmitError,
-    MixedPanicResult, MixedPanicSubmitError, MixedPedalDown, MixedPedalEdge, MixedPedalLedger,
-    MixedPedalRefused, MixedPedalSubmitError, MixedReleaseSubmitError, MixedRetired,
+    LiveOccurrenceId, MixedBendCreditReturn, MixedBendResult, MixedBendSubmitError,
+    MixedLiftResult, MixedLiveScope, MixedOccurrenceLedger, MixedOccurrenceState,
+    MixedOccurrenceTable, MixedOnsetSubmitError, MixedPanicResult, MixedPanicSubmitError,
+    MixedPedalDown, MixedPedalEdge, MixedPedalLedger, MixedPedalRefused, MixedPedalSubmitError,
+    MixedReleaseSubmitError, MixedRetired,
 };
 
 /// Why a bound mixed stream could not be prepared.
@@ -209,8 +210,8 @@ pub(crate) enum MixedOneShotArmError {
     #[cfg(all(test, feature = "simulated-ingress"))]
     #[error(transparent)]
     Ingress(#[from] IngressPrepareError),
-    /// The ingress queue cannot realize every declared live hold with its release and
-    /// bend places plus the final onset's own entry.
+    /// The ingress queue cannot withhold a bend-credit budget for every live hold and
+    /// still realize every declared hold with its release plus the final onset's entry.
     #[cfg(all(test, feature = "simulated-ingress"))]
     #[error(
         "mixed ingress depth {capacity} cannot serve {holds} live holds; need {required}",
@@ -218,7 +219,7 @@ pub(crate) enum MixedOneShotArmError {
         holds = .holds.get(),
         required = .required.get()
     )]
-    BendPlaceCapacity {
+    BendCreditCapacity {
         capacity: EventCount,
         holds: EventCount,
         required: EventCount,
@@ -886,6 +887,17 @@ pub(crate) struct MixedOneShotControl {
     /// release a cell only when no later bend for that scope has been submitted.
     #[cfg(all(test, feature = "simulated-ingress"))]
     bend_scopes: Vec<Option<(MixedLiveScope, MixedIngressCommandId)>>,
+    /// Credits one bend reserves: the live hold entitlement `H`, which bounds the
+    /// sounding and sustained members audio can find at service.
+    #[cfg(all(test, feature = "simulated-ingress"))]
+    bend_credits_per_bend: MixedIngressQueueCount,
+    /// Bend credits held by the merger: the budget `B` less those carried by unserved
+    /// commands, held by undrained entries, or returned by audio and not yet taken.
+    #[cfg(all(test, feature = "simulated-ingress"))]
+    bend_credits_free: MixedIngressQueueCount,
+    /// Audio's lock-free return of unused and drained bend credits.
+    #[cfg(all(test, feature = "simulated-ingress"))]
+    bend_credit_return: MixedBendCreditReturn,
     /// The Panic holding the protected ring place, until its result is collected. That
     /// place lies outside `ingress_capacity`, so ordinary traffic can never take it.
     #[cfg(all(test, feature = "simulated-ingress"))]
@@ -988,6 +1000,9 @@ enum MixedIngressRequest {
 struct MixedIngressCommand {
     id: MixedIngressCommandId,
     request: MixedIngressRequest,
+    /// Bend credits the merger reserved for this command before minting `id`. Audio
+    /// spends at most these and returns the rest when it serves the command.
+    bend_credits: MixedIngressQueueCount,
 }
 
 #[cfg(all(test, feature = "simulated-ingress"))]
@@ -1054,15 +1069,25 @@ impl MixedOneShotControl {
             .saturating_sub(self.pedal_ledger.reserved())
     }
 
-    /// Push one command. Callers other than the typed submits below forge requests.
+    /// Push one command carrying no bend credit. Callers other than the typed submits
+    /// below forge requests.
     fn submit_ingress(
         &mut self,
         request: MixedIngressRequest,
     ) -> Result<MixedIngressCommandId, MixedIngressSubmitError> {
+        self.submit_ingress_with(request, MixedIngressQueueCount::NONE)
+    }
+
+    /// Push one command carrying `bend_credits` the caller has already reserved.
+    fn submit_ingress_with(
+        &mut self,
+        request: MixedIngressRequest,
+        bend_credits: MixedIngressQueueCount,
+    ) -> Result<MixedIngressCommandId, MixedIngressSubmitError> {
         if self.ingress_room() == 0 {
             return Err(MixedIngressSubmitError::Full(request));
         }
-        let id = self.push_ingress(request)?;
+        let id = self.push_ingress(request, bend_credits)?;
         self.ingress_outstanding.0 += 1;
         Ok(id)
     }
@@ -1071,6 +1096,7 @@ impl MixedOneShotControl {
     fn push_ingress(
         &mut self,
         request: MixedIngressRequest,
+        bend_credits: MixedIngressQueueCount,
     ) -> Result<MixedIngressCommandId, MixedIngressSubmitError> {
         let serial = self
             .last_ingress_id
@@ -1079,10 +1105,42 @@ impl MixedOneShotControl {
         let id = MixedIngressCommandId(serial);
         self.ingress_commands
             .0
-            .try_push(MixedIngressCommand { id, request })
+            .try_push(MixedIngressCommand {
+                id,
+                request,
+                bend_credits,
+            })
             .map_err(|command| MixedIngressSubmitError::Full(command.request))?;
         self.last_ingress_id = Some(id);
         Ok(id)
+    }
+
+    /// Take `needed` bend credits after collecting audio's returns, or report how many
+    /// are free. Called before a command identity is minted.
+    fn reserve_bend_credits(
+        &mut self,
+        needed: MixedIngressQueueCount,
+    ) -> Result<(), MixedIngressQueueCount> {
+        self.bend_credits_free.0 += self.bend_credit_return.take().as_usize();
+        if self.bend_credits_free < needed {
+            return Err(self.bend_credits_free);
+        }
+        self.bend_credits_free.0 -= needed.as_usize();
+        Ok(())
+    }
+
+    /// Undo [`Self::reserve_bend_credits`] when the command could not be pushed.
+    fn unreserve_bend_credits(&mut self, credits: MixedIngressQueueCount) {
+        self.bend_credits_free.0 += credits.as_usize();
+    }
+
+    /// Whether the scope holds a bend-table reservation. Without one, every bend the
+    /// merger submitted for the scope ended in a collected successful zero, so audio
+    /// serves a later onset on it with no inherited bend.
+    fn scope_may_bend(&self, scope: MixedLiveScope) -> bool {
+        self.bend_scopes
+            .iter()
+            .any(|cell| cell.is_some_and(|(held, _)| held == scope))
     }
 
     /// Submit a host Panic into the protected ring place. Both rings carry one place
@@ -1099,19 +1157,24 @@ impl MixedOneShotControl {
             return Err(MixedPanicSubmitError::Pending(pending));
         }
         let request = MixedIngressRequest::Panic { origin, at };
-        let command = self.push_ingress(request).map_err(|error| match error {
-            // Ordinary commands never exceed `ingress_capacity`, so this needs a defect.
-            MixedIngressSubmitError::Full(_) => MixedPanicSubmitError::RingFull,
-            MixedIngressSubmitError::IdentityExhausted(_) => {
-                MixedPanicSubmitError::IdentityExhausted
-            }
-        })?;
+        // Panic carries no bend credit, so an exhausted budget never refuses it.
+        let command = self
+            .push_ingress(request, MixedIngressQueueCount::NONE)
+            .map_err(|error| match error {
+                // Ordinary commands never exceed `ingress_capacity`, so this needs a defect.
+                MixedIngressSubmitError::Full(_) => MixedPanicSubmitError::RingFull,
+                MixedIngressSubmitError::IdentityExhausted(_) => {
+                    MixedPanicSubmitError::IdentityExhausted
+                }
+            })?;
         self.panic_inflight = Some(command);
         Ok((command, request))
     }
 
     /// Mint a handle and stage its onset, reserving one ring place for its release so
-    /// the release can follow at once, before the onset's result is collected.
+    /// the release can follow at once, before the onset's result is collected. An onset
+    /// on a scope that may be bent also reserves one bend credit for its inherited
+    /// entry before its command identity is minted; an unbent scope needs none.
     fn submit_onset(
         &mut self,
         origin: MixedIngressOriginId,
@@ -1130,6 +1193,13 @@ impl MixedOneShotControl {
             .occurrence_ledger
             .vacant()
             .ok_or(MixedOnsetSubmitError::Full)?;
+        let credits = if self.scope_may_bend(scope) {
+            MixedIngressQueueCount(1)
+        } else {
+            MixedIngressQueueCount::NONE
+        };
+        self.reserve_bend_credits(credits)
+            .map_err(|_| MixedOnsetSubmitError::BendCredit)?;
         let request = MixedIngressRequest::Onset {
             origin,
             occurrence,
@@ -1138,12 +1208,18 @@ impl MixedOneShotControl {
             key,
             velocity,
         };
-        let command = self.submit_ingress(request).map_err(|error| match error {
-            MixedIngressSubmitError::Full(_) => MixedOnsetSubmitError::Full,
-            MixedIngressSubmitError::IdentityExhausted(_) => {
-                MixedOnsetSubmitError::IdentityExhausted
+        let command = match self.submit_ingress_with(request, credits) {
+            Ok(command) => command,
+            Err(error) => {
+                self.unreserve_bend_credits(credits);
+                return Err(match error {
+                    MixedIngressSubmitError::Full(_) => MixedOnsetSubmitError::Full,
+                    MixedIngressSubmitError::IdentityExhausted(_) => {
+                        MixedOnsetSubmitError::IdentityExhausted
+                    }
+                });
             }
-        })?;
+        };
         let opened = self.occurrence_ledger.open(occurrence);
         debug_assert!(opened, "the vacant handle stays vacant until opened");
         self.release_reserved.0 += 1;
@@ -1186,8 +1262,9 @@ impl MixedOneShotControl {
     }
 
     /// Submit one channel bend for `scope` into an ordinary ring place. A new
-    /// non-zero scope reserves one audio bend-table cell before submission. Bends
-    /// are not coalesced here: a full ring or scope table refuses the caller.
+    /// non-zero scope reserves one audio bend-table cell, and every bend reserves `H`
+    /// bend credits, before its command identity is minted. Bends are not coalesced: a
+    /// full ring, scope table or credit budget refuses the caller, which keeps its input.
     fn submit_bend(
         &mut self,
         origin: MixedIngressOriginId,
@@ -1212,18 +1289,27 @@ impl MixedOneShotControl {
                     .ok_or(MixedBendSubmitError::ScopeCapacity)?,
             )
         };
+        let needed = self.bend_credits_per_bend;
+        self.reserve_bend_credits(needed)
+            .map_err(|available| MixedBendSubmitError::Credits { needed, available })?;
         let request = MixedIngressRequest::Bend {
             origin,
             scope,
             at,
             cents,
         };
-        let command = self.submit_ingress(request).map_err(|error| match error {
-            MixedIngressSubmitError::Full(_) => MixedBendSubmitError::Full,
-            MixedIngressSubmitError::IdentityExhausted(_) => {
-                MixedBendSubmitError::IdentityExhausted
+        let command = match self.submit_ingress_with(request, needed) {
+            Ok(command) => command,
+            Err(error) => {
+                self.unreserve_bend_credits(needed);
+                return Err(match error {
+                    MixedIngressSubmitError::Full(_) => MixedBendSubmitError::Full,
+                    MixedIngressSubmitError::IdentityExhausted(_) => {
+                        MixedBendSubmitError::IdentityExhausted
+                    }
+                });
             }
-        })?;
+        };
         if let Some(index) = existing.or(vacant) {
             self.bend_scopes[index] = Some((scope, command));
         }
@@ -1513,6 +1599,10 @@ pub(crate) struct MixedOneShotAudio {
     ingress_results: OpaqueQueue<HeapProd<MixedIngressResult>>,
     #[cfg(all(test, feature = "simulated-ingress"))]
     ingress_result_pending: Option<MixedIngressResult>,
+    /// Returns each command's unused bend credits after service, and each written one
+    /// after its entry drains.
+    #[cfg(all(test, feature = "simulated-ingress"))]
+    bend_credit_return: MixedBendCreditReturn,
     #[cfg(all(test, feature = "simulated-ingress"))]
     test_ingress_inflight: Vec<Option<(TimedEvent, bool)>>,
     #[cfg(all(test, feature = "simulated-ingress"))]
@@ -2219,10 +2309,15 @@ impl MixedJoinedPrepared {
         #[cfg(all(test, feature = "simulated-ingress"))]
         let sustain_group = crate::ingress::RELEASE_GROUP_CAPACITY;
         #[cfg(all(test, feature = "simulated-ingress"))]
-        let Some(occurrence_width) = live_holds
+        let Some((holds, occurrence_width)) = live_holds
             .as_usize()
             .filter(|holds| *holds <= sustain_group)
-            .map(|holds| MixedIngressQueueCount::capacity(ingress_capacity.as_usize() + holds))
+            .map(|holds| {
+                (
+                    holds,
+                    MixedIngressQueueCount::capacity(ingress_capacity.as_usize() + holds),
+                )
+            })
         else {
             return Err(Box::new(MixedOneShotArmRefusal {
                 reason: MixedOneShotArmError::SustainGroupCapacity {
@@ -2233,16 +2328,19 @@ impl MixedJoinedPrepared {
                 candidate,
             }));
         };
-        // With H-1 live notes held after their onsets drain, their release and bend
-        // places use 2(H-1) units. The Hth onset takes three more, so 2H + 1 is the
-        // smallest ingress depth that can realize every declared live hold.
-        // H is at most one group here, so the arithmetic is bounded by 17.
+        // The store withholds a bend-credit budget B = max(H, C - 2H) from ordinary
+        // traffic, so B >= H covers one bend's every member. With H-1 live notes held
+        // after their onsets drain, their holds use H-1 of the C - B ordinary places,
+        // and the Hth onset needs its note-on and hold. At B = H that needs
+        // C - H >= H + 1, so 2H + 1 is the smallest ingress depth that can realize every
+        // declared live hold. H is at most one group here, so the arithmetic is bounded
+        // by 17.
         #[cfg(all(test, feature = "simulated-ingress"))]
         let required = EventCount::measured(live_holds.get() * 2 + 1);
         #[cfg(all(test, feature = "simulated-ingress"))]
         if ingress_capacity.as_usize() < required.as_usize().unwrap_or(usize::MAX) {
             return Err(Box::new(MixedOneShotArmRefusal {
-                reason: MixedOneShotArmError::BendPlaceCapacity {
+                reason: MixedOneShotArmError::BendCreditCapacity {
                     capacity: profile
                         .limits()
                         .events()
@@ -2265,6 +2363,11 @@ impl MixedJoinedPrepared {
         #[cfg(all(test, feature = "simulated-ingress"))]
         let (ingress_result_writer, ingress_result_reader) =
             HeapRb::<MixedIngressResult>::new(ring_places).split();
+        // Every bend credit starts with the merger; audio returns them through this.
+        #[cfg(all(test, feature = "simulated-ingress"))]
+        let bend_credit_return = MixedBendCreditReturn::new();
+        #[cfg(all(test, feature = "simulated-ingress"))]
+        let bend_credit_budget = MixedIngressQueueCount(test_ingress.mixed_bend_budget());
         let late_at_arm = candidate.anchor.time() < arm_clock;
         let effective_anchor = StreamAnchor::new(effective, candidate.anchor.position());
         let capsule = match candidate.into_audio_capsule() {
@@ -2313,6 +2416,12 @@ impl MixedJoinedPrepared {
                 #[cfg(all(test, feature = "simulated-ingress"))]
                 bend_scopes: vec![None; ingress_capacity.as_usize()],
                 #[cfg(all(test, feature = "simulated-ingress"))]
+                bend_credits_per_bend: MixedIngressQueueCount(holds),
+                #[cfg(all(test, feature = "simulated-ingress"))]
+                bend_credits_free: bend_credit_budget,
+                #[cfg(all(test, feature = "simulated-ingress"))]
+                bend_credit_return: bend_credit_return.clone(),
+                #[cfg(all(test, feature = "simulated-ingress"))]
                 panic_inflight: None,
                 off_thread: PhantomData,
             },
@@ -2351,6 +2460,8 @@ impl MixedJoinedPrepared {
                 ingress_results: OpaqueQueue(ingress_result_writer),
                 #[cfg(all(test, feature = "simulated-ingress"))]
                 ingress_result_pending: None,
+                #[cfg(all(test, feature = "simulated-ingress"))]
+                bend_credit_return,
                 #[cfg(test)]
                 test_live: None,
                 #[cfg(test)]

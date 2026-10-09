@@ -819,6 +819,14 @@ impl<R: RawBackend> RawStageBridge<R> {
     }
 }
 
+/// Render one 256-frame callback, so every queued live edge stamped before it drains.
+fn drain(audio: &mut MixedOneShotAudio) {
+    let mut samples = [0.0_f32; 256];
+    audio
+        .render_private(AudioBlockMut::new(&mut samples, 256, ChannelLayout::Mono).unwrap())
+        .unwrap();
+}
+
 #[test]
 fn raw_release_links_carry_source_handoffs_into_staged_mixed_results() {
     let on = input(0x90, 60, 100);
@@ -850,6 +858,9 @@ fn raw_release_links_carry_source_handoffs_into_staged_mixed_results() {
         assert_eq!(second.occurrence, b_onset);
         assert_eq!(second.handoff.link, Some(first.handoff.raw));
         assert!(second.accepted());
+        // B's pair drains: the bend-credit budget leaves `2H` ordinary units, which
+        // A's two held notes need.
+        drain(&mut audio);
         // B has no frontier beyond A's head yet.
         assert!(bridge.service(&mut control, &mut audio).is_none());
 
@@ -1020,7 +1031,9 @@ fn mixed_onset_refusal_retires_its_raw_linked_release_against_the_tombstone() {
         assert_eq!(peer_released.handoff.link, Some(peer.handoff.raw));
         assert!(peer_released.accepted());
 
-        // The actual releases returned both holds; a later onset is accepted.
+        // The actual releases returned both holds; once their edges drain from the
+        // `2H` ordinary units, a later onset is accepted.
+        drain(&mut audio);
         let later = bridge.offer(Source::First, 160, on).unwrap();
         bridge.frontier(Source::Second, 161);
         let reused = bridge.service(&mut control, &mut audio).unwrap();

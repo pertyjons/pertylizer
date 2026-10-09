@@ -27,8 +27,6 @@
 
 use super::PerformanceIngress;
 use crate::publish::{ProducerClass, Publication, PublicationFault};
-#[cfg(all(test, feature = "simulated-ingress"))]
-use crate::quantities::EventCount;
 use crate::time::SampleTime;
 
 impl PerformanceIngress {
@@ -143,14 +141,11 @@ impl PerformanceIngress {
             }
             self.tail = next(self.tail, capacity);
             self.len = self.len.saturating_sub(1);
-            // The slot returns to the live mixed note whose bend place it held. A retired
-            // note's entry no longer carries the mark, so its place is not restored.
+            // A drained credit-charged bend frees its budget place. The owner returns the
+            // credit to the merger from the fall of this count.
             #[cfg(all(test, feature = "simulated-ingress"))]
-            if entry.bend_place {
-                self.mixed_bend_reserved = self
-                    .mixed_bend_reserved
-                    .checked_add(EventCount::measured(1))
-                    .unwrap_or(self.mixed_bend_reserved);
+            if entry.bend_credit {
+                self.mixed_bend_queued = self.mixed_bend_queued.saturating_sub(1);
             }
         }
 

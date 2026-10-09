@@ -742,86 +742,50 @@ retirement order, allocation-free service, and live audio parity. Panic keeps
 the pedal and compiled notes unchanged. The multi-group amendment to draft
 rule 1.5, compiled Panic scope, source/stage protection and timestamped merge
 selection remain open with the concrete two-source bridge.
-A private channel bend now names its scope, not a handle. Audio owns each
-scope's value and writes every sounding and sustained member, never a tombstone
-or a compiled note. Each accepted private onset precharges one bend place in the
-ingress queue beside its note-on and release hold, so the private queue keeps
-`len + holds + reserved bend places <= capacity` and an onset needs three free
-units. An onset on a bent scope fills its place at once with its inherited bend,
-written after its note-on at its own stamp, and is accepted or refused whole. A
-member with no undrained bend entry writes into its place at the bend's stamp,
-so an admitted bend is never dropped for an ingress slot. A member with one
-coalesces into it: an ordinary entry in the same quantum takes the new value and
-stamp, and an inherited entry at the same stamp takes the value. Any other entry
-keeps its stamp and its inherited or ordinary origin, and the new value applies
-early. The result names that stamp and origin, and audio counts early and
-superseded values. Releases, sustain lifts and Panic retire their notes' places;
-an undrained entry is still published but restores no place when it drains.
-Like the private Panic, a bend nominally behind the ingress order fence executes
-at that fence; its result reports the execution stamp. This removes that
-post-submission order refusal without changing the command-ring admission rule.
-The private rehearsal imposes no fixed bound on the delay from a stale nominal
-stamp to execution; the timestamped merger rule is still open.
-The control half now reserves one of audio's bounded bend scope cells before
-submitting a new non-zero scope. A full table refuses the caller without minting
-a command identity; a zero bend needs no new cell. A reserved cell is released
-only after audio's successful zero result is collected and no later bend for
-that scope is pending. Thus typed bend submissions cannot later fail solely
-because another scope filled audio's bend table. The reservation is conservative:
-a failed non-zero command can keep its scope cell until a successful zero for
-that scope, and caller-side ring saturation still refuses a bend. Tests cover
-full-table caller refusal, audio's defensive refusal of an internally forged
-request, a refused zero, and overlapping zero and later non-zero results.
-Tests cover saturation, cross-quantum and inherited early application, all three
-retirements, audio under four host partitions and a 4,000-step invariant storm;
-earlier temporary mutations of the ingress accounting rules failed those tests.
-This is a private experiment, not the draft's D5 marker. D5 is unapproved and
-proposes one coalescing marker per `(source, channel)`, a fanout payload charged
-once at publication, and early application of at most one quantum under a named
-amendment of ADR-0023 clause 1 and SOUND-INV-020. This rehearsal costs one queue
-unit per live note instead. Private arm now requires at least `2H + 1` ingress
-places for `H` declared live holds. This is the ingress bound after earlier
-onsets drain; command-ring pedal reservations can still prevent a later onset.
-The rehearsal's early bend application is bounded by how far an undrained entry
-lies before the bend, at most the forward event horizon.
-No amendment is approved for that behaviour, so it stays confined to the private
-owner. Still open: a full command ring refuses a bend at the caller boundary;
-two notes in one scope can carry different values after an intervening onset.
-Another test pins a drained-entry variant: note A's 30-cent bend at frame 110
-drains; note B enters at 300 and inherits 30 cents; a 50-cent bend at 320 arrives
-before B's inherited entry drains. B's entry is rewritten to 50 cents at 300,
-while A receives a new 50-cent entry at 320. Frames 300–319 therefore have
-different bend values within the scope. The target property is same-scope bend
-value symmetry at each sample; preserving command order is a separate property.
-The current one-place-per-note coalescing rule proves neither. A replacement
-needs an explicit timing rule for interleaved bends and onsets, including an
-undrained inherited entry reached by a later bend, plus a capacity proof for
-whatever events that rule emits.
-One exact-order candidate replaces each note's reserved bend place with a fixed
-budget `B` of bend-entry credits charged to the same ingress queue. For queue
-depth `C` and live hold entitlement `H`, the proposed arm rule is `C >= 2H + 1`
-and `B = max(H, C - 2H)` when `H > 0`, or zero when `H = 0`. Its queue invariant
-is `(len - queued_bends) + holds + B <= C` and `queued_bends <= B`. A bend
-reserves `H` credits before its command identity is minted, covering every
-possible member at audio service even if membership grows after submission.
-An onset whose control-side scope reservation may carry a non-zero bend
-reserves one credit before its command identity is minted; an unbent scope
-needs none. Audio returns unused credits after service and each written credit
-only after its entry drains. Each accepted bend would append a separate entry
-per sounding or sustained member at its execution stamp; an inherited entry
-follows its onset at that onset's stamp. Exhausted credits refuse the caller,
-while Panic keeps its protected command place. The budget withholds `B` queue
-places from ordinary traffic, leaving at most `C - B` for non-bend entries and
-release holds. At the minimum depth `C = 2H + 1`, an in-flight bend reserves
-all `H` credits and can temporarily refuse a bent-scope onset at the caller;
-its source would have to retain and retry that onset. This candidate is neither
-implemented nor accepted. Its falsifiers include the drained-entry variant at
-frames 300–319 as a same-scope, per-sample equality test; caller refusal under
-a full credit budget without minting an identity or losing source custody;
-admission of an unbent-scope onset while credits are exhausted; credit recovery
-after drain without any other command; no early bend application; and Panic service
-with the ordinary ring and credit budget full.
-This slice does not lift the production mixed-plan refusal.
+A private channel bend names its scope, not a handle. Audio owns each scope's
+value and writes every sounding and sustained member, never a tombstone or a
+compiled note. The private owner now uses a fixed bend-entry budget `B` in its
+ingress queue. For queue depth `C` and live hold entitlement `H`, arm requires
+`C >= 2H + 1`; `B = max(H, C - 2H)` when `H > 0`, and zero otherwise. The queue
+keeps `(len - queued_bends) + holds + B <= C` and `queued_bends <= B`.
+
+The control half reserves `H` credits before minting a bend command identity,
+covering every member audio may find at service. An onset on a scope whose
+bend-table reservation may be non-zero reserves one credit before its own
+identity; an unbent scope needs none. Exhausted credits refuse at the caller,
+without minting a command identity or handle. Audio returns unused credits
+after service through a lock-free counter, and a written entry returns its
+credit only when it drains. Every accepted bend appends a distinct entry per
+member at its execution stamp. An inherited bend follows its onset at that
+onset's stamp. No earlier entry is rewritten, coalesced or applied early.
+Releases, sustain lifts and Panic leave undrained bend entries and their
+credits in the queue until drain.
+
+Like the private Panic, a bend nominally behind the ingress order fence
+executes at that fence and reports its execution stamp. The private rehearsal
+sets no fixed delay bound for a stale nominal stamp; the timestamped merger
+rule remains open. Panic needs no bend credit and retains its protected
+command place. The control half also reserves one bounded bend-table cell
+before submitting a new non-zero scope, releasing it only after a successful
+zero result with no later bend pending. A full scope table or command ring
+still refuses a bend at the caller boundary.
+
+The budget withholds `B` queue places from ordinary traffic for the whole
+private run, leaving at most `C - B` for ordinary entries and release holds.
+When `2H + 1 <= C <= 3H`, `B = H`: one bend with all credits outstanding can
+temporarily refuse a bent-scope onset, and any undrained bend entry prevents
+another full-`H` bend. The source must retain and retry caller refusals in
+the later concrete bridge; that source contract is not implemented here.
+
+Tests cover caller refusal without identity minting, full ordinary and bend
+budgets with Panic still serviceable, credit return after drain without another
+command, retirement with undrained entries, four host partitions and a 4,000-step
+invariant storm. The drained-entry case now retains 30 cents for both notes
+through frames 300–319 and places the later 50-cent writes at frame 320; its
+recorded entry history reconstructs equal scope values through frame 511.
+This is a private experiment, not the unapproved draft's D5 coalescing marker
+and not acceptance of a production bend contract. This slice does not lift
+the production mixed-plan refusal.
 
 ### Selected work — ordered transport through live I/O
 

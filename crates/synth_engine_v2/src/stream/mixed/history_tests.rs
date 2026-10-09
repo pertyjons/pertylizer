@@ -745,40 +745,30 @@ fn private_mixed_ingress_counts_each_resource_and_preserves_release_slot() {
     let (_, mut audio) = prepared
         .arm_one_shot(candidate, &mixed_profile())
         .expect("private arm");
-    // An onset takes its note-on, its bend place and its hold. Thirteen pairs leave six
-    // units, and two onsets inheriting a bend take three each: their bends fill their
-    // places, and no unit is free.
-    for _ in 0..13 {
-        let identity = audio
-            .offer_test_note_on(SampleTime::ZERO, key(48), NoteVelocity::FULL)
-            .expect("queued onset");
-        audio
-            .offer_test_note_off(SampleTime::ZERO, identity)
-            .expect("queued release");
-    }
+    // Two holds leave `C - B = 4` ordinary units. An onset takes its note-on and its
+    // hold; an inherited bend takes a bend credit instead. One pair and one onset
+    // inheriting a bend leave no ordinary unit free while a hold still is.
+    let identity = audio
+        .offer_test_note_on(SampleTime::ZERO, key(48), NoteVelocity::FULL)
+        .expect("queued onset");
+    audio
+        .offer_test_note_off(SampleTime::ZERO, identity)
+        .expect("queued release");
     let bend = crate::quantities::Cents::new(25.0).expect("bend");
-    let protected = [48, 49].map(|raw| {
-        audio
-            .offer_test_note_on_inheriting(
-                SampleTime::ZERO,
-                key(raw),
-                NoteVelocity::FULL,
-                Some(bend),
-            )
-            .expect("onset reserves its release slot")
-    });
+    let protected = audio
+        .offer_test_note_on_inheriting(SampleTime::ZERO, key(49), NoteVelocity::FULL, Some(bend))
+        .expect("onset reserves its release slot");
     assert_eq!(
         audio.offer_test_note_on(SampleTime::ZERO, key(50), NoteVelocity::FULL),
         Err(IngressRefused::Dropped {
             resource: ExhaustedResource::Slot,
         })
     );
-    for identity in protected {
-        audio
-            .offer_test_note_off(SampleTime::ZERO, identity)
-            .expect("release fills a reserved slot despite queue pressure");
-    }
-    assert_eq!(audio.test_ingress.len(), 32);
+    audio
+        .offer_test_note_off(SampleTime::ZERO, protected)
+        .expect("release fills a reserved slot despite queue pressure");
+    assert_eq!(audio.test_ingress.len(), 5);
+    assert_eq!(audio.test_ingress.mixed_bend_queued(), 1);
     assert_eq!(audio.test_ingress.counters().dropped_slot(), 1);
 
     let (prepared, candidate) = one_shot_with_boundary_on(true);
@@ -794,6 +784,12 @@ fn private_mixed_ingress_counts_each_resource_and_preserves_release_slot() {
             .offer_test_note_off(SampleTime::ZERO, identity)
             .expect("release retires index");
     }
+    // Drain both pairs so ordinary room cannot refuse the onset before its mint.
+    let mut drained = [0.0_f32; 256];
+    audio
+        .render_private(AudioBlockMut::new(&mut drained, 256, ChannelLayout::Mono).expect("block"))
+        .expect("drain");
+    assert_eq!(audio.test_ingress.len(), 0);
     assert_eq!(
         audio.offer_test_note_on(SampleTime::ZERO, key(50), NoteVelocity::FULL),
         Err(IngressRefused::Dropped {
@@ -810,7 +806,7 @@ fn private_mixed_ingress_late_full_queue_fits_adoption_partition() {
     use crate::publish::ProducerClass;
 
     let (prepared, candidate) = one_shot_with_boundary_on(true);
-    let (_, mut audio) = prepared
+    let (mut control, mut audio) = prepared
         .arm_one_shot(candidate, &mixed_profile())
         .expect("private arm");
     let mut old = [0.0_f32; 128];
@@ -818,18 +814,47 @@ fn private_mixed_ingress_late_full_queue_fits_adoption_partition() {
         .render_private(AudioBlockMut::new(&mut old, 128, ChannelLayout::Mono).expect("old"))
         .expect("old quantum");
     assert!(!audio.report().adopted);
-    // Each onset also holds a bend place until its release, so a full backlog needs
-    // two onsets whose inherited bends fill their places: 17 Live and 15 Release.
-    let bend = crate::quantities::Cents::new(25.0).expect("bend");
-    for inherited in [None; 13].into_iter().chain([Some(bend); 2]) {
-        let identity = audio
-            .offer_test_note_on_inheriting(SampleTime::ZERO, key(48), NoteVelocity::FULL, inherited)
+    // Two holds leave `C - B = 4` ordinary units and a budget of 28 bend credits. The
+    // fullest late backlog is both notes' note-ons and releases with fourteen two-member
+    // bends between them: 30 Live and 2 Release.
+    let origin = MixedIngressOriginId(1);
+    let notes = [48, 49].map(|raw| {
+        let (_, request) = control
+            .submit_onset(
+                origin,
+                super::TEST_SCOPE,
+                SampleTime::ZERO,
+                key(raw),
+                NoteVelocity::FULL,
+            )
             .expect("late onset");
-        audio
-            .offer_test_note_off(SampleTime::ZERO, identity)
+        let MixedIngressRequest::Onset { occurrence, .. } = request else {
+            panic!("an onset submit returns its onset request");
+        };
+        occurrence
+    });
+    let bend = crate::quantities::Cents::new(25.0).expect("bend");
+    for _ in 0..14 {
+        let _bend = control
+            .submit_bend(origin, super::TEST_SCOPE, SampleTime::ZERO, bend)
+            .expect("late bend credits");
+    }
+    for occurrence in notes {
+        let _release = control
+            .submit_release(origin, occurrence, SampleTime::ZERO)
             .expect("late protected release");
     }
+    audio.service_test_ingress_queue();
+    while let Some(result) = control.collect_ingress_result() {
+        assert!(matches!(
+            result.outcome,
+            MixedIngressOutcome::Onset(Ok(_))
+                | MixedIngressOutcome::Bend(Ok(_))
+                | MixedIngressOutcome::Release(Ok(_))
+        ));
+    }
     assert_eq!(audio.test_ingress.len(), 32);
+    assert_eq!(audio.test_ingress.mixed_bend_queued(), 28);
     let mut boundary = [0.0_f32; 1];
     audio
         .render_private(
@@ -840,11 +865,11 @@ fn private_mixed_ingress_late_full_queue_fits_adoption_partition() {
     assert_eq!(audio.test_ingress.len(), 0);
     assert_eq!(
         audio.arbiter.high_water(ProducerClass::Live),
-        EventCount::measured(17)
+        EventCount::measured(30)
     );
     assert_eq!(
         audio.arbiter.high_water(ProducerClass::Release),
-        EventCount::measured(15)
+        EventCount::measured(2)
     );
     let limits = mixed_profile().limits().events();
     assert!(audio.arbiter.high_water(ProducerClass::Live) <= limits.shares().live_event_share());

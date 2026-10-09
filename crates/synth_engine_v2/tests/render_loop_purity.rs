@@ -562,9 +562,10 @@ fn every_call_the_render_loop_makes_is_inside_the_checked_region() {
     // `#[derive(..)]` and `#[cfg(..)]` are each an identifier followed by a parenthesis and
     // are neither reachable code nor nameable as a function. `cfg` is here because the slot
     // module compiles its modulation seam for tests only, until Phase 7 gives it a caller.
+    // `not` is the `cfg` predicate in the private mixed ingress accounting branch.
     let syntax = [
         "if", "while", "for", "match", "return", "loop", "else", "fn", "let", "move", "pub",
-        "derive", "cfg", "allow",
+        "derive", "cfg", "not", "allow",
     ];
 
     // `std` on slices, `Option`, iterators and primitives: bounds-checked accessors,
@@ -828,6 +829,11 @@ fn every_call_the_render_loop_makes_is_inside_the_checked_region() {
     // counters, plus `new` on the checked time and count newtypes. Each is a field read
     // or a saturating add.
     let crate_accessors = [
+        // The private mixed owner returns bend credits through an Arc<AtomicUsize>:
+        // `give_back` performs one Release fetch_add and no allocation or lock.
+        // `written` walks at most eight prepared Option cells without allocation.
+        "give_back",
+        "written",
         // HostProfile::capabilities is a Copy field read. AudioBlockMut::samples_mut
         // borrows its already validated, bounded sample slice without allocation.
         "capabilities",

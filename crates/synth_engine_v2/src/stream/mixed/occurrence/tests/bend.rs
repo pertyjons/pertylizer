@@ -1,29 +1,40 @@
 //! Channel bend tests for the private mixed owner.
 //!
-//! Every test inspects the registered ingress queue after service: a bend writes one
-//! entry per sounding or sustained member of its scope, coalesces in place within one
-//! quantum, and an onset on a bent scope writes its inherited bend right after its
-//! note-on. Rendering then proves each bend resolved against a live occurrence.
+//! Every test inspects the registered ingress queue after service: a bend appends one
+//! entry per sounding or sustained member of its scope at its execution stamp, and an
+//! onset on a bent scope writes its inherited bend right after its note-on. No entry is
+//! rewritten or coalesced. Each bend reserves `H` credits and a possibly bent onset one
+//! before its command identity is minted. Rendering then proves each bend resolved
+//! against a live occurrence.
 
 use super::{
-    super::{super::MixedPedalSubmitted, MixedBendRefused, MixedBendSubmitError, MixedLiveScope},
+    super::{
+        super::{MixedIngressQueueCount, MixedPedalSubmitted},
+        MixedBendRefused, MixedBendSubmitError, MixedLiveScope, MixedOnsetSubmitError,
+    },
     ExhaustedResource, IngressRefused, LiveOccurrenceId, MixedIngressOutcome, MixedIngressRequest,
     MixedOccurrenceState, MixedOneShotAudio, MixedOneShotControl, MixedRetireCause, MixedRetired,
-    NoteIdentity, ORIGIN, accepted, collect_all, free_units, outcome_for, release, release_request,
-    service_without_allocation,
+    NoteIdentity, ORIGIN, accepted, collect_all, free_units, history_tests, key, outcome_for,
+    profile_with_ingress_depth, release, release_request, service_without_allocation,
+    settled_credits,
     sustain::{
         armed_with, holds, onset_in, onset_request_in, pedal, render, scope, sounding, state_of,
     },
 };
 use crate::{
-    ingress::{MixedBendOrigin, MixedBendWrite, ReleaseCause},
-    quantities::{Cents, EventCount},
+    ingress::{MixedBendOrigin, ReleaseCause},
+    quantities::{Cents, EventCount, HeldNoteCount, NoteVelocity},
     render::{EventPayload, NoteEdge},
     time::SampleTime,
 };
 
 pub(super) fn cents(value: f32) -> Cents {
     Cents::new(value).expect("valid bend")
+}
+
+/// A count of bend credits.
+pub(super) fn credits(count: usize) -> MixedIngressQueueCount {
+    MixedIngressQueueCount(count)
 }
 
 pub(super) fn bend_at(
@@ -34,11 +45,11 @@ pub(super) fn bend_at(
 ) -> MixedIngressRequest {
     let (_, request) = control
         .submit_bend(ORIGIN, scope, SampleTime::new(at), cents(value))
-        .expect("bend fits an ordinary place");
+        .expect("bend fits a ring place and its credits");
     request
 }
 
-pub(super) fn written(outcome: MixedIngressOutcome) -> Vec<(LiveOccurrenceId, MixedBendWrite)> {
+pub(super) fn written(outcome: MixedIngressOutcome) -> Vec<LiveOccurrenceId> {
     let MixedIngressOutcome::Bend(Ok(bent)) = outcome else {
         panic!("bend must apply, got {outcome:?}");
     };
@@ -85,10 +96,10 @@ pub(super) fn entries(audio: &MixedOneShotAudio) -> Vec<Entry> {
         .collect()
 }
 
-/// Every undrained bend entry's event, origin and whether it holds a live note's place.
+/// Every undrained bend entry's event and origin.
 pub(super) fn bend_origins(
     audio: &MixedOneShotAudio,
-) -> Vec<(crate::render::TimedEvent, MixedBendOrigin, bool)> {
+) -> Vec<(crate::render::TimedEvent, MixedBendOrigin)> {
     let mut copied = vec![None; audio.test_ingress.queue_capacity_for_test()];
     let len = audio
         .test_ingress
@@ -122,8 +133,8 @@ pub(super) fn pair(
     }
 }
 
-/// Pair onsets and releases on `scope` until no further onset fits: an onset needs
-/// three free units, for its note-on, its bend place and its hold.
+/// Pair onsets and releases on `scope` until no further onset fits: an onset needs two
+/// free ordinary units, for its note-on and its hold.
 pub(super) fn saturate(
     control: &mut MixedOneShotControl,
     audio: &mut MixedOneShotAudio,
@@ -131,7 +142,7 @@ pub(super) fn saturate(
     at: u64,
 ) {
     let mut raw = 0_u8;
-    while free_units(audio) >= 3 {
+    while free_units(audio) >= 2 {
         pair(control, audio, scope, at, raw);
         raw += 1;
     }
@@ -186,13 +197,7 @@ fn a_bend_writes_every_sounding_and_sustained_member_of_its_scope_only() {
             outcome_for(&results, release_request(sustained, 103)),
             MixedIngressOutcome::Sustained(sustained)
         );
-        assert_eq!(
-            written(outcome_for(&results, bend)),
-            vec![
-                (down, MixedBendWrite::Queued),
-                (sustained, MixedBendWrite::Queued),
-            ]
-        );
+        assert_eq!(written(outcome_for(&results, bend)), vec![down, sustained]);
         assert_eq!(
             entries(&audio),
             vec![
@@ -203,6 +208,10 @@ fn a_bend_writes_every_sounding_and_sustained_member_of_its_scope_only() {
                 Entry::Bend(isustained, 100.0, 110),
             ]
         );
+        // The bend reserved four credits, spent one per member and returned the rest.
+        let budget = audio.test_ingress.mixed_bend_budget();
+        assert_eq!(control.bend_credit_return.pending(), credits(2));
+        assert_eq!(settled_credits(&control, &audio), budget - 2);
         // A bend opens no obligation and leaves every occurrence's state alone.
         assert_eq!(holds(&audio), 3);
         assert_eq!(
@@ -214,6 +223,8 @@ fn a_bend_writes_every_sounding_and_sustained_member_of_its_scope_only() {
 
         render(&mut audio);
         assert_eq!(orphans(&audio), 0, "every bend found its live note");
+        // The drain returned both written credits.
+        assert_eq!(settled_credits(&control, &audio), budget);
         let live = sounding(&audio);
         assert!(
             [idown, isustained, ielsewhere]
@@ -227,10 +238,7 @@ fn a_bend_writes_every_sounding_and_sustained_member_of_its_scope_only() {
         let after = bend_at(&mut control, s, 310, -50.0);
         audio = service_without_allocation(audio);
         let results = collect_all(&mut control);
-        assert_eq!(
-            written(outcome_for(&results, after)),
-            vec![(down, MixedBendWrite::Queued)]
-        );
+        assert_eq!(written(outcome_for(&results, after)), vec![down]);
         assert_eq!(
             entries(&audio),
             vec![
@@ -241,17 +249,20 @@ fn a_bend_writes_every_sounding_and_sustained_member_of_its_scope_only() {
         assert_eq!(audio.occurrences.bend_of(s), cents(-50.0));
         render(&mut audio);
         assert_eq!(orphans(&audio), 0);
-        assert_eq!(audio.occurrences.bends_superseded(), EventCount::NONE);
+        assert_eq!(settled_credits(&control, &audio), budget);
     }
 }
 
 #[test]
-fn an_onset_inherits_its_scopes_bend_and_a_zero_bend_frees_the_scope() {
+fn an_onset_inherits_its_scopes_bend_and_a_zero_bend_appends_and_frees_the_scope() {
     for compiled_first in [true, false] {
         let (s, other) = (scope(1, 1), scope(1, 2));
         let (mut control, audio) = armed_with(compiled_first, 4);
         let depth = audio.test_ingress.queue_capacity_for_test();
-        // No member yet: the bend sets the value and the order fence only.
+        let budget = audio.test_ingress.mixed_bend_budget();
+        // No member yet: the bend sets the value and the order fence only. Its scope
+        // reservation makes the next onset on it reserve a credit; the other scope's
+        // onset reserves none.
         let set = bend_at(&mut control, s, 100, 50.0);
         let bent = onset_in(&mut control, s, 100, 60);
         let plain = onset_in(&mut control, other, 100, 60);
@@ -272,57 +283,53 @@ fn an_onset_inherits_its_scopes_bend_and_a_zero_bend_frees_the_scope() {
                 Entry::On(iplain, 100),
             ]
         );
+        assert_eq!(
+            bend_origins(&audio)
+                .into_iter()
+                .map(|(_, origin)| origin)
+                .collect::<Vec<_>>(),
+            vec![MixedBendOrigin::Inherited]
+        );
         assert_eq!(holds(&audio), 2);
-        // Three entries, two holds and the plain note's reserved bend place.
-        assert_eq!(free_units(&audio), depth - 6);
+        // Two note-ons and two holds take ordinary room; the inherited bend a credit.
+        assert_eq!(free_units(&audio), depth - budget - 4);
+        assert_eq!(settled_credits(&control, &audio), budget - 1);
 
-        // Returning to zero one frame later reaches the inherited entry, which keeps its
-        // onset stamp: zero applies from the onset, one frame early, and the inherited
-        // value is superseded. The scope's cell is freed, so a later onset writes no bend
-        // and reserves its place instead.
+        // Returning to zero one frame later appends its own entry: the inherited value
+        // applies from the onset until 101. The zero's result is not collected when the
+        // later onset is submitted, so that onset reserves a credit it does not spend.
         let zero = bend_at(&mut control, s, 101, 0.0);
         let later = onset_in(&mut control, s, 102, 62);
         audio = service_without_allocation(audio);
         let results = collect_all(&mut control);
-        assert_eq!(
-            written(outcome_for(&results, zero)),
-            vec![(
-                bent,
-                MixedBendWrite::Early {
-                    applies_at: SampleTime::new(100),
-                    origin: MixedBendOrigin::Inherited,
-                }
-            )]
-        );
+        assert_eq!(written(outcome_for(&results, zero)), vec![bent]);
         let ilater = accepted(outcome_for(&results, onset_request_in(later, s, 102, 62)));
         assert_eq!(
             entries(&audio),
             vec![
                 Entry::On(ibent, 100),
-                Entry::Bend(ibent, 0.0, 100),
+                Entry::Bend(ibent, 50.0, 100),
                 Entry::On(iplain, 100),
+                Entry::Bend(ibent, 0.0, 101),
                 Entry::On(ilater, 102),
             ]
         );
         assert_eq!(audio.occurrences.bend_of(s), Cents::ZERO);
-        assert_eq!(
-            audio.occurrences.bends_superseded(),
-            EventCount::measured(1)
-        );
-        assert_eq!(
-            audio.occurrences.bends_applied_early(),
-            EventCount::measured(1)
-        );
-        assert_eq!(free_units(&audio), depth - 9);
+        // The collected zero freed the reservation: a later onset needs no credit.
+        assert!(!control.scope_may_bend(s));
+        assert_eq!(free_units(&audio), depth - budget - 6);
+        assert_eq!(settled_credits(&control, &audio), budget - 2);
         render(&mut audio);
         assert_eq!(orphans(&audio), 0);
+        assert_eq!(settled_credits(&control, &audio), budget);
     }
 }
 
 #[test]
-fn a_later_bend_reaches_an_intervening_onsets_inherited_entry_early() {
+fn a_later_bend_appends_after_an_intervening_onsets_inherited_entry() {
     let s = scope(1, 1);
     let (mut control, audio) = armed_with(true, 3);
+    let budget = audio.test_ingress.mixed_bend_budget();
     let first = onset_in(&mut control, s, 100, 60);
     let initial = bend_at(&mut control, s, 110, 30.0);
     let second = onset_in(&mut control, s, 115, 62);
@@ -331,91 +338,68 @@ fn a_later_bend_reaches_an_intervening_onsets_inherited_entry_early() {
     let results = collect_all(&mut control);
     let ifirst = accepted(outcome_for(&results, onset_request_in(first, s, 100, 60)));
     let isecond = accepted(outcome_for(&results, onset_request_in(second, s, 115, 62)));
-    assert_eq!(
-        written(outcome_for(&results, initial)),
-        vec![(first, MixedBendWrite::Queued)]
-    );
-    // The first note's ordinary entry moves to the later stamp in its quantum. The
-    // second note owns one place, already filled by its inherited bend, so the later
-    // value takes that entry at its onset stamp: five frames early, and said so.
-    assert_eq!(
-        written(outcome_for(&results, later)),
-        vec![
-            (first, MixedBendWrite::Coalesced),
-            (
-                second,
-                MixedBendWrite::Early {
-                    applies_at: SampleTime::new(115),
-                    origin: MixedBendOrigin::Inherited,
-                }
-            ),
-        ]
-    );
+    assert_eq!(written(outcome_for(&results, initial)), vec![first]);
+    // The later bend appends one entry per member at its own stamp. The second note's
+    // inherited entry keeps its value at the onset stamp; nothing applies early.
+    assert_eq!(written(outcome_for(&results, later)), vec![first, second]);
     assert_eq!(
         entries(&audio),
         vec![
             Entry::On(ifirst, 100),
-            Entry::Bend(ifirst, 70.0, 120),
+            Entry::Bend(ifirst, 30.0, 110),
             Entry::On(isecond, 115),
-            Entry::Bend(isecond, 70.0, 115),
+            Entry::Bend(isecond, 30.0, 115),
+            Entry::Bend(ifirst, 70.0, 120),
+            Entry::Bend(isecond, 70.0, 120),
         ]
     );
-    // Coalescing never changes an entry's origin.
     assert_eq!(
         bend_origins(&audio)
             .into_iter()
-            .map(|(_, origin, place)| (origin, place))
+            .map(|(_, origin)| origin)
             .collect::<Vec<_>>(),
         vec![
-            (MixedBendOrigin::Ordinary, true),
-            (MixedBendOrigin::Inherited, true)
+            MixedBendOrigin::Ordinary,
+            MixedBendOrigin::Inherited,
+            MixedBendOrigin::Ordinary,
+            MixedBendOrigin::Ordinary,
         ]
     );
-    assert_eq!(
-        audio.occurrences.bends_superseded(),
-        EventCount::measured(2)
-    );
-    assert_eq!(
-        audio.occurrences.bends_applied_early(),
-        EventCount::measured(1)
-    );
     let _free = free_units(&audio);
+    assert_eq!(settled_credits(&control, &audio), budget - 4);
     render(&mut audio);
     assert_eq!(orphans(&audio), 0);
+    assert_eq!(settled_credits(&control, &audio), budget);
 }
 
 #[test]
-fn an_ordinary_bend_coalesces_in_its_quantum_when_no_onset_fits() {
+fn a_bend_needs_no_ordinary_unit_when_no_onset_fits() {
     let slot = IngressRefused::Dropped {
         resource: ExhaustedResource::Slot,
     };
-    let (s, other, filler) = (scope(1, 1), scope(2, 1), scope(3, 1));
+    let (s, filler) = (scope(1, 1), scope(3, 1));
     let (mut control, audio) = armed_with(true, 3);
     let first = onset_in(&mut control, s, 100, 60);
-    let first_bend = bend_at(&mut control, s, 100, 25.0);
-    let second = onset_in(&mut control, other, 100, 62);
-    let second_bend = bend_at(&mut control, other, 100, 25.0);
     let mut audio = service_without_allocation(audio);
-    let results = collect_all(&mut control);
-    let ifirst = accepted(outcome_for(&results, onset_request_in(first, s, 100, 60)));
-    let _isecond = accepted(outcome_for(
-        &results,
-        onset_request_in(second, other, 100, 62),
+    let ifirst = accepted(outcome_for(
+        &collect_all(&mut control),
+        onset_request_in(first, s, 100, 60),
     ));
-    assert_eq!(written(outcome_for(&results, first_bend)).len(), 1);
-    assert_eq!(written(outcome_for(&results, second_bend)).len(), 1);
     saturate(&mut control, &mut audio, filler, 100);
     assert_eq!(refused_probe(&mut control, &mut audio, filler, 100), slot);
+    let free = free_units(&audio);
+    assert!(free < 2);
     let len = audio.test_ingress.ring_len_for_test();
     let later = bend_at(&mut control, s, 110, 50.0);
     audio = service_without_allocation(audio);
     assert_eq!(
         written(outcome_for(&collect_all(&mut control), later)),
-        vec![(first, MixedBendWrite::Coalesced)]
+        vec![first]
     );
-    assert_eq!(audio.test_ingress.ring_len_for_test(), len);
-    assert!(entries(&audio).contains(&Entry::Bend(ifirst, 50.0, 110)));
-    assert!(free_units(&audio) < 3);
+    // The bend took a new entry charged to a credit, not to ordinary room.
+    assert_eq!(audio.test_ingress.ring_len_for_test(), len + 1);
+    assert!(entries(&audio).ends_with(&[Entry::Bend(ifirst, 50.0, 110)]));
+    assert_eq!(free_units(&audio), free);
     render(&mut audio);
     assert_eq!(orphans(&audio), 0);
 }
@@ -434,17 +418,11 @@ fn commands_at_one_stamp_apply_in_command_order() {
         let results = collect_all(&mut control);
         let ifirst = accepted(outcome_for(&results, onset_request_in(first, s, 200, 60)));
         let isecond = accepted(outcome_for(&results, onset_request_in(second, s, 200, 61)));
-        assert_eq!(
-            written(outcome_for(&results, bend)),
-            vec![(first, MixedBendWrite::Queued)]
-        );
+        assert_eq!(written(outcome_for(&results, bend)), vec![first]);
         // The first note's key-up preceded the second bend, so only the second note is a
-        // member, and its inherited entry takes the new value. The first note keeps the
-        // value it had when it was released.
-        assert_eq!(
-            written(outcome_for(&results, again)),
-            vec![(second, MixedBendWrite::Coalesced)]
-        );
+        // member, and it takes a new entry after its inherited one. The first note keeps
+        // the value it had when it was released.
+        assert_eq!(written(outcome_for(&results, again)), vec![second]);
         assert_eq!(
             outcome_for(&results, release_request(first, 200)),
             MixedIngressOutcome::Release(Ok(MixedRetired {
@@ -458,8 +436,9 @@ fn commands_at_one_stamp_apply_in_command_order() {
                 Entry::On(ifirst, 200),
                 Entry::Bend(ifirst, 30.0, 200),
                 Entry::On(isecond, 200),
-                Entry::Bend(isecond, 70.0, 200),
+                Entry::Bend(isecond, 30.0, 200),
                 Entry::Off(ifirst, 200),
+                Entry::Bend(isecond, 70.0, 200),
             ]
         );
 
@@ -472,14 +451,11 @@ fn commands_at_one_stamp_apply_in_command_order() {
             panic!("late bend must execute at the order fence");
         };
         assert_eq!(bent.executed_at(), SampleTime::new(200));
-        assert_eq!(
-            bent.written().collect::<Vec<_>>(),
-            vec![(second, MixedBendWrite::Coalesced)]
-        );
+        assert_eq!(bent.written().collect::<Vec<_>>(), vec![second]);
         assert_eq!(audio.test_ingress.counters().non_monotone(), 0);
         assert_eq!(audio.occurrences.bend_of(s), cents(90.0));
-        assert_eq!(entries(&audio).len(), 5);
-        assert!(entries(&audio).contains(&Entry::Bend(isecond, 90.0, 200)));
+        assert_eq!(entries(&audio).len(), 7);
+        assert!(entries(&audio).ends_with(&[Entry::Bend(isecond, 90.0, 200)]));
 
         // Each bend resolves after its note-on and before its note-off at one sample.
         render(&mut audio);
@@ -491,7 +467,7 @@ fn commands_at_one_stamp_apply_in_command_order() {
 }
 
 #[test]
-fn a_late_bend_uses_its_reserved_place_and_an_empty_scope_keeps_the_fence() {
+fn a_late_bend_executes_at_the_fence_and_an_empty_scope_keeps_it() {
     let (held_scope, empty_scope) = (scope(1, 1), scope(2, 1));
     let (mut control, audio) = armed_with(true, 1);
     let note = onset_in(&mut control, held_scope, 200, 60);
@@ -504,13 +480,10 @@ fn a_late_bend_uses_its_reserved_place_and_an_empty_scope_keeps_the_fence() {
         onset_request_in(note, held_scope, 200, 60),
     ));
     let MixedIngressOutcome::Bend(Ok(held)) = outcome_for(&results, held_bend) else {
-        panic!("held bend must use its reserved place");
+        panic!("held bend must execute at the order fence");
     };
     assert_eq!(held.executed_at(), SampleTime::new(200));
-    assert_eq!(
-        held.written().collect::<Vec<_>>(),
-        vec![(note, MixedBendWrite::Queued)]
-    );
+    assert_eq!(held.written().collect::<Vec<_>>(), vec![note]);
     let MixedIngressOutcome::Bend(Ok(empty)) = outcome_for(&results, empty_bend) else {
         panic!("empty-scope bend must set the value");
     };
@@ -527,19 +500,27 @@ fn a_late_bend_uses_its_reserved_place_and_an_empty_scope_keeps_the_fence() {
     assert!(sounding(&audio).contains(&identity));
 }
 
+/// The value `identity` carries at `frame` from the bends in `published`, in queue order.
+fn bend_value_at(published: &[Entry], identity: NoteIdentity, frame: u64) -> Option<f32> {
+    published.iter().rev().find_map(|entry| match entry {
+        Entry::Bend(bent, value, at) if *bent == identity && *at <= frame => Some(*value),
+        _ => None,
+    })
+}
+
 #[test]
-fn an_inherited_bend_can_precede_an_older_notes_new_bend() {
+fn the_drained_entry_variant_keeps_one_value_across_its_scope_at_every_sample() {
     let s = scope(1, 1);
     let (mut control, mut audio) = armed_with(true, 2);
+    let budget = audio.test_ingress.mixed_bend_budget();
     let old = onset_in(&mut control, s, 100, 60);
     let first = bend_at(&mut control, s, 110, 30.0);
     audio.service_test_ingress_queue();
     let results = collect_all(&mut control);
     let old_identity = accepted(outcome_for(&results, onset_request_in(old, s, 100, 60)));
-    assert_eq!(
-        written(outcome_for(&results, first)),
-        vec![(old, MixedBendWrite::Queued)]
-    );
+    assert_eq!(written(outcome_for(&results, first)), vec![old]);
+    // Every entry is recorded before it drains, so `published` is the whole history.
+    let mut published = entries(&audio);
     render(&mut audio);
     assert!(audio.test_ingress.is_empty());
     assert_eq!(audio.occurrences.bend_of(s), cents(30.0));
@@ -557,40 +538,44 @@ fn an_inherited_bend_can_precede_an_older_notes_new_bend() {
             Entry::Bend(new_identity, 30.0, 300)
         ]
     );
+    // The later bend arrives before the inherited entry drains. It appends one entry
+    // per member at 320 and leaves the inherited 30 cents at 300.
     let later = bend_at(&mut control, s, 320, 50.0);
     audio.service_test_ingress_queue();
     let results = collect_all(&mut control);
-    assert_eq!(
-        written(outcome_for(&results, later)),
-        vec![
-            (old, MixedBendWrite::Queued),
-            (
-                newer,
-                MixedBendWrite::Early {
-                    applies_at: SampleTime::new(300),
-                    origin: MixedBendOrigin::Inherited,
-                },
-            ),
-        ]
-    );
-    // Between 300 and 320 the newer note carries 50 cents and the older note
-    // still carries 30 cents. This is a same-scope value-symmetry counterexample.
+    assert_eq!(written(outcome_for(&results, later)), vec![old, newer]);
     assert_eq!(
         entries(&audio),
         vec![
             Entry::On(new_identity, 300),
-            Entry::Bend(new_identity, 50.0, 300),
+            Entry::Bend(new_identity, 30.0, 300),
             Entry::Bend(old_identity, 50.0, 320),
+            Entry::Bend(new_identity, 50.0, 320),
         ]
     );
+    published.extend(entries(&audio));
     render(&mut audio);
     assert_eq!(orphans(&audio), 0);
+    assert_eq!(settled_credits(&control, &audio), budget);
+
+    // Both notes carry one value at every sample both sound, 300 to 319 included.
+    for frame in 300..512 {
+        assert_eq!(
+            bend_value_at(&published, old_identity, frame),
+            bend_value_at(&published, new_identity, frame),
+            "frame {frame}"
+        );
+    }
+    assert_eq!(bend_value_at(&published, new_identity, 319), Some(30.0));
+    assert_eq!(bend_value_at(&published, new_identity, 320), Some(50.0));
 }
 
 #[test]
-fn four_wheel_updates_over_a_held_chord_spend_one_slot_per_member_and_quantum() {
+fn wheel_updates_over_a_full_chord_refuse_at_the_caller_until_the_drain_returns_credits() {
     let s = scope(1, 1);
     let (mut control, audio) = armed_with(true, 8);
+    let budget = audio.test_ingress.mixed_bend_budget();
+    assert_eq!(budget, 16);
     let notes: Vec<_> = (0..8)
         .map(|raw| onset_in(&mut control, s, 100, 60 + raw))
         .collect();
@@ -599,105 +584,83 @@ fn four_wheel_updates_over_a_held_chord_spend_one_slot_per_member_and_quantum() 
         .into_iter()
         .map(|result| accepted(result.outcome))
         .collect();
-    // Four wheel messages inside quantum 1 (frames 64 to 127).
-    let wheel: Vec<_> = [(110, 20.0), (115, -40.0), (120, 60.0), (125, 90.0)]
+    // Each bend reserves `H` = 8 credits before its command identity is minted, so two
+    // wheel messages in one service interval reserve the whole budget.
+    let wheel: Vec<_> = [(110, 20.0), (115, -40.0)]
         .into_iter()
         .map(|(at, value)| bend_at(&mut control, s, at, value))
         .collect();
+    let last = control.last_ingress_id;
+    let exhausted = Err(MixedBendSubmitError::Credits {
+        needed: credits(8),
+        available: credits(0),
+    });
+    assert_eq!(
+        control.submit_bend(ORIGIN, s, SampleTime::new(120), cents(60.0)),
+        exhausted
+    );
+    assert_eq!(control.last_ingress_id, last);
     audio = service_without_allocation(audio);
     let results = collect_all(&mut control);
-    for (index, bend) in wheel.into_iter().enumerate() {
-        let write = if index == 0 {
-            MixedBendWrite::Queued
-        } else {
-            MixedBendWrite::Coalesced
-        };
-        assert_eq!(
-            written(outcome_for(&results, bend)),
-            notes.iter().map(|note| (*note, write)).collect::<Vec<_>>()
-        );
+    for bend in wheel {
+        assert_eq!(written(outcome_for(&results, bend)), notes);
     }
-    // Eight note-ons and one bend per member, carrying the last value at the last stamp.
+    // Each member took one entry per bend at the bend's own stamp.
     let mut expected: Vec<_> = identities
         .iter()
         .map(|identity| Entry::On(*identity, 100))
         .collect();
-    expected.extend(
-        identities
-            .iter()
-            .map(|identity| Entry::Bend(*identity, 90.0, 125)),
-    );
-    assert_eq!(entries(&audio), expected);
-    assert_eq!(
-        audio.occurrences.bends_superseded(),
-        EventCount::measured(24)
-    );
-    assert_eq!(audio.test_ingress.counters().dropped_slot(), 0);
-    assert_eq!(audio.occurrences.bend_of(s), cents(90.0));
-
-    // A bend in the next quantum before the drain reaches each member's undrained entry,
-    // which keeps its stamp: the value applies early at 125, and each member says so.
-    let next = bend_at(&mut control, s, 130, 10.0);
-    audio = service_without_allocation(audio);
-    let results = collect_all(&mut control);
-    assert_eq!(
-        written(outcome_for(&results, next)),
-        notes
-            .iter()
-            .map(|note| (
-                *note,
-                MixedBendWrite::Early {
-                    applies_at: SampleTime::new(125),
-                    origin: MixedBendOrigin::Ordinary,
-                }
-            ))
-            .collect::<Vec<_>>()
-    );
-    assert_eq!(audio.test_ingress.ring_len_for_test(), 16);
-    assert!(
-        entries(&audio).ends_with(
-            &identities
+    for (value, at) in [(20.0, 110), (-40.0, 115)] {
+        expected.extend(
+            identities
                 .iter()
-                .map(|identity| Entry::Bend(*identity, 10.0, 125))
-                .collect::<Vec<_>>()
-        )
-    );
+                .map(|identity| Entry::Bend(*identity, value, at)),
+        );
+    }
+    assert_eq!(entries(&audio), expected);
+    assert_eq!(audio.test_ingress.counters().dropped_slot(), 0);
+    // Every written credit waits for its entry to drain, so the caller is still refused.
+    assert_eq!(settled_credits(&control, &audio), 0);
     assert_eq!(
-        audio.occurrences.bends_applied_early(),
-        EventCount::measured(8)
+        control.submit_bend(ORIGIN, s, SampleTime::new(120), cents(60.0)),
+        exhausted
     );
+    assert_eq!(control.last_ingress_id, last);
+
+    // The drain alone returns every credit; no command is served in between.
     render(&mut audio);
     assert!(audio.test_ingress.is_empty());
     assert_eq!(orphans(&audio), 0);
-    let live = sounding(&audio);
-    assert!(identities.iter().all(|identity| live.contains(identity)));
-
-    // The drain returned every place to its member: the next bend is on time.
-    let after = bend_at(&mut control, s, 300, -10.0);
+    assert_eq!(control.bend_credit_return.pending(), credits(budget));
+    // The source kept its input and resubmits it unchanged; it executes at its stamp.
+    let retry = bend_at(&mut control, s, 120, 60.0);
     audio = service_without_allocation(audio);
-    assert!(
-        written(outcome_for(&collect_all(&mut control), after))
-            .into_iter()
-            .all(|(_, write)| write == MixedBendWrite::Queued)
-    );
+    let MixedIngressOutcome::Bend(Ok(bent)) = outcome_for(&collect_all(&mut control), retry) else {
+        panic!("the retried bend applies");
+    };
+    assert_eq!(bent.executed_at(), SampleTime::new(120));
+    assert_eq!(bent.written().collect::<Vec<_>>(), notes);
     assert_eq!(
         entries(&audio),
         identities
             .iter()
-            .map(|identity| Entry::Bend(*identity, -10.0, 300))
+            .map(|identity| Entry::Bend(*identity, 60.0, 120))
             .collect::<Vec<_>>()
     );
-    assert_eq!(audio.test_ingress.counters().dropped_slot(), 0);
+    assert_eq!(settled_credits(&control, &audio), budget - 8);
+    let live = sounding(&audio);
+    assert!(identities.iter().all(|identity| live.contains(identity)));
     let _free = free_units(&audio);
 }
 
 #[test]
-fn a_saturated_queue_still_writes_every_members_bend() {
+fn a_saturated_queue_still_appends_every_members_bend() {
     let slot = IngressRefused::Dropped {
         resource: ExhaustedResource::Slot,
     };
     let (s, other) = (scope(1, 1), scope(2, 1));
     let (mut control, audio) = armed_with(true, 8);
+    let budget = audio.test_ingress.mixed_bend_budget();
     let notes: Vec<_> = (0..6)
         .map(|raw| onset_in(&mut control, s, 100, 60 + raw))
         .collect();
@@ -709,58 +672,58 @@ fn a_saturated_queue_still_writes_every_members_bend() {
         .zip(60..)
         .map(|(note, raw)| accepted(outcome_for(&results, onset_request_in(*note, s, 100, raw))))
         .collect();
-    assert_eq!(written(outcome_for(&results, first)).len(), 6);
+    assert_eq!(written(outcome_for(&results, first)), notes);
     // Ordinary onset/release pairs saturate the queue: an onset with a free hold is
     // refused for its slot.
     saturate(&mut control, &mut audio, other, 100);
     assert_eq!(refused_probe(&mut control, &mut audio, other, 100), slot);
     assert_eq!(holds(&audio), 6);
 
-    // Every member's entry is undrained: the same quantum moves it, a later quantum
-    // keeps its stamp and applies the value early. Neither needs a free slot.
+    // Every member's earlier entry is undrained, and a later bend appends a new entry
+    // per member at its own stamp: no ordinary unit is spent and nothing applies early.
+    let free = free_units(&audio);
     let same = bend_at(&mut control, s, 110, 50.0);
-    let later = bend_at(&mut control, s, 200, 75.0);
     audio = service_without_allocation(audio);
-    let results = collect_all(&mut control);
     assert_eq!(
-        written(outcome_for(&results, same)),
+        written(outcome_for(&collect_all(&mut control), same)),
         notes
-            .iter()
-            .map(|note| (*note, MixedBendWrite::Coalesced))
-            .collect::<Vec<_>>()
     );
-    assert_eq!(
-        written(outcome_for(&results, later)),
-        notes
-            .iter()
-            .map(|note| (
-                *note,
-                MixedBendWrite::Early {
-                    applies_at: SampleTime::new(110),
-                    origin: MixedBendOrigin::Ordinary,
-                }
-            ))
-            .collect::<Vec<_>>()
-    );
-    assert_eq!(audio.occurrences.bend_of(s), cents(75.0));
-    assert_eq!(audio.test_ingress.counters().dropped_slot(), 1);
-    assert!(
-        entries(&audio)
+    assert_eq!(free_units(&audio), free);
+    let bends = |audio: &MixedOneShotAudio| {
+        entries(audio)
             .into_iter()
             .filter(|entry| matches!(entry, Entry::Bend(..)))
-            .eq(identities
-                .iter()
-                .map(|identity| Entry::Bend(*identity, 75.0, 110)))
+            .collect::<Vec<_>>()
+    };
+    let mut expected: Vec<_> = identities
+        .iter()
+        .map(|identity| Entry::Bend(*identity, 25.0, 100))
+        .collect();
+    expected.extend(
+        identities
+            .iter()
+            .map(|identity| Entry::Bend(*identity, 50.0, 110)),
     );
+    assert_eq!(bends(&audio), expected);
+    // Twelve credits wait for their entries to drain; a third bend is refused at the
+    // caller and keeps its input.
+    assert_eq!(settled_credits(&control, &audio), budget - 12);
+    assert_eq!(
+        control.submit_bend(ORIGIN, s, SampleTime::new(200), cents(75.0)),
+        Err(MixedBendSubmitError::Credits {
+            needed: credits(8),
+            available: credits(budget - 12),
+        })
+    );
+    assert_eq!(audio.occurrences.bend_of(s), cents(50.0));
+    assert_eq!(audio.test_ingress.counters().dropped_slot(), 1);
 
-    // After the drain each member's place is back in reserve. Saturate again: the
-    // queue refuses an onset, yet a bend in a new quantum writes every member at its
-    // own stamp into the places it reserved, without a single free unit spent.
+    // After the drain every credit is back. Saturate again: the queue refuses an
+    // onset, yet a bend writes every member at its own stamp without a free unit.
     render(&mut audio);
     render(&mut audio);
     assert!(audio.test_ingress.is_empty());
-    let places = audio.test_ingress.mixed_bend_places_for_test();
-    assert_eq!((places.reserved, places.queued), (6, 0));
+    assert_eq!(settled_credits(&control, &audio), budget);
     saturate(&mut control, &mut audio, other, 520);
     assert_eq!(refused_probe(&mut control, &mut audio, other, 520), slot);
     let free = free_units(&audio);
@@ -770,19 +733,15 @@ fn a_saturated_queue_still_writes_every_members_bend() {
     assert_eq!(
         written(outcome_for(&collect_all(&mut control), retry)),
         notes
-            .iter()
-            .map(|note| (*note, MixedBendWrite::Queued))
-            .collect::<Vec<_>>()
     );
     assert_eq!(free_units(&audio), free);
     assert_eq!(audio.test_ingress.counters().dropped_slot(), 2);
-    assert!(
-        entries(&audio)
-            .into_iter()
-            .filter(|entry| matches!(entry, Entry::Bend(..)))
-            .eq(identities
-                .iter()
-                .map(|identity| Entry::Bend(*identity, -25.0, 530)))
+    assert_eq!(
+        bends(&audio),
+        identities
+            .iter()
+            .map(|identity| Entry::Bend(*identity, -25.0, 530))
+            .collect::<Vec<_>>()
     );
     render(&mut audio);
     assert_eq!(orphans(&audio), 0);
@@ -791,14 +750,13 @@ fn a_saturated_queue_still_writes_every_members_bend() {
 }
 
 #[test]
-fn an_onset_takes_three_units_and_its_inherited_bend_fills_its_place() {
+fn an_onset_takes_two_ordinary_units_and_its_inherited_bend_one_credit() {
     let slot = IngressRefused::Dropped {
         resource: ExhaustedResource::Slot,
     };
     let (s, other) = (scope(1, 1), scope(2, 1));
     let (mut control, audio) = armed_with(true, 2);
-    let depth = audio.test_ingress.queue_capacity_for_test();
-    assert!(depth % 2 == 0, "harness depth {depth}");
+    let budget = audio.test_ingress.mixed_bend_budget();
     let set = bend_at(&mut control, s, 100, 40.0);
     let mut audio = service_without_allocation(audio);
     assert_eq!(
@@ -806,9 +764,9 @@ fn an_onset_takes_three_units_and_its_inherited_bend_fills_its_place() {
         vec![]
     );
     saturate(&mut control, &mut audio, other, 100);
-    // Two units are left: neither a bent onset nor a plain one fits, because each
-    // needs its note-on, its bend place and its hold.
-    assert_eq!(free_units(&audio), 2);
+    // No ordinary unit is left: neither a bent onset nor a plain one fits, because
+    // each needs its note-on and its hold.
+    assert_eq!(free_units(&audio), 0);
     let bent = onset_in(&mut control, s, 100, 60);
     let plain = onset_in(&mut control, other, 100, 100);
     audio = service_without_allocation(audio);
@@ -822,9 +780,11 @@ fn an_onset_takes_three_units_and_its_inherited_bend_fills_its_place() {
         MixedIngressOutcome::Onset(Err(slot))
     );
     assert_eq!(holds(&audio), 0);
-    assert_eq!(free_units(&audio), 2);
+    assert_eq!(free_units(&audio), 0);
     assert_eq!(state_of(&audio, bent), MixedOccurrenceState::Refused(slot));
     assert_eq!(audio.test_ingress.counters().dropped_slot(), 2);
+    // The refused bent onset returned its unused credit at service.
+    assert_eq!(settled_credits(&control, &audio), budget);
 
     // The tombstone consumes its key-up and is never a bend member.
     release(&mut control, bent, 101);
@@ -843,18 +803,10 @@ fn an_onset_takes_three_units_and_its_inherited_bend_fills_its_place() {
     render(&mut audio);
     assert_eq!(orphans(&audio), 0);
 
-    // With four units left, a bent onset takes three: its note-on, its inherited bend
-    // in its own place, and its hold. A plain onset then finds one unit and is refused.
-    for raw in 0..(depth - 4) / 2 {
-        pair(
-            &mut control,
-            &mut audio,
-            other,
-            300,
-            u8::try_from(raw).expect("small key"),
-        );
-    }
-    assert_eq!(free_units(&audio), 4);
+    // With two units left, a bent onset takes both for its note-on and hold and one
+    // credit for its inherited bend. A plain onset then finds no unit and is refused.
+    pair(&mut control, &mut audio, other, 300, 0);
+    assert_eq!(free_units(&audio), 2);
     let bent = onset_in(&mut control, s, 300, 60);
     let plain = onset_in(&mut control, other, 300, 100);
     audio = service_without_allocation(audio);
@@ -865,14 +817,15 @@ fn an_onset_takes_three_units_and_its_inherited_bend_fills_its_place() {
         MixedIngressOutcome::Onset(Err(slot))
     );
     assert!(entries(&audio).ends_with(&[Entry::On(ibent, 300), Entry::Bend(ibent, 45.0, 300)]));
-    let places = audio.test_ingress.mixed_bend_places_for_test();
-    assert_eq!((places.reserved, places.queued), (0, 1));
-    assert_eq!(free_units(&audio), 1);
+    assert_eq!(audio.test_ingress.mixed_bend_queued(), 1);
+    assert_eq!(free_units(&audio), 0);
+    assert_eq!(settled_credits(&control, &audio), budget - 1);
     release(&mut control, plain, 301);
     audio.service_test_ingress_queue();
     let _results = collect_all(&mut control);
     render(&mut audio);
     assert_eq!(orphans(&audio), 0);
+    assert_eq!(settled_credits(&control, &audio), budget);
 }
 
 #[test]
@@ -887,21 +840,30 @@ fn tombstones_and_released_occurrences_are_not_bent() {
     let first = bend_at(&mut control, s, 110, 20.0);
     release(&mut control, held, 111);
     let second = bend_at(&mut control, s, 112, 35.0);
-    let reused = onset_in(&mut control, s, 113, 60);
     let mut audio = service_without_allocation(audio);
-    let results = collect_all(&mut control);
+    let mut results = collect_all(&mut control);
     let iheld = accepted(outcome_for(&results, onset_request_in(held, s, 100, 60)));
     assert_eq!(
         outcome_for(&results, onset_request_in(refused, s, 100, 61)),
         MixedIngressOutcome::Onset(Err(hold))
     );
-    assert_eq!(
-        written(outcome_for(&results, first)),
-        vec![(held, MixedBendWrite::Queued)]
-    );
+    assert_eq!(written(outcome_for(&results, first)), vec![held]);
     // The released note and the refusal tombstone are not members; the released note's
     // queued bend keeps its value and stamp ahead of its note-off.
     assert_eq!(written(outcome_for(&results, second)), vec![]);
+    assert_eq!(
+        entries(&audio),
+        vec![
+            Entry::On(iheld, 100),
+            Entry::Bend(iheld, 20.0, 110),
+            Entry::Off(iheld, 111),
+        ]
+    );
+    // One hold leaves two ordinary units, which the note-on and note-off still take.
+    render(&mut audio);
+    let reused = onset_in(&mut control, s, 113, 60);
+    audio = service_without_allocation(audio);
+    results.extend(collect_all(&mut control));
     let ireused = accepted(outcome_for(&results, onset_request_in(reused, s, 113, 60)));
     assert_ne!(ireused, iheld);
 
@@ -936,16 +898,12 @@ fn tombstones_and_released_occurrences_are_not_bent() {
     assert_eq!(
         entries(&audio),
         vec![
-            Entry::On(iheld, 100),
-            Entry::Bend(iheld, 20.0, 110),
-            Entry::Off(iheld, 111),
             Entry::On(ireused, 113),
             Entry::Bend(ireused, 35.0, 113),
             Entry::Group(ReleaseCause::Panic, vec![ireused]),
         ]
     );
     assert_eq!(audio.occurrences.bend_of(s), cents(50.0));
-    assert_eq!(audio.occurrences.bends_superseded(), EventCount::NONE);
     assert!(audio.occurrences.occupied().is_empty());
     render(&mut audio);
     assert_eq!(orphans(&audio), 0);
@@ -1092,14 +1050,182 @@ fn a_zero_result_does_not_release_a_scope_with_a_later_bend_pending() {
 
 #[test]
 fn a_full_command_ring_refuses_a_bend_at_the_caller_boundary() {
-    let s = scope(1, 1);
+    let (s, other) = (scope(1, 1), scope(2, 1));
     let (mut control, _audio) = armed_with(true, 1);
-    for _ in 0..control.ingress_capacity.as_usize() {
-        let _request = bend_at(&mut control, s, 100, 5.0);
+    // Unbent onsets fill the ring, each with its reserved release place, and reserve no
+    // bend credit.
+    for raw in 0..control.ingress_capacity.as_usize() / 2 {
+        let _note = onset_in(
+            &mut control,
+            other,
+            100,
+            u8::try_from(raw).expect("small key"),
+        );
     }
     assert_eq!(control.ingress_room(), 0);
+    let (last, free) = (control.last_ingress_id, control.bend_credits_free);
     assert_eq!(
         control.submit_bend(ORIGIN, s, SampleTime::new(100), cents(6.0)),
         Err(MixedBendSubmitError::Full)
     );
+    // The refusal minted no identity and reserved no credit or scope cell.
+    assert_eq!(control.last_ingress_id, last);
+    assert_eq!(control.bend_credits_free, free);
+    assert!(!control.scope_may_bend(s));
+}
+
+#[test]
+fn at_minimum_depth_an_inflight_bend_refuses_a_bent_onset_until_credits_return() {
+    let (s, other) = (scope(1, 1), scope(2, 1));
+    let (prepared, candidate) = history_tests::one_shot_with_live(
+        true,
+        HeldNoteCount::measured(2),
+        EventCount::measured(2),
+    );
+    let (mut control, mut audio) = prepared
+        .arm_one_shot(candidate, &profile_with_ingress_depth(5))
+        .expect("depth 2H + 1 arms");
+    // `B = max(H, C - 2H) = H`: one bend reserves the whole budget.
+    assert_eq!(audio.test_ingress.mixed_bend_budget(), 2);
+    let held = onset_in(&mut control, s, 100, 60);
+    audio.service_test_ingress_queue();
+    let iheld = accepted(outcome_for(
+        &collect_all(&mut control),
+        onset_request_in(held, s, 100, 60),
+    ));
+    render(&mut audio);
+
+    let bend = bend_at(&mut control, s, 300, 30.0);
+    // The bent scope's onset needs a credit and none is free: the caller is refused
+    // before a handle or command identity is minted, and keeps its input.
+    let (last, open) = (control.last_ingress_id, control.occurrence_ledger.held());
+    assert_eq!(
+        control.submit_onset(
+            ORIGIN,
+            s,
+            SampleTime::new(300),
+            key(100),
+            NoteVelocity::FULL
+        ),
+        Err(MixedOnsetSubmitError::BendCredit)
+    );
+    assert_eq!(control.last_ingress_id, last);
+    assert_eq!(control.occurrence_ledger.held(), open);
+    // An onset on an unbent scope needs no credit and is admitted.
+    let plain = onset_in(&mut control, other, 300, 62);
+    audio = service_without_allocation(audio);
+    let results = collect_all(&mut control);
+    assert_eq!(written(outcome_for(&results, bend)), vec![held]);
+    let iplain = accepted(outcome_for(
+        &results,
+        onset_request_in(plain, other, 300, 62),
+    ));
+    assert_eq!(
+        entries(&audio),
+        vec![Entry::Bend(iheld, 30.0, 300), Entry::On(iplain, 300)]
+    );
+    // The bend spent one credit; audio returned the unused one when it served it.
+    assert_eq!(control.bend_credit_return.pending(), credits(1));
+    assert_eq!(settled_credits(&control, &audio), 1);
+    assert_eq!(free_units(&audio), 0);
+    release(&mut control, plain, 300);
+    audio.service_test_ingress_queue();
+    let _released = collect_all(&mut control);
+
+    // The drain alone returns the written credit; no other command is served.
+    render(&mut audio);
+    assert!(audio.test_ingress.is_empty());
+    assert_eq!(control.bend_credit_return.pending(), credits(2));
+    // The resubmitted onset reserves a credit and inherits the scope's bend.
+    let bent = onset_in(&mut control, s, 300, 100);
+    audio = service_without_allocation(audio);
+    let ibent = accepted(outcome_for(
+        &collect_all(&mut control),
+        onset_request_in(bent, s, 300, 100),
+    ));
+    assert_eq!(
+        entries(&audio),
+        vec![Entry::On(ibent, 300), Entry::Bend(ibent, 30.0, 300)]
+    );
+    assert_eq!(settled_credits(&control, &audio), 1);
+    render(&mut audio);
+    assert_eq!(orphans(&audio), 0);
+    assert_eq!(settled_credits(&control, &audio), 2);
+}
+
+#[test]
+fn panic_applies_with_the_ordinary_room_and_the_credit_budget_full() {
+    let hold = IngressRefused::Dropped {
+        resource: ExhaustedResource::Hold,
+    };
+    let (s, other) = (scope(1, 1), scope(2, 1));
+    let (mut control, audio) = armed_with(true, 8);
+    let budget = audio.test_ingress.mixed_bend_budget();
+    let notes: Vec<_> = (0..8)
+        .map(|raw| onset_in(&mut control, s, 100, 60 + raw))
+        .collect();
+    let mut audio = service_without_allocation(audio);
+    let identities: Vec<_> = collect_all(&mut control)
+        .into_iter()
+        .map(|result| accepted(result.outcome))
+        .collect();
+    let wheel = [
+        bend_at(&mut control, s, 110, 20.0),
+        bend_at(&mut control, s, 115, 40.0),
+    ];
+    audio = service_without_allocation(audio);
+    let results = collect_all(&mut control);
+    for bend in wheel {
+        assert_eq!(written(outcome_for(&results, bend)), notes);
+    }
+    // Undrained bend entries hold every credit, and the eight note-ons and holds fill
+    // ordinary room.
+    assert_eq!(settled_credits(&control, &audio), 0);
+    assert_eq!(free_units(&audio), 0);
+    let last = control.last_ingress_id;
+    assert_eq!(
+        control.submit_bend(ORIGIN, s, SampleTime::new(120), cents(60.0)),
+        Err(MixedBendSubmitError::Credits {
+            needed: credits(8),
+            available: credits(0),
+        })
+    );
+    assert_eq!(control.last_ingress_id, last);
+    // Unbent onsets, each with its reserved release place, fill the command ring.
+    for raw in 0..control.ingress_room() / 2 {
+        let _note = onset_in(
+            &mut control,
+            other,
+            120,
+            u8::try_from(raw).expect("small key"),
+        );
+    }
+    assert_eq!(control.ingress_room(), 0);
+
+    let (_, panic) = control
+        .submit_panic(ORIGIN, SampleTime::new(130))
+        .expect("the protected place is free");
+    audio = service_without_allocation(audio);
+    let results = collect_all(&mut control);
+    let MixedIngressOutcome::Panic(Ok(panicked)) = outcome_for(&results, panic) else {
+        panic!("Panic must apply");
+    };
+    assert_eq!(panicked.executed_at(), SampleTime::new(130));
+    assert_eq!(panicked.ended().count(), 8);
+    for result in &results {
+        if let MixedIngressOutcome::Onset(outcome) = result.outcome {
+            assert_eq!(outcome, Err(hold));
+        }
+    }
+    assert_eq!(holds(&audio), 0);
+    let Some(Entry::Group(ReleaseCause::Panic, members)) = entries(&audio).pop() else {
+        panic!("the Panic group is queued last");
+    };
+    assert_eq!(members.len(), 8);
+    assert!(identities.iter().all(|identity| members.contains(identity)));
+    // Panic spent no credit; the drain returns them all.
+    assert_eq!(settled_credits(&control, &audio), 0);
+    render(&mut audio);
+    assert_eq!(orphans(&audio), 0);
+    assert_eq!(settled_credits(&control, &audio), budget);
 }

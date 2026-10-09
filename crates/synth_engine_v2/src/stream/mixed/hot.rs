@@ -382,6 +382,7 @@ impl MixedOneShotAudio {
                     .test_ingress
                     .copy_queue_for_test(destination)
                     .ok_or(MixedOneShotRenderError::IngressJournal)?;
+                let bends_before = self.test_ingress.mixed_bend_queued();
                 let charged = self.test_ingress.drain_into(
                     &mut publication,
                     self.audio.renderer.diagnostics_mut(),
@@ -389,6 +390,11 @@ impl MixedOneShotAudio {
                 );
                 self.test_ingress_inflight_len = offset
                     .saturating_add(before.saturating_sub(self.test_ingress.ring_len_for_test()));
+                // Each bend entry that left the queue returns its credit to the merger.
+                self.bend_credit_return
+                    .give_back(super::MixedIngressQueueCount(
+                        bends_before.saturating_sub(self.test_ingress.mixed_bend_queued()),
+                    ));
                 charged?;
             }
             #[cfg(test)]

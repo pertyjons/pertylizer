@@ -33,21 +33,26 @@
 //!
 //! Bend is scoped like sustain. The audio half owns each scope's bend value; a bend
 //! command names its scope, never a handle, and audio resolves its members: every
-//! sounding and sustained occurrence of the scope, which arm bounds by one group. Each
-//! accepted onset precharges one bend place in the ingress queue beside its note-on and
-//! release hold, and an onset on a bent scope fills it at once with that bend, written
-//! after its note-on at its own stamp; the onset is accepted or refused whole. A member
-//! without an undrained bend entry writes one into its place at the command's stamp, so
-//! an admitted bend is never dropped for a queue slot. A member with one coalesces into
-//! it: an ordinary entry in the same quantum takes the new value and stamp, and an
-//! inherited entry at the same stamp the value. Any other entry keeps its stamp and its
-//! inherited or ordinary origin, so its new value applies early; the result names that
-//! stamp and the table counts it. Superseded values are counted. A retired occurrence
-//! gives its place up: released, lifted and panicked notes keep any undrained entry, which
-//! no longer restores a place when it drains. Until a per-scope marker exists, notes on
-//! one scope can have different values between an intervening onset and the next bend.
-//! A refused bend changes neither the scope's value nor any entry. Panic and lifts leave
-//! the scope's value unchanged.
+//! sounding and sustained occurrence of the scope, which arm bounds by one group.
+//!
+//! Bend entries are charged to a fixed budget `B` of bend credits in the same ingress
+//! queue, withheld from ordinary traffic. The merger reserves credits before it mints a
+//! command's identity: `H` for a bend, covering every possible member at service even if
+//! membership grows after submission, and one for an onset whose scope reservation says
+//! it may inherit a non-zero bend. Exhausted credits refuse the caller. Each accepted
+//! bend appends one entry per member at its execution stamp, and an onset on a bent scope
+//! appends its inherited bend right after its note-on at the onset's stamp; no entry is
+//! rewritten or coalesced, so every value applies at its own stamp and all members of a
+//! scope carry the same value at every sample. Audio returns a command's unused credits
+//! when it serves the command, and each written credit only when its entry drains,
+//! through one lock-free counter. Retiring a note leaves its undrained entries and their
+//! credits alone. A refused bend changes neither the scope's value nor any entry. Panic
+//! and lifts leave the scope's value unchanged and need no credit.
+
+use std::sync::{
+    Arc,
+    atomic::{AtomicUsize, Ordering},
+};
 
 use synth_core::MidiChannel;
 use thiserror::Error;
@@ -55,12 +60,44 @@ use thiserror::Error;
 use super::{MixedIngressCommandId, MixedIngressQueueCount};
 use crate::{
     identity::NoteIdentity,
-    ingress::{IngressRefused, MixedBendWrite, RELEASE_GROUP_CAPACITY},
+    ingress::{IngressRefused, RELEASE_GROUP_CAPACITY},
     quantities::{Cents, EventCount},
     time::SampleTime,
 };
 
 mod hot;
+
+/// Bend credits audio hands back to the merger. Audio adds and the merger takes, with
+/// no lock, no allocation and no queue: the value never exceeds the budget `B`, because
+/// every credit is held by exactly one of the merger, an unserved command, an undrained
+/// entry or this counter.
+#[derive(Clone, Debug)]
+#[must_use]
+pub(super) struct MixedBendCreditReturn(Arc<AtomicUsize>);
+
+impl MixedBendCreditReturn {
+    /// Allocated off-thread at arm; both halves hold one clone.
+    pub(super) fn new() -> Self {
+        Self(Arc::new(AtomicUsize::new(0)))
+    }
+
+    /// Audio: return credits it no longer holds.
+    pub(super) fn give_back(&self, credits: MixedIngressQueueCount) {
+        if credits.as_usize() > 0 {
+            self.0.fetch_add(credits.as_usize(), Ordering::Release);
+        }
+    }
+
+    /// The merger: take every credit returned since the last take.
+    pub(super) fn take(&self) -> MixedIngressQueueCount {
+        MixedIngressQueueCount(self.0.swap(0, Ordering::Acquire))
+    }
+
+    /// Credits returned and not yet taken, for an invariant check.
+    pub(super) fn pending(&self) -> MixedIngressQueueCount {
+        MixedIngressQueueCount(self.0.load(Ordering::Acquire))
+    }
+}
 
 /// One bounded cell of the occurrence ledger and of the audio table.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd)]
@@ -264,11 +301,12 @@ pub(super) enum MixedHandleRefused {
     Exhausted,
 }
 
-/// The stamp a bend executed at and how it wrote each member, in cell order.
+/// The stamp a bend executed at and the members it wrote, in cell order. Each member
+/// took one new entry at that stamp.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) struct MixedBent {
     executed_at: SampleTime,
-    members: [Option<(LiveOccurrenceId, MixedBendWrite)>; RELEASE_GROUP_CAPACITY],
+    members: [Option<LiveOccurrenceId>; RELEASE_GROUP_CAPACITY],
 }
 
 impl MixedBent {
@@ -277,12 +315,12 @@ impl MixedBent {
         self.executed_at
     }
 
-    pub(super) fn written(&self) -> impl Iterator<Item = (LiveOccurrenceId, MixedBendWrite)> + '_ {
+    pub(super) fn written(&self) -> impl Iterator<Item = LiveOccurrenceId> + '_ {
         self.members.iter().flatten().copied()
     }
 }
 
-/// A bend's member writes, or a refusal that changed no value and no entry.
+/// A bend's members, or a refusal that changed no value and no entry.
 pub(super) type MixedBendResult = Result<MixedBent, MixedBendRefused>;
 
 /// Why the audio half refused a bend. The scope keeps its value and every entry stays.
@@ -292,17 +330,33 @@ pub(super) enum MixedBendRefused {
     BendTableFull,
     #[error("more live occurrences in the scope than one bend fanout carries")]
     GroupCapacity,
+    /// The command carried fewer credits than the scope has members. A typed bend
+    /// carries the live hold entitlement, which bounds the members, so only a forged
+    /// command reaches this.
+    #[error("{members} bend members exceed the command's {granted:?} credits")]
+    Credits {
+        granted: MixedIngressQueueCount,
+        members: usize,
+    },
     #[error(transparent)]
     Ingress(IngressRefused),
 }
 
-/// Why the merger could not submit a bend. The caller keeps its input.
+/// Why the merger could not submit a bend. The caller keeps its input and no command
+/// identity was minted.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Error)]
 pub(super) enum MixedBendSubmitError {
     #[error("no command-ring place for a bend")]
     Full,
     #[error("no prepared bend scope cell is free")]
     ScopeCapacity,
+    /// Too few bend credits are free; they return as audio serves earlier commands and
+    /// drains earlier bend entries.
+    #[error("a bend needs {needed:?} bend credits, {available:?} are free")]
+    Credits {
+        needed: MixedIngressQueueCount,
+        available: MixedIngressQueueCount,
+    },
     #[error("mixed ingress command identity is exhausted")]
     IdentityExhausted,
 }
@@ -313,6 +367,10 @@ pub(super) enum MixedBendSubmitError {
 pub(super) enum MixedOnsetSubmitError {
     #[error("no command-ring place for an onset and its reserved release")]
     Full,
+    /// The onset's scope may carry a non-zero bend, and no credit is free for the
+    /// inherited bend entry. An onset on an unbent scope needs none.
+    #[error("no bend credit is free for the onset's inherited bend")]
+    BendCredit,
     #[error("mixed ingress command identity is exhausted")]
     IdentityExhausted,
 }
@@ -711,8 +769,6 @@ pub(super) struct MixedOccurrenceTable {
     bends: Vec<Option<(MixedLiveScope, Cents)>>,
     released_after_refusal: EventCount,
     released_after_panic: EventCount,
-    bends_superseded: EventCount,
-    bends_applied_early: EventCount,
 }
 
 impl MixedOccurrenceTable {
@@ -725,20 +781,7 @@ impl MixedOccurrenceTable {
             bends: vec![None; scopes.as_usize()],
             released_after_refusal: EventCount::NONE,
             released_after_panic: EventCount::NONE,
-            bends_superseded: EventCount::NONE,
-            bends_applied_early: EventCount::NONE,
         }
-    }
-
-    /// Member values a later bend replaced in an undrained entry before publication.
-    pub(super) const fn bends_superseded(&self) -> EventCount {
-        self.bends_superseded
-    }
-
-    /// Member values that took an undrained entry's earlier stamp, and so apply before
-    /// their own bend's stamp.
-    pub(super) const fn bends_applied_early(&self) -> EventCount {
-        self.bends_applied_early
     }
 
     /// Scopes whose pedal is down, in cell order, for an off-thread teardown.

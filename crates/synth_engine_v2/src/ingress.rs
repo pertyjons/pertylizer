@@ -90,7 +90,7 @@ pub(crate) mod hot;
 mod offers;
 mod release;
 #[cfg(all(test, feature = "simulated-ingress"))]
-pub(crate) use offers::{MixedBendOrigin, MixedBendWrite};
+pub(crate) use offers::MixedBendOrigin;
 pub(crate) use release::RELEASE_GROUP_CAPACITY;
 pub use release::{ReleaseCause, ReleaseGroup};
 
@@ -195,12 +195,12 @@ pub enum IngressRefused {
     #[cfg(all(test, feature = "simulated-ingress"))]
     #[error("mixed channel bend is not a distinct set of at most eight live notes")]
     MixedBendFanout,
-    /// A private mixed bend member has neither an undrained bend entry nor a reserved
-    /// bend place. Every accepted mixed onset precharges one, so this is an accounting
-    /// defect, reported rather than dropped. Nothing was written.
+    /// Private mixed bend entries would exceed the bend-credit budget. The merger
+    /// reserves a credit for every entry before it mints the command, so this is an
+    /// accounting defect, reported rather than dropped. Nothing was written.
     #[cfg(all(test, feature = "simulated-ingress"))]
-    #[error("mixed bend member has no reserved bend place")]
-    MixedBendPlace,
+    #[error("mixed bend entries would exceed the bend-credit budget")]
+    MixedBendCredit,
     /// Invalid, oversized or deferred group; no obligation is changed.
     #[error("release group is not a distinct owned set of at most eight non-deferred notes")]
     ReleaseGroup,
@@ -336,15 +336,14 @@ pub enum IngressRefused {
 struct IngressEntry {
     event: TimedEvent,
     redeems_hold: bool,
-    /// A private mixed bend an onset inherited at its own stamp. Kept when a later bend
-    /// coalesces into the entry, so the entry's origin stays explicit.
+    /// A private mixed bend an onset inherited at its own stamp.
     #[cfg(all(test, feature = "simulated-ingress"))]
     inherited_bend: bool,
-    /// The entry occupies a live mixed note's precharged bend place. Draining it returns
-    /// the place to the note's reservation; retiring the note clears this first, so a
-    /// retired note's entry drains as an ordinary one and restores nothing.
+    /// The entry is a private mixed bend charged to the bend-credit budget rather than
+    /// to ordinary room. Draining it returns its credit, whether or not its note has
+    /// since retired.
     #[cfg(all(test, feature = "simulated-ingress"))]
-    bend_place: bool,
+    bend_credit: bool,
 }
 
 /// A note that took a voice by ADR-0058's fade-then-start and has not yet started, or has
@@ -536,14 +535,18 @@ pub struct PerformanceIngress {
     stolen_transferred: Vec<Option<NoteIdentity>>,
     /// Where the next transferred record goes when the list is full.
     stolen_next: usize,
-    /// Precharged bend places of live private mixed notes that hold no queued entry.
+    /// The private mixed owner's bend-credit budget `B`, withheld from ordinary traffic.
     ///
-    /// Each accepted mixed onset takes one bend place beside its note-on and hold, and an
-    /// inherited bend fills it at once. The queue keeps
-    /// `len + holds_outstanding + mixed_bend_reserved <= capacity`, so a member's bend
-    /// always has its entry. Retiring the note gives the place up.
+    /// For depth `C` and hold entitlement `H`, `B = max(H, C - 2H)` when `H > 0` and zero
+    /// otherwise; every other store has none. The queue keeps
+    /// `(len - mixed_bend_queued) + holds_outstanding + B <= capacity` and
+    /// `mixed_bend_queued <= B`, so ordinary entries and holds share `C - B` places and
+    /// each bend entry occupies one of the `B` withheld places.
     #[cfg(all(test, feature = "simulated-ingress"))]
-    mixed_bend_reserved: EventCount,
+    mixed_bend_budget: usize,
+    /// Undrained entries charged to the bend-credit budget.
+    #[cfg(all(test, feature = "simulated-ingress"))]
+    mixed_bend_queued: usize,
 }
 
 /// Why a store could not be prepared.
@@ -830,7 +833,13 @@ impl PerformanceIngress {
             stolen_transferred: vec![None; partition.saturating_mul(4)],
             stolen_next: 0,
             #[cfg(all(test, feature = "simulated-ingress"))]
-            mixed_bend_reserved: EventCount::NONE,
+            mixed_bend_budget: if mixed_rehearsal {
+                Self::mixed_bend_budget_for(depth, hold_entitlement)
+            } else {
+                0
+            },
+            #[cfg(all(test, feature = "simulated-ingress"))]
+            mixed_bend_queued: 0,
             producer,
             hold_entitlement,
             forward_event_horizon: profile.limits().events().forward_event_horizon(),
@@ -841,6 +850,18 @@ impl PerformanceIngress {
             adopted_by: None,
             counters: IngressCounters::default(),
         })
+    }
+
+    /// `B = max(H, C - 2H)` for depth `C` and `H > 0` holds, zero for none. The private
+    /// arm separately requires `C >= 2H + 1`; a shallower store gets `B = H` and is
+    /// refused there.
+    #[cfg(all(test, feature = "simulated-ingress"))]
+    fn mixed_bend_budget_for(depth: usize, holds: EventCount) -> usize {
+        let holds = holds.get() as usize;
+        if holds == 0 {
+            return 0;
+        }
+        holds.max(depth.saturating_sub(holds.saturating_mul(2)))
     }
 
     /// The producer this store belongs to.

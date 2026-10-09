@@ -11,57 +11,40 @@ use crate::{
     render::{EventEnvelope, EventPayload, NoteEdge, TimedEvent},
     time::{SampleTime, StreamEpoch, TimeSource},
 };
-/// How one member of a test-only mixed channel bend was written.
-#[cfg(all(test, feature = "simulated-ingress"))]
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum MixedBendWrite {
-    /// The member had no undrained bend entry: its reserved bend place took a new entry
-    /// at the bend's stamp.
-    Queued,
-    /// The member's undrained bend entry took the new value and the bend's stamp, which
-    /// lies in the entry's quantum and is no earlier than it. The value it carried is
-    /// superseded.
-    Coalesced,
-    /// The member's undrained bend entry took the new value but kept its own earlier
-    /// stamp, because it lies in an earlier quantum or is the bend an onset inherited at
-    /// its own stamp. The new value therefore applies at `applies_at`, before the bend's
-    /// own stamp, and the value the entry carried is superseded.
-    Early {
-        /// The entry's preserved stamp, at which the new value now applies.
-        applies_at: SampleTime,
-        /// Whether the entry was an onset's inherited bend or an ordinary bend.
-        origin: MixedBendOrigin,
-    },
-}
-
-/// What first wrote a test-only mixed bend entry. Coalescing never changes it.
+/// What wrote a test-only mixed bend entry.
 #[cfg(all(test, feature = "simulated-ingress"))]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum MixedBendOrigin {
     /// An onset on a bent scope wrote its scope's value at its own stamp.
     Inherited,
-    /// A channel bend wrote the entry at its own stamp.
+    /// A channel bend wrote the entry at its own execution stamp.
     Ordinary,
 }
 
-/// The test-only accounting of live mixed notes' bend places.
+/// The test-only accounting of the private mixed bend-credit budget.
 #[cfg(all(test, feature = "simulated-ingress"))]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) struct MixedBendPlaces {
-    /// Places held in reserve, counted in the queue invariant.
-    pub(crate) reserved: usize,
-    /// Undrained bend entries that occupy a live note's place.
+pub(crate) struct MixedBendBudget {
+    /// The budget `B` withheld from ordinary traffic.
+    pub(crate) budget: usize,
+    /// The store's count of undrained credit-charged entries.
     pub(crate) queued: usize,
+    /// Undrained entries actually marked as credit-charged, counted by walking the ring.
+    pub(crate) marked: usize,
 }
 
 impl PerformanceIngress {
     /// Test-only mixed offer through the owner's registered queue and live range.
     ///
-    /// An accepted onset takes its note-on entry, its release hold and one bend place
-    /// together. An onset whose scope's bend is not zero fills that place at once with
-    /// the bend, written at its own stamp right after its note-on; otherwise the place
-    /// is reserved. Room for all three is checked before the mint, so the onset and its
-    /// inherited bend are accepted or refused whole.
+    /// An accepted onset takes its note-on entry and its release hold from ordinary
+    /// room. An onset whose scope's bend is not zero also writes that bend right after
+    /// its note-on at its own stamp, charged to one bend credit the merger reserved for
+    /// it. Every check precedes the mint, so the onset and its inherited bend are
+    /// accepted or refused whole.
+    ///
+    /// The hold is checked before ordinary room. With `B = C - 2H`, ordinary room holds
+    /// exactly every hold's note-on and release, so when every hold is out the room is
+    /// short too and the hold is the binding cause.
     #[cfg(all(test, feature = "simulated-ingress"))]
     pub(crate) fn offer_mixed_note_on(
         &mut self,
@@ -73,18 +56,20 @@ impl PerformanceIngress {
         inherited: Option<Cents>,
     ) -> Result<NoteIdentity, IngressRefused> {
         self.admit(time)?;
-        // The note-on and the bend place, whether an inherited entry fills it or not.
-        if !self.room_for_entries(2, 1) {
-            self.counters.dropped_slot = self.counters.dropped_slot.saturating_add(1);
-            return Err(IngressRefused::Dropped {
-                resource: ExhaustedResource::Slot,
-            });
-        }
         if self.holds_outstanding >= self.hold_entitlement {
             self.counters.dropped_hold = self.counters.dropped_hold.saturating_add(1);
             return Err(IngressRefused::Dropped {
                 resource: ExhaustedResource::Hold,
             });
+        }
+        if !self.room_for_entries(1, 1) {
+            self.counters.dropped_slot = self.counters.dropped_slot.saturating_add(1);
+            return Err(IngressRefused::Dropped {
+                resource: ExhaustedResource::Slot,
+            });
+        }
+        if inherited.is_some() && !self.mixed_bend_credits_free(1) {
+            return Err(IngressRefused::MixedBendCredit);
         }
         let identity = match minter.mint_keyed(note, key) {
             Ok(identity) => identity,
@@ -111,23 +96,13 @@ impl PerformanceIngress {
             },
             false,
         );
-        match inherited {
-            Some(cents) => {
-                self.enqueue_entry(time, EventPayload::Bend { identity, cents }, false);
-                self.mark_mixed_bend_entry(MixedBendOrigin::Inherited);
-            }
-            None => {
-                self.mixed_bend_reserved = self
-                    .mixed_bend_reserved
-                    .checked_add(EventCount::measured(1))
-                    .unwrap_or(self.mixed_bend_reserved);
-            }
+        if let Some(cents) = inherited {
+            self.enqueue_mixed_bend(time, identity, cents, MixedBendOrigin::Inherited);
         }
         Ok(identity)
     }
 
-    /// An accepted release trades its reserved hold for a queue entry and retires the
-    /// note's bend place.
+    /// An accepted release trades its reserved hold for a queue entry.
     #[cfg(all(test, feature = "simulated-ingress"))]
     pub(crate) fn offer_mixed_note_off(
         &mut self,
@@ -144,7 +119,6 @@ impl PerformanceIngress {
         }
         self.holds_outstanding =
             EventCount::measured(self.holds_outstanding.get().saturating_sub(1));
-        self.retire_mixed_bend_place(identity);
         self.enqueue_entry(
             time,
             EventPayload::Note {
@@ -158,19 +132,12 @@ impl PerformanceIngress {
 
     /// Test-only channel bend for the mixed owner's live members, all of one scope.
     ///
-    /// Every member owns one bend place, so a bend never needs a free ordinary slot and
-    /// is never dropped for one. A member without an undrained bend entry writes a new
-    /// entry into its reserved place at the bend's stamp. A member with one coalesces
-    /// into it, superseding the value it carried:
-    ///
-    /// - an ordinary entry in the bend's quantum takes the new value and stamp. It stays
-    ///   inside its quantum, so the drain's head-first walk stays complete, and the
-    ///   renderer orders it by position;
-    /// - an inherited entry at the bend's own stamp takes the new value;
-    /// - any other entry, one in an earlier quantum or an onset's inherited bend at an
-    ///   earlier stamp, keeps its stamp and origin and takes the new value, which then
-    ///   applies early. Moving it later would reorder the queue or leave the onset
-    ///   unbent; the result names the stamp it applies at.
+    /// Each member takes a new entry at the bend's stamp, in member order and after
+    /// every earlier entry, charged to one bend credit the merger reserved before it
+    /// minted the command. No earlier entry is rewritten, coalesced or moved, so every
+    /// value applies at its own stamp. The budget invariant gives each entry a ring slot:
+    /// `(len - queued) + holds + B <= C` with `queued + members <= B` leaves
+    /// `len + members <= C - holds`.
     ///
     /// Every check precedes the first write, so a refusal changes nothing, and an
     /// accepted bend moves the order fence to its stamp even when it has no member: a
@@ -182,14 +149,12 @@ impl PerformanceIngress {
         time: SampleTime,
         members: &[NoteIdentity],
         cents: Cents,
-    ) -> Result<[Option<MixedBendWrite>; RELEASE_GROUP_CAPACITY], IngressRefused> {
+    ) -> Result<(), IngressRefused> {
         self.admit(time)?;
-        let mut writes = [None; RELEASE_GROUP_CAPACITY];
-        if members.len() > writes.len() {
+        if members.len() > RELEASE_GROUP_CAPACITY {
             return Err(IngressRefused::MixedBendFanout);
         }
-        let mut placed = 0_u32;
-        for (index, (identity, write)) in members.iter().copied().zip(&mut writes).enumerate() {
+        for (index, identity) in members.iter().copied().enumerate() {
             if members
                 .get(..index)
                 .is_some_and(|seen| seen.contains(&identity))
@@ -201,130 +166,69 @@ impl PerformanceIngress {
                     self.counters.orphan_expressions.saturating_add(1);
                 return Err(IngressRefused::OrphanExpression { identity });
             }
-            *write = Some(match self.queued_mixed_bend(identity) {
-                Some((_, queued, origin))
-                    if queued == time
-                        || (origin == MixedBendOrigin::Ordinary
-                            && queued.quantum_index() == time.quantum_index()) =>
-                {
-                    MixedBendWrite::Coalesced
-                }
-                Some((_, applies_at, origin)) => MixedBendWrite::Early { applies_at, origin },
-                None => {
-                    placed += 1;
-                    MixedBendWrite::Queued
-                }
-            });
         }
-        if placed > self.mixed_bend_reserved.get() {
-            return Err(IngressRefused::MixedBendPlace);
+        if !self.mixed_bend_credits_free(members.len()) {
+            return Err(IngressRefused::MixedBendCredit);
         }
-        for (identity, write) in members.iter().copied().zip(writes) {
-            let payload = EventPayload::Bend { identity, cents };
-            let stamp = match write {
-                Some(MixedBendWrite::Coalesced) => time,
-                Some(MixedBendWrite::Early { applies_at, .. }) => applies_at,
-                Some(MixedBendWrite::Queued) => {
-                    self.mixed_bend_reserved =
-                        EventCount::measured(self.mixed_bend_reserved.get().saturating_sub(1));
-                    self.enqueue_entry(time, payload, false);
-                    self.mark_mixed_bend_entry(MixedBendOrigin::Ordinary);
-                    continue;
-                }
-                None => continue,
-            };
-            let event = TimedEvent::new(self.envelope(stamp), payload);
-            if let Some((slot, _, _)) = self.queued_mixed_bend(identity)
-                && let Some(Some(entry)) = self.entries.get_mut(slot)
-            {
-                entry.event = event;
-            }
+        for identity in members.iter().copied() {
+            self.enqueue_mixed_bend(time, identity, cents, MixedBendOrigin::Ordinary);
         }
         self.last_accepted = Some(match self.last_accepted {
             Some(last) if last > time => last,
             _ => time,
         });
-        Ok(writes)
+        Ok(())
     }
 
-    /// Mark the entry just written as a live note's bend place, with its origin.
+    /// Whether `entries` more bend entries fit the bend-credit budget.
     #[cfg(all(test, feature = "simulated-ingress"))]
-    fn mark_mixed_bend_entry(&mut self, origin: MixedBendOrigin) {
-        let slot = if self.head == 0 {
-            self.entries.len().saturating_sub(1)
-        } else {
-            self.head - 1
-        };
+    fn mixed_bend_credits_free(&self, entries: usize) -> bool {
+        self.mixed_bend_queued.saturating_add(entries) <= self.mixed_bend_budget
+    }
+
+    /// Append one credit-charged bend entry. The caller has checked the budget.
+    #[cfg(all(test, feature = "simulated-ingress"))]
+    fn enqueue_mixed_bend(
+        &mut self,
+        time: SampleTime,
+        identity: NoteIdentity,
+        cents: Cents,
+        origin: MixedBendOrigin,
+    ) {
+        let slot = self.head;
+        self.enqueue_entry(time, EventPayload::Bend { identity, cents }, false);
         if let Some(Some(entry)) = self.entries.get_mut(slot) {
-            entry.bend_place = true;
+            entry.bend_credit = true;
             entry.inherited_bend = origin == MixedBendOrigin::Inherited;
         }
+        self.mixed_bend_queued = self.mixed_bend_queued.saturating_add(1);
     }
 
-    /// Give up a retiring mixed note's bend place. An undrained entry keeps its value
-    /// and stamp but drains as an ordinary entry, so it restores no reservation; a place
-    /// in reserve is released at once. The caller has just released `identity` in the
-    /// minter, which happens once per occurrence.
+    /// The private mixed owner's bend-credit budget `B`.
     #[cfg(all(test, feature = "simulated-ingress"))]
-    pub(super) fn retire_mixed_bend_place(&mut self, identity: NoteIdentity) {
-        if let Some((slot, _, _)) = self.queued_mixed_bend(identity) {
-            if let Some(Some(entry)) = self.entries.get_mut(slot) {
-                entry.bend_place = false;
-            }
-            return;
-        }
-        // Every live mixed note owns a place, so this cannot underflow; the tests check
-        // `reserved + queued places == holds` after every step instead of asserting here.
-        self.mixed_bend_reserved =
-            EventCount::measured(self.mixed_bend_reserved.get().saturating_sub(1));
+    pub(crate) const fn mixed_bend_budget(&self) -> usize {
+        self.mixed_bend_budget
     }
 
-    /// The ring slot, stamp and origin of the undrained entry holding `identity`'s bend
-    /// place. A live note has at most one.
+    /// Undrained entries charged to the bend-credit budget. The drain only lowers it.
     #[cfg(all(test, feature = "simulated-ingress"))]
-    fn queued_mixed_bend(
-        &self,
-        identity: NoteIdentity,
-    ) -> Option<(usize, SampleTime, MixedBendOrigin)> {
+    pub(crate) const fn mixed_bend_queued(&self) -> usize {
+        self.mixed_bend_queued
+    }
+
+    /// The budget, its queued count and the marked entries, for an invariant check.
+    #[cfg(all(test, feature = "simulated-ingress"))]
+    pub(crate) fn mixed_bend_budget_for_test(&self) -> MixedBendBudget {
         let capacity = self.entries.len();
         let mut cursor = self.tail;
-        for _ in 0..self.len {
-            if let Some(Some(entry)) = self.entries.get(cursor)
-                && entry.bend_place
-                && let EventPayload::Bend {
-                    identity: queued, ..
-                } = entry.event.payload()
-                && queued == identity
-            {
-                let origin = if entry.inherited_bend {
-                    MixedBendOrigin::Inherited
-                } else {
-                    MixedBendOrigin::Ordinary
-                };
-                return Some((cursor, entry.event.envelope().time(), origin));
-            }
-            cursor = if cursor + 1 >= capacity {
-                0
-            } else {
-                cursor + 1
-            };
-        }
-        None
-    }
-
-    /// Reserved bend places, and undrained entries holding one, for an invariant check.
-    #[cfg(all(test, feature = "simulated-ingress"))]
-    pub(crate) fn mixed_bend_places_for_test(&self) -> MixedBendPlaces {
-        let capacity = self.entries.len();
-        let mut cursor = self.tail;
-        let mut queued = 0;
+        let mut marked = 0;
         for _ in 0..self.len {
             if self
                 .entries
                 .get(cursor)
-                .is_some_and(|entry| entry.is_some_and(|entry| entry.bend_place))
+                .is_some_and(|entry| entry.is_some_and(|entry| entry.bend_credit))
             {
-                queued += 1;
+                marked += 1;
             }
             cursor = if cursor + 1 >= capacity {
                 0
@@ -332,19 +236,19 @@ impl PerformanceIngress {
                 cursor + 1
             };
         }
-        MixedBendPlaces {
-            reserved: self.mixed_bend_reserved.get() as usize,
-            queued,
+        MixedBendBudget {
+            budget: self.mixed_bend_budget,
+            queued: self.mixed_bend_queued,
+            marked,
         }
     }
 
-    /// Copy every undrained bend entry in queue order into prepared storage: its event,
-    /// its origin and whether it still holds a live note's place. `None` when the
-    /// storage is too short.
+    /// Copy every undrained bend entry in queue order into prepared storage, with its
+    /// origin. `None` when the storage is too short.
     #[cfg(all(test, feature = "simulated-ingress"))]
     pub(crate) fn copy_mixed_bend_entries_for_test(
         &self,
-        destination: &mut [Option<(TimedEvent, MixedBendOrigin, bool)>],
+        destination: &mut [Option<(TimedEvent, MixedBendOrigin)>],
     ) -> Option<usize> {
         let capacity = self.entries.len();
         let mut cursor = self.tail;
@@ -358,7 +262,7 @@ impl PerformanceIngress {
                 } else {
                     MixedBendOrigin::Ordinary
                 };
-                *destination.get_mut(copied)? = Some((entry.event, origin, entry.bend_place));
+                *destination.get_mut(copied)? = Some((entry.event, origin));
                 copied += 1;
             }
             cursor = if cursor + 1 >= capacity {
@@ -404,17 +308,21 @@ impl PerformanceIngress {
             .iter()
             .filter(|slot| slot.is_some_and(|record| record.bend.is_some()))
             .count();
-        let needed = self
-            .len
+        // Credit-charged mixed bend entries occupy the withheld budget, not ordinary room.
+        #[cfg(all(test, feature = "simulated-ingress"))]
+        let ordinary = self.len.saturating_sub(self.mixed_bend_queued);
+        #[cfg(not(all(test, feature = "simulated-ingress")))]
+        let ordinary = self.len;
+        let needed = ordinary
             .saturating_add(unstarted.saturating_mul(2))
             .saturating_add(waiting_bends)
             .saturating_add(self.expression_len)
             .saturating_add(self.holds_outstanding.get() as usize)
             .saturating_add(entries)
             .saturating_add(holds);
-        // Live mixed notes' bend places in reserve keep their room like holds do.
+        // The private mixed bend-credit budget is withheld from ordinary traffic.
         #[cfg(all(test, feature = "simulated-ingress"))]
-        let needed = needed.saturating_add(self.mixed_bend_reserved.get() as usize);
+        let needed = needed.saturating_add(self.mixed_bend_budget);
         needed <= self.entries.len()
     }
 
@@ -1080,7 +988,7 @@ impl PerformanceIngress {
             #[cfg(all(test, feature = "simulated-ingress"))]
             inherited_bend: false,
             #[cfg(all(test, feature = "simulated-ingress"))]
-            bend_place: false,
+            bend_credit: false,
         };
         if let Some(slot) = self.entries.get_mut(self.head) {
             *slot = Some(entry);

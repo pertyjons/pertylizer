@@ -26,10 +26,47 @@ fn armed(compiled_first: bool) -> (MixedOneShotControl, MixedOneShotAudio) {
         .expect("private arm")
 }
 
-#[test]
-fn shallow_ingress_profiles_refuse_arm_and_preserve_both_inputs() {
+/// The mixed harness profile with ingress depth `depth` and everything else unchanged.
+fn profile_with_ingress_depth(depth: u32) -> crate::profile::HostProfile {
     use crate::profile::{EventLimits, HostProfile, QueueCapacities, RenderLimits};
 
+    let original = history_tests::mixed_profile();
+    let limits = original.limits();
+    let events = limits.events();
+    let queues = events.queues();
+    let queues = QueueCapacities::new(
+        EventCount::measured(depth),
+        queues.command_queue_capacity(),
+        queues.event_egress_capacity(),
+    )
+    .expect("valid shallow queue");
+    let events = EventLimits::new(
+        events.max_events_per_quantum(),
+        events.max_note_expansion_per_tick(),
+        events.max_scheduled_events_in_flight(),
+        events.forward_event_horizon(),
+        queues,
+        events.shares(),
+    )
+    .expect("valid shallow event profile");
+    let limits = RenderLimits::new(
+        limits.stream(),
+        limits.graph(),
+        limits.voices(),
+        events,
+        limits.observation(),
+        limits.mixing(),
+        limits.memory(),
+        limits.script(),
+        limits.recording(),
+        limits.cost(),
+    )
+    .expect("valid limits");
+    HostProfile::new(original.capabilities(), limits).expect("valid profile")
+}
+
+#[test]
+fn shallow_ingress_profiles_refuse_arm_and_preserve_both_inputs() {
     for (holds, depth, admitted) in [
         (1, 1, false),
         (1, 2, false),
@@ -38,38 +75,7 @@ fn shallow_ingress_profiles_refuse_arm_and_preserve_both_inputs() {
         (2, 5, true),
     ] {
         let original = history_tests::mixed_profile();
-        let limits = original.limits();
-        let events = limits.events();
-        let queues = events.queues();
-        let queues = QueueCapacities::new(
-            EventCount::measured(depth),
-            queues.command_queue_capacity(),
-            queues.event_egress_capacity(),
-        )
-        .expect("valid shallow queue");
-        let events = EventLimits::new(
-            events.max_events_per_quantum(),
-            events.max_note_expansion_per_tick(),
-            events.max_scheduled_events_in_flight(),
-            events.forward_event_horizon(),
-            queues,
-            events.shares(),
-        )
-        .expect("valid shallow event profile");
-        let limits = RenderLimits::new(
-            limits.stream(),
-            limits.graph(),
-            limits.voices(),
-            events,
-            limits.observation(),
-            limits.mixing(),
-            limits.memory(),
-            limits.script(),
-            limits.recording(),
-            limits.cost(),
-        )
-        .expect("valid limits");
-        let profile = HostProfile::new(original.capabilities(), limits).expect("valid profile");
+        let profile = profile_with_ingress_depth(depth);
         let (prepared, candidate) = if holds == 1 {
             history_tests::one_shot_with_one_live_hold()
         } else {
@@ -100,10 +106,10 @@ fn shallow_ingress_profiles_refuse_arm_and_preserve_both_inputs() {
         } else {
             let refused = prepared
                 .arm_one_shot(candidate, &profile)
-                .expect_err("shallow queue cannot reserve onset, release and bend");
+                .expect_err("shallow queue cannot withhold bend credits and realize every hold");
             assert_eq!(
                 refused.reason,
-                MixedOneShotArmError::BendPlaceCapacity {
+                MixedOneShotArmError::BendCreditCapacity {
                     capacity: EventCount::measured(depth),
                     holds: EventCount::measured(holds),
                     required: EventCount::measured(2 * holds + 1),
@@ -218,27 +224,40 @@ fn queued_edges(audio: &MixedOneShotAudio) -> Vec<(NoteIdentity, bool)> {
         .collect()
 }
 
-/// Check the queue's bend-place accounting and return its free units: every live note
-/// owns exactly one hold and one bend place, held in reserve or by one undrained entry,
-/// and `len + holds + reserved bend places <= capacity`.
+/// Check the queue's bend-credit accounting and return its free ordinary units: every
+/// live note owns one hold, the marked bend entries match the store's count and fit the
+/// budget, and `(len - queued bends) + holds + budget <= capacity`.
 fn free_units(audio: &MixedOneShotAudio) -> usize {
     let ingress = &audio.test_ingress;
-    let places = ingress.mixed_bend_places_for_test();
+    let budget = ingress.mixed_bend_budget_for_test();
     let holds = ingress.holds_outstanding().get() as usize;
     assert_eq!(
         audio.audio.live_minter.live_identities_for_test().len(),
         holds,
         "one hold per live note"
     );
-    assert_eq!(
-        places.reserved + places.queued,
-        holds,
-        "one bend place per live note: {places:?}"
-    );
-    let used = ingress.ring_len_for_test() + holds + places.reserved;
+    assert_eq!(budget.queued, budget.marked, "bend count: {budget:?}");
+    assert!(budget.queued <= budget.budget, "bend budget: {budget:?}");
+    let ordinary = ingress.ring_len_for_test() - budget.queued;
+    let used = ordinary + holds + budget.budget;
     let capacity = ingress.queue_capacity_for_test();
     assert!(used <= capacity, "{used} units exceed capacity {capacity}");
     capacity - used
+}
+
+/// With no command in flight, every bend credit is free at the merger, waiting in
+/// audio's return counter, or held by an undrained entry. Returns the merger's free
+/// credits once it takes the returned ones, without taking them.
+fn settled_credits(control: &MixedOneShotControl, audio: &MixedOneShotAudio) -> usize {
+    let budget = audio.test_ingress.mixed_bend_budget_for_test();
+    let free = control.bend_credits_free.as_usize();
+    let returned = control.bend_credit_return.pending().as_usize();
+    assert_eq!(
+        free + returned + budget.queued,
+        budget.budget,
+        "credits: {free} free, {returned} returned, {budget:?}"
+    );
+    free + returned
 }
 
 fn accepted(outcome: MixedIngressOutcome) -> NoteIdentity {
@@ -293,14 +312,18 @@ fn a_refused_first_onset_never_releases_an_accepted_same_key_second_onset() {
     };
     for compiled_first in [true, false] {
         for expected in [hold, order] {
-            let (mut control, audio) = armed(compiled_first);
-            // Every command is submitted before the first service and the first
-            // collection, so the merger knows no result when it names a release.
+            let (mut control, mut audio) = armed(compiled_first);
+            // Every command from the refused onset on is submitted before its service
+            // and collection, so the merger knows no result when it names a release.
             let (refused, second, refused_release_at) = if expected == hold {
                 // Two live holds: the third onset is refused, then one release
-                // returns a hold and the same key's next onset is accepted.
+                // returns a hold and the same key's next onset is accepted. The two
+                // holders' note-ons drain first: ordinary room is `C - B = 2H`.
                 let first = onset(&mut control, 140, 61);
                 let _peer = onset(&mut control, 140, 62);
+                audio.service_test_ingress_queue();
+                let _held = collect_all(&mut control);
+                sustain::render(&mut audio);
                 let refused = onset(&mut control, 140, 60);
                 release(&mut control, first, 140);
                 let second = onset(&mut control, 141, 60);
@@ -380,6 +403,8 @@ fn a_cell_is_reused_only_after_retired_and_a_stale_generation_refuses() {
     let first = onset(&mut control, 140, 60);
     release(&mut control, first, 141);
     let mut audio = service_without_allocation(audio);
+    // The pair drains, leaving ordinary room for both later onsets.
+    sustain::render(&mut audio);
     // Audio has retired the cell, but the merger has not collected `Retired`.
     let unacknowledged = onset(&mut control, 142, 61);
     assert_ne!(unacknowledged.cell, first.cell);

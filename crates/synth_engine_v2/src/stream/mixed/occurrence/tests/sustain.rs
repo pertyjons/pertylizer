@@ -504,11 +504,26 @@ fn a_sustained_hold_refuses_new_onsets_until_the_lift_redeems_it() {
     // Both keys are up, but the pedal keeps both holds: this onset is refused.
     let starved = onset_in(&mut control, s, 112, 63);
     pedal(&mut control, s, 113, false);
+    let mut audio = service_without_allocation(audio);
+    let mut results = collect_all(&mut control);
+    let (ifirst, isecond) = (
+        accepted(outcome_for(&results, onset_request_in(first, s, 110, 61))),
+        accepted(outcome_for(&results, onset_request_in(second, s, 110, 62))),
+    );
+    assert_eq!(
+        queued(&audio),
+        vec![
+            Queued::On(ifirst),
+            Queued::On(isecond),
+            Queued::Group(vec![ifirst, isecond]),
+        ]
+    );
+    // The lift returned both holds; ordinary room, `C - B = 2H`, frees as the two
+    // note-ons and the group drain.
+    render(&mut audio);
     let after = onset_in(&mut control, s, 114, 60);
     let audio = service_without_allocation(audio);
-    let results = collect_all(&mut control);
-    let ifirst = accepted(outcome_for(&results, onset_request_in(first, s, 110, 61)));
-    let isecond = accepted(outcome_for(&results, onset_request_in(second, s, 110, 62)));
+    results.extend(collect_all(&mut control));
     assert_eq!(
         outcome_for(&results, onset_request_in(refused, s, 110, 60)),
         MixedIngressOutcome::Onset(Err(hold))
@@ -530,15 +545,7 @@ fn a_sustained_hold_refuses_new_onsets_until_the_lift_redeems_it() {
     );
     let iafter = accepted(outcome_for(&results, onset_request_in(after, s, 114, 60)));
     assert_eq!(holds(&audio), 1);
-    assert_eq!(
-        queued(&audio),
-        vec![
-            Queued::On(ifirst),
-            Queued::On(isecond),
-            Queued::Group(vec![ifirst, isecond]),
-            Queued::On(iafter),
-        ]
-    );
+    assert_eq!(queued(&audio), vec![Queued::On(iafter)]);
 }
 
 #[test]
@@ -704,21 +711,10 @@ fn a_lift_needs_no_ingress_place_when_the_queue_is_full_and_every_hold_is_out() 
     let (s, other) = (scope(1, 1), scope(2, 1));
     let (mut control, mut audio) = armed_with(true, 6);
     let depth = audio.test_ingress.queue_capacity_for_test();
-    let pairs = (depth - 18) / 2;
-    // Ordinary onset/release pairs on an unpedalled scope fill the ingress queue up to
-    // the six sustained notes' entries, holds and bend places.
-    for raw in 0..pairs {
-        let raw = u8::try_from(raw).expect("small key");
-        let note = onset_in(&mut control, other, 100, raw);
-        release(&mut control, note, 100);
-        audio.service_test_ingress_queue();
-        for result in collect_all(&mut control) {
-            assert!(matches!(
-                result.outcome,
-                MixedIngressOutcome::Onset(Ok(_)) | MixedIngressOutcome::Release(Ok(_))
-            ));
-        }
-    }
+    let budget = audio.test_ingress.mixed_bend_budget();
+    // The bend-credit budget leaves exactly the six notes' entries and holds as ordinary
+    // room: `B = C - 2H`.
+    assert_eq!(depth - budget, 12);
     pedal(&mut control, s, 110, true);
     let mut notes = Vec::new();
     for raw in 0..6 {
@@ -730,13 +726,13 @@ fn a_lift_needs_no_ingress_place_when_the_queue_is_full_and_every_hold_is_out() 
     audio.service_test_ingress_queue();
     let results = collect_all(&mut control);
     assert_eq!(holds(&audio), 6);
-    assert_eq!(audio.test_ingress.len(), depth - 12);
-    // Slot refusal: entries, outstanding holds and bend places already fill the queue.
+    assert_eq!(audio.test_ingress.len(), 6);
+    // Entries and outstanding holds fill ordinary room, and every hold is out.
     assert_eq!(free_units(&audio), 0);
     assert_eq!(
         outcome_for(&results, onset_request_in(starved, other, 122, 100)),
         MixedIngressOutcome::Onset(Err(IngressRefused::Dropped {
-            resource: ExhaustedResource::Slot,
+            resource: ExhaustedResource::Hold,
         }))
     );
     let identities = notes
@@ -761,10 +757,10 @@ fn a_lift_needs_no_ingress_place_when_the_queue_is_full_and_every_hold_is_out() 
         )),
         identities.iter().map(|(note, _)| *note).collect::<Vec<_>>()
     );
-    // Six reservations became one group entry, and the six bend places are retired.
+    // Six reservations became one group entry.
     assert_eq!(holds(&audio), 0);
-    assert_eq!(audio.test_ingress.len(), depth - 11);
-    assert_eq!(free_units(&audio), 11);
+    assert_eq!(audio.test_ingress.len(), 7);
+    assert_eq!(free_units(&audio), 5);
     assert_eq!(
         queued(&audio).last(),
         Some(&Queued::Group(

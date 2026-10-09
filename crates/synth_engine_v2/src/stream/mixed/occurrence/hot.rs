@@ -7,15 +7,19 @@
 //! scope's pedal is down offers nothing and keeps the hold; the scope's lift ends every
 //! sustained member as one release group. Panic ends every sounding and sustained
 //! occurrence as one release group and leaves a tombstone for each key still down. A
-//! bend writes every sounding and sustained member of its scope into the member's
-//! precharged bend place or coalesces into its undrained entry, and an onset inherits
-//! its scope's non-zero bend whole. It works in prepared storage only: it does not
+//! bend appends one entry per sounding and sustained member of its scope at its
+//! execution stamp, and an onset inherits its scope's non-zero bend whole. Each command
+//! spends at most the bend credits it carries; the rest return to the merger at once
+//! through the lock-free credit counter. It works in prepared storage only: it does not
 //! allocate, lock, perform I/O, log or panic.
 
 use ringbuf::traits::{Consumer, Producer};
 
 use super::{
-    super::{MixedIngressOutcome, MixedIngressRequest, MixedIngressResult, MixedOneShotAudio},
+    super::{
+        MixedIngressOutcome, MixedIngressQueueCount, MixedIngressRequest, MixedIngressResult,
+        MixedOneShotAudio,
+    },
     CellUse, LiveOccurrenceCell, LiveOccurrenceGeneration, LiveOccurrenceId, MixedBendRefused,
     MixedBendResult, MixedBent, MixedHandleRefused, MixedLiftResult, MixedLifted, MixedLiveScope,
     MixedOccurrenceState, MixedOccurrenceTable, MixedPanicEnd, MixedPanicRefused, MixedPanicResult,
@@ -23,7 +27,7 @@ use super::{
 };
 use crate::{
     identity::NoteIdentity,
-    ingress::{IngressRefused, MixedBendWrite, RELEASE_GROUP_CAPACITY, ReleaseCause},
+    ingress::{IngressRefused, RELEASE_GROUP_CAPACITY, ReleaseCause},
     quantities::{Cents, EventCount, KeyIdentity, NoteVelocity},
     time::SampleTime,
 };
@@ -179,20 +183,6 @@ impl MixedOccurrenceTable {
         }
     }
 
-    fn count_superseded_bend(&mut self) {
-        self.bends_superseded = self
-            .bends_superseded
-            .checked_add(EventCount::measured(1))
-            .unwrap_or(self.bends_superseded);
-    }
-
-    fn count_early_bend(&mut self) {
-        self.bends_applied_early = self
-            .bends_applied_early
-            .checked_add(EventCount::measured(1))
-            .unwrap_or(self.bends_applied_early);
-    }
-
     fn count_release_after_refusal(&mut self) {
         self.released_after_refusal = self
             .released_after_refusal
@@ -218,7 +208,9 @@ impl MixedOneShotAudio {
             return;
         }
         while let Some(command) = self.ingress_commands.0.try_pop() {
-            let outcome = match command.request {
+            let granted = command.bend_credits;
+            let none = MixedIngressQueueCount::NONE;
+            let (outcome, spent) = match command.request {
                 MixedIngressRequest::Onset {
                     occurrence,
                     scope,
@@ -226,26 +218,44 @@ impl MixedOneShotAudio {
                     key,
                     velocity,
                     ..
-                } => self.service_onset(occurrence, scope, at, key, velocity),
+                } => self.service_onset(occurrence, scope, at, key, velocity, granted),
                 MixedIngressRequest::Release { occurrence, at, .. } => {
-                    self.service_release(occurrence, at)
+                    (self.service_release(occurrence, at), none)
                 }
                 MixedIngressRequest::Pedal {
                     scope, down: true, ..
-                } => MixedIngressOutcome::PedalDown(self.occurrences.press(scope)),
+                } => (
+                    MixedIngressOutcome::PedalDown(self.occurrences.press(scope)),
+                    none,
+                ),
                 MixedIngressRequest::Pedal {
                     scope,
                     at,
                     down: false,
                     ..
-                } => MixedIngressOutcome::Lift(self.service_lift(scope, at)),
+                } => (
+                    MixedIngressOutcome::Lift(self.service_lift(scope, at)),
+                    none,
+                ),
                 MixedIngressRequest::Panic { at, .. } => {
-                    MixedIngressOutcome::Panic(self.service_panic(at))
+                    (MixedIngressOutcome::Panic(self.service_panic(at)), none)
                 }
                 MixedIngressRequest::Bend {
                     scope, at, cents, ..
-                } => MixedIngressOutcome::Bend(self.service_bend(scope, at, cents)),
+                } => {
+                    let bent = self.service_bend(scope, at, cents, granted);
+                    let spent = bent.as_ref().map_or(0, |bent| bent.written().count());
+                    (
+                        MixedIngressOutcome::Bend(bent),
+                        MixedIngressQueueCount(spent),
+                    )
+                }
             };
+            // Unused credits return at once; each written one returns when its entry
+            // drains.
+            self.bend_credit_return.give_back(MixedIngressQueueCount(
+                granted.as_usize().saturating_sub(spent.as_usize()),
+            ));
             let result = MixedIngressResult {
                 id: command.id,
                 request: command.request,
@@ -259,8 +269,9 @@ impl MixedOneShotAudio {
     }
 
     /// An onset occupies its handle's cell with the identity or the first refusal. On a
-    /// scope whose bend is not zero it is offered with that bend, and refused whole when
-    /// the two do not fit together.
+    /// scope whose bend is not zero it is offered with that bend, charged to the credit
+    /// its command carries, and refused whole when the two do not fit together. Returns
+    /// the outcome and the credits it spent.
     fn service_onset(
         &mut self,
         occurrence: LiveOccurrenceId,
@@ -268,21 +279,34 @@ impl MixedOneShotAudio {
         at: SampleTime,
         key: KeyIdentity,
         velocity: NoteVelocity,
-    ) -> MixedIngressOutcome {
+        granted: MixedIngressQueueCount,
+    ) -> (MixedIngressOutcome, MixedIngressQueueCount) {
+        let none = MixedIngressQueueCount::NONE;
         let index = match self.occurrences.vacant_for_onset(occurrence) {
             Ok(index) => index,
-            Err(refused) => return MixedIngressOutcome::Handle(refused),
+            Err(refused) => return (MixedIngressOutcome::Handle(refused), none),
         };
         let bend = self.occurrences.bend_of(scope);
         let inherited = (bend != Cents::ZERO).then_some(bend);
-        let outcome = self.offer_test_note_on_inheriting(at, key, velocity, inherited);
+        // The merger reserves a credit whenever the scope may be bent, so only a forged
+        // onset reaches a bent scope without one.
+        let outcome = if inherited.is_some() && granted == none {
+            Err(IngressRefused::MixedBendCredit)
+        } else {
+            self.offer_test_note_on_inheriting(at, key, velocity, inherited)
+        };
+        let spent = if outcome.is_ok() && inherited.is_some() {
+            MixedIngressQueueCount(1)
+        } else {
+            none
+        };
         let state = match outcome {
             Ok(identity) => MixedOccurrenceState::Sounding(identity),
             Err(reason) => MixedOccurrenceState::Refused(reason),
         };
         self.occurrences
             .occupy(index, occurrence.generation, Occupant { scope, state });
-        MixedIngressOutcome::Onset(outcome)
+        (MixedIngressOutcome::Onset(outcome), spent)
     }
 
     /// A release ends its sounding occurrence or is consumed by the onset's tombstone,
@@ -451,16 +475,18 @@ impl MixedOneShotAudio {
         Ok(panicked)
     }
 
-    /// A bend writes every sounding and sustained occurrence of its scope, in cell order,
-    /// then becomes the scope's value for later onsets. Refusal and Panic tombstones are
-    /// not members. Each member's precharged place guarantees its write, so no bend is
-    /// refused for a queue slot. The offer executes at the later of its nominal stamp
-    /// and the ingress order fence. A refused bend changes neither the value nor any entry.
+    /// A bend appends one entry for every sounding and sustained occurrence of its scope,
+    /// in cell order, then becomes the scope's value for later onsets. Refusal and Panic
+    /// tombstones are not members. Each entry spends one of the credits the command
+    /// carries, so no bend is refused for a queue slot. The offer executes at the later
+    /// of its nominal stamp and the ingress order fence. A refused bend changes neither
+    /// the value nor any entry.
     fn service_bend(
         &mut self,
         scope: MixedLiveScope,
         at: SampleTime,
         cents: Cents,
+        granted: MixedIngressQueueCount,
     ) -> MixedBendResult {
         if !self.occurrences.can_bend(scope, cents) {
             return Err(MixedBendRefused::BendTableFull);
@@ -490,8 +516,14 @@ impl MixedOneShotAudio {
             *member = Some((occurrence, identity));
             count += 1;
         }
+        if count > granted.as_usize() {
+            return Err(MixedBendRefused::Credits {
+                granted,
+                members: count,
+            });
+        }
         let executed_at = self.test_ingress.mixed_execution_stamp(at);
-        let writes = match members.first().copied().flatten() {
+        let offered = match members.first().copied().flatten() {
             Some((_, first)) => {
                 let mut identities = [first; RELEASE_GROUP_CAPACITY];
                 for (identity, member) in identities.iter_mut().zip(members.iter().flatten()) {
@@ -504,26 +536,15 @@ impl MixedOneShotAudio {
             }
             // A bend with no member still sets the value and the order fence.
             None => self.offer_test_bend(executed_at, &[], cents),
-        }
-        .map_err(MixedBendRefused::Ingress)?;
+        };
+        offered.map_err(MixedBendRefused::Ingress)?;
         self.occurrences.set_bend(scope, cents);
         let mut bent = MixedBent {
             executed_at,
             members: [None; RELEASE_GROUP_CAPACITY],
         };
-        for ((written, member), write) in bent.members.iter_mut().zip(members).zip(writes) {
-            let (Some((occurrence, _)), Some(write)) = (member, write) else {
-                continue;
-            };
-            match write {
-                MixedBendWrite::Queued => {}
-                MixedBendWrite::Coalesced => self.occurrences.count_superseded_bend(),
-                MixedBendWrite::Early { .. } => {
-                    self.occurrences.count_superseded_bend();
-                    self.occurrences.count_early_bend();
-                }
-            }
-            *written = Some((occurrence, write));
+        for (written, member) in bent.members.iter_mut().zip(members) {
+            *written = member.map(|(occurrence, _)| occurrence);
         }
         Ok(bent)
     }
@@ -563,13 +584,13 @@ impl MixedOneShotAudio {
         )
     }
 
-    /// A bend's live members take their writes together, or none does.
+    /// A bend's live members take their entries together, or none does.
     fn offer_test_bend(
         &mut self,
         at: SampleTime,
         identities: &[NoteIdentity],
         cents: Cents,
-    ) -> Result<[Option<MixedBendWrite>; RELEASE_GROUP_CAPACITY], IngressRefused> {
+    ) -> Result<(), IngressRefused> {
         if self.fault.is_some() || self.audio.renderer.diagnostics().needs_reprepare() {
             return Err(IngressRefused::TerminalOwner);
         }

@@ -307,22 +307,11 @@ fn panic_takes_its_protected_place_in_a_ring_full_of_commands_and_uncollected_re
 #[test]
 fn panic_needs_no_ingress_place_with_the_queue_full_and_every_hold_out() {
     let (s, other) = (scope(1, 1), scope(2, 1));
-    let (mut control, mut audio) = armed_with(true, 8);
+    let (mut control, audio) = armed_with(true, 8);
     let depth = audio.test_ingress.queue_capacity_for_test();
-    // Eight live notes each hold a note-on entry, a hold and a bend place.
-    let pairs = (depth - 24) / 2;
-    for raw in 0..pairs {
-        let raw = u8::try_from(raw).expect("small key");
-        let note = onset_in(&mut control, other, 100, raw);
-        release(&mut control, note, 100);
-        audio.service_test_ingress_queue();
-        for result in collect_all(&mut control) {
-            assert!(matches!(
-                result.outcome,
-                MixedIngressOutcome::Onset(Ok(_)) | MixedIngressOutcome::Release(Ok(_))
-            ));
-        }
-    }
+    // Eight live notes' note-on entries and holds are all the ordinary room the
+    // bend-credit budget leaves: `B = C - 2H`.
+    assert_eq!(depth - audio.test_ingress.mixed_bend_budget(), 16);
     pedal(&mut control, s, 110, true);
     let mut sustained = Vec::new();
     let mut down = Vec::new();
@@ -335,15 +324,15 @@ fn panic_needs_no_ingress_place_with_the_queue_full_and_every_hold_out() {
         down.push((note, onset_request_in(note, other, at + 2, 70 + raw)));
     }
     let starved = onset_in(&mut control, other, 133, 100);
-    audio = service_without_allocation(audio);
+    let mut audio = service_without_allocation(audio);
     let results = collect_all(&mut control);
     assert_eq!(holds(&audio), 8);
-    assert_eq!(audio.test_ingress.len(), depth - 16);
+    assert_eq!(audio.test_ingress.len(), 8);
     assert_eq!(free_units(&audio), 0);
     assert_eq!(
         outcome_for(&results, onset_request_in(starved, other, 133, 100)),
         MixedIngressOutcome::Onset(Err(IngressRefused::Dropped {
-            resource: ExhaustedResource::Slot,
+            resource: ExhaustedResource::Hold,
         }))
     );
     let identity = |request| accepted(outcome_for(&results, request));
@@ -368,10 +357,10 @@ fn panic_needs_no_ingress_place_with_the_queue_full_and_every_hold_out() {
     for (note, _) in &down {
         assert!(panicked.contains(&MixedPanicEnd::Tombstoned(*note)));
     }
-    // Eight reservations became one group entry, and the eight bend places are retired.
+    // Eight reservations became one group entry.
     assert_eq!(holds(&audio), 0);
-    assert_eq!(audio.test_ingress.len(), depth - 15);
-    assert_eq!(free_units(&audio), 15);
+    assert_eq!(audio.test_ingress.len(), 9);
+    assert_eq!(free_units(&audio), 7);
     let (cause, members) = groups(&audio).pop().expect("the Panic group");
     assert_eq!(cause, ReleaseCause::Panic);
     assert_eq!(members.len(), 8);
@@ -400,8 +389,8 @@ fn panic_needs_no_ingress_place_with_the_queue_full_and_every_hold_out() {
         );
     }
     assert_eq!(holds(&audio), 1);
-    assert_eq!(audio.test_ingress.len(), depth - 14);
-    assert_eq!(free_units(&audio), 12);
+    assert_eq!(audio.test_ingress.len(), 10);
+    assert_eq!(free_units(&audio), 5);
     render(&mut audio);
     let live = sounding(&audio);
     assert!(

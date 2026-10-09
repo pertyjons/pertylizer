@@ -1,34 +1,36 @@
-//! Precharged bend places for the private mixed owner.
+//! The bend-credit budget of the private mixed owner.
 //!
-//! Every accepted live onset owns one bend place in the ingress queue until it retires.
-//! These tests check the queue invariant `len + holds + reserved places <= capacity`
-//! after each step through [`free_units`], that a retired note's undrained entry never
-//! returns a place when it drains, that an inherited entry keeps its origin and stamp,
-//! that early application sounds exactly as its result describes under every host
-//! partition, and that no admitted bend is lost under a long scripted command storm.
+//! Bend entries are charged to a fixed budget withheld from ordinary ingress traffic.
+//! These tests check `(len - queued bends) + holds + budget <= capacity` after each
+//! step through [`free_units`], and that every credit is free at the merger, waiting in
+//! audio's return counter or held by one undrained entry through [`settled_credits`].
+//! They check that a retired note's undrained entry keeps its credit until it drains,
+//! that every later bend appends its own entry after an inherited one, that a bend
+//! served before the drain sounds at its own stamp under every host partition, and
+//! that no admitted bend is lost or rewritten under a long scripted command storm.
 
 use super::{
-    super::{MixedLiveScope, MixedPanicEnd},
+    super::{MixedBendSubmitError, MixedLiveScope, MixedPanicEnd},
     LiveOccurrenceId, MixedIngressOutcome, MixedIngressRequest, MixedOccurrenceState,
     MixedOneShotAudio, MixedOneShotControl, MixedRetireCause, MixedRetired, NoteIdentity, ORIGIN,
     accepted,
-    bend::{Entry, bend_at, bend_origins, entries, orphans, written},
+    bend::{Entry, bend_at, bend_origins, credits, entries, orphans, written},
     collect_all, free_units, key, outcome_for, release, release_request,
-    service_without_allocation,
+    service_without_allocation, settled_credits,
     sustain::{armed_with, holds, onset_in, onset_request_in, pedal, pedal_request, render, scope},
 };
 use crate::{
-    ingress::{IngressRefused, MixedBendOrigin, MixedBendWrite, ReleaseCause},
-    quantities::{Cents, ChannelLayout, EventCount, NoteVelocity},
+    ingress::{IngressRefused, MixedBendOrigin, ReleaseCause},
+    quantities::{Cents, ChannelLayout, NoteVelocity},
     render::AudioBlockMut,
     time::SampleTime,
 };
 
-/// Reserved places and undrained entries holding one, after checking the invariant.
-fn places(audio: &MixedOneShotAudio) -> (usize, usize) {
+/// Undrained credit-charged bend entries, after checking both invariants.
+fn queued_bends(control: &MixedOneShotControl, audio: &MixedOneShotAudio) -> usize {
     let _free = free_units(audio);
-    let places = audio.test_ingress.mixed_bend_places_for_test();
-    (places.reserved, places.queued)
+    let _credits = settled_credits(control, audio);
+    audio.test_ingress.mixed_bend_queued()
 }
 
 /// The identity a sounding or sustained handle names on audio.
@@ -56,11 +58,12 @@ enum Retirement {
 }
 
 #[test]
-fn retired_notes_never_restore_a_bend_place_when_their_entries_drain() {
+fn a_retired_notes_undrained_bend_entry_keeps_its_credit_until_it_drains() {
     for case in [Retirement::Release, Retirement::Lift, Retirement::Panic] {
         let (bent_scope, plain_scope, kept_scope) = (scope(1, 1), scope(2, 1), scope(3, 1));
         let (mut control, audio) = armed_with(true, 4);
         let depth = audio.test_ingress.queue_capacity_for_test();
+        let budget = audio.test_ingress.mixed_bend_budget();
         if case == Retirement::Lift {
             pedal(&mut control, bent_scope, 90, true);
             pedal(&mut control, plain_scope, 90, true);
@@ -83,14 +86,10 @@ fn retired_notes_never_restore_a_bend_place_when_their_entries_drain() {
             &results,
             onset_request_in(kept, kept_scope, 100, 62),
         ));
-        assert_eq!(
-            written(outcome_for(&results, bend)),
-            vec![(bent, MixedBendWrite::Queued)]
-        );
-        assert_eq!(places(&audio), (2, 1), "{case:?}");
+        assert_eq!(written(outcome_for(&results, bend)), vec![bent]);
+        assert_eq!(queued_bends(&control, &audio), 1, "{case:?}");
 
-        // Retire `bent` while its bend entry is undrained and `plain` while its place is
-        // in reserve.
+        // Retire `bent` while its bend entry is undrained, and `plain`, which has none.
         match case {
             Retirement::Release => {
                 release(&mut control, bent, 111);
@@ -154,8 +153,8 @@ fn retired_notes_never_restore_a_bend_place_when_their_entries_drain() {
                 );
             }
         }
-        // The retired note's bend is still published before its end: the value is not
-        // lost, but its entry no longer holds a place.
+        // The retired note's bend is still published before its end, and its entry still
+        // holds its credit: retirement returns none.
         let bend_at_position = entries(&audio)
             .into_iter()
             .position(|entry| entry == Entry::Bend(ibent, 40.0, 110))
@@ -163,20 +162,26 @@ fn retired_notes_never_restore_a_bend_place_when_their_entries_drain() {
         assert!(bend_at_position < ended_by(ibent).expect("the note's end is queued"));
         let live = usize::from(case != Retirement::Panic);
         assert_eq!(holds(&audio) as usize, live);
-        assert_eq!(places(&audio), (live, 0), "{case:?}: places at retirement");
+        assert_eq!(
+            queued_bends(&control, &audio),
+            1,
+            "{case:?}: credits at retirement"
+        );
+        assert_eq!(settled_credits(&control, &audio), budget - 1);
 
+        // The drain alone returns the credit.
         render(&mut audio);
         assert!(audio.test_ingress.is_empty());
-        // A drained entry of a retired note restores nothing.
         assert_eq!(
-            places(&audio),
-            (live, 0),
-            "{case:?}: places after the drain"
+            queued_bends(&control, &audio),
+            0,
+            "{case:?}: credits after the drain"
         );
-        assert_eq!(free_units(&audio), depth - 2 * live);
+        assert_eq!(settled_credits(&control, &audio), budget);
+        assert_eq!(free_units(&audio), depth - budget - live);
         assert_eq!(orphans(&audio), 0);
 
-        // Panic left key-down tombstones; their key-ups are consumed without a place.
+        // Panic left key-down tombstones; their key-ups are consumed without an entry.
         if case == Retirement::Panic {
             for note in [bent, plain, kept] {
                 release(&mut control, note, 300);
@@ -192,23 +197,66 @@ fn retired_notes_never_restore_a_bend_place_when_their_entries_drain() {
                     }))
                 );
             }
-            assert_eq!(places(&audio), (0, 0));
+            assert_eq!(queued_bends(&control, &audio), 0);
         } else {
-            // The kept note is still a member and its reserved place still serves it.
+            // The kept note is still a member and takes a new entry at the bend's stamp.
             let again = bend_at(&mut control, kept_scope, 300, -20.0);
             audio = service_without_allocation(audio);
             assert_eq!(
                 written(outcome_for(&collect_all(&mut control), again)),
-                vec![(kept, MixedBendWrite::Queued)]
+                vec![kept]
             );
-            assert_eq!(places(&audio), (0, 1));
+            assert_eq!(queued_bends(&control, &audio), 1);
             assert_eq!(entries(&audio), vec![Entry::Bend(ikept, -20.0, 300)]);
         }
     }
 }
 
 #[test]
-fn an_inherited_entry_keeps_its_origin_and_onset_stamp_through_every_merge() {
+fn unused_credits_return_at_service_and_written_ones_only_at_the_drain_without_allocation() {
+    let s = scope(1, 1);
+    let (mut control, audio) = armed_with(true, 4);
+    let budget = audio.test_ingress.mixed_bend_budget();
+    let note = onset_in(&mut control, s, 100, 60);
+    let bend = bend_at(&mut control, s, 110, 25.0);
+    // The bend carries its four credits; none has returned yet.
+    assert_eq!(control.bend_credits_free, credits(budget - 4));
+    assert_eq!(control.bend_credit_return.pending(), credits(0));
+    // Audio serves on another thread without allocating, and returns the three unused
+    // credits through the shared counter at once.
+    let audio = service_without_allocation(audio);
+    assert_eq!(control.bend_credit_return.pending(), credits(3));
+    let results = collect_all(&mut control);
+    assert_eq!(written(outcome_for(&results, bend)), vec![note]);
+    // Collecting the result returns nothing more: the written credit waits for its entry.
+    assert_eq!(control.bend_credit_return.pending(), credits(3));
+    assert_eq!(queued_bends(&control, &audio), 1);
+    // The drain returns it, on the audio thread, without allocating.
+    let audio = std::thread::spawn(move || {
+        let mut audio = audio;
+        let mut samples = [0.0_f32; 256];
+        let allocations = crate::render_allocation::count_allocs(|| {
+            audio
+                .render_private(
+                    AudioBlockMut::new(&mut samples, 256, ChannelLayout::Mono).expect("block"),
+                )
+                .expect("mixed render");
+        });
+        assert_eq!(allocations, 0, "the drain allocated");
+        audio
+    })
+    .join()
+    .expect("render thread");
+    assert_eq!(control.bend_credit_return.pending(), credits(4));
+    assert_eq!(queued_bends(&control, &audio), 0);
+    // The merger takes every returned credit at its next reservation.
+    let _next = bend_at(&mut control, s, 300, 0.0);
+    assert_eq!(control.bend_credit_return.pending(), credits(0));
+    assert_eq!(control.bend_credits_free, credits(budget - 4));
+}
+
+#[test]
+fn every_bend_after_an_inherited_entry_appends_its_own_entry() {
     let s = scope(1, 1);
     let (mut control, audio) = armed_with(true, 2);
     let set = bend_at(&mut control, s, 100, 30.0);
@@ -220,59 +268,56 @@ fn an_inherited_entry_keeps_its_origin_and_onset_stamp_through_every_merge() {
     let results = collect_all(&mut control);
     assert_eq!(written(outcome_for(&results, set)), vec![]);
     let identity = accepted(outcome_for(&results, onset_request_in(note, s, 100, 60)));
-    let early = MixedBendWrite::Early {
-        applies_at: SampleTime::new(100),
-        origin: MixedBendOrigin::Inherited,
-    };
-    // At the onset's own stamp the value is replaced on time; at a later stamp in the
-    // same quantum or a later quantum it applies at the onset stamp, said so.
-    assert_eq!(
-        written(outcome_for(&results, same)),
-        vec![(note, MixedBendWrite::Coalesced)]
-    );
-    assert_eq!(written(outcome_for(&results, within)), vec![(note, early)]);
-    assert_eq!(written(outcome_for(&results, across)), vec![(note, early)]);
+    // At the onset's own stamp, later in its quantum and in a later quantum, each bend
+    // appends its own entry after the inherited one, which keeps its value and stamp.
+    for bend in [same, within, across] {
+        assert_eq!(written(outcome_for(&results, bend)), vec![note]);
+    }
     assert_eq!(
         entries(&audio),
-        vec![Entry::On(identity, 100), Entry::Bend(identity, 45.0, 100)]
-    );
-    let origins = bend_origins(&audio);
-    assert_eq!(origins.len(), 1);
-    assert_eq!(
-        (origins[0].1, origins[0].2),
-        (MixedBendOrigin::Inherited, true)
-    );
-    assert_eq!(
-        audio.occurrences.bends_superseded(),
-        EventCount::measured(3)
+        vec![
+            Entry::On(identity, 100),
+            Entry::Bend(identity, 30.0, 100),
+            Entry::Bend(identity, 35.0, 100),
+            Entry::Bend(identity, 40.0, 120),
+            Entry::Bend(identity, 45.0, 200),
+        ]
     );
     assert_eq!(
-        audio.occurrences.bends_applied_early(),
-        EventCount::measured(2)
+        bend_origins(&audio)
+            .into_iter()
+            .map(|(_, origin)| origin)
+            .collect::<Vec<_>>(),
+        vec![
+            MixedBendOrigin::Inherited,
+            MixedBendOrigin::Ordinary,
+            MixedBendOrigin::Ordinary,
+            MixedBendOrigin::Ordinary,
+        ]
     );
-    assert_eq!(places(&audio), (0, 1));
+    assert_eq!(queued_bends(&control, &audio), 4);
 
-    // Once drained, the place serves an ordinary bend at its own stamp, and a new
-    // onset's inherited entry starts with its own origin.
+    // Once drained, every credit is back; a later bend and a new onset's inherited
+    // entry each start with their own origin.
     render(&mut audio);
-    assert_eq!(places(&audio), (1, 0));
+    // This first callback leaves the renderer at 192, before the frame-200 entry.
+    assert_eq!(entries(&audio), vec![Entry::Bend(identity, 45.0, 200)]);
+    render(&mut audio);
+    assert_eq!(queued_bends(&control, &audio), 0);
     let later = bend_at(&mut control, s, 300, 50.0);
     let second = onset_in(&mut control, s, 301, 62);
     audio = service_without_allocation(audio);
     let results = collect_all(&mut control);
-    assert_eq!(
-        written(outcome_for(&results, later)),
-        vec![(note, MixedBendWrite::Queued)]
-    );
+    assert_eq!(written(outcome_for(&results, later)), vec![note]);
     let isecond = accepted(outcome_for(&results, onset_request_in(second, s, 301, 62)));
     assert_eq!(
         bend_origins(&audio)
             .into_iter()
-            .map(|(event, origin, place)| (event.envelope().time().as_u64(), origin, place))
+            .map(|(event, origin)| (event.envelope().time().as_u64(), origin))
             .collect::<Vec<_>>(),
         vec![
-            (300, MixedBendOrigin::Ordinary, true),
-            (301, MixedBendOrigin::Inherited, true)
+            (300, MixedBendOrigin::Ordinary),
+            (301, MixedBendOrigin::Inherited)
         ]
     );
     assert_eq!(
@@ -326,7 +371,7 @@ fn bent_owner(bends: &[(u64, f32)]) -> (MixedOneShotControl, MixedOneShotAudio) 
 }
 
 #[test]
-fn an_early_bend_sounds_at_its_described_stamp_under_every_host_partition() {
+fn a_bend_served_before_the_drain_sounds_at_its_own_stamp_under_every_host_partition() {
     let partitions: [&[usize]; 4] = [&[512], &[64; 8], &[1, 63, 100, 200, 148], &[37; 13]];
     let partitions = partitions.map(|partition| {
         let mut partition = partition.to_vec();
@@ -336,22 +381,17 @@ fn an_early_bend_sounds_at_its_described_stamp_under_every_host_partition() {
         }
         partition
     });
-    // A wheel at 110 then 200, both serviced before the drain: the second reaches the
-    // first's entry, which keeps 110, so -300 applies from 110.
-    let (mut control, mut early) = bent_owner(&[(110, 200.0)]);
+    // A wheel at 110 then 200, both serviced before the drain: the second appends its
+    // own entry at 200 behind the first's undrained entry at 110.
+    let (mut control, mut queued) = bent_owner(&[(110, 200.0)]);
     let late = bend_at(&mut control, scope(1, 1), 200, -300.0);
-    early.service_test_ingress_queue();
+    queued.service_test_ingress_queue();
     let MixedIngressOutcome::Bend(Ok(bent)) = outcome_for(&collect_all(&mut control), late) else {
         panic!("the bend applies");
     };
-    assert_eq!(
-        bent.written().map(|(_, write)| write).collect::<Vec<_>>(),
-        vec![MixedBendWrite::Early {
-            applies_at: SampleTime::new(110),
-            origin: MixedBendOrigin::Ordinary,
-        }]
-    );
-    let reference = render_partition(&mut early, &partitions[0]);
+    assert_eq!(bent.executed_at(), SampleTime::new(200));
+    assert_eq!(bent.written().count(), 1);
+    let reference = render_partition(&mut queued, &partitions[0]);
     for partition in &partitions[1..] {
         let (mut control, mut owner) = bent_owner(&[(110, 200.0)]);
         let _late = bend_at(&mut control, scope(1, 1), 200, -300.0);
@@ -363,17 +403,8 @@ fn an_early_bend_sounds_at_its_described_stamp_under_every_host_partition() {
             "partition {partition:?}"
         );
     }
-    // The described stamp is the whole story: the same as -300 written at 110.
-    for partition in &partitions {
-        let (_control, mut described) = bent_owner(&[(110, -300.0)]);
-        assert_eq!(
-            render_partition(&mut described, partition),
-            reference,
-            "partition {partition:?}"
-        );
-    }
-    // And it is audible: served on time, after the drain of 110, the bend differs
-    // between 110 and 200 and nowhere before 110.
+    // Served on time, after the drain of 110, the bend sounds the same: queueing it
+    // before the drain applied nothing early.
     let (mut control, mut on_time) = bent_owner(&[(110, 200.0)]);
     let mut samples = render_partition(&mut on_time, &[192]);
     let _late = bend_at(&mut control, scope(1, 1), 200, -300.0);
@@ -383,14 +414,20 @@ fn an_early_bend_sounds_at_its_described_stamp_under_every_host_partition() {
         MixedIngressOutcome::Bend(Ok(_))
     ));
     samples.extend(render_partition(&mut on_time, &[320]));
-    assert_eq!(samples[..110], reference[..110]);
-    assert_ne!(samples[110..200], reference[110..200]);
+    assert_eq!(samples, reference);
+    // And the stamp is audible: -300 written at 110 differs between 110 and 200 and
+    // nowhere before 110.
+    let (_control, mut early) = bent_owner(&[(110, -300.0)]);
+    let early = render_partition(&mut early, &partitions[0]);
+    assert_eq!(early[..110], reference[..110]);
+    assert_ne!(early[110..200], reference[110..200]);
 }
 
 #[test]
-fn the_bend_place_invariant_holds_under_a_scripted_command_storm() {
+fn the_bend_credit_invariant_holds_under_a_scripted_command_storm() {
     let scopes: [MixedLiveScope; 3] = [scope(1, 1), scope(1, 2), scope(2, 1)];
     let (mut control, mut audio) = armed_with(true, 8);
+    let budget = audio.test_ingress.mixed_bend_budget();
     let mut state = 0x2545_f491_4f6c_dd1d_u64;
     let mut draw = |bound: u64| {
         state ^= state << 13;
@@ -400,7 +437,7 @@ fn the_bend_place_invariant_holds_under_a_scripted_command_storm() {
     };
     let mut at = 100_u64;
     let mut open: Vec<LiveOccurrenceId> = Vec::new();
-    let (mut queued, mut coalesced, mut inherited_early, mut ordinary_early) = (0, 0, 0, 0);
+    let (mut bend_entries, mut bend_credit_refusals) = (0, 0);
     let (mut onset_slot_refusals, mut lifts, mut panics) = (0_u64, 0, 0);
     let slot = IngressRefused::Dropped {
         resource: crate::ingress::ExhaustedResource::Slot,
@@ -421,6 +458,8 @@ fn the_bend_place_invariant_holds_under_a_scripted_command_storm() {
         match draw(16) {
             0..=4 => {
                 let raw = u8::try_from(draw(128)).expect("key");
+                // A full ring, or a possibly bent scope without a free credit,
+                // refuses at the caller.
                 if let Ok((_, MixedIngressRequest::Onset { occurrence, .. })) =
                     control.submit_onset(ORIGIN, s, stamp, key(raw), NoteVelocity::FULL)
                 {
@@ -438,8 +477,13 @@ fn the_bend_place_invariant_holds_under_a_scripted_command_storm() {
             }
             9..=12 => {
                 let value = Cents::new(draw(401) as f32 - 200.0).expect("bend");
-                if let Ok((_, request)) = control.submit_bend(ORIGIN, s, stamp, value) {
-                    bend = Some((request, value));
+                match control.submit_bend(ORIGIN, s, stamp, value) {
+                    Ok((_, request)) => bend = Some((request, value)),
+                    Err(MixedBendSubmitError::Credits { needed, .. }) => {
+                        assert_eq!(needed, credits(8));
+                        bend_credit_refusals += 1;
+                    }
+                    Err(_) => {}
                 }
             }
             13 => {
@@ -459,7 +503,14 @@ fn the_bend_place_invariant_holds_under_a_scripted_command_storm() {
                 continue;
             }
         }
+        // Service only appends: every entry already queued keeps its place and value.
+        let before = entries(&audio);
         audio.service_test_ingress_queue();
+        let after = entries(&audio);
+        assert!(
+            after.starts_with(&before),
+            "step {step}: service rewrote the queue"
+        );
         for result in collect_all(&mut control) {
             match result.outcome {
                 MixedIngressOutcome::Onset(Err(reason)) if reason == slot => {
@@ -480,61 +531,44 @@ fn the_bend_place_invariant_holds_under_a_scripted_command_storm() {
                         panic!("step {step}: an unexpected bend result");
                     };
                     assert_eq!(result.request, request);
-                    // Every member's latest value waits in the queue, at the stamp the
-                    // result names.
-                    let waiting = entries(&audio);
-                    for (member, write) in bent.written() {
-                        let applies = match write {
-                            MixedBendWrite::Queued => {
-                                queued += 1;
-                                at
-                            }
-                            MixedBendWrite::Coalesced => {
-                                coalesced += 1;
-                                at
-                            }
-                            MixedBendWrite::Early { applies_at, origin } => {
-                                assert!(applies_at.as_u64() < at);
-                                match origin {
-                                    MixedBendOrigin::Inherited => inherited_early += 1,
-                                    MixedBendOrigin::Ordinary => ordinary_early += 1,
-                                }
-                                applies_at.as_u64()
-                            }
-                        };
-                        let identity = identity_of(&audio, member).expect("a live member");
-                        assert!(
-                            waiting.contains(&Entry::Bend(identity, value.as_f32(), applies)),
-                            "step {step}: {member:?} lost its bend"
-                        );
-                    }
+                    // The bend appended exactly one entry per member, in member order,
+                    // at its own stamp.
+                    assert_eq!(bent.executed_at(), stamp);
+                    let expected = bent
+                        .written()
+                        .map(|member| {
+                            let identity = identity_of(&audio, member).expect("a live member");
+                            Entry::Bend(identity, value.as_f32(), at)
+                        })
+                        .collect::<Vec<_>>();
+                    assert_eq!(
+                        after.get(before.len()..),
+                        Some(expected.as_slice()),
+                        "step {step}"
+                    );
+                    bend_entries += expected.len();
                 }
                 _ => {}
             }
         }
         let _free = free_units(&audio);
+        let _credits = settled_credits(&control, &audio);
     }
     // The storm reached every branch it claims to cover.
     assert!(onset_slot_refusals > 0, "the queue never saturated");
-    assert!(queued > 0 && coalesced > 0);
-    assert!(inherited_early > 0 && ordinary_early > 0);
+    assert!(bend_entries > 0, "no bend reached a member");
+    assert!(bend_credit_refusals > 0, "the credit budget never ran out");
     assert!(lifts > 0 && panics > 0);
     assert_eq!(
         audio.test_ingress.counters().dropped_slot(),
         onset_slot_refusals
     );
-    assert_eq!(
-        audio.occurrences.bends_applied_early().get(),
-        u32::try_from(inherited_early + ordinary_early).expect("count")
-    );
-    assert_eq!(
-        audio.occurrences.bends_superseded().get(),
-        u32::try_from(coalesced + inherited_early + ordinary_early).expect("count")
-    );
-    // Let the owner fall quiet: every remaining entry drains and resolves.
+    // Let the owner fall quiet: every remaining entry drains, resolves and returns its
+    // credit.
     for _ in 0..8 {
         render(&mut audio);
     }
     assert_eq!(orphans(&audio), 0);
     let _free = free_units(&audio);
+    assert_eq!(settled_credits(&control, &audio), budget);
 }
