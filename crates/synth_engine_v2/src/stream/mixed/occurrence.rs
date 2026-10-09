@@ -264,13 +264,19 @@ pub(super) enum MixedHandleRefused {
     Exhausted,
 }
 
-/// How a bend command wrote each member, in cell order.
+/// The stamp a bend executed at and how it wrote each member, in cell order.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) struct MixedBent {
+    executed_at: SampleTime,
     members: [Option<(LiveOccurrenceId, MixedBendWrite)>; RELEASE_GROUP_CAPACITY],
 }
 
 impl MixedBent {
+    /// The nominal stamp, or the ingress store's later order fence at acceptance.
+    pub(super) const fn executed_at(&self) -> SampleTime {
+        self.executed_at
+    }
+
     pub(super) fn written(&self) -> impl Iterator<Item = (LiveOccurrenceId, MixedBendWrite)> + '_ {
         self.members.iter().flatten().copied()
     }

@@ -463,21 +463,23 @@ fn commands_at_one_stamp_apply_in_command_order() {
             ]
         );
 
-        // A bend behind the order fence is refused whole.
+        // A bend behind the order fence executes at the fence. Its request keeps
+        // the nominal stamp, while the result reports the stamp actually offered.
         let late = bend_at(&mut control, s, 199, 90.0);
         audio = service_without_allocation(audio);
         let results = collect_all(&mut control);
+        let MixedIngressOutcome::Bend(Ok(bent)) = outcome_for(&results, late) else {
+            panic!("late bend must execute at the order fence");
+        };
+        assert_eq!(bent.executed_at(), SampleTime::new(200));
         assert_eq!(
-            outcome_for(&results, late),
-            MixedIngressOutcome::Bend(Err(MixedBendRefused::Ingress(
-                IngressRefused::NonMonotoneStamp {
-                    time: SampleTime::new(199),
-                    last: SampleTime::new(200),
-                }
-            )))
+            bent.written().collect::<Vec<_>>(),
+            vec![(second, MixedBendWrite::Coalesced)]
         );
-        assert_eq!(audio.occurrences.bend_of(s), cents(70.0));
+        assert_eq!(audio.test_ingress.counters().non_monotone(), 0);
+        assert_eq!(audio.occurrences.bend_of(s), cents(90.0));
         assert_eq!(entries(&audio).len(), 5);
+        assert!(entries(&audio).contains(&Entry::Bend(isecond, 90.0, 200)));
 
         // Each bend resolves after its note-on and before its note-off at one sample.
         render(&mut audio);
@@ -486,6 +488,43 @@ fn commands_at_one_stamp_apply_in_command_order() {
         assert_eq!(orphans(&audio), 0);
         assert!(sounding(&audio).contains(&isecond));
     }
+}
+
+#[test]
+fn a_late_bend_uses_its_reserved_place_and_an_empty_scope_keeps_the_fence() {
+    let (held_scope, empty_scope) = (scope(1, 1), scope(2, 1));
+    let (mut control, audio) = armed_with(true, 1);
+    let note = onset_in(&mut control, held_scope, 200, 60);
+    let held_bend = bend_at(&mut control, held_scope, 100, 35.0);
+    let empty_bend = bend_at(&mut control, empty_scope, 50, 45.0);
+    let mut audio = service_without_allocation(audio);
+    let results = collect_all(&mut control);
+    let identity = accepted(outcome_for(
+        &results,
+        onset_request_in(note, held_scope, 200, 60),
+    ));
+    let MixedIngressOutcome::Bend(Ok(held)) = outcome_for(&results, held_bend) else {
+        panic!("held bend must use its reserved place");
+    };
+    assert_eq!(held.executed_at(), SampleTime::new(200));
+    assert_eq!(
+        held.written().collect::<Vec<_>>(),
+        vec![(note, MixedBendWrite::Queued)]
+    );
+    let MixedIngressOutcome::Bend(Ok(empty)) = outcome_for(&results, empty_bend) else {
+        panic!("empty-scope bend must set the value");
+    };
+    assert_eq!(empty.executed_at(), SampleTime::new(200));
+    assert_eq!(empty.written().count(), 0);
+    assert_eq!(audio.occurrences.bend_of(empty_scope), cents(45.0));
+    assert_eq!(audio.test_ingress.counters().non_monotone(), 0);
+    assert_eq!(
+        entries(&audio),
+        vec![Entry::On(identity, 200), Entry::Bend(identity, 35.0, 200)]
+    );
+    render(&mut audio);
+    render(&mut audio);
+    assert!(sounding(&audio).contains(&identity));
 }
 
 #[test]

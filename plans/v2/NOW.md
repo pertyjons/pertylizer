@@ -757,6 +757,11 @@ keeps its stamp and its inherited or ordinary origin, and the new value applies
 early. The result names that stamp and origin, and audio counts early and
 superseded values. Releases, sustain lifts and Panic retire their notes' places;
 an undrained entry is still published but restores no place when it drains.
+Like the private Panic, a bend nominally behind the ingress order fence executes
+at that fence; its result reports the execution stamp. This removes that
+post-submission order refusal without changing the command-ring admission rule.
+The private rehearsal imposes no fixed bound on the delay from a stale nominal
+stamp to execution; the timestamped merger rule is still open.
 Tests cover saturation, cross-quantum and inherited early application, all three
 retirements, audio under four host partitions and a 4,000-step invariant storm;
 a temporary mutation of each accounting rule failed them.

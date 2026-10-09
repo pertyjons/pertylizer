@@ -454,7 +454,8 @@ impl MixedOneShotAudio {
     /// A bend writes every sounding and sustained occurrence of its scope, in cell order,
     /// then becomes the scope's value for later onsets. Refusal and Panic tombstones are
     /// not members. Each member's precharged place guarantees its write, so no bend is
-    /// refused for a queue slot. A refused bend changes neither the value nor any entry.
+    /// refused for a queue slot. The offer executes at the later of its nominal stamp
+    /// and the ingress order fence. A refused bend changes neither the value nor any entry.
     fn service_bend(
         &mut self,
         scope: MixedLiveScope,
@@ -489,6 +490,7 @@ impl MixedOneShotAudio {
             *member = Some((occurrence, identity));
             count += 1;
         }
+        let executed_at = self.test_ingress.mixed_execution_stamp(at);
         let writes = match members.first().copied().flatten() {
             Some((_, first)) => {
                 let mut identities = [first; RELEASE_GROUP_CAPACITY];
@@ -498,14 +500,15 @@ impl MixedOneShotAudio {
                 let identities = identities
                     .get(..count)
                     .ok_or(MixedBendRefused::GroupCapacity)?;
-                self.offer_test_bend(at, identities, cents)
+                self.offer_test_bend(executed_at, identities, cents)
             }
             // A bend with no member still sets the value and the order fence.
-            None => self.offer_test_bend(at, &[], cents),
+            None => self.offer_test_bend(executed_at, &[], cents),
         }
         .map_err(MixedBendRefused::Ingress)?;
         self.occurrences.set_bend(scope, cents);
         let mut bent = MixedBent {
+            executed_at,
             members: [None; RELEASE_GROUP_CAPACITY],
         };
         for ((written, member), write) in bent.members.iter_mut().zip(members).zip(writes) {
