@@ -1259,6 +1259,8 @@ impl MixedOneShotControl {
     }
 
     /// Submit the release of an open handle into the place its onset reserved.
+    /// If the queue or its accounting has lost that place, leave the handle open
+    /// and report the broken reservation to the caller.
     fn submit_release(
         &mut self,
         origin: MixedIngressOriginId,
@@ -1280,7 +1282,7 @@ impl MixedOneShotControl {
                 self.release_reserved.0 += 1;
                 return Err(match error {
                     MixedIngressSubmitError::Full(_) => {
-                        unreachable!("an open handle's reserved place is free")
+                        MixedReleaseSubmitError::ReservedPlaceUnavailable(occurrence)
                     }
                     MixedIngressSubmitError::IdentityExhausted(_) => {
                         MixedReleaseSubmitError::IdentityExhausted(occurrence)
@@ -1356,7 +1358,8 @@ impl MixedOneShotControl {
 
     /// Submit one sustain edge for `scope`. Only an edge that changes the merger's
     /// pedal state is pushed. An effective pedal-down needs its own place and one more
-    /// that it reserves for the scope's lift; the lift then always fits.
+    /// that it reserves for the scope's lift. A broken queue or accounting
+    /// reservation is reported without changing the scope's pedal state.
     fn submit_pedal(
         &mut self,
         origin: MixedIngressOriginId,
@@ -1397,7 +1400,7 @@ impl MixedOneShotControl {
                 self.pedal_ledger.return_reservation();
                 Err(match error {
                     MixedIngressSubmitError::Full(_) => {
-                        unreachable!("a latched pedal-down's reserved place is free")
+                        MixedPedalSubmitError::ReservedPlaceUnavailable
                     }
                     MixedIngressSubmitError::IdentityExhausted(_) => {
                         MixedPedalSubmitError::IdentityExhausted

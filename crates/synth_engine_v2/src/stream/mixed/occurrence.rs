@@ -381,6 +381,8 @@ pub(super) enum MixedOnsetSubmitError {
 pub(super) enum MixedPedalSubmitError {
     #[error("no command-ring place for a pedal-down and its reserved lift")]
     Full,
+    #[error("the reserved pedal-lift place is unavailable")]
+    ReservedPlaceUnavailable,
     #[error("mixed ingress command identity is exhausted")]
     IdentityExhausted,
 }
@@ -403,6 +405,8 @@ pub(super) enum MixedPanicSubmitError {
 pub(super) enum MixedReleaseSubmitError {
     #[error("the live occurrence is not open at the merger")]
     NotOpen(LiveOccurrenceId),
+    #[error("the live occurrence's reserved release place is unavailable")]
+    ReservedPlaceUnavailable(LiveOccurrenceId),
     #[error("mixed ingress command identity is exhausted")]
     IdentityExhausted(LiveOccurrenceId),
 }

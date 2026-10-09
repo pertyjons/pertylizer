@@ -1,5 +1,6 @@
 //! Reduced two-source custody model with one local raw-input/recorder bridge probe.
 
+use ringbuf::traits::Producer;
 use std::collections::VecDeque;
 
 use super::{
@@ -7,8 +8,8 @@ use super::{
     MixedIngressOutcome, MixedIngressRequest, MixedIngressResult, MixedIngressSubmitError,
     MixedOneShotControl, MixedOneShotRenderError, history_tests,
     occurrence::{
-        LiveOccurrenceId, MixedOnsetSubmitError, MixedReleaseSubmitError, MixedRetireCause,
-        MixedRetired,
+        LiveOccurrenceId, MixedOnsetSubmitError, MixedPedalSubmitError, MixedReleaseSubmitError,
+        MixedRetireCause, MixedRetired,
     },
 };
 use crate::identity::NoteIdentity;
@@ -2270,6 +2271,103 @@ fn mixed_ingress_command_id_exhaustion_retains_original_request() {
         submit(&mut control),
         Err(MixedOnsetSubmitError::IdentityExhausted)
     );
+}
+
+#[test]
+fn a_lost_reserved_command_place_refuses_without_spending_release_or_lift_custody() {
+    let (prepared, candidate) = history_tests::one_shot_with_boundary_on(true);
+    let (mut control, _audio) = prepared
+        .arm_one_shot(candidate, &history_tests::mixed_profile())
+        .unwrap();
+    let origin = MixedIngressOriginId(1);
+    let at = SampleTime::new(140);
+    let (_, onset) = control
+        .submit_onset(
+            origin,
+            super::TEST_SCOPE,
+            at,
+            KeyIdentity::new(60).unwrap(),
+            NoteVelocity::FULL,
+        )
+        .unwrap();
+    let MixedIngressRequest::Onset { occurrence, .. } = onset else {
+        panic!("onset request");
+    };
+    let (_, down) = match control
+        .submit_pedal(origin, super::TEST_SCOPE, at, true)
+        .unwrap()
+    {
+        super::MixedPedalSubmitted::Command(id, request) => (id, request),
+        super::MixedPedalSubmitted::Redundant => panic!("the first down is effective"),
+    };
+    let MixedIngressRequest::Pedal { down: true, .. } = down else {
+        panic!("pedal-down request");
+    };
+
+    // Break the private queue/count invariant. The reserved places must remain
+    // owned by the release and lift on refusal.
+    let forged = super::MixedIngressCommand {
+        id: MixedIngressCommandId(u64::MAX),
+        request: MixedIngressRequest::Panic { origin, at },
+        bend_credits: super::MixedIngressQueueCount::NONE,
+    };
+    while control.ingress_commands.0.try_push(forged).is_ok() {}
+    let last_id = control.last_ingress_id;
+    assert_eq!(
+        control.submit_release(origin, occurrence, at),
+        Err(MixedReleaseSubmitError::ReservedPlaceUnavailable(
+            occurrence
+        ))
+    );
+    assert!(control.occurrence_ledger.is_open(occurrence));
+    assert_eq!(control.release_reserved, super::MixedIngressQueueCount(1));
+    assert_eq!(control.last_ingress_id, last_id);
+    assert_eq!(
+        control.submit_pedal(origin, super::TEST_SCOPE, at, false),
+        Err(MixedPedalSubmitError::ReservedPlaceUnavailable)
+    );
+    assert_eq!(control.pedal_ledger.reserved(), 1);
+    assert!(control.pedal_ledger.is_down(super::TEST_SCOPE));
+    assert_eq!(control.last_ingress_id, last_id);
+
+    // The accounting guard can also refuse before reaching the physical ring.
+    let (prepared, candidate) = history_tests::one_shot_with_boundary_on(true);
+    let (mut counted, _audio) = prepared
+        .arm_one_shot(candidate, &history_tests::mixed_profile())
+        .unwrap();
+    let (_, onset) = counted
+        .submit_onset(
+            origin,
+            super::TEST_SCOPE,
+            at,
+            KeyIdentity::new(60).unwrap(),
+            NoteVelocity::FULL,
+        )
+        .unwrap();
+    let MixedIngressRequest::Onset { occurrence, .. } = onset else {
+        panic!("onset request");
+    };
+    assert!(matches!(
+        counted.submit_pedal(origin, super::TEST_SCOPE, at, true),
+        Ok(super::MixedPedalSubmitted::Command(..))
+    ));
+    counted.ingress_outstanding = counted.ingress_capacity;
+    let last_id = counted.last_ingress_id;
+    assert_eq!(
+        counted.submit_release(origin, occurrence, at),
+        Err(MixedReleaseSubmitError::ReservedPlaceUnavailable(
+            occurrence
+        ))
+    );
+    assert_eq!(counted.release_reserved, super::MixedIngressQueueCount(1));
+    assert!(counted.occurrence_ledger.is_open(occurrence));
+    assert_eq!(
+        counted.submit_pedal(origin, super::TEST_SCOPE, at, false),
+        Err(MixedPedalSubmitError::ReservedPlaceUnavailable)
+    );
+    assert_eq!(counted.pedal_ledger.reserved(), 1);
+    assert!(counted.pedal_ledger.is_down(super::TEST_SCOPE));
+    assert_eq!(counted.last_ingress_id, last_id);
 }
 
 #[test]
