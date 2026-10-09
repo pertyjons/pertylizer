@@ -822,8 +822,9 @@ remaining stage release reservations. Subsequent raw settlement covers every
 issued ID: all five message receipts are delivered, while the first source's
 later frontier is cancelled.
 The sixteen pedal-downs create pressure directly in the private control
-fixture; source-to-raw pedal custody is still open. This counterexample rules
-out unconditional onset retry but does not by itself select a split policy.
+fixture; this counterexample does not exercise source-ring or raw pedal
+custody. It rules out unconditional onset retry but does not by itself select
+a split policy.
 
 A further private bridge prototype now distinguishes an in-flight `Full`, whose
 same stage head and raw handoff retry after command collection, from a selected
@@ -852,8 +853,8 @@ first raw-linked key-up uses the first handle, and the second consumes the
 refused onset's tombstone. The source ring closes, no stage charge remains at
 mixed teardown, and cancellation settlement covers every issued raw ID with
 its recorded link. This fixture uses standalone raw owners and cancelled raw
-receipts, so it does not prove recorder delivery. Pedal pressure is still
-injected directly at private control; ordered source-to-raw pedal edges and a
+receipts, so it does not prove recorder delivery. In this source-ring fixture,
+pedal pressure enters at private control; ordered source-ring pedal edges and a
 production combined host remain open.
 
 The private raw bridge now maps each source and MIDI channel to its own live
@@ -861,8 +862,31 @@ scope when submitting an onset. A three-note fixture confirms that a
 pedal-down submitted on the first source's first channel sustains only that
 note, while a note on its second channel and another source's first channel
 retire independently. The ordering frontier comes from the raw owner. The
-pedal-down still enters at private control; source-to-raw pedal custody
-remains open.
+pedal-down in this scope fixture still enters at private control.
+
+The private raw bridge now accepts pedal-down and lift messages from the raw
+owner. Each effective source/channel down holds one stage place for its lift.
+Raw down/lift admission manages this place; mixed-result collection does not.
+One fixture fills the remaining stage places with a note pair, yet its raw
+lift enters and retires the sustained note in time order. Another stages the
+lift before a command-ring `Full` on the down; the selected head and both raw
+handoffs remain until collection frees room, then down and lift succeed in
+order. A repeated down uses one ordinary stage custody cell until selection;
+mixed ingress then consumes it as redundant without a command or second lift
+reservation. The completed lift result names the exact sustained handle it
+retires. Joined teardown names either an unredeemed lift reservation or a
+staged but unoffered lift with its raw down ID. When the stage refuses a new
+raw pedal-down, a bounded source/channel latch keeps that down's raw ID.
+Repeated down and later lift receive linked split refusals without mixed
+commands, and teardown reports a down whose lift has not arrived. A later note
+can still reach mixed while that raw pedal observation is down; a private
+fixture shows its key-up retiring normally because mixed never received the
+pedal-down. These fixtures offer directly to standalone raw owners. The lane
+refusal is still reported at offer time, so it can precede an older staged
+command's result;
+an ordered combined disposition that attributes each later note to this
+raw/mixed pedal split, source-ring pedal custody, a settled mixed `Full` split
+outcome and recorder delivery remain open.
 
 The budget withholds `B` queue places from ordinary traffic for the whole
 private run, leaving at most `C - B` for ordinary entries and release holds.
