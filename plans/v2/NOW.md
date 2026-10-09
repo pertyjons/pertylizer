@@ -884,7 +884,16 @@ refusal is still reported at offer time, so it can precede an older staged
 command's result;
 an ordered combined disposition that attributes each later note to this
 raw/mixed pedal split, production source-ring pedal custody, a settled mixed
-`Full` split outcome and recorder delivery remain open.
+`Full` split outcome and production recorder delivery remain open.
+
+At `H = 2`, `C = 5`, four collected pedal-downs enter raw and stage directly.
+They retain two stage lift places per source and four command-ring lift places,
+leaving one free command place. A fifth down and its lift cross the actual
+source ring, serial raw owner and stage. The down needs two command places and
+returns `Full` with none outstanding; another audio service and collection
+leave it selected ahead of its lift. The serial session delivers receipts for
+all six messages and completes capture. This falsifies a capacity rule that
+splits only onsets after a quiescent `Full`.
 
 The private raw bridge also stages bends alongside pedal and note edges.
 One five-cell lane holds a pedal-down, note-on, bend, key-up and pedal lift

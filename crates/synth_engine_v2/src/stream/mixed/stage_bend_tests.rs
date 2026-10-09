@@ -2789,6 +2789,123 @@ fn source_pedal_split_allows_the_protected_key_up_and_lift_to_advance() {
 }
 
 #[test]
+fn quiescent_pedal_down_full_blocks_its_staged_lift() {
+    let (prepared, candidate) = history_tests::one_shot_with_live(
+        true,
+        crate::quantities::HeldNoteCount::measured(2),
+        EventCount::measured(2),
+    );
+    let (mut control, mut audio) = prepared
+        .arm_one_shot(
+            candidate,
+            &history_tests::profile_with_ingress_depth(EventCount::measured(5)),
+        )
+        .unwrap();
+    let (owner, generations) = ledger_tests::bridge_serial_owner_with_first_limits(
+        256,
+        InputRate::new(FrameCount::new(1), InputTickSpan::new(1)).unwrap(),
+        InputCapacity::new(64).unwrap(),
+    );
+    let clock = owner.input(generations[0]).unwrap().clock().unwrap();
+    let (mut producer, mut inbox) =
+        SourceInbox::prepare(generations[0], InputCaptureHalt::detached_for_test(), clock);
+    let mut bridge = RawStageBridge::with_raw(4, SerialRaw { owner, generations });
+    bridge.frontier(Source::First, 100);
+    for (source, at, status) in [
+        (Source::Second, 90, 0xb0),
+        (Source::Second, 91, 0xb1),
+        (Source::First, 110, 0xb0),
+        (Source::First, 111, 0xb1),
+    ] {
+        if source == Source::First && at == 110 {
+            bridge.frontier(Source::Second, 200);
+        }
+        let occurrence = bridge.offer(source, at, input(status, 64, 127)).unwrap();
+        let down = bridge
+            .service_pedal(&mut control, &mut audio)
+            .unwrap()
+            .unwrap();
+        assert_eq!(down.occurrence, occurrence);
+        assert!(matches!(
+            down.outcome,
+            Some(MixedIngressOutcome::PedalDown(Ok(_)))
+        ));
+    }
+    assert_eq!(bridge.stage.pressure(Source::First), (0, 2));
+    assert_eq!(bridge.stage.pressure(Source::Second), (0, 2));
+    assert_eq!(control.ingress_room(), 1);
+    assert_eq!(
+        control.ingress_outstanding,
+        super::super::MixedIngressQueueCount::NONE
+    );
+    for (at, value) in [(120, 127), (121, 0)] {
+        let _ = producer
+            .submit_owned(InputObservation::Message {
+                tick: InputTick::new(at),
+                arrival: SampleTime::new(at),
+                input: input(0xb2, 64, value),
+            })
+            .unwrap();
+    }
+    let mut pending = None;
+    let Some(MixedSourceStep::Staged(_, down)) =
+        pump_concrete_mixed(&mut bridge, &mut inbox, &mut pending)
+    else {
+        panic!("the effective pedal-down must reserve its stage lift place");
+    };
+    let Some(MixedSourceStep::Staged(_, lift)) =
+        pump_concrete_mixed(&mut bridge, &mut inbox, &mut pending)
+    else {
+        panic!("the lift must redeem the stage reservation");
+    };
+    assert_ne!(down, lift);
+    assert_eq!(bridge.stage.pressure(Source::First), (2, 2));
+    let selected = bridge.stage.peek_next();
+    assert_eq!(
+        selected.map(|(source, packet)| (source, packet.occurrence)),
+        Some((Source::First, down))
+    );
+    let last_id = control.last_ingress_id;
+    assert_eq!(
+        bridge.service_pedal(&mut control, &mut audio),
+        Err(MixedPedalSubmitError::Full)
+    );
+    assert_eq!(bridge.stage.peek_next(), selected);
+    assert_eq!(control.last_ingress_id, last_id);
+    audio.service_test_ingress_queue();
+    assert!(control.collect_ingress_result().is_none());
+    assert_eq!(
+        bridge.service_pedal(&mut control, &mut audio),
+        Err(MixedPedalSubmitError::Full)
+    );
+    assert_eq!(bridge.stage.peek_next(), selected);
+    assert!(inbox.close(producer).is_ok());
+    let (teardown, mut raw, _ended) = bridge.tear_down(control, audio);
+    assert_eq!(teardown.unoffered.len(), 2);
+    assert_eq!(teardown.staged_pedal_lifts.len(), 1);
+    assert_eq!(teardown.pedal_lifts.len(), 4);
+    let mut remaining = teardown.raw_issued;
+    for (source, generation) in [Source::First, Source::Second]
+        .into_iter()
+        .zip(raw.generations)
+    {
+        let frontier = raw
+            .owner
+            .advance_frontier(generation, InputTick::new(256))
+            .unwrap();
+        remaining.push((source, frontier, None));
+    }
+    let delivered = publish_serial(&mut raw, remaining);
+    assert_eq!(
+        delivered
+            .iter()
+            .filter(|receipt| matches!(receipt.observation, InputObservation::Message { .. }))
+            .count(),
+        6
+    );
+}
+
+#[test]
 fn actual_source_key_up_waits_behind_an_onset_refused_by_open_handle_reservations() {
     let (prepared, candidate) = history_tests::one_shot_with_live(
         true,
