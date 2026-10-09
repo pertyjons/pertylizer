@@ -933,9 +933,11 @@ partitioned audio equals a pre-serviced reference at bend frames 110 and 111.
 A separate private fixture sends bends from one source on MIDI channel two
 and then channel one. Their distinct source/channel scopes, original raw
 handoffs, selected sample times and command-result order survive the raw,
-stage and command paths. No note sounds in this fixture, so it proves command
-acceptance and scope separation, not audible channel isolation. The callback
-comparison above remains the channel-one coverage.
+stage and command paths. Two note onsets enter audio ingress first, at frames
+90 and 91. The audio ingress queue then writes the channel-two bend only to
+its note at frame 100 and the channel-one bend only to its note at frame 101.
+This fixture does not render audio; the callback comparison above remains the
+channel-one rendered-audio coverage.
 A further private fixture fills the actual 16-cell source ring. Its seventeenth
 bend retains an owned retry token until an exact head commit frees one place;
 retry keeps attempt 17 and receives queue identity 17. All seventeen heads then

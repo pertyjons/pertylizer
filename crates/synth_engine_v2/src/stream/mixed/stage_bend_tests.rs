@@ -319,6 +319,38 @@ fn same_source_bends_keep_channel_and_command_order() {
     let (mut control, mut audio) = prepared
         .arm_one_shot(candidate, &history_tests::mixed_profile())
         .unwrap();
+    let first_note_scope = source_scope(Source::First, input(0x90, 60, 100));
+    let second_note_scope = source_scope(Source::First, input(0x91, 61, 100));
+    let submitted: Vec<_> = [
+        (1, first_note_scope, 90, 60),
+        (2, second_note_scope, 91, 61),
+    ]
+    .into_iter()
+    .map(|(origin, scope, at, key)| {
+        control
+            .submit_onset(
+                MixedIngressOriginId(origin),
+                scope,
+                SampleTime::new(at),
+                crate::quantities::KeyIdentity::new(key).unwrap(),
+                crate::quantities::NoteVelocity::FULL,
+            )
+            .unwrap()
+    })
+    .collect();
+    audio.service_test_ingress_queue();
+    let identities: Vec<_> = submitted
+        .into_iter()
+        .map(|(command, request)| {
+            let result = control.collect_ingress_result().unwrap();
+            assert_eq!((result.id, result.request), (command, request));
+            let MixedIngressOutcome::Onset(Ok(identity)) = result.outcome else {
+                panic!("both channel notes must sound");
+            };
+            identity
+        })
+        .collect();
+    assert_ne!(identities[0], identities[1]);
     let mut bridge = BendBridge::new(2);
     let first_input = input(0xe1, 127, 127);
     let second_input = input(0xe0, 0, 0);
@@ -368,6 +400,34 @@ fn same_source_bends_keep_channel_and_command_order() {
         assert_eq!((result.id, result.request), (command, request));
         assert!(matches!(result.outcome, MixedIngressOutcome::Bend(Ok(_))));
     }
+    let mut queue = vec![None; audio.test_ingress.queue_capacity_for_test()];
+    let len = audio.test_ingress.copy_queue_for_test(&mut queue).unwrap();
+    let written: Vec<_> = queue
+        .into_iter()
+        .take(len)
+        .flatten()
+        .filter_map(|(event, _)| match event.payload() {
+            EventPayload::Bend { identity, cents } => {
+                Some((identity, cents, event.envelope().time()))
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        written,
+        vec![
+            (
+                identities[1],
+                Cents::new(200.0).unwrap(),
+                SampleTime::new(100)
+            ),
+            (
+                identities[0],
+                Cents::new(-200.0).unwrap(),
+                SampleTime::new(101)
+            ),
+        ]
+    );
 }
 
 /// Feed the actual producer's validated head into the existing private raw,
