@@ -856,6 +856,14 @@ receipts, so it does not prove recorder delivery. Pedal pressure is still
 injected directly at private control; ordered source-to-raw pedal edges and a
 production combined host remain open.
 
+The private raw bridge now maps each source and MIDI channel to its own live
+scope when submitting an onset. A three-note fixture confirms that a
+pedal-down submitted on the first source's first channel sustains only that
+note, while a note on its second channel and another source's first channel
+retire independently. The ordering frontier comes from the raw owner. The
+pedal-down still enters at private control; source-to-raw pedal custody
+remains open.
+
 The budget withholds `B` queue places from ordinary traffic for the whole
 private run, leaving at most `C - B` for ordinary entries and release holds.
 When `2H + 1 <= C <= 3H`, `B = H`: one bend with all credits outstanding can

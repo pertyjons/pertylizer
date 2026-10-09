@@ -7,7 +7,8 @@ use super::{
     MixedIngressRequest, MixedOneShotAudio, MixedOneShotControl, MixedOneShotRenderError,
     MixedOneShotTeardown, TimedEvent, history_tests, ledger_tests,
     occurrence::{
-        LiveOccurrenceId, MixedLiveScope, MixedOnsetSubmitError, MixedRetireCause, MixedRetired,
+        LiveOccurrenceId, MixedLiveScope, MixedLiveSource, MixedOnsetSubmitError, MixedRetireCause,
+        MixedRetired,
     },
 };
 use crate::{
@@ -45,6 +46,15 @@ impl Source {
             Self::Second => 1,
         }
     }
+}
+
+/// The private raw bridge maps each source and MIDI channel to one live scope.
+fn source_scope(source: Source, original: Midi1Input) -> MixedLiveScope {
+    let owner = match source {
+        Source::First => MixedLiveSource::new(1),
+        Source::Second => MixedLiveSource::new(2),
+    };
+    MixedLiveScope::new(owner, original.channel())
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -800,6 +810,7 @@ impl<R: RawBackend> RawStageBridge<R> {
         let Some((source, packet)) = self.stage.peek_next() else {
             return Ok(None);
         };
+        assert_eq!(scope, source_scope(source, packet.original));
         let Midi1Event::NoteOn { key, velocity } = packet.original.event() else {
             panic!("the focused bridge services only an onset");
         };
@@ -1028,7 +1039,13 @@ impl<R: RawBackend> RawStageBridge<R> {
         let (handle, (command, request)) = match packet.original.event() {
             Midi1Event::NoteOn { key, velocity } => {
                 let submitted = control
-                    .submit_onset(origin, super::TEST_SCOPE, packet.at, key, velocity)
+                    .submit_onset(
+                        origin,
+                        source_scope(source, packet.original),
+                        packet.at,
+                        key,
+                        velocity,
+                    )
                     .unwrap();
                 let MixedIngressRequest::Onset {
                     occurrence: handle, ..
@@ -1911,6 +1928,102 @@ fn a_silent_peer_saturating_the_stage_never_refuses_raw_capture() {
         assert_eq!(recorded_occurrence(&delivered, orphan.raw), split);
         assert_ne!(combined, split);
     }
+}
+
+#[test]
+fn source_and_channel_scopes_keep_independent_live_pedals() {
+    let (prepared, candidate) = history_tests::one_shot_with_live(
+        true,
+        crate::quantities::HeldNoteCount::measured(3),
+        EventCount::measured(3),
+    );
+    let (mut control, mut audio) = prepared
+        .arm_one_shot(candidate, &history_tests::mixed_profile())
+        .unwrap();
+    let note = input(0x90, 60, 100);
+    let first_scope = source_scope(Source::First, note);
+    let second_scope = source_scope(Source::Second, note);
+    assert_ne!(first_scope, second_scope);
+    assert_ne!(
+        first_scope,
+        source_scope(Source::First, input(0x91, 60, 100))
+    );
+    let pedal = control
+        .submit_pedal(
+            MixedIngressOriginId(90),
+            first_scope,
+            SampleTime::new(90),
+            true,
+        )
+        .unwrap();
+    assert!(matches!(pedal, super::MixedPedalSubmitted::Command(..)));
+    audio.service_test_ingress_queue();
+    assert!(matches!(
+        control.collect_ingress_result().unwrap().outcome,
+        MixedIngressOutcome::PedalDown(Ok(_))
+    ));
+
+    let mut bridge = RawStageBridge::new(4);
+    let first = bridge.offer(Source::First, 100, note).unwrap();
+    let other_channel = bridge
+        .offer(Source::First, 101, input(0x91, 61, 100))
+        .unwrap();
+    let second = bridge.offer(Source::Second, 102, note).unwrap();
+    assert_eq!(
+        bridge.offer(Source::First, 110, input(0x80, 60, 0)),
+        Ok(first)
+    );
+    assert_eq!(
+        bridge.offer(Source::First, 111, input(0x81, 61, 0)),
+        Ok(other_channel)
+    );
+    assert_eq!(
+        bridge.offer(Source::Second, 112, input(0x80, 60, 0)),
+        Ok(second)
+    );
+    bridge.frontier(Source::First, 113);
+    let first_on = bridge.service(&mut control, &mut audio).unwrap();
+    let other_on = bridge.service(&mut control, &mut audio).unwrap();
+    let second_on = bridge.service(&mut control, &mut audio).unwrap();
+    assert_eq!(
+        (
+            first_on.occurrence,
+            other_on.occurrence,
+            second_on.occurrence
+        ),
+        (first, other_channel, second)
+    );
+    assert!(first_on.accepted() && other_on.accepted() && second_on.accepted());
+    assert_ne!(first_on.handle, second_on.handle);
+    let first_off = bridge.service(&mut control, &mut audio).unwrap();
+    let other_off = bridge.service(&mut control, &mut audio).unwrap();
+    let second_off = bridge.service(&mut control, &mut audio).unwrap();
+    assert_eq!(
+        (
+            first_off.occurrence,
+            other_off.occurrence,
+            second_off.occurrence
+        ),
+        (first, other_channel, second)
+    );
+    assert_eq!(first_off.handle, first_on.handle);
+    assert_eq!(other_off.handle, other_on.handle);
+    assert_eq!(second_off.handle, second_on.handle);
+    assert_eq!(
+        first_off.disposition,
+        MixedDisposition::Result(MixedIngressOutcome::Sustained(first_on.handle))
+    );
+    assert!(other_off.accepted() && second_off.accepted());
+    assert!(bridge.stage.peek_next().is_none());
+
+    let (teardown, raw, ended) = bridge.tear_down(control, audio);
+    assert_eq!(ended.ingress.holds_outstanding, EventCount::measured(1));
+    assert!(teardown.unoffered.is_empty() && teardown.reservations.is_empty());
+    let issued = teardown.raw_issued.clone();
+    assert_eq!(
+        settle_raw_by_cancellation(raw, &issued).bridge.len(),
+        issued.len()
+    );
 }
 
 #[test]
