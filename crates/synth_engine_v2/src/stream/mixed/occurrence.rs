@@ -57,7 +57,7 @@ use std::sync::{
 use synth_core::MidiChannel;
 use thiserror::Error;
 
-use super::{MixedIngressCommandId, MixedIngressQueueCount};
+use super::{MixedBendScopeCapacity, MixedIngressCommandId, MixedIngressQueueCount};
 use crate::{
     identity::NoteIdentity,
     ingress::{IngressRefused, RELEASE_GROUP_CAPACITY},
@@ -772,13 +772,16 @@ pub(super) struct MixedOccurrenceTable {
 }
 
 impl MixedOccurrenceTable {
-    /// Allocated off-thread at arm, with the merger ledgers' widths. Pedal and bend
-    /// tables are each as wide as `scopes`.
-    pub(super) fn prepare(width: MixedIngressQueueCount, scopes: MixedIngressQueueCount) -> Self {
+    /// Allocated off-thread at arm, with distinct pedal and bend scope bounds.
+    pub(super) fn prepare(
+        width: MixedIngressQueueCount,
+        pedal_scopes: MixedIngressQueueCount,
+        bend_scopes: MixedBendScopeCapacity,
+    ) -> Self {
         Self {
             cells: vec![CellUse::Free(LiveOccurrenceGeneration::FIRST); width.as_usize()],
-            pedals: vec![None; scopes.as_usize()],
-            bends: vec![None; scopes.as_usize()],
+            pedals: vec![None; pedal_scopes.as_usize()],
+            bends: vec![None; bend_scopes.as_usize()],
             released_after_refusal: EventCount::NONE,
             released_after_panic: EventCount::NONE,
         }

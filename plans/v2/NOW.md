@@ -774,19 +774,17 @@ serves the next source bend. A full scope table or command ring still refuses
 a bend at the caller boundary. The private bridge leaves the source head for
 retry; that custody alone does not establish progress.
 
-`ScopeCapacity` does not yet have a progress guarantee: arm sizes both bend
-scope tables to ingress depth `C`, but the admitted minimum `C = 2H + 1` can
-be smaller than the number of live `(source, channel)` scopes. At `H = 2` and
-`C = 5`, five non-zero channel values can keep all cells indefinitely. A sixth
-channel's refused head then blocks a zero bend behind it in the same source
-FIFO. A production bend-scope guarantee therefore needs a bounded admitted
-scope set, enough prepared cells for every admitted scope, and a named outcome
-for input outside that set. Its terminal mixed reason and retained raw receipt
-must follow ADR-0075's split-outcome rule.
-
-The falsifier is the five-channel case with the sixth bend followed by a zero
-on channel one: a claimed source-owned retry must advance both in order
-without a peer action.
+The private owner now prepares `max(C, 32)` bend-scope cells on both control
+and audio, independent of pedal-table width. The private raw bridge's two
+sources can name at most 32 `(source, channel)` scopes. At `H = 2`, `C = 5`, a
+serial fixture sends six non-zero channel bends followed by zero on channel
+one through source ring, raw capture, stage, command and audio; all seven
+reach the recorder.
+The old five-cell `ScopeCapacity` stop no longer applies to that bridge.
+Direct private control still accepts arbitrary `MixedLiveSource(u64)` values,
+so production admission must bind the source set before this becomes a
+general place guarantee. An out-of-set source needs a named split result and
+retained raw receipt under ADR-0075.
 
 That bend-cell bound alone does not make every caller `Full` retryable. At the
 same `C = 5`, four serviced and collected pedal-downs can retain four reserved
@@ -909,9 +907,8 @@ capture advances.
 The 2026-10-09 private choice gives a stage-full bend a final sound-path split
 before a younger head enters mixed stage. Immediate and frontier-triggered
 split fixtures record their raw observations; the audio scope keeps its last
-accepted value. A split return to zero leaves the non-zero bend-table cell
-held until a later accepted zero, which may never arrive and can starve
-another scope.
+accepted value. A split return to zero leaves that non-zero bend and its
+inherited-credit cost until a later zero is accepted, which may never arrive.
 Production acceptance must revisit this result and scope-capacity law together
 with ordered result attribution, stage admission and recorder delivery.
 A younger head from that source staged while the bend is still pending, or a

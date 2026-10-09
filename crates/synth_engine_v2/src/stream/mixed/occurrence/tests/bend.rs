@@ -948,9 +948,49 @@ fn tombstones_and_released_occurrences_are_not_bent() {
 }
 
 #[test]
+fn two_source_bend_scope_floor_covers_all_channels_at_shallow_ingress_depth() {
+    let (prepared, candidate) = history_tests::one_shot_with_live(
+        true,
+        HeldNoteCount::measured(2),
+        EventCount::measured(2),
+    );
+    let (mut control, mut audio) = prepared
+        .arm_one_shot(
+            candidate,
+            &history_tests::profile_with_ingress_depth(EventCount::measured(5)),
+        )
+        .unwrap();
+    assert_eq!(control.ingress_capacity.as_usize(), 5);
+    assert_eq!(control.bend_scopes.len(), 32);
+    assert_eq!(audio.occurrences.bends.len(), 32);
+    for source in 1..=2 {
+        for channel in 1..=16 {
+            let scope = scope(source, channel);
+            let request = bend_at(&mut control, scope, 100, 5.0);
+            audio.service_test_ingress_queue();
+            assert_eq!(
+                written(outcome_for(&collect_all(&mut control), request)),
+                vec![]
+            );
+            assert_eq!(audio.occurrences.bend_of(scope), cents(5.0));
+        }
+    }
+    assert_eq!(control.bend_scopes.iter().flatten().count(), 32);
+    let first = scope(1, 1);
+    let zero = bend_at(&mut control, first, 100, 0.0);
+    audio.service_test_ingress_queue();
+    assert_eq!(
+        written(outcome_for(&collect_all(&mut control), zero)),
+        vec![]
+    );
+    assert_eq!(audio.occurrences.bend_of(first), Cents::ZERO);
+    assert_eq!(control.bend_scopes.iter().flatten().count(), 31);
+}
+
+#[test]
 fn a_full_bend_table_refuses_at_the_caller_and_frees_only_after_a_zero_result() {
     let (mut control, mut audio) = armed_with(true, 1);
-    let width = control.ingress_capacity.as_usize();
+    let width = control.bend_scopes.len();
     let mut serve = |control: &mut MixedOneShotControl, request: MixedIngressRequest| {
         audio.service_test_ingress_queue();
         outcome_for(&collect_all(control), request)
@@ -1025,7 +1065,7 @@ fn a_full_bend_table_refuses_at_the_caller_and_frees_only_after_a_zero_result() 
 #[test]
 fn a_refused_zero_keeps_its_scope_reservation() {
     let (mut control, mut audio) = armed_with(true, 1);
-    let width = control.ingress_capacity.as_usize();
+    let width = control.bend_scopes.len();
     for source in 0..width {
         let held = scope(10 + source as u64, 1);
         let request = bend_at(&mut control, held, 100, 5.0);
@@ -1056,7 +1096,7 @@ fn a_refused_zero_keeps_its_scope_reservation() {
 #[test]
 fn a_zero_result_does_not_release_a_scope_with_a_later_bend_pending() {
     let (mut control, mut audio) = armed_with(true, 1);
-    let width = control.ingress_capacity.as_usize();
+    let width = control.bend_scopes.len();
     for source in 0..width {
         let scope = scope(10 + source as u64, 1);
         let request = bend_at(&mut control, scope, 100, 5.0);

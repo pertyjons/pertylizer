@@ -2596,6 +2596,102 @@ fn a_split_source_bend_reaches_the_serial_recorder_with_its_note_pair() {
 }
 
 #[test]
+fn six_channels_keep_bend_scope_places_with_a_five_place_command_ring() {
+    let (prepared, candidate) = history_tests::one_shot_with_live(
+        true,
+        crate::quantities::HeldNoteCount::measured(2),
+        EventCount::measured(2),
+    );
+    let (mut control, mut audio) = prepared
+        .arm_one_shot(
+            candidate,
+            &history_tests::profile_with_ingress_depth(EventCount::measured(5)),
+        )
+        .unwrap();
+    assert_eq!(control.ingress_capacity.as_usize(), 5);
+    assert_eq!(control.bend_scopes.len(), 32);
+    let (owner, generations) = ledger_tests::bridge_serial_owner_with_first_limits(
+        256,
+        InputRate::new(FrameCount::new(1), InputTickSpan::new(1)).unwrap(),
+        InputCapacity::new(64).unwrap(),
+    );
+    let clock = owner.input(generations[0]).unwrap().clock().unwrap();
+    let (mut producer, mut inbox) =
+        SourceInbox::prepare(generations[0], InputCaptureHalt::detached_for_test(), clock);
+    let mut bridge = RawStageBridge::with_raw(2, SerialRaw { owner, generations });
+    bridge.frontier(Source::Second, 200);
+    let mut issued = Vec::new();
+    for (at, original) in (100..106)
+        .zip(1..=6)
+        .map(|(at, channel)| (at, input(0xe0 + channel - 1, 127, 127)))
+        .chain([(106, input(0xe0, 0, 64))])
+    {
+        let (_, queue) = producer
+            .submit_owned(InputObservation::Message {
+                tick: InputTick::new(at),
+                arrival: SampleTime::new(at),
+                input: original,
+            })
+            .unwrap()
+            .parts();
+        let mut pending = None;
+        let Some(MixedSourceStep::Staged(head, occurrence)) =
+            pump_concrete_mixed(&mut bridge, &mut inbox, &mut pending)
+        else {
+            panic!("a bend from an admitted source must take its stage place");
+        };
+        assert_eq!(head.stamp().queue(), queue);
+        let result = bridge
+            .service_bend(&mut control, &mut audio)
+            .unwrap()
+            .unwrap();
+        assert_eq!(result.occurrence, occurrence);
+        assert_eq!(result.handoff.original, original);
+        assert!(matches!(result.outcome, MixedIngressOutcome::Bend(Ok(_))));
+        issued.push(result.handoff.raw);
+    }
+    assert_eq!(issued.len(), 7);
+    assert_eq!(control.bend_scopes.iter().flatten().count(), 5);
+    for channel in 1..=6 {
+        let scope = MixedLiveScope::new(MixedLiveSource::new(1), MidiChannel::new(channel));
+        assert_eq!(
+            audio.occurrences.bend_of(scope),
+            if channel == 1 {
+                Cents::ZERO
+            } else {
+                Cents::new(200.0).unwrap()
+            }
+        );
+    }
+    assert!(inbox.close(producer).is_ok());
+    let (teardown, mut raw, _ended) = bridge.tear_down(control, audio);
+    assert!(teardown.unoffered.is_empty() && teardown.reservations.is_empty());
+    let mut remaining = teardown.raw_issued;
+    for (source, generation) in [Source::First, Source::Second]
+        .into_iter()
+        .zip(raw.generations)
+    {
+        let frontier = raw
+            .owner
+            .advance_frontier(generation, InputTick::new(256))
+            .unwrap();
+        remaining.push((source, frontier, None));
+    }
+    let delivered = publish_serial(&mut raw, remaining);
+    for raw_id in issued {
+        let receipt = delivered
+            .iter()
+            .find(|receipt| receipt.id == raw_id)
+            .unwrap();
+        assert!(matches!(
+            &receipt.outcome,
+            InputOutcome::Delivered(SessionSourceOutcome::Published(record))
+                if record.capture == crate::recording::notes::CaptureDisposition::Recorded
+        ));
+    }
+}
+
+#[test]
 fn source_pedal_split_allows_the_protected_key_up_and_lift_to_advance() {
     let (prepared, candidate) = history_tests::one_shot_with_live(
         true,

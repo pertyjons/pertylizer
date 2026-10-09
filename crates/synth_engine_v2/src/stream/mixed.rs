@@ -937,6 +937,27 @@ const TEST_SCOPE: MixedLiveScope = MixedLiveScope::new(
 #[must_use]
 struct MixedIngressQueueCount(usize);
 
+/// Prepared bend cells modeled on the private bridge's two MIDI1 sources.
+/// The owner does not itself bind source IDs; ingress depth remains a floor
+/// so direct private callers keep their existing table capacity.
+#[cfg(all(test, feature = "simulated-ingress"))]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[must_use]
+struct MixedBendScopeCapacity(usize);
+
+#[cfg(all(test, feature = "simulated-ingress"))]
+impl MixedBendScopeCapacity {
+    const TWO_SOURCE_MIDI1_FLOOR: usize = 2 * 16;
+
+    fn for_two_source_midi1(ingress: MixedIngressQueueCount) -> Self {
+        Self(ingress.as_usize().max(Self::TWO_SOURCE_MIDI1_FLOOR))
+    }
+
+    const fn as_usize(self) -> usize {
+        self.0
+    }
+}
+
 /// One merger reservation for a scope that is bent or has an uncollected bend.
 #[cfg(all(test, feature = "simulated-ingress"))]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -2388,6 +2409,8 @@ impl MixedJoinedPrepared {
         let bend_credit_return = MixedBendCreditReturn::new();
         #[cfg(all(test, feature = "simulated-ingress"))]
         let bend_credit_budget = MixedIngressQueueCount(test_ingress.mixed_bend_budget());
+        #[cfg(all(test, feature = "simulated-ingress"))]
+        let bend_scope_capacity = MixedBendScopeCapacity::for_two_source_midi1(ingress_capacity);
         let late_at_arm = candidate.anchor.time() < arm_clock;
         let effective_anchor = StreamAnchor::new(effective, candidate.anchor.position());
         let capsule = match candidate.into_audio_capsule() {
@@ -2434,7 +2457,7 @@ impl MixedJoinedPrepared {
                 #[cfg(all(test, feature = "simulated-ingress"))]
                 pedal_ledger: MixedPedalLedger::prepare(ingress_capacity),
                 #[cfg(all(test, feature = "simulated-ingress"))]
-                bend_scopes: vec![None; ingress_capacity.as_usize()],
+                bend_scopes: vec![None; bend_scope_capacity.as_usize()],
                 #[cfg(all(test, feature = "simulated-ingress"))]
                 bend_credits_per_bend: MixedIngressQueueCount(holds),
                 #[cfg(all(test, feature = "simulated-ingress"))]
@@ -2473,7 +2496,11 @@ impl MixedJoinedPrepared {
                 #[cfg(all(test, feature = "simulated-ingress"))]
                 test_ingress,
                 #[cfg(all(test, feature = "simulated-ingress"))]
-                occurrences: MixedOccurrenceTable::prepare(occurrence_width, ingress_capacity),
+                occurrences: MixedOccurrenceTable::prepare(
+                    occurrence_width,
+                    ingress_capacity,
+                    bend_scope_capacity,
+                ),
                 #[cfg(all(test, feature = "simulated-ingress"))]
                 ingress_commands: OpaqueQueue(ingress_command_reader),
                 #[cfg(all(test, feature = "simulated-ingress"))]
