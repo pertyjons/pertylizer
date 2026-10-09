@@ -396,6 +396,7 @@ impl PublicationArbiter {
     }
 
     /// Allocated publication storage, excluding the inline owner.
+    #[cfg(feature = "simulated-ingress")]
     pub(crate) fn storage_bytes(&self) -> Option<crate::quantities::PreparedBytes> {
         let bytes = self
             .events
