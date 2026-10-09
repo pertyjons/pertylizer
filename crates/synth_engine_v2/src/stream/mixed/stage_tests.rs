@@ -612,6 +612,15 @@ enum SplitDisposition {
         onset_raw: InputEventId,
         reason: MixedOnsetSubmitError,
     },
+    PedalDown {
+        reason: MixedPedalSubmitError,
+    },
+    RepeatedPedalDown {
+        down_raw: InputEventId,
+    },
+    PedalLiftAfterDown {
+        down_raw: InputEventId,
+    },
 }
 
 #[derive(Debug, PartialEq)]
@@ -633,6 +642,20 @@ struct RefusedOnsetTombstone {
 enum OnsetDecision {
     Admitted(CombinedResult),
     Refused(SplitRefusal),
+}
+
+#[derive(Debug, PartialEq)]
+enum PedalDecision {
+    Admitted(PedalCombinedResult),
+    Refused(SplitRefusal),
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct SplitPedalLatch {
+    source: Source,
+    channel: MidiChannel,
+    occurrence: Occurrence,
+    down_raw: InputEventId,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -873,6 +896,8 @@ struct RawStageBridge<R = [RawSource; 2]> {
     /// A refused onset has no mixed handle. Its raw handoff belongs to the
     /// returned split result, while this cell links its future key-up.
     refused_onsets: Vec<RefusedOnsetTombstone>,
+    /// A command-full down keeps its stage lift place but never enters mixed.
+    split_pedals: Vec<SplitPedalLatch>,
     /// Every raw ID a raw owner issued to this bridge, with its admission link.
     raw_issued: Vec<(Source, InputEventId, Option<InputEventId>)>,
     /// A source-owned bend pending outside the ring blocks that source's frontier.
@@ -899,6 +924,7 @@ impl<R: RawBackend> RawStageBridge<R> {
             onset_results: Vec::new(),
             handles: Vec::new(),
             refused_onsets: Vec::new(),
+            split_pedals: Vec::with_capacity(2 * (cells_per_source - 1)),
             raw_issued: Vec::new(),
             pending_source_bends: [None; 2],
             next_occurrence: 1,
@@ -1236,25 +1262,12 @@ impl<R: RawBackend> RawStageBridge<R> {
         self.stage.frontier(source, SampleTime::new(at)).unwrap();
     }
 
-    /// A pedal is submitted only from the selected stage head. A caller-side
-    /// refusal leaves that head and its raw handoff available for retry.
-    fn service_pedal(
+    /// Commit one selected pedal after its mixed submission or named split.
+    fn take_selected_pedal(
         &mut self,
-        control: &mut MixedOneShotControl,
-        audio: &mut MixedOneShotAudio,
-    ) -> Result<Option<PedalCombinedResult>, MixedPedalSubmitError> {
-        let Some((source, packet)) = self.stage.peek_next() else {
-            return Ok(None);
-        };
-        let Midi1Event::Sustain { down } = packet.original.event() else {
-            panic!("the focused pedal service requires a selected pedal head");
-        };
-        let submitted = control.submit_pedal(
-            MixedIngressOriginId(packet.occurrence.0),
-            source_scope(source, packet.original),
-            packet.at,
-            down,
-        )?;
+        source: Source,
+        packet: Packet,
+    ) -> (RawHandoff, Option<InputEventId>) {
         self.stage.commit_next(source, packet);
         let position = self
             .handoffs
@@ -1271,6 +1284,35 @@ impl<R: RawBackend> RawStageBridge<R> {
             .iter()
             .position(|&(occurrence, _)| occurrence == packet.occurrence)
             .map(|position| self.paired_pedal_lifts.swap_remove(position).1);
+        (handoff, paired_down_raw)
+    }
+
+    /// A pedal is submitted only from the selected stage head. A caller-side
+    /// refusal leaves that head and its raw handoff available for retry.
+    fn service_pedal(
+        &mut self,
+        control: &mut MixedOneShotControl,
+        audio: &mut MixedOneShotAudio,
+    ) -> Result<Option<PedalCombinedResult>, MixedPedalSubmitError> {
+        let Some((source, packet)) = self.stage.peek_next() else {
+            return Ok(None);
+        };
+        let Midi1Event::Sustain { down } = packet.original.event() else {
+            panic!("the focused pedal service requires a selected pedal head");
+        };
+        assert!(
+            !self.split_pedals.iter().any(|latch| {
+                latch.source == source && latch.channel == packet.original.channel()
+            }),
+            "a split pedal scope must use the split-aware service"
+        );
+        let submitted = control.submit_pedal(
+            MixedIngressOriginId(packet.occurrence.0),
+            source_scope(source, packet.original),
+            packet.at,
+            down,
+        )?;
+        let (handoff, paired_down_raw) = self.take_selected_pedal(source, packet);
         let outcome = match submitted {
             MixedPedalSubmitted::Redundant => None,
             MixedPedalSubmitted::Command(command, request) => {
@@ -1286,6 +1328,94 @@ impl<R: RawBackend> RawStageBridge<R> {
             paired_down_raw,
             outcome,
         }))
+    }
+
+    /// At a quiescent command-ring Full, split an effective down with a
+    /// protected stage lift. Later same-scope edges use its raw-linked latch
+    /// at their selected stage head, before mixed sees any of them.
+    fn service_pedal_or_refuse_full(
+        &mut self,
+        control: &mut MixedOneShotControl,
+        audio: &mut MixedOneShotAudio,
+    ) -> Result<Option<PedalDecision>, MixedPedalSubmitError> {
+        let Some((source, packet)) = self.stage.peek_next() else {
+            return Ok(None);
+        };
+        let Midi1Event::Sustain { down } = packet.original.event() else {
+            panic!("the split-aware pedal service requires a selected pedal head");
+        };
+        let channel = packet.original.channel();
+        if let Some(index) = self
+            .split_pedals
+            .iter()
+            .position(|latch| latch.source == source && latch.channel == channel)
+        {
+            let latch = self.split_pedals[index];
+            let (handoff, paired_down_raw) = self.take_selected_pedal(source, packet);
+            let disposition = if down {
+                assert_eq!(paired_down_raw, None);
+                SplitDisposition::RepeatedPedalDown {
+                    down_raw: latch.down_raw,
+                }
+            } else {
+                assert_eq!(paired_down_raw, Some(latch.down_raw));
+                self.split_pedals.swap_remove(index);
+                SplitDisposition::PedalLiftAfterDown {
+                    down_raw: latch.down_raw,
+                }
+            };
+            return Ok(Some(PedalDecision::Refused(SplitRefusal {
+                handoff,
+                occurrence: packet.occurrence,
+                disposition,
+            })));
+        }
+        match self.service_pedal(control, audio) {
+            Ok(Some(result)) => Ok(Some(PedalDecision::Admitted(result))),
+            Ok(None) => Ok(None),
+            Err(MixedPedalSubmitError::Full)
+                if down
+                    && control.ingress_outstanding == super::MixedIngressQueueCount::NONE
+                    && control.ingress_room() < 2 =>
+            {
+                let position = self
+                    .handoffs
+                    .iter()
+                    .position(|&(occurrence, release, _)| {
+                        occurrence == packet.occurrence && !release
+                    })
+                    .expect("the selected down keeps its raw handoff");
+                let raw = self.handoffs[position].2.raw;
+                let reserved = self.pedal_downs.iter().any(|&(owner, held, id, down_raw)| {
+                    (owner, held, id, down_raw) == (source, channel, packet.occurrence, raw)
+                });
+                let staged = self
+                    .paired_pedal_lifts
+                    .iter()
+                    .any(|&(_, down_raw)| down_raw == raw);
+                if reserved == staged {
+                    return Err(MixedPedalSubmitError::Full);
+                }
+                let (handoff, paired_down_raw) = self.take_selected_pedal(source, packet);
+                assert_eq!((handoff.raw, paired_down_raw), (raw, None));
+                assert!(self.split_pedals.len() < 2 * (self.stage.cells_per_source - 1));
+                assert!(self.split_pedals.len() < self.split_pedals.capacity());
+                self.split_pedals.push(SplitPedalLatch {
+                    source,
+                    channel,
+                    occurrence: packet.occurrence,
+                    down_raw: raw,
+                });
+                Ok(Some(PedalDecision::Refused(SplitRefusal {
+                    handoff,
+                    occurrence: packet.occurrence,
+                    disposition: SplitDisposition::PedalDown {
+                        reason: MixedPedalSubmitError::Full,
+                    },
+                })))
+            }
+            Err(error) => Err(error),
+        }
     }
 
     /// A caller-side bend refusal retains the selected stage head and its raw
@@ -1690,12 +1820,19 @@ struct BridgeTeardown {
     unstaged_pedals: Vec<(Source, MidiChannel, Occurrence, InputEventId)>,
     onsets: Vec<(Occurrence, OnsetAtTeardown)>,
     refused_onsets: Vec<(RefusedOnsetTombstone, RefusedOnsetPending)>,
+    split_pedals: Vec<(SplitPedalLatch, SplitPedalPending)>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum RefusedOnsetPending {
     ReservedKeyUp,
     StagedKeyUp(InputEventId),
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum SplitPedalPending {
+    ReservedLift,
+    StagedLift(InputEventId),
 }
 
 fn onset_edges(events: &[(TimedEvent, bool)], identity: NoteIdentity) -> usize {
@@ -1767,6 +1904,7 @@ impl<R: RawBackend> RawStageBridge<R> {
             unstaged_pedals: Vec::new(),
             onsets: Vec::new(),
             refused_onsets: Vec::new(),
+            split_pedals: Vec::new(),
         };
         for (lane, source) in self
             .stage
@@ -1851,12 +1989,48 @@ impl<R: RawBackend> RawStageBridge<R> {
             };
             teardown.refused_onsets.push((tombstone, pending));
         }
+        for latch in self.split_pedals.drain(..) {
+            let reserved = teardown
+                .pedal_lifts
+                .iter()
+                .any(|&(source, channel, id, raw)| {
+                    (source, channel, id, raw)
+                        == (
+                            latch.source,
+                            latch.channel,
+                            latch.occurrence,
+                            latch.down_raw,
+                        )
+                });
+            let staged = teardown
+                .staged_pedal_lifts
+                .iter()
+                .find(|&&(lift_raw, down_raw)| {
+                    down_raw == latch.down_raw
+                        && teardown.unoffered.iter().any(|handoff| {
+                            handoff.source == latch.source
+                                && handoff.raw == lift_raw
+                                && handoff.original.channel() == latch.channel
+                                && matches!(
+                                    handoff.original.event(),
+                                    Midi1Event::Sustain { down: false }
+                                )
+                        })
+                });
+            let pending = match (reserved, staged) {
+                (true, None) => SplitPedalPending::ReservedLift,
+                (false, Some(&(lift_raw, _))) => SplitPedalPending::StagedLift(lift_raw),
+                _ => panic!("one stage lift charge for each split pedal down"),
+            };
+            teardown.split_pedals.push((latch, pending));
+        }
         assert!(
             self.handoffs.is_empty()
                 && self.staged_onsets.is_empty()
                 && self.pedal_downs.is_empty()
                 && self.paired_pedal_lifts.is_empty()
                 && self.unstaged_pedal_downs.is_empty()
+                && self.split_pedals.is_empty()
         );
         for (occurrence, result) in self.onset_results.drain(..) {
             let state = match result {

@@ -883,7 +883,7 @@ pedal-down. These fixtures offer directly to standalone raw owners. The lane
 refusal is still reported at offer time, so it can precede an older staged
 command's result;
 an ordered combined disposition that attributes each later note to this
-raw/mixed pedal split, production source-ring pedal custody, a settled mixed
+raw/mixed pedal split, production source-ring pedal custody, a production mixed
 `Full` split outcome and production recorder delivery remain open.
 
 At `H = 2`, `C = 5`, four collected pedal-downs enter raw and stage directly.
@@ -894,6 +894,14 @@ returns `Full` with none outstanding; another audio service and collection
 leave it selected ahead of its lift. The serial session delivers receipts for
 all six messages and completes capture. This falsifies a capacity rule that
 splits only onsets after a quiescent `Full`.
+The [private bridge fixture](../../crates/synth_engine_v2/src/stream/mixed/stage_bend_tests.rs)
+now gives that down a selected-head sound-path split without a mixed command.
+A source/channel/raw latch consumes staged repeats and its protected lift;
+another source's same-channel pedal remains independent. Teardown names the
+latch against exactly one reserved or staged lift. With `S` stage cells per
+source, its prepared two-source bound is `2(S - 1)`; a saturation fixture
+reaches that bound. In-flight `Full` retains the selected head for retry,
+while ordered production reporting and admission remain open.
 
 The private raw bridge also stages bends alongside pedal and note edges.
 One five-cell lane holds a pedal-down, note-on, bend, key-up and pedal lift
