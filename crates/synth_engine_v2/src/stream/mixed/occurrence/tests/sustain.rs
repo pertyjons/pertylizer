@@ -7,8 +7,8 @@ use synth_core::MidiChannel;
 
 use super::{
     super::{
-        super::MixedPedalSubmitted, MixedLifted, MixedLiveScope, MixedLiveSource, MixedPedalDown,
-        MixedPedalRefused, MixedPedalSubmitError,
+        super::MixedPedalSubmitted, MixedLifted, MixedLiveScope, MixedLiveSource,
+        MixedOnsetSubmitError, MixedPedalDown, MixedPedalRefused, MixedPedalSubmitError,
     },
     ExhaustedResource, IngressRefused, LiveOccurrenceId, MixedCollection, MixedHandleRefused,
     MixedIngressOutcome, MixedIngressRequest, MixedIngressResult, MixedOccurrenceState,
@@ -171,6 +171,73 @@ pub(super) fn state_of(
         .into_iter()
         .find_map(|(held, state)| (held == occurrence).then_some(state))
         .expect("the handle is held")
+}
+
+#[test]
+fn sixteen_pedal_reservations_and_audio_refused_handles_exhaust_onset_room() {
+    let (prepared, candidate) = history_tests::one_shot_with_live(
+        true,
+        HeldNoteCount::measured(2),
+        EventCount::measured(2),
+    );
+    let (mut control, mut audio) = prepared
+        .arm_one_shot(
+            candidate,
+            &history_tests::profile_with_ingress_depth(EventCount::measured(20)),
+        )
+        .expect("test profile with depth 20 arms");
+    for channel in 1..=16 {
+        let s = scope(1, channel);
+        let edge = pedal(&mut control, s, 100, true);
+        assert!(matches!(edge, MixedPedalSubmitted::Command(..)));
+        audio.service_test_ingress_queue();
+        let result = collect_all(&mut control);
+        assert_eq!(result.len(), 1);
+        assert!(matches!(
+            result[0].outcome,
+            MixedIngressOutcome::PedalDown(Ok(_))
+        ));
+        assert_eq!(holds(&audio), 0);
+    }
+    let s = scope(1, 1);
+    let mut handles = Vec::new();
+    let mut outcomes = Vec::new();
+    for (raw, expected_holds) in [(60, 1), (61, 2), (62, 2)] {
+        let handle = onset_in(&mut control, s, 110, raw);
+        audio.service_test_ingress_queue();
+        let results = collect_all(&mut control);
+        assert_eq!(results.len(), 1);
+        outcomes.push(outcome_for(&results, onset_request_in(handle, s, 110, raw)));
+        handles.push(handle);
+        assert_eq!(holds(&audio), expected_holds);
+    }
+    assert!(matches!(outcomes[0], MixedIngressOutcome::Onset(Ok(_))));
+    assert!(matches!(outcomes[1], MixedIngressOutcome::Onset(Ok(_))));
+    assert_eq!(
+        outcomes[2],
+        MixedIngressOutcome::Onset(Err(IngressRefused::Dropped {
+            resource: ExhaustedResource::Hold,
+        }))
+    );
+    assert_eq!(control.ingress_room(), 1);
+    assert_eq!(control.ingress_outstanding.as_usize(), 0);
+    assert_eq!(control.release_reserved.as_usize(), 3);
+    assert_eq!(control.pedal_ledger.reserved(), 16);
+    assert_eq!(
+        control.submit_onset(ORIGIN, s, SampleTime::new(111), key(63), NoteVelocity::FULL),
+        Err(MixedOnsetSubmitError::Full)
+    );
+    // A release submitted directly can use its reserved place and restore room.
+    release(&mut control, handles[0], 112);
+    audio.service_test_ingress_queue();
+    let results = collect_all(&mut control);
+    assert_eq!(results.len(), 1);
+    assert_eq!(
+        results[0].outcome,
+        MixedIngressOutcome::Sustained(handles[0])
+    );
+    assert_eq!(control.ingress_room(), 2);
+    assert_eq!(holds(&audio), 2);
 }
 
 #[test]
