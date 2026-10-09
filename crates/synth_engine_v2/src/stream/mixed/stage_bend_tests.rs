@@ -2,11 +2,11 @@
 
 use super::*;
 use crate::quantities::Cents;
-use ringbuf::{
-    HeapCons, HeapProd, HeapRb,
-    traits::{Consumer, Observer, Producer, Split},
-};
 use synth_core::MidiChannel;
+
+#[path = "../../../tests/support/source_queue.rs"]
+mod source_queue;
+use source_queue::{SourceQueueReader, SourceQueueWriter};
 
 use super::super::{
     MixedPedalSubmitted,
@@ -16,14 +16,14 @@ use super::super::{
 /// The fixture owns both endpoints, but packets cross an actual bounded SPSC
 /// source ring before raw admission. A refused head stays in that ring.
 struct BendSourceRing {
-    writer: HeapProd<Packet>,
-    reader: HeapCons<Packet>,
+    writer: SourceQueueWriter<Packet>,
+    reader: SourceQueueReader<Packet>,
     last_sent: Option<SampleTime>,
 }
 
 impl BendSourceRing {
     fn new() -> Self {
-        let (writer, reader) = HeapRb::new(32).split();
+        let (writer, reader) = SourceQueueWriter::prepare(32);
         Self {
             writer,
             reader,
@@ -39,12 +39,11 @@ impl BendSourceRing {
     }
 
     fn peek(&self) -> Option<Packet> {
-        self.reader.try_peek().copied()
+        self.reader.peek()
     }
 
     fn commit(&mut self, expected: Packet) {
-        assert_eq!(self.peek(), Some(expected));
-        assert_eq!(self.reader.try_pop(), Some(expected));
+        assert_eq!(self.reader.commit_exact(expected), Ok(expected));
     }
 
     fn len(&self) -> usize {

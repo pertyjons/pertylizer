@@ -3,6 +3,10 @@ use super::*;
 use std::sync::OnceLock;
 use synth_engine_v2::host::input::{InputTick, SimulatedInputClock};
 
+#[path = "../../../../synth_engine_v2/tests/support/source_queue.rs"]
+mod source_queue;
+use source_queue::{SourceQueueCommitError, SourceQueueReader, SourceQueueWriter};
+
 pub const SOURCE_CELLS: usize = 16;
 pub const SOURCE_OUTSTANDING: synth_engine_v2::quantities::EventCount =
     synth_engine_v2::quantities::EventCount::measured(64);
@@ -165,7 +169,7 @@ impl SourceRetiredAttempt {
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 struct SourcePacket {
     id: SourceQueueId,
     observation: InputObservation,
@@ -184,7 +188,7 @@ struct PendingOwned {
 #[must_use]
 pub struct SourceProducer {
     halt: InputCaptureHalt,
-    queue: HeapProd<SourcePacket>,
+    queue: SourceQueueWriter<SourcePacket>,
     generation: ConnectionGeneration,
     serial: u64,
     attempt_serial: u64,
@@ -207,7 +211,7 @@ struct SourceTime {
 #[must_use]
 pub struct SourceInbox {
     generation: ConnectionGeneration,
-    queue: HeapCons<SourcePacket>,
+    queue: SourceQueueReader<SourcePacket>,
     closed: bool,
     failure: Arc<OnceLock<SourceFailure>>,
     failure_resolved: bool,
@@ -219,7 +223,7 @@ impl SourceInbox {
         halt: InputCaptureHalt,
         clock: SimulatedInputClock,
     ) -> (SourceProducer, Self) {
-        let (writer, reader) = HeapRb::new(SOURCE_CELLS).split();
+        let (writer, reader) = SourceQueueWriter::prepare(SOURCE_CELLS);
         let failure = Arc::new(OnceLock::new());
         (
             SourceProducer {
@@ -335,7 +339,7 @@ impl SourceInbox {
     /// A later stage or command refusal may leave it here for a same-identity
     /// retry.
     pub fn peek_handoff(&self) -> Option<SourceHandoff> {
-        self.queue.try_peek().copied().map(|packet| SourceHandoff {
+        self.queue.peek().map(|packet| SourceHandoff {
             stamp: SourceQueueStamp {
                 queue: packet.id,
                 mapped_at: packet.mapped_at,
@@ -352,11 +356,27 @@ impl SourceInbox {
         &mut self,
         expected: SourceHandoff,
     ) -> Result<SourceHandoff, SourceHeadError> {
-        let actual = self.peek_handoff().ok_or(SourceHeadError::Empty)?;
-        if actual != expected {
-            return Err(SourceHeadError::Mismatched { expected, actual });
-        }
-        let packet = self.queue.try_pop().ok_or(SourceHeadError::Empty)?;
+        let packet = SourcePacket {
+            id: expected.stamp.queue,
+            observation: expected.observation,
+            mapped_at: expected.stamp.mapped_at,
+        };
+        let packet = match self.queue.commit_exact(packet) {
+            Ok(packet) => packet,
+            Err(SourceQueueCommitError::Empty) => return Err(SourceHeadError::Empty),
+            Err(SourceQueueCommitError::Mismatched { actual }) => {
+                return Err(SourceHeadError::Mismatched {
+                    expected,
+                    actual: SourceHandoff {
+                        stamp: SourceQueueStamp {
+                            queue: actual.id,
+                            mapped_at: actual.mapped_at,
+                        },
+                        observation: actual.observation,
+                    },
+                });
+            }
+        };
         Ok(SourceHandoff {
             stamp: SourceQueueStamp {
                 queue: packet.id,

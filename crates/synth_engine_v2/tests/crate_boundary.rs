@@ -614,6 +614,41 @@ fn the_experimental_crate_reaches_nothing_the_work_list_forbids() {
 }
 
 #[test]
+fn line_leading_path_attributes_in_the_experimental_crate_stay_in_its_package() {
+    let root = repo_root().join("crates/synth_engine_v2");
+    let canonical_root = std::fs::canonicalize(&root).expect("experimental crate exists");
+    let mut checked = 0;
+    for source in rust_sources(&root) {
+        let body = read(&source);
+        for line in body.lines() {
+            let Some(attribute) = line.trim().strip_prefix("#[path") else {
+                continue;
+            };
+            checked += 1;
+            let (_, quoted) = attribute
+                .split_once('"')
+                .expect("path attribute has an opening quote");
+            let (relative, _) = quoted
+                .split_once('"')
+                .expect("path attribute has a closing quote");
+            let target = source
+                .parent()
+                .expect("Rust source has a parent")
+                .join(relative);
+            let canonical_target = std::fs::canonicalize(&target)
+                .unwrap_or_else(|error| panic!("{}: {error}", target.display()));
+            assert!(
+                canonical_target.starts_with(&canonical_root),
+                "{} includes source outside synth_engine_v2: {}",
+                source.display(),
+                canonical_target.display()
+            );
+        }
+    }
+    assert!(checked > 0, "no line-leading path attributes were checked");
+}
+
+#[test]
 fn the_workspace_lists_the_crate_as_a_member() {
     // Otherwise none of these tests run, and a green build would mean nothing.
     let workspace = read(&repo_root().join("Cargo.toml"));

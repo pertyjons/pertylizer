@@ -793,8 +793,10 @@ its frontier.
 A further scenario on the first fixture fills its source ring. The full ring
 returns an unsent bend without minting its identity. After an exact head commit,
 the retry takes that identity and keeps its nominal order through raw, stage
-and command service. Both ring endpoints still live in the private test process;
-this is not the example host's `SourceInbox` or a joined host command outcome.
+and command service. The exact ring peek/commit code is now shared with the
+example host's `SourceInbox`. Both fixture endpoints still live in the private
+test process, so it does not exercise that inbox's producer/time mapping or a
+joined host command outcome.
 A third private fixture uses `C = 5`, `H = B = 2`. A bent-scope onset keeps its
 raw handoff and stage head when the caller has no inherited-bend credit, and
 mints no handle or command ID. Audio returns the bend's unused credit. The same
