@@ -10,6 +10,12 @@
 use std::{marker::PhantomData, rc::Rc, sync::Arc};
 
 #[cfg(all(test, feature = "simulated-ingress"))]
+use std::{
+    collections::VecDeque,
+    sync::atomic::{AtomicBool, Ordering},
+};
+
+#[cfg(all(test, feature = "simulated-ingress"))]
 use ringbuf::{
     HeapCons, HeapProd, HeapRb,
     traits::{Consumer, Producer, Split},
@@ -282,6 +288,9 @@ pub(crate) enum MixedOneShotRenderError {
     #[cfg(all(test, feature = "simulated-ingress"))]
     #[error("private mixed ingress command identity is out of order")]
     IngressCommandOrder,
+    #[cfg(all(test, feature = "simulated-ingress"))]
+    #[error("private mixed ingress result does not match the next command")]
+    IngressResultOrder,
     #[cfg(all(test, feature = "simulated-ingress"))]
     #[error("injected private mixed fault after ingress charge")]
     InjectedAfterIngress,
@@ -875,6 +884,12 @@ pub(crate) struct MixedOneShotControl {
     #[cfg(all(test, feature = "simulated-ingress"))]
     ingress_results: OpaqueQueue<HeapCons<MixedIngressResult>>,
     #[cfg(all(test, feature = "simulated-ingress"))]
+    ingress_journal: VecDeque<MixedIngressCommand>,
+    #[cfg(all(test, feature = "simulated-ingress"))]
+    invalid_ingress_result: Option<MixedIngressResult>,
+    #[cfg(all(test, feature = "simulated-ingress"))]
+    ingress_halt: Arc<AtomicBool>,
+    #[cfg(all(test, feature = "simulated-ingress"))]
     ingress_capacity: MixedIngressQueueCount,
     #[cfg(all(test, feature = "simulated-ingress"))]
     ingress_outstanding: MixedIngressQueueCount,
@@ -1084,6 +1099,46 @@ struct MixedIngressResult {
 }
 
 #[cfg(all(test, feature = "simulated-ingress"))]
+impl MixedIngressResult {
+    fn kind_matches_request(self) -> bool {
+        matches!(
+            (self.request, self.outcome),
+            (
+                MixedIngressRequest::Onset { .. },
+                MixedIngressOutcome::Onset(_) | MixedIngressOutcome::Handle(_)
+            ) | (
+                MixedIngressRequest::Release { .. },
+                MixedIngressOutcome::Release(_)
+                    | MixedIngressOutcome::Sustained(_)
+                    | MixedIngressOutcome::Handle(_)
+            ) | (
+                MixedIngressRequest::Pedal { down: true, .. },
+                MixedIngressOutcome::PedalDown(_)
+            ) | (
+                MixedIngressRequest::Pedal { down: false, .. },
+                MixedIngressOutcome::Lift(_)
+            ) | (
+                MixedIngressRequest::Panic { .. },
+                MixedIngressOutcome::Panic(_)
+            ) | (
+                MixedIngressRequest::Bend { .. },
+                MixedIngressOutcome::Bend(_)
+            )
+        )
+    }
+}
+
+#[cfg(all(test, feature = "simulated-ingress"))]
+#[derive(Clone, Copy, Debug, PartialEq, Error)]
+enum MixedIngressResultCollectError {
+    #[error("mixed ingress result does not match the next submitted command")]
+    Protocol {
+        received: MixedIngressCommandId,
+        expected: Option<MixedIngressCommandId>,
+    },
+}
+
+#[cfg(all(test, feature = "simulated-ingress"))]
 #[derive(Debug, Error, PartialEq)]
 enum MixedIngressSubmitError {
     #[error("mixed ingress command or result capacity is full")]
@@ -1138,14 +1193,16 @@ impl MixedOneShotControl {
             .map_or(Some(1), |id| id.0.checked_add(1))
             .ok_or(MixedIngressSubmitError::IdentityExhausted(request))?;
         let id = MixedIngressCommandId(serial);
+        let packet = MixedIngressCommand {
+            id,
+            request,
+            bend_credits,
+        };
         self.ingress_commands
             .0
-            .try_push(MixedIngressCommand {
-                id,
-                request,
-                bend_credits,
-            })
+            .try_push(packet)
             .map_err(|command| MixedIngressSubmitError::Full(command.request))?;
+        self.ingress_journal.push_back(packet);
         self.last_ingress_id = Some(id);
         Ok(id)
     }
@@ -1256,7 +1313,7 @@ impl MixedOneShotControl {
                 });
             }
         };
-        let opened = self.occurrence_ledger.open(occurrence);
+        let opened = self.occurrence_ledger.open(occurrence, scope);
         debug_assert!(opened, "the vacant handle stays vacant until opened");
         self.release_reserved.0 += 1;
         Ok((command, request))
@@ -1423,9 +1480,96 @@ impl MixedOneShotControl {
     /// it tombstoned stay open for their key-ups. The latest bend result releases
     /// its scope cell when the last accepted value is zero.
     fn collect_ingress_result(&mut self) -> Option<MixedIngressResult> {
-        let result = self.ingress_results.0.try_pop()?;
+        match self.collect_ingress_result_checked() {
+            Ok(result) => result,
+            Err(error) => panic!(
+                "private mixed result protocol fault: {error}; received={:?}; expected={:?}",
+                self.invalid_ingress_result,
+                self.ingress_journal.front()
+            ),
+        }
+    }
+
+    fn result_payload_matches_ledger(&self, result: MixedIngressResult) -> bool {
+        match (result.request, result.outcome) {
+            (
+                MixedIngressRequest::Release { occurrence, .. },
+                MixedIngressOutcome::Release(Ok(retired)),
+            ) => {
+                retired.occurrence == occurrence
+                    && self.occurrence_ledger.is_releasing(occurrence, result.id)
+            }
+            (
+                MixedIngressRequest::Release { occurrence, .. },
+                MixedIngressOutcome::Release(Err(_)),
+            ) => self.occurrence_ledger.is_releasing(occurrence, result.id),
+            (
+                MixedIngressRequest::Release { occurrence, .. },
+                MixedIngressOutcome::Sustained(sustained),
+            ) => {
+                sustained == occurrence
+                    && self.occurrence_ledger.is_releasing(occurrence, result.id)
+            }
+            (
+                MixedIngressRequest::Pedal {
+                    scope, down: false, ..
+                },
+                MixedIngressOutcome::Lift(Ok(lifted)),
+            ) => self.occurrence_ledger.can_retire_lift(scope, &lifted),
+            (MixedIngressRequest::Panic { .. }, MixedIngressOutcome::Panic(Ok(panicked))) => {
+                self.panic_inflight == Some(result.id)
+                    && self.occurrence_ledger.can_settle_panic(&panicked)
+            }
+            (MixedIngressRequest::Panic { .. }, MixedIngressOutcome::Panic(Err(_))) => {
+                self.panic_inflight == Some(result.id)
+            }
+            _ => true,
+        }
+    }
+
+    /// Validate identity, request and outcome kind before changing any ledger or
+    /// reservation. The test-only wrapper above fails loudly for existing fixtures;
+    /// a host-facing collector will return this typed fault to its caller.
+    fn collect_ingress_result_checked(
+        &mut self,
+    ) -> Result<Option<MixedIngressResult>, MixedIngressResultCollectError> {
+        if let Some(received) = self.invalid_ingress_result {
+            return Err(MixedIngressResultCollectError::Protocol {
+                received: received.id,
+                expected: self.ingress_journal.front().map(|packet| packet.id),
+            });
+        }
+        let Some(result) = self.ingress_results.0.try_pop() else {
+            return Ok(None);
+        };
+        let expected = self.ingress_journal.front().copied();
+        let place_accounted = match result.request {
+            MixedIngressRequest::Panic { .. } => self.panic_inflight == Some(result.id),
+            _ => self.ingress_outstanding > MixedIngressQueueCount::NONE,
+        };
+        if expected.is_none_or(|packet| {
+            packet.id != result.id
+                || packet.request != result.request
+                || !result.kind_matches_request()
+                || !self.result_payload_matches_ledger(result)
+        }) || !place_accounted
+        {
+            self.invalid_ingress_result = Some(result);
+            self.ingress_halt.store(true, Ordering::Release);
+            return Err(MixedIngressResultCollectError::Protocol {
+                received: result.id,
+                expected: expected.map(|packet| packet.id),
+            });
+        }
+        let Some(_settled) = self.ingress_journal.pop_front() else {
+            self.invalid_ingress_result = Some(result);
+            self.ingress_halt.store(true, Ordering::Release);
+            return Err(MixedIngressResultCollectError::Protocol {
+                received: result.id,
+                expected: None,
+            });
+        };
         if let MixedIngressRequest::Panic { .. } = result.request {
-            assert_eq!(self.panic_inflight, Some(result.id), "one protected Panic");
             self.panic_inflight = None;
             if let MixedIngressOutcome::Panic(Ok(panicked)) = result.outcome {
                 for retired in panicked.retired() {
@@ -1433,9 +1577,8 @@ impl MixedOneShotControl {
                     debug_assert!(freed, "Panic retires only sustained cells");
                 }
             }
-            return Some(result);
+            return Ok(Some(result));
         }
-        assert!(self.ingress_outstanding > MixedIngressQueueCount::NONE);
         self.ingress_outstanding.0 -= 1;
         match result.request {
             MixedIngressRequest::Release { occurrence, .. } => {
@@ -1443,7 +1586,7 @@ impl MixedOneShotControl {
                     let settled = sustained == occurrence
                         && self.occurrence_ledger.sustain(result.id, occurrence);
                     debug_assert!(settled, "audio sustains only the released handle");
-                    return Some(result);
+                    return Ok(Some(result));
                 }
                 let retired = match result.outcome {
                     MixedIngressOutcome::Release(Ok(retired)) => Some(retired),
@@ -1500,7 +1643,7 @@ impl MixedOneShotControl {
             }
             MixedIngressRequest::Onset { .. } | MixedIngressRequest::Panic { .. } => {}
         }
-        Some(result)
+        Ok(Some(result))
     }
 }
 
@@ -1573,6 +1716,7 @@ struct MixedIngressTeardown {
     released_after_panic: EventCount,
     /// The command that failed the audio-side sequence check, if any.
     invalid_command: Option<MixedIngressCommand>,
+    invalid_result: Option<MixedIngressResult>,
     last_served_id: Option<MixedIngressCommandId>,
     unserved_commands: Vec<MixedIngressCommand>,
     uncollected_results: Vec<MixedIngressResult>,
@@ -1591,6 +1735,7 @@ struct MixedTerminalControlCustody {
     bend_credits_free: MixedIngressQueueCount,
     bend_credits_return_pending: MixedIngressQueueCount,
     bend_scopes: Vec<MixedBendScopeCell>,
+    outstanding_commands: Vec<MixedIngressCommand>,
 }
 
 #[derive(Debug)]
@@ -1669,6 +1814,8 @@ pub(crate) struct MixedOneShotAudio {
     ingress_results: OpaqueQueue<HeapProd<MixedIngressResult>>,
     #[cfg(all(test, feature = "simulated-ingress"))]
     ingress_result_pending: Option<MixedIngressResult>,
+    #[cfg(all(test, feature = "simulated-ingress"))]
+    ingress_halt: Arc<AtomicBool>,
     /// The last served command ID; a gap, duplicate or wrap faults before the
     /// offending command changes audio state. Its packet remains owned for teardown.
     #[cfg(all(test, feature = "simulated-ingress"))]
@@ -1835,6 +1982,7 @@ fn mixed_teardown_parts(
             released_after_refusal: audio.occurrences.released_after_refusal(),
             released_after_panic: audio.occurrences.released_after_panic(),
             invalid_command: audio.invalid_ingress_command,
+            invalid_result: None,
             last_served_id: audio.last_served_ingress_id,
             unserved_commands: Vec::new(),
             uncollected_results: Vec::new(),
@@ -1890,7 +2038,9 @@ impl MixedOneShotControl {
             }));
         }
         #[cfg(all(test, feature = "simulated-ingress"))]
-        let ingress_faulted = audio.invalid_ingress_command.is_some();
+        let ingress_faulted = audio.invalid_ingress_command.is_some()
+            || self.invalid_ingress_result.is_some()
+            || self.ingress_halt.load(Ordering::Acquire);
         #[cfg(not(all(test, feature = "simulated-ingress")))]
         let ingress_faulted = false;
         let terminal = ingress_faulted
@@ -1927,6 +2077,7 @@ impl MixedOneShotControl {
             let mut parts = parts;
             #[cfg(all(test, feature = "simulated-ingress"))]
             if terminal {
+                parts.ingress.invalid_result = self.invalid_ingress_result;
                 parts.ingress.terminal_control = Some(MixedTerminalControlCustody {
                     ingress_outstanding: self.ingress_outstanding,
                     release_reserved: self.release_reserved,
@@ -1935,6 +2086,7 @@ impl MixedOneShotControl {
                     bend_credits_free: self.bend_credits_free,
                     bend_credits_return_pending: self.bend_credit_return.pending(),
                     bend_scopes: self.bend_scopes.iter().flatten().copied().collect(),
+                    outstanding_commands: self.ingress_journal.iter().copied().collect(),
                 });
                 parts.ingress.pending_result = audio.ingress_result_pending.take();
                 while let Some(command) = audio.ingress_commands.0.try_pop() {
@@ -2475,6 +2627,8 @@ impl MixedJoinedPrepared {
         #[cfg(all(test, feature = "simulated-ingress"))]
         let bend_credit_return = MixedBendCreditReturn::new();
         #[cfg(all(test, feature = "simulated-ingress"))]
+        let ingress_halt = Arc::new(AtomicBool::new(false));
+        #[cfg(all(test, feature = "simulated-ingress"))]
         let bend_credit_budget = MixedIngressQueueCount(test_ingress.mixed_bend_budget());
         #[cfg(all(test, feature = "simulated-ingress"))]
         let bend_scope_capacity = MixedBendScopeCapacity::for_two_source_midi1(ingress_capacity);
@@ -2511,6 +2665,12 @@ impl MixedJoinedPrepared {
                 ingress_commands: OpaqueQueue(ingress_command_writer),
                 #[cfg(all(test, feature = "simulated-ingress"))]
                 ingress_results: OpaqueQueue(ingress_result_reader),
+                #[cfg(all(test, feature = "simulated-ingress"))]
+                ingress_journal: VecDeque::with_capacity(ring_places),
+                #[cfg(all(test, feature = "simulated-ingress"))]
+                invalid_ingress_result: None,
+                #[cfg(all(test, feature = "simulated-ingress"))]
+                ingress_halt: ingress_halt.clone(),
                 #[cfg(all(test, feature = "simulated-ingress"))]
                 ingress_capacity,
                 #[cfg(all(test, feature = "simulated-ingress"))]
@@ -2574,6 +2734,8 @@ impl MixedJoinedPrepared {
                 ingress_results: OpaqueQueue(ingress_result_writer),
                 #[cfg(all(test, feature = "simulated-ingress"))]
                 ingress_result_pending: None,
+                #[cfg(all(test, feature = "simulated-ingress"))]
+                ingress_halt,
                 #[cfg(all(test, feature = "simulated-ingress"))]
                 last_served_ingress_id: None,
                 #[cfg(all(test, feature = "simulated-ingress"))]

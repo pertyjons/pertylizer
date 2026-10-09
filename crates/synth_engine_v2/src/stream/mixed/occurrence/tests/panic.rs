@@ -4,6 +4,8 @@
 //! every sounding and sustained hold in one group, and a later key-up of an occurrence
 //! it ended is consumed by its tombstone without touching the queue.
 
+use ringbuf::traits::{Consumer, Producer};
+
 use super::{
     super::{
         super::MixedPedalSubmitted, MixedLifted, MixedOnsetSubmitError, MixedPanicEnd,
@@ -38,6 +40,36 @@ fn panic_request(at: u64) -> MixedIngressRequest {
         origin: ORIGIN,
         at: SampleTime::new(at),
     }
+}
+
+#[test]
+fn forged_panic_retirement_of_an_open_cell_keeps_ledger_and_place() {
+    let s = scope(1, 1);
+    let (mut control, mut audio) = armed_with(true, 2);
+    let open = onset_in(&mut control, s, 100, 60);
+    audio.service_test_ingress_queue();
+    let _onset = control.collect_ingress_result().unwrap();
+    let _panic = panic_at(&mut control, 120);
+    let panic_id = control.panic_inflight.unwrap();
+    audio.service_test_ingress_queue();
+    let actual = control.ingress_results.0.try_pop().unwrap();
+    let MixedIngressOutcome::Panic(Ok(mut panicked)) = actual.outcome else {
+        panic!("the actual Panic applied");
+    };
+    panicked.ended[0] = Some(MixedPanicEnd::Retired(open));
+    let forged = super::MixedIngressResult {
+        outcome: MixedIngressOutcome::Panic(Ok(panicked)),
+        ..actual
+    };
+    assert!(audio.ingress_results.0.try_push(forged).is_ok());
+    assert!(control.collect_ingress_result_checked().is_err());
+    assert_eq!(control.invalid_ingress_result, Some(forged));
+    assert_eq!(control.panic_inflight, Some(panic_id));
+    assert!(control.occurrence_ledger.is_open(open));
+    assert_eq!(
+        control.ingress_journal.front().map(|packet| packet.id),
+        Some(panic_id)
+    );
 }
 
 fn applied(outcome: MixedIngressOutcome) -> MixedPanicked {

@@ -14,6 +14,7 @@
 //! allocate, lock, perform I/O, log or panic.
 
 use ringbuf::traits::{Consumer, Producer};
+use std::sync::atomic::Ordering;
 
 use super::{
     super::{
@@ -201,7 +202,10 @@ impl MixedOccurrenceTable {
 impl MixedOneShotAudio {
     /// Serve only the preallocated command prefix; each result retains its request.
     pub(crate) fn service_test_ingress_queue(&mut self) {
-        if self.fault.is_some() || self.invalid_ingress_command.is_some() {
+        if self.fault.is_some()
+            || self.invalid_ingress_command.is_some()
+            || self.ingress_halt.load(Ordering::Acquire)
+        {
             return;
         }
         if let Some(pending) = self.ingress_result_pending.take()
@@ -210,7 +214,13 @@ impl MixedOneShotAudio {
             self.ingress_result_pending = Some(pending);
             return;
         }
-        while let Some(command) = self.ingress_commands.0.try_pop() {
+        loop {
+            if self.ingress_halt.load(Ordering::Acquire) {
+                return;
+            }
+            let Some(command) = self.ingress_commands.0.try_pop() else {
+                break;
+            };
             let expected = self
                 .last_served_ingress_id
                 .map_or(Some(1), |id| id.0.checked_add(1));

@@ -436,12 +436,14 @@ enum LedgerHold {
 #[derive(Debug)]
 pub(super) struct MixedOccurrenceLedger {
     cells: Vec<CellUse<LedgerHold>>,
+    scopes: Vec<Option<MixedLiveScope>>,
 }
 
 impl MixedOccurrenceLedger {
     pub(super) fn prepare(width: MixedIngressQueueCount) -> Self {
         Self {
             cells: vec![CellUse::Free(LiveOccurrenceGeneration::FIRST); width.as_usize()],
+            scopes: vec![None; width.as_usize()],
         }
     }
 
@@ -468,18 +470,94 @@ impl MixedOccurrenceLedger {
     }
 
     /// Take a handle `vacant` returned once its onset holds command custody.
-    pub(super) fn open(&mut self, occurrence: LiveOccurrenceId) -> bool {
-        match self.cell_mut(occurrence) {
-            Some(cell) if *cell == CellUse::Free(occurrence.generation) => {
+    pub(super) fn open(&mut self, occurrence: LiveOccurrenceId, scope: MixedLiveScope) -> bool {
+        let Some(index) = occurrence.cell.index() else {
+            return false;
+        };
+        match (self.cells.get_mut(index), self.scopes.get_mut(index)) {
+            (Some(cell), Some(held_scope)) if *cell == CellUse::Free(occurrence.generation) => {
                 *cell = CellUse::Held(occurrence.generation, LedgerHold::Open);
+                *held_scope = Some(scope);
                 true
             }
-            Some(_) | None => false,
+            (Some(_), Some(_)) | (Some(_), None) | (None, Some(_)) | (None, None) => false,
         }
     }
 
     pub(super) fn is_open(&self, occurrence: LiveOccurrenceId) -> bool {
         self.cell(occurrence) == Some(CellUse::Held(occurrence.generation, LedgerHold::Open))
+    }
+
+    fn scope_of(&self, occurrence: LiveOccurrenceId) -> Option<MixedLiveScope> {
+        match self.cell(occurrence) {
+            Some(CellUse::Held(generation, _)) if generation == occurrence.generation => occurrence
+                .cell
+                .index()
+                .and_then(|index| self.scopes.get(index).copied().flatten()),
+            Some(_) | None => None,
+        }
+    }
+
+    pub(super) fn is_releasing(
+        &self,
+        occurrence: LiveOccurrenceId,
+        command: MixedIngressCommandId,
+    ) -> bool {
+        self.cell(occurrence)
+            == Some(CellUse::Held(
+                occurrence.generation,
+                LedgerHold::Releasing(command),
+            ))
+    }
+
+    fn is_key_down_or_releasing(&self, occurrence: LiveOccurrenceId) -> bool {
+        matches!(
+            self.cell(occurrence),
+            Some(CellUse::Held(
+                generation,
+                LedgerHold::Open | LedgerHold::Releasing(_)
+            )) if generation == occurrence.generation
+        )
+    }
+
+    /// Check a lift's entire retirement list before any cell can be freed.
+    pub(super) fn can_retire_lift(&self, scope: MixedLiveScope, lifted: &MixedLifted) -> bool {
+        let mut seen = [None; RELEASE_GROUP_CAPACITY];
+        for (count, occurrence) in lifted.retired().enumerate() {
+            if !self.is_sustained(occurrence)
+                || self.scope_of(occurrence) != Some(scope)
+                || seen.contains(&Some(occurrence))
+            {
+                return false;
+            }
+            let Some(cell) = seen.get_mut(count) else {
+                return false;
+            };
+            *cell = Some(occurrence);
+        }
+        true
+    }
+
+    /// A Panic result may retire sustained cells and tombstone open key-down cells.
+    /// Check every named cell and duplicate before settling any of them.
+    pub(super) fn can_settle_panic(&self, panicked: &MixedPanicked) -> bool {
+        let mut seen = [None; RELEASE_GROUP_CAPACITY];
+        for (count, end) in panicked.ended().enumerate() {
+            let (occurrence, valid) = match end {
+                MixedPanicEnd::Retired(occurrence) => (occurrence, self.is_sustained(occurrence)),
+                MixedPanicEnd::Tombstoned(occurrence) => {
+                    (occurrence, self.is_key_down_or_releasing(occurrence))
+                }
+            };
+            if !valid || seen.contains(&Some(occurrence)) {
+                return false;
+            }
+            let Some(cell) = seen.get_mut(count) else {
+                return false;
+            };
+            *cell = Some(occurrence);
+        }
+        true
     }
 
     /// Mark an open handle's release as submitted under `command`.

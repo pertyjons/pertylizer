@@ -16,6 +16,8 @@ use crate::{
     render::{AudioBlockMut, EventEnvelope, EventPayload, NoteEdge, Renderer, TimedEvent},
     time::{PlanPosition, QUANTUM_FRAMES, SampleTime},
 };
+#[cfg(all(test, feature = "simulated-ingress"))]
+use std::sync::atomic::Ordering;
 
 impl MixedNoteToken {
     pub(crate) fn as_usize(self) -> usize {
@@ -239,6 +241,12 @@ impl MixedOneShotAudio {
             return Err(MixedOneShotRenderError::OutputShape);
         }
         #[cfg(all(test, feature = "simulated-ingress"))]
+        if self.ingress_halt.load(Ordering::Acquire) {
+            self.fault = Some(MixedOneShotRenderError::IngressResultOrder);
+            self.audio.renderer.terminal_mixed_fault(&mut output);
+            return Err(MixedOneShotRenderError::IngressResultOrder);
+        }
+        #[cfg(all(test, feature = "simulated-ingress"))]
         if self.invalid_ingress_command.is_some() {
             self.fault = Some(MixedOneShotRenderError::IngressCommandOrder);
             self.audio.renderer.terminal_mixed_fault(&mut output);
@@ -310,6 +318,10 @@ impl MixedOneShotAudio {
         output: AudioBlockMut<'_>,
         opens_quantum: bool,
     ) -> Result<(), MixedOneShotRenderError> {
+        #[cfg(all(test, feature = "simulated-ingress"))]
+        if self.ingress_halt.load(Ordering::Acquire) {
+            return Err(MixedOneShotRenderError::IngressResultOrder);
+        }
         let clock = self.audio.renderer.clock();
         if opens_quantum && !self.adopted && clock == self.timing.effective() {
             let adopted = self.audio.adopt_compiled_boundary(

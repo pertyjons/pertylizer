@@ -3,6 +3,8 @@
 //! Every test asserts the outstanding release holds after each step: a key-up under
 //! the pedal redeems nothing, and only the scope's lift ends a sustained occurrence.
 
+use ringbuf::traits::{Consumer, Producer};
+
 use synth_core::MidiChannel;
 
 use super::{
@@ -319,6 +321,48 @@ fn a_key_up_under_the_pedal_keeps_its_hold_until_the_lift() {
         render(&mut audio);
         assert!(!sounding(&audio).contains(&identity), "the lift ended it");
     }
+}
+
+#[test]
+fn forged_lift_member_from_another_scope_keeps_both_sustained_cells() {
+    let (a, b) = (scope(1, 1), scope(2, 1));
+    let (mut control, mut audio) = armed_with(true, 2);
+    pedal(&mut control, a, 100, true);
+    pedal(&mut control, b, 101, true);
+    let a_note = onset_in(&mut control, a, 110, 60);
+    let b_note = onset_in(&mut control, b, 111, 61);
+    release(&mut control, a_note, 112);
+    release(&mut control, b_note, 113);
+    audio.service_test_ingress_queue();
+    let _earlier = collect_all(&mut control);
+    assert!(control.occurrence_ledger.is_sustained(a_note));
+    assert!(control.occurrence_ledger.is_sustained(b_note));
+    let MixedPedalSubmitted::Command(id, request) = pedal(&mut control, a, 120, false) else {
+        panic!("the first lift is effective");
+    };
+    audio.service_test_ingress_queue();
+    let actual = control.ingress_results.0.try_pop().unwrap();
+    let MixedIngressOutcome::Lift(Ok(mut lifted)) = actual.outcome else {
+        panic!("the actual lift retired its own scope");
+    };
+    lifted.members[0] = Some(b_note);
+    let forged = MixedIngressResult {
+        outcome: MixedIngressOutcome::Lift(Ok(lifted)),
+        ..actual
+    };
+    assert!(audio.ingress_results.0.try_push(forged).is_ok());
+    assert!(control.collect_ingress_result_checked().is_err());
+    assert_eq!(control.invalid_ingress_result, Some(forged));
+    assert_eq!(
+        control.ingress_journal.front().map(|packet| packet.id),
+        Some(id)
+    );
+    assert_eq!(
+        control.ingress_journal.front().map(|packet| packet.request),
+        Some(request)
+    );
+    assert!(control.occurrence_ledger.is_sustained(a_note));
+    assert!(control.occurrence_ledger.is_sustained(b_note));
 }
 
 #[test]
