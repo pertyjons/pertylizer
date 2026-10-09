@@ -908,8 +908,11 @@ frontier is queued, the bend receives an explicit sound-path split and raw
 capture advances.
 A stage-full pedal-down splits immediately so its protected key-up and later
 raw lift advance. A private shutdown fixture reports the pending bend's
-source queue identity and raw ID before closing both owners. Ordered combined
-reporting, recorder delivery and shared production admission remain open.
+source queue identity and raw ID before closing both owners. A separate
+serial-recorder fixture for the younger-edge split publishes the bend as
+recorded and pairs the recorded note on/off under one recorder occurrence.
+Ordered combined reporting,
+production recorder delivery and shared production admission remain open.
 
 The budget withholds `B` queue places from ordinary traffic for the whole
 private run, leaving at most `C - B` for ordinary entries and release holds.

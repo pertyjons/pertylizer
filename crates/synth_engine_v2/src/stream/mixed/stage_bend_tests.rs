@@ -2388,6 +2388,150 @@ fn younger_source_edges_split_a_full_stage_bend_before_raw_capture_continues() {
 }
 
 #[test]
+fn a_split_source_bend_reaches_the_serial_recorder_with_its_note_pair() {
+    let (prepared, candidate) = history_tests::one_shot_with_live(
+        true,
+        crate::quantities::HeldNoteCount::measured(1),
+        EventCount::measured(1),
+    );
+    let (mut control, mut audio) = prepared
+        .arm_one_shot(candidate, &history_tests::mixed_profile())
+        .unwrap();
+    let (owner, generations) = ledger_tests::bridge_serial_owner_with_first_limits(
+        256,
+        InputRate::new(FrameCount::new(1), InputTickSpan::new(1)).unwrap(),
+        InputCapacity::new(64).unwrap(),
+    );
+    let clock = owner.input(generations[0]).unwrap().clock().unwrap();
+    let (mut producer, mut inbox) =
+        SourceInbox::prepare(generations[0], InputCaptureHalt::detached_for_test(), clock);
+    let mut bridge = RawStageBridge::with_raw(4, SerialRaw { owner, generations });
+    for (index, (at, input)) in [
+        (100, input(0xb0, 64, 127)),
+        (101, input(0x90, 60, 100)),
+        (102, input(0xe0, 127, 127)),
+        (103, input(0x80, 60, 0)),
+        (104, input(0xb0, 64, 0)),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let (_, queue) = producer
+            .submit_owned(InputObservation::Message {
+                tick: InputTick::new(at),
+                arrival: SampleTime::new(at),
+                input,
+            })
+            .unwrap()
+            .parts();
+        assert_eq!(queue.serial(), u64::try_from(index + 1).unwrap());
+    }
+    bridge.frontier(Source::Second, 105);
+    let mut pending = None;
+    let Some(MixedSourceStep::Staged(_, down_id)) =
+        pump_concrete_mixed(&mut bridge, &mut inbox, &mut pending)
+    else {
+        panic!("serial pedal-down must reach mixed stage");
+    };
+    let Some(MixedSourceStep::Staged(_, note_id)) =
+        pump_concrete_mixed(&mut bridge, &mut inbox, &mut pending)
+    else {
+        panic!("serial note-on must reach mixed stage");
+    };
+    let Some(MixedSourceStep::Split(
+        bend_head,
+        BridgeRefused::Lane {
+            handoff: split_bend,
+            reason: LaneRefusal::Stage(StageRefusal::NoPacketCredit),
+        },
+    )) = pump_concrete_mixed(&mut bridge, &mut inbox, &mut pending)
+    else {
+        panic!("the stage-full serial bend splits before the key-up");
+    };
+    assert_eq!(bend_head.stamp().queue().serial(), 3);
+    let Some(MixedSourceStep::Staged(_, release_id)) =
+        pump_concrete_mixed(&mut bridge, &mut inbox, &mut pending)
+    else {
+        panic!("the reserved key-up must reach mixed stage");
+    };
+    assert_eq!(release_id, note_id);
+    let Some(MixedSourceStep::Staged(_, _)) =
+        pump_concrete_mixed(&mut bridge, &mut inbox, &mut pending)
+    else {
+        panic!("the reserved lift must reach mixed stage");
+    };
+    assert!(inbox.close(producer).is_ok());
+    let down = bridge
+        .service_pedal(&mut control, &mut audio)
+        .unwrap()
+        .unwrap();
+    assert_eq!(down.occurrence, down_id);
+    let onset = bridge.service(&mut control, &mut audio).unwrap();
+    assert_eq!(onset.occurrence, note_id);
+    assert!(onset.accepted());
+    let release = bridge.service(&mut control, &mut audio).unwrap();
+    assert_eq!(release.handoff.link, Some(onset.handoff.raw));
+    assert_eq!(
+        release.disposition,
+        MixedDisposition::Result(MixedIngressOutcome::Sustained(onset.handle))
+    );
+    let lift = bridge
+        .service_pedal(&mut control, &mut audio)
+        .unwrap()
+        .unwrap();
+    assert_eq!(lift.paired_down_raw, Some(down.handoff.raw));
+    let Some(MixedIngressOutcome::Lift(Ok(retired))) = lift.outcome else {
+        panic!("the serial lift must retire the sustained note");
+    };
+    assert_eq!(retired.retired().collect::<Vec<_>>(), vec![onset.handle]);
+
+    let (teardown, mut raw, _ended) = bridge.tear_down(control, audio);
+    assert!(
+        teardown.unoffered.is_empty()
+            && teardown.reservations.is_empty()
+            && teardown.pedal_lifts.is_empty()
+            && teardown.unstaged_pedals.is_empty()
+            && teardown.refused_onsets.is_empty()
+    );
+    let mut remaining = teardown.raw_issued;
+    for (source, generation) in [Source::First, Source::Second]
+        .into_iter()
+        .zip(raw.generations)
+    {
+        let frontier = raw
+            .owner
+            .advance_frontier(generation, InputTick::new(256))
+            .unwrap();
+        remaining.push((source, frontier, None));
+    }
+    let delivered = publish_serial(&mut raw, remaining);
+    let bend_receipt = delivered
+        .iter()
+        .find(|receipt| receipt.id == split_bend.raw)
+        .unwrap();
+    assert_eq!(bend_receipt.observation, bend_head.observation());
+    assert_eq!(bend_receipt.matched_onset, None);
+    for raw_id in [split_bend.raw, onset.handoff.raw, release.handoff.raw] {
+        let receipt = delivered
+            .iter()
+            .find(|receipt| receipt.id == raw_id)
+            .unwrap();
+        let InputOutcome::Delivered(SessionSourceOutcome::Published(record)) = &receipt.outcome
+        else {
+            panic!("the raw edge must reach the serial recorder: {receipt:?}");
+        };
+        assert_eq!(
+            record.capture,
+            crate::recording::notes::CaptureDisposition::Recorded
+        );
+    }
+    assert_eq!(
+        recorded_occurrence(&delivered, onset.handoff.raw),
+        recorded_occurrence(&delivered, release.handoff.raw)
+    );
+}
+
+#[test]
 fn source_pedal_split_allows_the_protected_key_up_and_lift_to_advance() {
     let (prepared, candidate) = history_tests::one_shot_with_live(
         true,
