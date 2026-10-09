@@ -3240,6 +3240,118 @@ fn split_pedal_latch_redeems_a_later_lift_then_allows_a_new_scope() {
 }
 
 #[test]
+fn quiescent_bend_keeps_one_command_place_after_maximum_pedal_reservations() {
+    let (prepared, candidate) = history_tests::one_shot_with_live(
+        true,
+        crate::quantities::HeldNoteCount::measured(2),
+        EventCount::measured(2),
+    );
+    let (mut control, mut audio) = prepared
+        .arm_one_shot(
+            candidate,
+            &history_tests::profile_with_ingress_depth(EventCount::measured(5)),
+        )
+        .unwrap();
+    for channel in 1..=4 {
+        let scope = MixedLiveScope::new(MixedLiveSource::new(1), MidiChannel::new(channel));
+        assert!(matches!(
+            control
+                .submit_pedal(
+                    MixedIngressOriginId(u64::from(channel)),
+                    scope,
+                    SampleTime::new(90),
+                    true
+                )
+                .unwrap(),
+            MixedPedalSubmitted::Command(..)
+        ));
+        audio.service_test_ingress_queue();
+        assert!(matches!(
+            control.collect_ingress_result().unwrap().outcome,
+            MixedIngressOutcome::PedalDown(Ok(_))
+        ));
+    }
+    assert_eq!(control.pedal_ledger.reserved(), 4);
+    assert_eq!(control.ingress_room(), 1);
+    assert_eq!(
+        control.ingress_outstanding,
+        super::super::MixedIngressQueueCount::NONE
+    );
+    let bend_scope = MixedLiveScope::new(MixedLiveSource::new(1), MidiChannel::new(5));
+    let first_value = Cents::new(50.0).unwrap();
+    let (first_id, first_request) = control
+        .submit_bend(
+            MixedIngressOriginId(50),
+            bend_scope,
+            SampleTime::new(120),
+            first_value,
+        )
+        .expect("the quiescent bend keeps the fifth command place");
+    assert_eq!(control.ingress_room(), 0);
+    assert_eq!(control.bend_credits_per_bend.as_usize(), 2);
+    assert_eq!(control.bend_credits_free.as_usize(), 0);
+    let refused_id = control.last_ingress_id;
+    let second_value = Cents::new(75.0).unwrap();
+    assert_eq!(
+        control.submit_bend(
+            MixedIngressOriginId(51),
+            bend_scope,
+            SampleTime::new(121),
+            second_value,
+        ),
+        Err(MixedBendSubmitError::Full)
+    );
+    assert_eq!(control.last_ingress_id, refused_id);
+    assert_ne!(
+        control.ingress_outstanding,
+        super::super::MixedIngressQueueCount::NONE
+    );
+    audio.service_test_ingress_queue();
+    assert_eq!(
+        control.submit_bend(
+            MixedIngressOriginId(51),
+            bend_scope,
+            SampleTime::new(121),
+            second_value,
+        ),
+        Err(MixedBendSubmitError::Full)
+    );
+    assert_eq!(control.last_ingress_id, refused_id);
+    assert_eq!(control.bend_credits_free.as_usize(), 0);
+    let first_result = control.collect_ingress_result().unwrap();
+    assert_eq!(
+        (first_result.id, first_result.request),
+        (first_id, first_request)
+    );
+    let MixedIngressOutcome::Bend(Ok(first_bent)) = first_result.outcome else {
+        panic!("the first bend must execute");
+    };
+    assert_eq!(first_bent.written().count(), 0);
+    assert_eq!(control.ingress_room(), 1);
+    assert_eq!(control.bend_credits_free.as_usize(), 0);
+    let (second_id, second_request) = control
+        .submit_bend(
+            MixedIngressOriginId(51),
+            bend_scope,
+            SampleTime::new(121),
+            second_value,
+        )
+        .expect("collection returns the ordinary bend place");
+    assert_ne!(second_id, first_id);
+    audio.service_test_ingress_queue();
+    let second_result = control.collect_ingress_result().unwrap();
+    assert_eq!(
+        (second_result.id, second_result.request),
+        (second_id, second_request)
+    );
+    assert!(matches!(
+        second_result.outcome,
+        MixedIngressOutcome::Bend(Ok(_))
+    ));
+    assert_eq!(control.ingress_room(), 1);
+}
+
+#[test]
 fn split_pedal_latch_consumes_staged_repeat_after_peer_frees_command_room() {
     let (prepared, candidate) = history_tests::one_shot_with_live(
         true,

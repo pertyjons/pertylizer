@@ -786,6 +786,14 @@ so production admission must bind the source set before this becomes a
 general place guarantee. An out-of-set source needs a named split result and
 retained raw receipt under ADR-0075.
 
+At `H = 2`, `C = 5`, four collected pedal-downs reserve four lift places and
+leave one ordinary command place. A private test admits a memberless bend in
+that place. A second bend gets `Full` while the first command is outstanding,
+both before and after audio service. Collection returns the command place;
+audio's unused-credit return lets the exact retry succeed. This command-ring
+result does not settle raw, stage, member-bearing credit or production admission
+capacity.
+
 That bend-cell bound alone does not make every caller `Full` retryable. At the
 same `C = 5`, four serviced and collected pedal-downs can retain four reserved
 lift places. An onset then needs two ordinary command places but has one; if a
