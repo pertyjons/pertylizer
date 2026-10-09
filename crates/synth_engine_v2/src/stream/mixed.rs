@@ -1490,7 +1490,11 @@ impl MixedOneShotControl {
         }
     }
 
-    fn result_payload_matches_ledger(&self, result: MixedIngressResult) -> bool {
+    fn result_payload_matches_ledger(
+        &self,
+        result: MixedIngressResult,
+        expected: MixedIngressCommand,
+    ) -> bool {
         match (result.request, result.outcome) {
             (
                 MixedIngressRequest::Release { occurrence, .. },
@@ -1523,6 +1527,10 @@ impl MixedOneShotControl {
             (MixedIngressRequest::Panic { .. }, MixedIngressOutcome::Panic(Err(_))) => {
                 self.panic_inflight == Some(result.id)
             }
+            (MixedIngressRequest::Bend { scope, at, .. }, MixedIngressOutcome::Bend(Ok(bent))) => {
+                self.occurrence_ledger
+                    .can_report_bend(scope, at, expected.bend_credits, &bent)
+            }
             _ => true,
         }
     }
@@ -1551,7 +1559,7 @@ impl MixedOneShotControl {
             packet.id != result.id
                 || packet.request != result.request
                 || !result.kind_matches_request()
-                || !self.result_payload_matches_ledger(result)
+                || !self.result_payload_matches_ledger(result, packet)
         }) || !place_accounted
         {
             self.invalid_ingress_result = Some(result);

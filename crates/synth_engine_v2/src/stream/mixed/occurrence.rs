@@ -560,6 +560,38 @@ impl MixedOccurrenceLedger {
         true
     }
 
+    /// Check a bend result's stamp and listed members against the command's credits
+    /// and held scope. This cannot prove complete audio membership: a later onset or
+    /// a refused/tombstoned hold can still exist in the control ledger.
+    pub(super) fn can_report_bend(
+        &self,
+        scope: MixedLiveScope,
+        at: SampleTime,
+        credits: MixedIngressQueueCount,
+        bent: &MixedBent,
+    ) -> bool {
+        if bent.executed_at != at {
+            return false;
+        }
+        let mut previous = None;
+        let mut ended = false;
+        for (count, member) in bent.members.iter().enumerate() {
+            let Some(occurrence) = member else {
+                ended = true;
+                continue;
+            };
+            if ended
+                || count >= credits.as_usize()
+                || self.scope_of(*occurrence) != Some(scope)
+                || previous.is_some_and(|previous| previous >= occurrence.cell)
+            {
+                return false;
+            }
+            previous = Some(occurrence.cell);
+        }
+        true
+    }
+
     /// Mark an open handle's release as submitted under `command`.
     pub(super) fn begin_release(
         &mut self,

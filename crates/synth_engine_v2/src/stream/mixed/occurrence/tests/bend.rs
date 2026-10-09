@@ -7,15 +7,18 @@
 //! before its command identity is minted. Rendering then proves each bend resolved
 //! against a live occurrence.
 
+use ringbuf::traits::{Consumer, Producer};
+
 use super::{
     super::{
         super::{MixedIngressQueueCount, MixedPedalSubmitted},
         MixedBendRefused, MixedBendSubmitError, MixedLiveScope, MixedOnsetSubmitError,
     },
     ExhaustedResource, IngressRefused, LiveOccurrenceId, MixedIngressOutcome, MixedIngressRequest,
-    MixedOccurrenceState, MixedOneShotAudio, MixedOneShotControl, MixedRetireCause, MixedRetired,
-    NoteIdentity, ORIGIN, accepted, collect_all, free_units, history_tests, key, outcome_for,
-    release, release_request, service_without_allocation, settled_credits,
+    MixedIngressResult, MixedOccurrenceState, MixedOneShotAudio, MixedOneShotControl,
+    MixedRetireCause, MixedRetired, NoteIdentity, ORIGIN, accepted, collect_all, free_units,
+    history_tests, key, outcome_for, release, release_request, service_without_allocation,
+    settled_credits,
     sustain::{
         armed_with, holds, onset_in, onset_request_in, pedal, render, scope, sounding, state_of,
     },
@@ -53,6 +56,57 @@ pub(super) fn written(outcome: MixedIngressOutcome) -> Vec<LiveOccurrenceId> {
         panic!("bend must apply, got {outcome:?}");
     };
     bent.written().collect()
+}
+
+#[test]
+fn malformed_bend_result_stamp_scope_or_shape_keeps_command_custody() {
+    for fault in 0..3 {
+        let (scope_a, scope_b) = (scope(1, 1), scope(2, 1));
+        let (mut control, mut audio) = armed_with(true, 2);
+        let a = onset_in(&mut control, scope_a, 100, 60);
+        let b = onset_in(&mut control, scope_b, 101, 61);
+        audio.service_test_ingress_queue();
+        let _onsets = collect_all(&mut control);
+        let request = bend_at(&mut control, scope_a, 120, 30.0);
+        let id = control.last_ingress_id.unwrap();
+        audio.service_test_ingress_queue();
+        let actual = control.ingress_results.0.try_pop().unwrap();
+        let MixedIngressOutcome::Bend(Ok(mut bent)) = actual.outcome else {
+            panic!("the actual bend applied");
+        };
+        match fault {
+            0 => bent.executed_at = SampleTime::new(121),
+            1 => bent.members[0] = Some(b),
+            2 => {
+                bent.members[0] = None;
+                bent.members[1] = Some(a);
+            }
+            _ => unreachable!(),
+        }
+        let forged = MixedIngressResult {
+            outcome: MixedIngressOutcome::Bend(Ok(bent)),
+            ..actual
+        };
+        assert!(audio.ingress_results.0.try_push(forged).is_ok());
+        assert!(control.collect_ingress_result_checked().is_err());
+        assert_eq!(control.invalid_ingress_result, Some(forged));
+        assert_eq!(control.ingress_outstanding, credits(1));
+        assert_eq!(
+            control.ingress_journal.front().map(|packet| packet.id),
+            Some(id)
+        );
+        assert_eq!(
+            control.ingress_journal.front().map(|packet| packet.request),
+            Some(request)
+        );
+        assert!(
+            control
+                .bend_scopes
+                .iter()
+                .flatten()
+                .any(|cell| cell.scope == scope_a && !cell.accepted_nonzero)
+        );
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
