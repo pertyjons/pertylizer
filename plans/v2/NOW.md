@@ -930,6 +930,12 @@ the typed command ring is full. Rendering serves the filler commands at the
 next quantum boundary; the bridge then submits both original raw handoffs in
 order, and the following callback returns matching command results. Its
 partitioned audio equals a pre-serviced reference at bend frames 110 and 111.
+A separate private fixture sends bends from one source on MIDI channel two
+and then channel one. Their distinct source/channel scopes, original raw
+handoffs, selected sample times and command-result order survive the raw,
+stage and command paths. No note sounds in this fixture, so it proves command
+acceptance and scope separation, not audible channel isolation. The callback
+comparison above remains the channel-one coverage.
 A further private fixture fills the actual 16-cell source ring. Its seventeenth
 bend retains an owned retry token until an exact head commit frees one place;
 retry keeps attempt 17 and receives queue identity 17. All seventeen heads then

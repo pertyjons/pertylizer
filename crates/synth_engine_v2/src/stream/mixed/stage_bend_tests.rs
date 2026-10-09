@@ -99,10 +99,7 @@ impl BendBridge {
     }
 
     fn scope(source: Source) -> MixedLiveScope {
-        MixedLiveScope::new(
-            MixedLiveSource::new(u64::try_from(source.index() + 1).unwrap()),
-            MidiChannel::new(1),
-        )
+        source_scope(source, input(0xe0, 0, 64))
     }
 }
 
@@ -217,7 +214,7 @@ impl<R: RawBackend> BendBridge<R> {
         let cents = Cents::new(value.as_f32() * 200.0).unwrap();
         let (command, request) = control.submit_bend(
             MixedIngressOriginId(packet.occurrence.0),
-            BendBridge::scope(source),
+            source_scope(source, packet.original),
             packet.at,
             cents,
         )?;
@@ -310,6 +307,67 @@ fn a_late_bend_returns_a_terminal_result_and_releases_its_stage_place() {
     assert!(matches!(outcome, MixedIngressOutcome::Bend(Ok(_))));
     assert!(bridge.stage.peek_next().is_none());
     assert!(bridge.staged.is_empty());
+}
+
+#[test]
+fn same_source_bends_keep_channel_and_command_order() {
+    let (prepared, candidate) = history_tests::one_shot_with_live(
+        true,
+        crate::quantities::HeldNoteCount::measured(2),
+        EventCount::measured(2),
+    );
+    let (mut control, mut audio) = prepared
+        .arm_one_shot(candidate, &history_tests::mixed_profile())
+        .unwrap();
+    let mut bridge = BendBridge::new(2);
+    let first_input = input(0xe1, 127, 127);
+    let second_input = input(0xe0, 0, 0);
+    let first = bridge.enqueue(Source::First, 100, first_input);
+    let second = bridge.enqueue(Source::First, 101, second_input);
+    let first_raw = bridge.pump(Source::First).unwrap().unwrap();
+    let second_raw = bridge.pump(Source::First).unwrap().unwrap();
+    bridge.frontier(Source::Second, 102);
+
+    let (first_seen, first_handoff, first_command, first_request) =
+        bridge.submit_next(&mut control).unwrap().unwrap();
+    let (second_seen, second_handoff, second_command, second_request) =
+        bridge.submit_next(&mut control).unwrap().unwrap();
+    assert_eq!((first_seen, first_handoff), (first, first_raw));
+    assert_eq!((second_seen, second_handoff), (second, second_raw));
+    assert_ne!(first_command, second_command);
+    let first_scope = source_scope(Source::First, first_input);
+    let second_scope = source_scope(Source::First, second_input);
+    assert_ne!(first_scope, second_scope);
+    assert!(matches!(
+        first_request,
+        MixedIngressRequest::Bend { scope, at, .. }
+            if scope == first_scope && at == SampleTime::new(100)
+    ));
+    assert!(matches!(
+        second_request,
+        MixedIngressRequest::Bend { scope, at, .. }
+            if scope == second_scope && at == SampleTime::new(101)
+    ));
+    assert!(bridge.stage.peek_next().is_none() && bridge.staged.is_empty());
+    assert_eq!(
+        control
+            .bend_scopes
+            .iter()
+            .flatten()
+            .filter(|cell| cell.scope == first_scope || cell.scope == second_scope)
+            .count(),
+        2
+    );
+
+    audio.service_test_ingress_queue();
+    for (command, request) in [
+        (first_command, first_request),
+        (second_command, second_request),
+    ] {
+        let result = control.collect_ingress_result().unwrap();
+        assert_eq!((result.id, result.request), (command, request));
+        assert!(matches!(result.outcome, MixedIngressOutcome::Bend(Ok(_))));
+    }
 }
 
 /// Feed the actual producer's validated head into the existing private raw,
