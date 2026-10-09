@@ -6,8 +6,9 @@ use super::{
         MixedIngressResult, MixedOneShotArmError, MixedOneShotAudio, MixedOneShotControl,
         history_tests,
     },
-    CellUse, LiveOccurrenceCell, LiveOccurrenceGeneration, LiveOccurrenceId, MixedHandleRefused,
-    MixedOccurrenceState, MixedReleaseSubmitError, MixedRetireCause, MixedRetired,
+    CellUse, LiveOccurrenceCell, LiveOccurrenceGeneration, LiveOccurrenceId,
+    MixedHandleRefused, MixedOccurrenceState, MixedOnsetSubmitError, MixedReleaseSubmitError,
+    MixedRetireCause, MixedRetired,
 };
 use crate::{
     identity::{NoteIdentity, Resolution},
@@ -24,6 +25,60 @@ fn armed(compiled_first: bool) -> (MixedOneShotControl, MixedOneShotAudio) {
     prepared
         .arm_one_shot(candidate, &history_tests::mixed_profile())
         .expect("private arm")
+}
+
+#[test]
+fn exhausted_occurrence_cells_do_not_masquerade_as_transient_ring_full() {
+    let (mut control, _audio) = armed(true);
+    assert!(control.ingress_room() >= 2);
+    let width = control.occurrence_ledger.cells.len();
+    assert!(width >= 2);
+    let last_id = control.last_ingress_id;
+    control.occurrence_ledger.cells.fill(CellUse::Exhausted);
+    assert_eq!(
+        control.submit_onset(
+            ORIGIN,
+            super::super::TEST_SCOPE,
+            SampleTime::new(140),
+            key(60),
+            NoteVelocity::FULL,
+        ),
+        Err(MixedOnsetSubmitError::IdentityExhausted)
+    );
+    assert_eq!(control.last_ingress_id, last_id);
+    assert_eq!(control.ingress_room(), control.ingress_capacity.as_usize());
+
+    control.occurrence_ledger.cells[0] = CellUse::Free(LiveOccurrenceGeneration::FIRST);
+    let held = onset(&mut control, 140, 60);
+    assert_eq!(held.cell, LiveOccurrenceCell(0));
+    assert!(control.ingress_room() >= 2);
+    let held_id = control.last_ingress_id;
+    assert_eq!(
+        control.submit_onset(
+            ORIGIN,
+            super::super::TEST_SCOPE,
+            SampleTime::new(141),
+            key(61),
+            NoteVelocity::FULL,
+        ),
+        Err(MixedOnsetSubmitError::IdentityExhausted)
+    );
+    assert_eq!(control.last_ingress_id, held_id);
+
+    control.occurrence_ledger.cells[1] = CellUse::Free(LiveOccurrenceGeneration::FIRST);
+    let (_, request) = control
+        .submit_onset(
+            ORIGIN,
+            super::super::TEST_SCOPE,
+            SampleTime::new(141),
+            key(61),
+            NoteVelocity::FULL,
+        )
+        .expect("one free cell allows a new occurrence");
+    let MixedIngressRequest::Onset { occurrence, .. } = request else {
+        panic!("an onset submit returns its onset request");
+    };
+    assert_eq!(occurrence.cell, LiveOccurrenceCell(1));
 }
 
 #[test]

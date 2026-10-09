@@ -371,7 +371,7 @@ pub(super) enum MixedOnsetSubmitError {
     /// inherited bend entry. An onset on an unbent scope needs none.
     #[error("no bend credit is free for the onset's inherited bend")]
     BendCredit,
-    #[error("mixed ingress command identity is exhausted")]
+    #[error("mixed ingress command or live occurrence identity is exhausted")]
     IdentityExhausted,
 }
 

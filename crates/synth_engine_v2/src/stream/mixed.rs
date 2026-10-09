@@ -1219,12 +1219,13 @@ impl MixedOneShotControl {
             return Err(MixedOnsetSubmitError::Full);
         }
         // The ledger is as wide as the ring plus the live hold entitlement. A held cell
-        // owns a ring place, or is sustained and owns an outstanding hold, so a ring
-        // with two free places always has a vacant cell.
+        // owns a ring place, or is sustained and owns an outstanding hold. If the ring
+        // has two free places but no vacant cell, its generations are exhausted rather
+        // than the onset being transiently blocked by ring capacity.
         let occurrence = self
             .occurrence_ledger
             .vacant()
-            .ok_or(MixedOnsetSubmitError::Full)?;
+            .ok_or(MixedOnsetSubmitError::IdentityExhausted)?;
         let credits = if self.scope_may_bend(scope) {
             MixedIngressQueueCount(1)
         } else {
