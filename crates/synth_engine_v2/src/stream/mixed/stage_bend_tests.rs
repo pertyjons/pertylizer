@@ -3107,6 +3107,139 @@ fn split_pedal_latches_fill_only_the_prepared_stage_bound() {
 }
 
 #[test]
+fn split_pedal_latch_redeems_a_later_lift_then_allows_a_new_scope() {
+    let (prepared, candidate) = history_tests::one_shot_with_live(
+        true,
+        crate::quantities::HeldNoteCount::measured(2),
+        EventCount::measured(2),
+    );
+    let (mut control, mut audio) = prepared
+        .arm_one_shot(
+            candidate,
+            &history_tests::profile_with_ingress_depth(EventCount::measured(5)),
+        )
+        .unwrap();
+    for channel in 10..14 {
+        let scope = MixedLiveScope::new(MixedLiveSource::new(3), MidiChannel::new(channel));
+        assert!(matches!(
+            control
+                .submit_pedal(
+                    MixedIngressOriginId(u64::from(channel)),
+                    scope,
+                    SampleTime::new(90),
+                    true
+                )
+                .unwrap(),
+            MixedPedalSubmitted::Command(..)
+        ));
+        audio.service_test_ingress_queue();
+        assert!(matches!(
+            control.collect_ingress_result().unwrap().outcome,
+            MixedIngressOutcome::PedalDown(Ok(_))
+        ));
+    }
+    let mut bridge = RawStageBridge::new(2);
+    bridge.frontier(Source::Second, 200);
+    let last_id = control.last_ingress_id;
+    let down = bridge
+        .offer(Source::First, 120, input(0xb2, 64, 127))
+        .unwrap();
+    let Some(PedalDecision::Refused(split)) = bridge
+        .service_pedal_or_refuse_full(&mut control, &mut audio)
+        .unwrap()
+    else {
+        panic!("the protected down must split");
+    };
+    assert_eq!(split.occurrence, down);
+    assert_eq!(bridge.stage.pressure(Source::First), (0, 1));
+    let repeat = bridge
+        .offer(Source::First, 121, input(0xb2, 64, 127))
+        .unwrap();
+    let Some(PedalDecision::Refused(repeated)) = bridge
+        .service_pedal_or_refuse_full(&mut control, &mut audio)
+        .unwrap()
+    else {
+        panic!("a later repeat must use the split latch");
+    };
+    assert_eq!(repeated.occurrence, repeat);
+    assert_eq!(
+        repeated.disposition,
+        SplitDisposition::RepeatedPedalDown {
+            down_raw: split.handoff.raw
+        }
+    );
+    assert_eq!(bridge.stage.pressure(Source::First), (0, 1));
+    let lift = bridge
+        .offer(Source::First, 122, input(0xb2, 64, 0))
+        .unwrap();
+    assert_eq!(bridge.stage.pressure(Source::First), (1, 0));
+    let Some(PedalDecision::Refused(lifted)) = bridge
+        .service_pedal_or_refuse_full(&mut control, &mut audio)
+        .unwrap()
+    else {
+        panic!("a later lift must redeem the split down's stage place");
+    };
+    assert_eq!(lifted.occurrence, lift);
+    assert_eq!(
+        lifted.disposition,
+        SplitDisposition::PedalLiftAfterDown {
+            down_raw: split.handoff.raw
+        }
+    );
+    assert!(bridge.split_pedals.is_empty());
+    assert_eq!(bridge.stage.pressure(Source::First), (0, 0));
+    assert_eq!(control.ingress_room(), 1);
+    assert_eq!(control.last_ingress_id, last_id);
+    let split_scope = MixedLiveScope::new(MixedLiveSource::new(1), MidiChannel::new(3));
+    assert!(!control.pedal_ledger.is_down(split_scope));
+    assert!(!audio.occurrences.pedals_down().contains(&split_scope));
+    let prior = MixedLiveScope::new(MixedLiveSource::new(3), MidiChannel::new(10));
+    assert!(matches!(
+        control
+            .submit_pedal(
+                MixedIngressOriginId(100),
+                prior,
+                SampleTime::new(122),
+                false
+            )
+            .unwrap(),
+        MixedPedalSubmitted::Command(..)
+    ));
+    audio.service_test_ingress_queue();
+    assert!(matches!(
+        control.collect_ingress_result().unwrap().outcome,
+        MixedIngressOutcome::Lift(Ok(_))
+    ));
+    assert_eq!(control.ingress_room(), 2);
+    let admitted = bridge
+        .offer(Source::First, 123, input(0xb3, 64, 127))
+        .unwrap();
+    let Some(PedalDecision::Admitted(result)) = bridge
+        .service_pedal_or_refuse_full(&mut control, &mut audio)
+        .unwrap()
+    else {
+        panic!("a new scope must reach mixed after room returns");
+    };
+    assert_eq!(result.occurrence, admitted);
+    assert!(matches!(
+        result.outcome,
+        Some(MixedIngressOutcome::PedalDown(Ok(_)))
+    ));
+    let admitted_raw = result.handoff.raw;
+    let (teardown, raw, _ended) = bridge.tear_down(control, audio);
+    assert!(teardown.split_pedals.is_empty());
+    assert_eq!(
+        teardown.pedal_lifts,
+        vec![(Source::First, MidiChannel::new(4), admitted, admitted_raw)]
+    );
+    let issued = teardown.raw_issued.clone();
+    assert_eq!(
+        settle_raw_by_cancellation(raw, &issued).bridge.len(),
+        issued.len()
+    );
+}
+
+#[test]
 fn split_pedal_latch_consumes_staged_repeat_after_peer_frees_command_room() {
     let (prepared, candidate) = history_tests::one_shot_with_live(
         true,

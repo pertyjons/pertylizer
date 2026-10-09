@@ -900,8 +900,10 @@ A source/channel/raw latch consumes staged repeats and its protected lift;
 another source's same-channel pedal remains independent. Teardown names the
 latch against exactly one reserved or staged lift. With `S` stage cells per
 source, its prepared two-source bound is `2(S - 1)`; a saturation fixture
-reaches that bound. In-flight `Full` retains the selected head for retry,
-while ordered production reporting and admission remain open.
+reaches that bound. A later repeat keeps the split down's reserved stage place;
+its later lift redeems it. When a separate mixed scope later releases a command
+place, a new scope can enter mixed. In-flight `Full` retains the selected head
+for retry, while ordered production reporting and admission remain open.
 
 The private raw bridge also stages bends alongside pedal and note edges.
 One five-cell lane holds a pedal-down, note-on, bend, key-up and pedal lift
