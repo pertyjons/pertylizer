@@ -892,7 +892,7 @@ fn tombstones_and_released_occurrences_are_not_bent() {
 }
 
 #[test]
-fn a_full_bend_table_refuses_a_new_scope_whole_and_a_zero_bend_needs_no_cell() {
+fn a_full_bend_table_refuses_at_the_caller_and_frees_only_after_a_zero_result() {
     let (mut control, mut audio) = armed_with(true, 1);
     let width = control.ingress_capacity.as_usize();
     let mut serve = |control: &mut MixedOneShotControl, request: MixedIngressRequest| {
@@ -904,21 +904,130 @@ fn a_full_bend_table_refuses_a_new_scope_whole_and_a_zero_bend_needs_no_cell() {
         assert_eq!(written(serve(&mut control, request)), vec![]);
     }
     let extra = scope(999, 1);
-    let request = bend_at(&mut control, extra, 100, 5.0);
+    let last = control.last_ingress_id;
     assert_eq!(
-        serve(&mut control, request),
+        control.submit_bend(ORIGIN, extra, SampleTime::new(100), cents(5.0)),
+        Err(MixedBendSubmitError::ScopeCapacity)
+    );
+    assert_eq!(control.last_ingress_id, last);
+    assert_eq!(control.bend_scopes.iter().flatten().count(), width);
+    drop(serve);
+    // A forged internal request bypasses the typed caller reservation. Audio still
+    // refuses it without changing the table or a queued entry.
+    let forged = MixedIngressRequest::Bend {
+        origin: ORIGIN,
+        scope: extra,
+        at: SampleTime::new(100),
+        cents: cents(5.0),
+    };
+    let _forged_command = control.submit_ingress(forged).expect("forged command fits");
+    audio.service_test_ingress_queue();
+    assert_eq!(
+        outcome_for(&collect_all(&mut control), forged),
         MixedIngressOutcome::Bend(Err(MixedBendRefused::BendTableFull))
     );
+    assert_eq!(audio.occurrences.bend_of(extra), Cents::ZERO);
+    for source in 0..width {
+        assert_eq!(
+            audio.occurrences.bend_of(scope(10 + source as u64, 1)),
+            cents(5.0)
+        );
+    }
+    assert!(entries(&audio).is_empty());
     let request = bend_at(&mut control, extra, 100, 0.0);
-    assert_eq!(written(serve(&mut control, request)), vec![]);
-    // Returning one scope to zero frees its cell for the new scope.
-    let request = bend_at(&mut control, scope(10, 1), 100, 0.0);
-    assert_eq!(written(serve(&mut control, request)), vec![]);
+    audio.service_test_ingress_queue();
+    assert_eq!(
+        written(outcome_for(&collect_all(&mut control), request)),
+        vec![]
+    );
+    // The zero is in the command ring, then on audio, but the caller's cell stays
+    // reserved until its successful result is collected.
+    let zero = bend_at(&mut control, scope(10, 1), 100, 0.0);
+    assert_eq!(
+        control.submit_bend(ORIGIN, extra, SampleTime::new(100), cents(5.0)),
+        Err(MixedBendSubmitError::ScopeCapacity)
+    );
+    audio.service_test_ingress_queue();
+    assert_eq!(
+        control.submit_bend(ORIGIN, extra, SampleTime::new(100), cents(5.0)),
+        Err(MixedBendSubmitError::ScopeCapacity)
+    );
+    assert_eq!(
+        written(outcome_for(&collect_all(&mut control), zero)),
+        vec![]
+    );
     let request = bend_at(&mut control, extra, 100, 5.0);
-    assert_eq!(written(serve(&mut control, request)), vec![]);
-    drop(serve);
+    audio.service_test_ingress_queue();
+    assert_eq!(
+        written(outcome_for(&collect_all(&mut control), request)),
+        vec![]
+    );
     assert_eq!(audio.occurrences.bend_of(extra), cents(5.0));
     assert_eq!(audio.occurrences.bend_of(scope(10, 1)), Cents::ZERO);
+}
+
+#[test]
+fn a_refused_zero_keeps_its_scope_reservation() {
+    let (mut control, mut audio) = armed_with(true, 1);
+    let width = control.ingress_capacity.as_usize();
+    for source in 0..width {
+        let held = scope(10 + source as u64, 1);
+        let request = bend_at(&mut control, held, 100, 5.0);
+        audio.service_test_ingress_queue();
+        assert_eq!(
+            written(outcome_for(&collect_all(&mut control), request)),
+            vec![]
+        );
+    }
+    let held = scope(10, 1);
+    let extra = scope(999, 1);
+    let refused = bend_at(&mut control, held, u64::MAX, 0.0);
+    audio.service_test_ingress_queue();
+    assert!(matches!(
+        outcome_for(&collect_all(&mut control), refused),
+        MixedIngressOutcome::Bend(Err(MixedBendRefused::Ingress(
+            IngressRefused::BeyondHorizon { .. }
+        )))
+    ));
+    assert_eq!(audio.occurrences.bend_of(held), cents(5.0));
+    assert_eq!(control.bend_scopes.iter().flatten().count(), width);
+    assert_eq!(
+        control.submit_bend(ORIGIN, extra, SampleTime::new(100), cents(5.0)),
+        Err(MixedBendSubmitError::ScopeCapacity)
+    );
+}
+
+#[test]
+fn a_zero_result_does_not_release_a_scope_with_a_later_bend_pending() {
+    let (mut control, mut audio) = armed_with(true, 1);
+    let width = control.ingress_capacity.as_usize();
+    for source in 0..width {
+        let scope = scope(10 + source as u64, 1);
+        let request = bend_at(&mut control, scope, 100, 5.0);
+        audio.service_test_ingress_queue();
+        assert_eq!(
+            written(outcome_for(&collect_all(&mut control), request)),
+            vec![]
+        );
+    }
+    let held = scope(10, 1);
+    let extra = scope(999, 1);
+    let zero = bend_at(&mut control, held, 100, 0.0);
+    let again = bend_at(&mut control, held, 100, 7.0);
+    audio.service_test_ingress_queue();
+    let first = control.collect_ingress_result().expect("zero result");
+    assert_eq!(first.request, zero);
+    assert_eq!(written(first.outcome), vec![]);
+    assert_eq!(audio.occurrences.bend_of(held), cents(7.0));
+    assert_eq!(
+        control.submit_bend(ORIGIN, extra, SampleTime::new(100), cents(5.0)),
+        Err(MixedBendSubmitError::ScopeCapacity)
+    );
+    assert_eq!(
+        written(outcome_for(&collect_all(&mut control), again)),
+        vec![]
+    );
+    assert_eq!(audio.occurrences.bend_of(held), cents(7.0));
 }
 
 #[test]

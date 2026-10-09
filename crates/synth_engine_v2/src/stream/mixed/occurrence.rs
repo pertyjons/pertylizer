@@ -301,6 +301,8 @@ pub(super) enum MixedBendRefused {
 pub(super) enum MixedBendSubmitError {
     #[error("no command-ring place for a bend")]
     Full,
+    #[error("no prepared bend scope cell is free")]
+    ScopeCapacity,
     #[error("mixed ingress command identity is exhausted")]
     IdentityExhausted,
 }

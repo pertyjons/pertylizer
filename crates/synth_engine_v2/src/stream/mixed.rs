@@ -882,6 +882,10 @@ pub(crate) struct MixedOneShotControl {
     /// Effective pedal state per scope and the ring places reserved for lifts.
     #[cfg(all(test, feature = "simulated-ingress"))]
     pedal_ledger: MixedPedalLedger,
+    /// Scopes entitled to audio's bounded bend table. A successful zero result may
+    /// release a cell only when no later bend for that scope has been submitted.
+    #[cfg(all(test, feature = "simulated-ingress"))]
+    bend_scopes: Vec<Option<(MixedLiveScope, MixedIngressCommandId)>>,
     /// The Panic holding the protected ring place, until its result is collected. That
     /// place lies outside `ingress_capacity`, so ordinary traffic can never take it.
     #[cfg(all(test, feature = "simulated-ingress"))]
@@ -1181,8 +1185,9 @@ impl MixedOneShotControl {
         Ok((command, request))
     }
 
-    /// Submit one channel bend for `scope` into an ordinary ring place. Bends are not
-    /// coalesced here: a full ring refuses one at the caller boundary.
+    /// Submit one channel bend for `scope` into an ordinary ring place. A new
+    /// non-zero scope reserves one audio bend-table cell before submission. Bends
+    /// are not coalesced here: a full ring or scope table refuses the caller.
     fn submit_bend(
         &mut self,
         origin: MixedIngressOriginId,
@@ -1190,6 +1195,23 @@ impl MixedOneShotControl {
         at: SampleTime,
         cents: Cents,
     ) -> Result<(MixedIngressCommandId, MixedIngressRequest), MixedBendSubmitError> {
+        if self.ingress_room() == 0 {
+            return Err(MixedBendSubmitError::Full);
+        }
+        let existing = self
+            .bend_scopes
+            .iter()
+            .position(|cell| cell.is_some_and(|(held, _)| held == scope));
+        let vacant = if cents == Cents::ZERO || existing.is_some() {
+            None
+        } else {
+            Some(
+                self.bend_scopes
+                    .iter()
+                    .position(Option::is_none)
+                    .ok_or(MixedBendSubmitError::ScopeCapacity)?,
+            )
+        };
         let request = MixedIngressRequest::Bend {
             origin,
             scope,
@@ -1202,6 +1224,9 @@ impl MixedOneShotControl {
                 MixedBendSubmitError::IdentityExhausted
             }
         })?;
+        if let Some(index) = existing.or(vacant) {
+            self.bend_scopes[index] = Some((scope, command));
+        }
         Ok((command, request))
     }
 
@@ -1264,7 +1289,8 @@ impl MixedOneShotControl {
     /// place to the merger. A lift result frees every cell it retired and settles the
     /// scope's lift reservation; a pedal-down result settles its reservation. A Panic
     /// result frees every sustained cell it retired and the protected place; the cells
-    /// it tombstoned stay open for their key-ups.
+    /// it tombstoned stay open for their key-ups. A successful zero bend releases
+    /// its scope cell only if no later bend for that scope is pending.
     fn collect_ingress_result(&mut self) -> Option<MixedIngressResult> {
         let result = self.ingress_results.0.try_pop()?;
         if let MixedIngressRequest::Panic { .. } = result.request {
@@ -1326,9 +1352,17 @@ impl MixedOneShotControl {
                 self.pedal_ledger
                     .settle_lift(result.id, scope, lifted.is_none());
             }
-            MixedIngressRequest::Onset { .. }
-            | MixedIngressRequest::Panic { .. }
-            | MixedIngressRequest::Bend { .. } => {}
+            MixedIngressRequest::Bend { scope, cents, .. } => {
+                if cents == Cents::ZERO
+                    && matches!(result.outcome, MixedIngressOutcome::Bend(Ok(_)))
+                    && let Some(cell) = self.bend_scopes.iter_mut().find(|cell| {
+                        cell.is_some_and(|(held, latest)| held == scope && latest == result.id)
+                    })
+                {
+                    *cell = None;
+                }
+            }
+            MixedIngressRequest::Onset { .. } | MixedIngressRequest::Panic { .. } => {}
         }
         Some(result)
     }
@@ -2276,6 +2310,8 @@ impl MixedJoinedPrepared {
                 occurrence_ledger: MixedOccurrenceLedger::prepare(occurrence_width),
                 #[cfg(all(test, feature = "simulated-ingress"))]
                 pedal_ledger: MixedPedalLedger::prepare(ingress_capacity),
+                #[cfg(all(test, feature = "simulated-ingress"))]
+                bend_scopes: vec![None; ingress_capacity.as_usize()],
                 #[cfg(all(test, feature = "simulated-ingress"))]
                 panic_inflight: None,
                 off_thread: PhantomData,

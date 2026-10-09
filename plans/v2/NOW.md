@@ -762,9 +762,19 @@ at that fence; its result reports the execution stamp. This removes that
 post-submission order refusal without changing the command-ring admission rule.
 The private rehearsal imposes no fixed bound on the delay from a stale nominal
 stamp to execution; the timestamped merger rule is still open.
+The control half now reserves one of audio's bounded bend scope cells before
+submitting a new non-zero scope. A full table refuses the caller without minting
+a command identity; a zero bend needs no new cell. A reserved cell is released
+only after audio's successful zero result is collected and no later bend for
+that scope is pending. Thus typed bend submissions cannot later fail solely
+because another scope filled audio's bend table. The reservation is conservative:
+a failed non-zero command can keep its scope cell until a successful zero for
+that scope, and caller-side ring saturation still refuses a bend. Tests cover
+full-table caller refusal, audio's defensive refusal of an internally forged
+request, a refused zero, and overlapping zero and later non-zero results.
 Tests cover saturation, cross-quantum and inherited early application, all three
 retirements, audio under four host partitions and a 4,000-step invariant storm;
-a temporary mutation of each accounting rule failed them.
+earlier temporary mutations of the ingress accounting rules failed those tests.
 This is a private experiment, not the draft's D5 marker. D5 is unapproved and
 proposes one coalescing marker per `(source, channel)`, a fanout payload charged
 once at publication, and early application of at most one quantum under a named
