@@ -111,6 +111,16 @@ impl PerformanceIngress {
         Ok(())
     }
 
+    /// The stamp a mixed Panic group is queued at: its nominal stamp, or the last stamp
+    /// this store accepted when that is later, so the order fence cannot refuse it.
+    #[cfg(all(test, feature = "simulated-ingress"))]
+    pub(crate) const fn mixed_execution_stamp(&self, nominal: SampleTime) -> SampleTime {
+        match self.last_accepted {
+            Some(last) if last.as_u64() > nominal.as_u64() => last,
+            Some(_) | None => nominal,
+        }
+    }
+
     /// Test-only mixed group release through the audio owner's live range, with the
     /// same preflight, hold conversion and single queue entry as the exclusive path.
     #[cfg(all(test, feature = "simulated-ingress"))]

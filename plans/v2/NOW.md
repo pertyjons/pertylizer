@@ -732,8 +732,16 @@ lift leaves the pedal down and every member sustained. Tests cover scope
 isolation, repeated keys, tombstones under the pedal, a full command ring, a
 full ingress queue with every hold outstanding, and in-interval ordering. Arm
 refuses a live hold entitlement above one eight-member group, so one lift never
-needs to split a cause into several charged groups; that split, the draft's rule
-1.5 amendment, remains open with Panic, bend and the concrete two-source bridge.
+needs to split a cause into several charged groups. A private host Panic now owns
+one command and result place beyond ordinary ring capacity, refuses a second
+Panic before acceptance, and releases all sounding and sustained live notes as
+one group. A sustained occurrence retires; a key-down occurrence keeps a
+Panic tombstone until its later key-up, which is consumed and counted. Tests
+cover a full ordinary ring and ingress queue, same-key reuse, refusal and
+retirement order, allocation-free service, and live audio parity. Panic keeps
+the pedal and compiled notes unchanged. The multi-group amendment to draft
+rule 1.5, compiled Panic scope, source/stage protection and timestamped merge
+selection remain open with bend and the concrete two-source bridge.
 This slice does not lift the production mixed-plan refusal.
 
 ### Selected work — ordered transport through live I/O

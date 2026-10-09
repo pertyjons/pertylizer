@@ -20,7 +20,16 @@
 //! for its own lift, and the lift ends every sustained member of its scope as one
 //! release group, retiring their cells in its result. A sustained cell owns a release
 //! hold rather than a ring place, so both tables are as wide as the ring plus the live
-//! hold entitlement. Panic and bend are not handled here yet.
+//! hold entitlement.
+//!
+//! Panic is a host command, not a source edge. The merger owns one command-ring place
+//! for it outside the ordinary room and refuses a second Panic at the caller boundary
+//! while the first is uncollected. On audio it ends every sounding and sustained live
+//! occurrence of every scope as one `Panic` release group: arm bounds the live hold
+//! entitlement by one group, so the group is never split. A sustained occurrence's cell
+//! retires with the Panic; a key-down occurrence's cell becomes a tombstone that
+//! consumes and counts its later key-up. Panic leaves pedals, refusal tombstones,
+//! compiled occurrences and the transport unchanged. Bend is not handled here yet.
 
 use synth_core::MidiChannel;
 use thiserror::Error;
@@ -30,6 +39,7 @@ use crate::{
     identity::NoteIdentity,
     ingress::{IngressRefused, RELEASE_GROUP_CAPACITY},
     quantities::EventCount,
+    time::SampleTime,
 };
 
 mod hot;
@@ -97,6 +107,9 @@ pub(super) enum MixedOccurrenceState {
     Sustained(NoteIdentity),
     /// A tombstone carrying the onset's first refusal; the release is consumed.
     Refused(IngressRefused),
+    /// A tombstone for a key-down occurrence Panic ended, carrying the identity the
+    /// Panic group released. The key-up is consumed and counted.
+    Panicked(NoteIdentity),
 }
 
 /// How a release retired its cell.
@@ -106,6 +119,8 @@ pub(super) enum MixedRetireCause {
     Released(NoteIdentity),
     /// The onset had been refused; the release was consumed and counted.
     AfterRefusal(IngressRefused),
+    /// Panic had already ended this identity; the release was consumed and counted.
+    AfterPanic(NoteIdentity),
 }
 
 /// The audio half's acknowledgement that a cell is retired and may be reused.
@@ -136,6 +151,55 @@ impl MixedLifted {
 /// A lift's retirements, or a refusal that leaves the pedal down and every member
 /// sustained.
 pub(super) type MixedLiftResult = Result<MixedLifted, MixedPedalRefused>;
+
+/// How Panic ended one occurrence.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum MixedPanicEnd {
+    /// The key was up under its pedal: the cell retired with the Panic.
+    Retired(LiveOccurrenceId),
+    /// The key was down: the cell is a tombstone until its key-up is consumed.
+    Tombstoned(LiveOccurrenceId),
+}
+
+/// The occurrences one applied Panic ended, in cell order, which is also the order of
+/// their identities in its release group, and the stamp the group was queued at.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) struct MixedPanicked {
+    executed_at: SampleTime,
+    ended: [Option<MixedPanicEnd>; RELEASE_GROUP_CAPACITY],
+}
+
+impl MixedPanicked {
+    /// The execution stamp: the nominal stamp, or the ingress store's last accepted stamp
+    /// when that is later, so a Panic is never refused for its order.
+    pub(super) const fn executed_at(&self) -> SampleTime {
+        self.executed_at
+    }
+
+    pub(super) fn ended(&self) -> impl Iterator<Item = MixedPanicEnd> + '_ {
+        self.ended.iter().flatten().copied()
+    }
+
+    /// Sustained cells the Panic retired; the merger frees them when it collects this.
+    pub(super) fn retired(&self) -> impl Iterator<Item = LiveOccurrenceId> + '_ {
+        self.ended().filter_map(|end| match end {
+            MixedPanicEnd::Retired(occurrence) => Some(occurrence),
+            MixedPanicEnd::Tombstoned(_) => None,
+        })
+    }
+}
+
+/// An applied Panic, or a refusal that changed no occurrence, hold or queue entry.
+pub(super) type MixedPanicResult = Result<MixedPanicked, MixedPanicRefused>;
+
+/// Why the audio half refused a Panic. Every occurrence keeps its state.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Error)]
+pub(super) enum MixedPanicRefused {
+    #[error("more live occurrences than one release group carries")]
+    GroupCapacity,
+    #[error(transparent)]
+    Ingress(IngressRefused),
+}
 
 /// How the audio half applied a pedal-down.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -198,6 +262,18 @@ pub(super) enum MixedOnsetSubmitError {
 pub(super) enum MixedPedalSubmitError {
     #[error("no command-ring place for a pedal-down and its reserved lift")]
     Full,
+    #[error("mixed ingress command identity is exhausted")]
+    IdentityExhausted,
+}
+
+/// Why the merger refused a Panic at the caller boundary, before acceptance. The caller
+/// keeps its input and no command was pushed.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Error)]
+pub(super) enum MixedPanicSubmitError {
+    #[error("an earlier Panic {0:?} still holds the protected place")]
+    Pending(MixedIngressCommandId),
+    #[error("the protected Panic place is not free in the command ring")]
+    RingFull,
     #[error("mixed ingress command identity is exhausted")]
     IdentityExhausted,
 }
@@ -344,8 +420,8 @@ impl MixedOccurrenceLedger {
         }
     }
 
-    /// Free a sustained cell a collected lift retired.
-    pub(super) fn retire_lifted(&mut self, occurrence: LiveOccurrenceId) -> bool {
+    /// Free a sustained cell a collected lift or Panic retired.
+    pub(super) fn retire_sustained(&mut self, occurrence: LiveOccurrenceId) -> bool {
         match self.cell_mut(occurrence) {
             Some(cell) if *cell == CellUse::Held(occurrence.generation, LedgerHold::Sustained) => {
                 *cell = CellUse::retired(occurrence.generation);
@@ -571,6 +647,7 @@ pub(super) struct MixedOccurrenceTable {
     cells: Vec<CellUse<Occupant>>,
     pedals: Vec<Option<MixedLiveScope>>,
     released_after_refusal: EventCount,
+    released_after_panic: EventCount,
 }
 
 impl MixedOccurrenceTable {
@@ -580,6 +657,7 @@ impl MixedOccurrenceTable {
             cells: vec![CellUse::Free(LiveOccurrenceGeneration::FIRST); width.as_usize()],
             pedals: vec![None; pedals.as_usize()],
             released_after_refusal: EventCount::NONE,
+            released_after_panic: EventCount::NONE,
         }
     }
 
@@ -609,6 +687,11 @@ impl MixedOccurrenceTable {
     /// Releases consumed by a refused onset's tombstone.
     pub(super) const fn released_after_refusal(&self) -> EventCount {
         self.released_after_refusal
+    }
+
+    /// Key-ups consumed by a tombstone Panic left.
+    pub(super) const fn released_after_panic(&self) -> EventCount {
+        self.released_after_panic
     }
 }
 

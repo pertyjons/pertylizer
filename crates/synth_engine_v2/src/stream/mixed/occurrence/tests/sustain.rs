@@ -22,7 +22,10 @@ use crate::{
     time::SampleTime,
 };
 
-fn armed_with(compiled_first: bool, holds: u32) -> (MixedOneShotControl, MixedOneShotAudio) {
+pub(super) fn armed_with(
+    compiled_first: bool,
+    holds: u32,
+) -> (MixedOneShotControl, MixedOneShotAudio) {
     let (prepared, candidate) = history_tests::one_shot_with_live(
         compiled_first,
         HeldNoteCount::measured(holds),
@@ -33,11 +36,11 @@ fn armed_with(compiled_first: bool, holds: u32) -> (MixedOneShotControl, MixedOn
         .expect("private arm")
 }
 
-fn scope(source: u64, channel: u8) -> MixedLiveScope {
+pub(super) fn scope(source: u64, channel: u8) -> MixedLiveScope {
     MixedLiveScope::new(MixedLiveSource::new(source), MidiChannel::new(channel))
 }
 
-fn onset_in(
+pub(super) fn onset_in(
     control: &mut MixedOneShotControl,
     scope: MixedLiveScope,
     at: u64,
@@ -58,7 +61,7 @@ fn onset_in(
     occurrence
 }
 
-fn onset_request_in(
+pub(super) fn onset_request_in(
     occurrence: LiveOccurrenceId,
     scope: MixedLiveScope,
     at: u64,
@@ -74,7 +77,7 @@ fn onset_request_in(
     }
 }
 
-fn pedal(
+pub(super) fn pedal(
     control: &mut MixedOneShotControl,
     scope: MixedLiveScope,
     at: u64,
@@ -85,7 +88,7 @@ fn pedal(
         .expect("pedal edge fits")
 }
 
-fn pedal_request(scope: MixedLiveScope, at: u64, down: bool) -> MixedIngressRequest {
+pub(super) fn pedal_request(scope: MixedLiveScope, at: u64, down: bool) -> MixedIngressRequest {
     MixedIngressRequest::Pedal {
         origin: ORIGIN,
         scope,
@@ -94,7 +97,7 @@ fn pedal_request(scope: MixedLiveScope, at: u64, down: bool) -> MixedIngressRequ
     }
 }
 
-fn holds(audio: &MixedOneShotAudio) -> u32 {
+pub(super) fn holds(audio: &MixedOneShotAudio) -> u32 {
     audio.test_ingress.holds_outstanding().get()
 }
 
@@ -106,14 +109,14 @@ fn lifted(outcome: MixedIngressOutcome) -> Vec<LiveOccurrenceId> {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-enum Queued {
+pub(super) enum Queued {
     On(NoteIdentity),
     Off(NoteIdentity),
     Group(Vec<NoteIdentity>),
 }
 
 /// Live entries still waiting in the registered ingress queue, in queue order.
-fn queued(audio: &MixedOneShotAudio) -> Vec<Queued> {
+pub(super) fn queued(audio: &MixedOneShotAudio) -> Vec<Queued> {
     let mut queue = vec![None; audio.test_ingress.queue_capacity_for_test()];
     let len = audio
         .test_ingress
@@ -138,14 +141,14 @@ fn queued(audio: &MixedOneShotAudio) -> Vec<Queued> {
         .collect()
 }
 
-fn render(audio: &mut MixedOneShotAudio) {
+pub(super) fn render(audio: &mut MixedOneShotAudio) {
     let mut samples = [0.0_f32; 256];
     audio
         .render_private(AudioBlockMut::new(&mut samples, 256, ChannelLayout::Mono).expect("block"))
         .expect("mixed render");
 }
 
-fn sounding(audio: &MixedOneShotAudio) -> Vec<NoteIdentity> {
+pub(super) fn sounding(audio: &MixedOneShotAudio) -> Vec<NoteIdentity> {
     audio
         .audio
         .renderer
@@ -157,7 +160,10 @@ fn sounding(audio: &MixedOneShotAudio) -> Vec<NoteIdentity> {
         .collect()
 }
 
-fn state_of(audio: &MixedOneShotAudio, occurrence: LiveOccurrenceId) -> MixedOccurrenceState {
+pub(super) fn state_of(
+    audio: &MixedOneShotAudio,
+    occurrence: LiveOccurrenceId,
+) -> MixedOccurrenceState {
     audio
         .occurrences
         .occupied()

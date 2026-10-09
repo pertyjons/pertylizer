@@ -55,8 +55,9 @@ mod occurrence;
 #[cfg(all(test, feature = "simulated-ingress"))]
 use occurrence::{
     LiveOccurrenceId, MixedLiftResult, MixedLiveScope, MixedOccurrenceLedger, MixedOccurrenceState,
-    MixedOccurrenceTable, MixedOnsetSubmitError, MixedPedalDown, MixedPedalEdge, MixedPedalLedger,
-    MixedPedalRefused, MixedPedalSubmitError, MixedReleaseSubmitError, MixedRetired,
+    MixedOccurrenceTable, MixedOnsetSubmitError, MixedPanicResult, MixedPanicSubmitError,
+    MixedPedalDown, MixedPedalEdge, MixedPedalLedger, MixedPedalRefused, MixedPedalSubmitError,
+    MixedReleaseSubmitError, MixedRetired,
 };
 
 /// Why a bound mixed stream could not be prepared.
@@ -212,8 +213,9 @@ pub(crate) enum MixedOneShotArmError {
     #[cfg(all(test, feature = "simulated-ingress"))]
     #[error("mixed occurrence ingress depth {capacity} cannot reserve an onset and release")]
     OccurrenceCapacity { capacity: usize },
-    /// A sustain lift ends its scope's sustained occurrences as one release group, so
-    /// the live hold entitlement may not exceed one group's members.
+    /// A sustain lift ends its scope's sustained occurrences, and Panic every live
+    /// occurrence, as one release group, so the live hold entitlement may not exceed
+    /// one group's members.
     #[cfg(all(test, feature = "simulated-ingress"))]
     #[error("{holds} live holds exceed the {group}-member sustain lift group")]
     SustainGroupCapacity { holds: EventCount, group: usize },
@@ -870,6 +872,10 @@ pub(crate) struct MixedOneShotControl {
     /// Effective pedal state per scope and the ring places reserved for lifts.
     #[cfg(all(test, feature = "simulated-ingress"))]
     pedal_ledger: MixedPedalLedger,
+    /// The Panic holding the protected ring place, until its result is collected. That
+    /// place lies outside `ingress_capacity`, so ordinary traffic can never take it.
+    #[cfg(all(test, feature = "simulated-ingress"))]
+    panic_inflight: Option<MixedIngressCommandId>,
     off_thread: PhantomData<Rc<()>>,
 }
 
@@ -947,6 +953,12 @@ enum MixedIngressRequest {
         at: SampleTime,
         down: bool,
     },
+    /// A host Panic in the protected ring place. It names no scope or occurrence: audio
+    /// ends every live occurrence its own table holds.
+    Panic {
+        origin: MixedIngressOriginId,
+        at: SampleTime,
+    },
 }
 
 #[cfg(all(test, feature = "simulated-ingress"))]
@@ -973,6 +985,9 @@ enum MixedIngressOutcome {
     PedalDown(Result<MixedPedalDown, MixedPedalRefused>),
     /// The cells the lift retired, or a refusal that changed nothing.
     Lift(MixedLiftResult),
+    /// The occurrences Panic ended and its execution stamp, or a refusal that changed
+    /// nothing.
+    Panic(MixedPanicResult),
 }
 
 /// What the merger did with one pedal edge.
@@ -1015,7 +1030,7 @@ impl MixedOneShotControl {
             .saturating_sub(self.pedal_ledger.reserved())
     }
 
-    /// Push one command. Callers other than the two typed submits below forge requests.
+    /// Push one command. Callers other than the typed submits below forge requests.
     fn submit_ingress(
         &mut self,
         request: MixedIngressRequest,
@@ -1023,6 +1038,16 @@ impl MixedOneShotControl {
         if self.ingress_room() == 0 {
             return Err(MixedIngressSubmitError::Full(request));
         }
+        let id = self.push_ingress(request)?;
+        self.ingress_outstanding.0 += 1;
+        Ok(id)
+    }
+
+    /// Mint the next command identity and push the command. Room is the caller's check.
+    fn push_ingress(
+        &mut self,
+        request: MixedIngressRequest,
+    ) -> Result<MixedIngressCommandId, MixedIngressSubmitError> {
         let serial = self
             .last_ingress_id
             .map_or(Some(1), |id| id.0.checked_add(1))
@@ -1033,8 +1058,32 @@ impl MixedOneShotControl {
             .try_push(MixedIngressCommand { id, request })
             .map_err(|command| MixedIngressSubmitError::Full(command.request))?;
         self.last_ingress_id = Some(id);
-        self.ingress_outstanding.0 += 1;
         Ok(id)
+    }
+
+    /// Submit a host Panic into the protected ring place. Both rings carry one place
+    /// beyond `ingress_capacity` for it, so a ring full of ordinary commands and
+    /// uncollected results never refuses it. While an earlier Panic is uncollected the
+    /// place is taken and this one is refused here, before acceptance, rather than
+    /// dropped later.
+    fn submit_panic(
+        &mut self,
+        origin: MixedIngressOriginId,
+        at: SampleTime,
+    ) -> Result<(MixedIngressCommandId, MixedIngressRequest), MixedPanicSubmitError> {
+        if let Some(pending) = self.panic_inflight {
+            return Err(MixedPanicSubmitError::Pending(pending));
+        }
+        let request = MixedIngressRequest::Panic { origin, at };
+        let command = self.push_ingress(request).map_err(|error| match error {
+            // Ordinary commands never exceed `ingress_capacity`, so this needs a defect.
+            MixedIngressSubmitError::Full(_) => MixedPanicSubmitError::RingFull,
+            MixedIngressSubmitError::IdentityExhausted(_) => {
+                MixedPanicSubmitError::IdentityExhausted
+            }
+        })?;
+        self.panic_inflight = Some(command);
+        Ok((command, request))
     }
 
     /// Mint a handle and stage its onset, reserving one ring place for its release so
@@ -1169,9 +1218,22 @@ impl MixedOneShotControl {
     /// ledger cell for reuse; `Sustained` leaves the cell for the scope's lift and
     /// spends the release's place; a refused release returns custody and its reserved
     /// place to the merger. A lift result frees every cell it retired and settles the
-    /// scope's lift reservation; a pedal-down result settles its reservation.
+    /// scope's lift reservation; a pedal-down result settles its reservation. A Panic
+    /// result frees every sustained cell it retired and the protected place; the cells
+    /// it tombstoned stay open for their key-ups.
     fn collect_ingress_result(&mut self) -> Option<MixedIngressResult> {
         let result = self.ingress_results.0.try_pop()?;
+        if let MixedIngressRequest::Panic { .. } = result.request {
+            assert_eq!(self.panic_inflight, Some(result.id), "one protected Panic");
+            self.panic_inflight = None;
+            if let MixedIngressOutcome::Panic(Ok(panicked)) = result.outcome {
+                for retired in panicked.retired() {
+                    let freed = self.occurrence_ledger.retire_sustained(retired);
+                    debug_assert!(freed, "Panic retires only sustained cells");
+                }
+            }
+            return Some(result);
+        }
         assert!(self.ingress_outstanding > MixedIngressQueueCount::NONE);
         self.ingress_outstanding.0 -= 1;
         match result.request {
@@ -1189,7 +1251,8 @@ impl MixedOneShotControl {
                     | MixedIngressOutcome::Onset(_)
                     | MixedIngressOutcome::Sustained(_)
                     | MixedIngressOutcome::PedalDown(_)
-                    | MixedIngressOutcome::Lift(_) => None,
+                    | MixedIngressOutcome::Lift(_)
+                    | MixedIngressOutcome::Panic(_) => None,
                 };
                 if self
                     .occurrence_ledger
@@ -1212,13 +1275,13 @@ impl MixedOneShotControl {
                     _ => None,
                 };
                 for retired in lifted.iter().flat_map(|lifted| lifted.retired()) {
-                    let freed = self.occurrence_ledger.retire_lifted(retired);
+                    let freed = self.occurrence_ledger.retire_sustained(retired);
                     debug_assert!(freed, "a lift retires only sustained cells");
                 }
                 self.pedal_ledger
                     .settle_lift(result.id, scope, lifted.is_none());
             }
-            MixedIngressRequest::Onset { .. } => {}
+            MixedIngressRequest::Onset { .. } | MixedIngressRequest::Panic { .. } => {}
         }
         Some(result)
     }
@@ -1290,6 +1353,7 @@ struct MixedIngressTeardown {
     /// Scopes whose pedal audio still holds down.
     pedals_down: Vec<MixedLiveScope>,
     released_after_refusal: EventCount,
+    released_after_panic: EventCount,
 }
 
 #[derive(Debug)]
@@ -1522,6 +1586,7 @@ fn mixed_teardown_parts(
             occurrences: audio.occurrences.occupied(),
             pedals_down: audio.occurrences.pedals_down(),
             released_after_refusal: audio.occurrences.released_after_refusal(),
+            released_after_panic: audio.occurrences.released_after_panic(),
         }
     };
     Ok(MixedTeardownParts {
@@ -1572,7 +1637,8 @@ impl MixedOneShotControl {
             }));
         }
         #[cfg(all(test, feature = "simulated-ingress"))]
-        if self.ingress_outstanding > MixedIngressQueueCount::NONE {
+        if self.ingress_outstanding > MixedIngressQueueCount::NONE || self.panic_inflight.is_some()
+        {
             return Err(Box::new(MixedCollectionRefusal {
                 reason: MixedCollectionError::IngressResultPending,
                 control: self,
@@ -2069,7 +2135,8 @@ impl MixedJoinedPrepared {
         }
         // A sustained occurrence owns a release hold instead of a ring place, so the
         // occurrence tables cover the ring plus the live hold entitlement. A lift ends
-        // its scope's sustained occurrences as one group, which bounds that entitlement.
+        // its scope's sustained occurrences, and Panic every live occurrence, as one
+        // group, which bounds that entitlement.
         // The ingress preparation above already refused a producer the plan lacks.
         #[cfg(all(test, feature = "simulated-ingress"))]
         let live_holds = control
@@ -2095,12 +2162,16 @@ impl MixedJoinedPrepared {
                 candidate,
             }));
         };
+        // Both rings carry one protected place beyond the ordinary capacity: the merger
+        // keeps it for one Panic, which ordinary commands and results cannot take.
+        #[cfg(all(test, feature = "simulated-ingress"))]
+        let ring_places = ingress_capacity.as_usize() + 1;
         #[cfg(all(test, feature = "simulated-ingress"))]
         let (ingress_command_writer, ingress_command_reader) =
-            HeapRb::<MixedIngressCommand>::new(ingress_capacity.as_usize()).split();
+            HeapRb::<MixedIngressCommand>::new(ring_places).split();
         #[cfg(all(test, feature = "simulated-ingress"))]
         let (ingress_result_writer, ingress_result_reader) =
-            HeapRb::<MixedIngressResult>::new(ingress_capacity.as_usize()).split();
+            HeapRb::<MixedIngressResult>::new(ring_places).split();
         let late_at_arm = candidate.anchor.time() < arm_clock;
         let effective_anchor = StreamAnchor::new(effective, candidate.anchor.position());
         let capsule = match candidate.into_audio_capsule() {
@@ -2146,6 +2217,8 @@ impl MixedJoinedPrepared {
                 occurrence_ledger: MixedOccurrenceLedger::prepare(occurrence_width),
                 #[cfg(all(test, feature = "simulated-ingress"))]
                 pedal_ledger: MixedPedalLedger::prepare(ingress_capacity),
+                #[cfg(all(test, feature = "simulated-ingress"))]
+                panic_inflight: None,
                 off_thread: PhantomData,
             },
             MixedOneShotAudio {

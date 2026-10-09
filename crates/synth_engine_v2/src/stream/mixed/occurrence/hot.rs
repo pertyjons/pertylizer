@@ -5,8 +5,10 @@
 //! acceptance or refusal in the handle's cell, and retires the cell when its release
 //! ends the occurrence or is consumed by the onset's tombstone. A key-up while its
 //! scope's pedal is down offers nothing and keeps the hold; the scope's lift ends every
-//! sustained member as one release group. It works in prepared storage only: it does
-//! not allocate, lock, perform I/O, log or panic.
+//! sustained member as one release group. Panic ends every sounding and sustained
+//! occurrence as one release group and leaves a tombstone for each key still down. It
+//! works in prepared storage only: it does not allocate, lock, perform I/O, log or
+//! panic.
 
 use ringbuf::traits::{Consumer, Producer};
 
@@ -14,7 +16,8 @@ use super::{
     super::{MixedIngressOutcome, MixedIngressRequest, MixedIngressResult, MixedOneShotAudio},
     CellUse, LiveOccurrenceCell, LiveOccurrenceGeneration, LiveOccurrenceId, MixedHandleRefused,
     MixedLiftResult, MixedLifted, MixedLiveScope, MixedOccurrenceState, MixedOccurrenceTable,
-    MixedPedalDown, MixedPedalRefused, MixedRetireCause, MixedRetired, Occupant,
+    MixedPanicEnd, MixedPanicRefused, MixedPanicResult, MixedPanicked, MixedPedalDown,
+    MixedPedalRefused, MixedRetireCause, MixedRetired, Occupant,
 };
 use crate::{
     identity::NoteIdentity,
@@ -92,8 +95,9 @@ impl MixedOccurrenceTable {
         }
     }
 
-    /// Record an onset's first disposition, or a sounding occurrence's key-up under the
-    /// pedal. A refusal is never overwritten before retirement.
+    /// Record an onset's first disposition, a sounding occurrence's key-up under the
+    /// pedal, or Panic ending a key-down occurrence. A refusal or Panic tombstone is never
+    /// overwritten before retirement.
     fn occupy(&mut self, index: usize, generation: LiveOccurrenceGeneration, occupant: Occupant) {
         if let Some(cell) = self.cells.get_mut(index) {
             *cell = CellUse::Held(generation, occupant);
@@ -139,6 +143,13 @@ impl MixedOccurrenceTable {
             .checked_add(EventCount::measured(1))
             .unwrap_or(self.released_after_refusal);
     }
+
+    fn count_release_after_panic(&mut self) {
+        self.released_after_panic = self
+            .released_after_panic
+            .checked_add(EventCount::measured(1))
+            .unwrap_or(self.released_after_panic);
+    }
 }
 
 impl MixedOneShotAudio {
@@ -172,6 +183,9 @@ impl MixedOneShotAudio {
                     down: false,
                     ..
                 } => MixedIngressOutcome::Lift(self.service_lift(scope, at)),
+                MixedIngressRequest::Panic { at, .. } => {
+                    MixedIngressOutcome::Panic(self.service_panic(at))
+                }
             };
             let result = MixedIngressResult {
                 id: command.id,
@@ -244,6 +258,10 @@ impl MixedOneShotAudio {
                 self.occurrences.count_release_after_refusal();
                 MixedRetireCause::AfterRefusal(reason)
             }
+            MixedOccurrenceState::Panicked(identity) => {
+                self.occurrences.count_release_after_panic();
+                MixedRetireCause::AfterPanic(identity)
+            }
         };
         self.occurrences.retire(index, occurrence.generation);
         MixedIngressOutcome::Release(Ok(MixedRetired { occurrence, cause }))
@@ -287,7 +305,7 @@ impl MixedOneShotAudio {
         let identities = identities
             .get(..count)
             .ok_or(MixedPedalRefused::GroupCapacity)?;
-        self.offer_test_release_group(at, identities)
+        self.offer_test_release_group(at, identities, ReleaseCause::SustainLift)
             .map_err(MixedPedalRefused::Ingress)?;
         let mut lifted = MixedLifted::NONE;
         for (retired, member) in lifted.members.iter_mut().zip(members) {
@@ -299,6 +317,75 @@ impl MixedOneShotAudio {
         }
         self.occurrences.unpress(scope);
         Ok(lifted)
+    }
+
+    /// Panic ends every sounding and sustained occurrence of every scope as one release
+    /// group. It is queued at its execution stamp, so the store's order fence never
+    /// refuses it. A sustained cell retires; a key-down cell becomes a tombstone that
+    /// consumes its key-up. Refusal and Panic tombstones, pedals and compiled occurrences
+    /// are untouched. A refused group changes nothing: every occurrence keeps its state
+    /// and hold. Arm bounds the live holds, and so the members, by one group.
+    fn service_panic(&mut self, at: SampleTime) -> MixedPanicResult {
+        let mut members = [None; RELEASE_GROUP_CAPACITY];
+        let mut count = 0;
+        for (index, cell) in self.occurrences.cells.iter().enumerate() {
+            let CellUse::Held(generation, occupant) = cell else {
+                continue;
+            };
+            let identity = match occupant.state {
+                MixedOccurrenceState::Sounding(identity)
+                | MixedOccurrenceState::Sustained(identity) => identity,
+                MixedOccurrenceState::Refused(_) | MixedOccurrenceState::Panicked(_) => continue,
+            };
+            let member = members
+                .get_mut(count)
+                .ok_or(MixedPanicRefused::GroupCapacity)?;
+            let cell = u32::try_from(index).map_err(|_| MixedPanicRefused::GroupCapacity)?;
+            let occurrence = LiveOccurrenceId {
+                cell: LiveOccurrenceCell(cell),
+                generation: *generation,
+            };
+            *member = Some((index, occurrence, *occupant, identity));
+            count += 1;
+        }
+        let executed_at = self.test_ingress.mixed_execution_stamp(at);
+        let offered = match members.first().copied().flatten() {
+            Some((_, _, _, first)) => {
+                let mut identities = [first; RELEASE_GROUP_CAPACITY];
+                for (identity, member) in identities.iter_mut().zip(members.iter().flatten()) {
+                    *identity = member.3;
+                }
+                let identities = identities
+                    .get(..count)
+                    .ok_or(MixedPanicRefused::GroupCapacity)?;
+                self.offer_test_release_group(executed_at, identities, ReleaseCause::Panic)
+            }
+            // An empty Panic still passes the owner's checks and queues nothing.
+            None => self.offer_test_release_group(executed_at, &[], ReleaseCause::Panic),
+        };
+        offered.map_err(MixedPanicRefused::Ingress)?;
+        let mut panicked = MixedPanicked {
+            executed_at,
+            ended: [None; RELEASE_GROUP_CAPACITY],
+        };
+        for (ended, member) in panicked.ended.iter_mut().zip(members) {
+            let Some((index, occurrence, occupant, identity)) = member else {
+                continue;
+            };
+            if let MixedOccurrenceState::Sustained(_) = occupant.state {
+                self.occurrences.retire(index, occurrence.generation);
+                *ended = Some(MixedPanicEnd::Retired(occurrence));
+            } else {
+                let state = MixedOccurrenceState::Panicked(identity);
+                self.occurrences.occupy(
+                    index,
+                    occurrence.generation,
+                    Occupant { state, ..occupant },
+                );
+                *ended = Some(MixedPanicEnd::Tombstoned(occurrence));
+            }
+        }
+        Ok(panicked)
     }
 
     /// Private ingress acceptance; the returned identity is recorded in the handle's cell.
@@ -324,11 +411,12 @@ impl MixedOneShotAudio {
         )
     }
 
-    /// The scope's sustained occurrences redeem their holds as one lift group.
+    /// A lift's or Panic's members redeem their holds as one release group.
     fn offer_test_release_group(
         &mut self,
         at: SampleTime,
         identities: &[NoteIdentity],
+        cause: ReleaseCause,
     ) -> Result<(), IngressRefused> {
         if self.fault.is_some() || self.audio.renderer.diagnostics().needs_reprepare() {
             return Err(IngressRefused::TerminalOwner);
@@ -341,7 +429,7 @@ impl MixedOneShotAudio {
             &mut self.audio.live_minter,
             at,
             identities,
-            ReleaseCause::SustainLift,
+            cause,
         )
     }
 
