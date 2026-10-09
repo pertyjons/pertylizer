@@ -33,6 +33,15 @@ pub struct InputCaptureHalt {
     signal: Arc<AtomicU8>,
 }
 
+#[cfg(test)]
+impl InputCaptureHalt {
+    pub(crate) fn detached_for_test() -> Self {
+        Self {
+            signal: Arc::new(AtomicU8::new(0)),
+        }
+    }
+}
+
 #[must_use]
 pub struct InputCaptureControl {
     core: LoopRecordingControl,

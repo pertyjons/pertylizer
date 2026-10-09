@@ -4,6 +4,14 @@ use super::*;
 use crate::quantities::Cents;
 use synth_core::MidiChannel;
 
+#[allow(
+    dead_code,
+    reason = "shared source custody is exercised here through its owned path"
+)]
+#[path = "../../../tests/support/source_custody.rs"]
+mod source_custody;
+use source_custody::{SourceHandoff, SourceHeadError, SourceInbox};
+
 #[path = "../../../tests/support/source_queue.rs"]
 mod source_queue;
 use source_queue::{SourceQueueReader, SourceQueueWriter};
@@ -230,6 +238,236 @@ fn queued_bends(audio: &MixedOneShotAudio) -> Vec<(SampleTime, Cents)> {
             _ => None,
         })
         .collect()
+}
+
+/// Feed the actual producer's validated head into the existing private raw,
+/// stage and command fixture. The original observation reaches raw unchanged.
+fn pump_concrete_bend(
+    bridge: &mut BendBridge<SerialRaw>,
+    inbox: &mut SourceInbox,
+    pending_head: &mut Option<SourceHandoff>,
+) -> Result<Option<(SourceHandoff, RawHandoff)>, BendPumpRefusal> {
+    assert!(
+        inbox.unresolved_failure().is_none(),
+        "producer failure must be resolved before servicing a source head"
+    );
+    let Some(head) = inbox.peek_handoff() else {
+        return Ok(None);
+    };
+    let InputObservation::Message {
+        tick,
+        arrival,
+        input: original,
+    } = head.observation()
+    else {
+        panic!("concrete bend fixture contains only messages");
+    };
+    assert!(matches!(original.event(), Midi1Event::PitchBend { .. }));
+    let source = Source::First;
+    if bridge.raw_pending[0].is_none() {
+        assert!(pending_head.is_none());
+        let generation = bridge.raw.generations[0];
+        let preflight = bridge
+            .raw
+            .owner
+            .input(generation)
+            .unwrap()
+            .preflight_observation_custody(generation, head.observation())
+            .map_err(BendPumpRefusal::RawPreflight)?;
+        if let InputCustodyPreflight::Await(error) = preflight {
+            return Err(BendPumpRefusal::AwaitRaw(error));
+        }
+        let raw = bridge
+            .raw
+            .owner
+            .offer_message(generation, tick, arrival, original)
+            .map_err(raw_admission)
+            .map_err(BendPumpRefusal::RawOffer)?;
+        bridge.raw_issued.push((source, raw));
+        bridge.raw_pending[0] = Some(RawHandoff {
+            source,
+            raw,
+            link: None,
+            original,
+            at: head.stamp().mapped_at(),
+        });
+        *pending_head = Some(head);
+    } else {
+        assert_eq!(*pending_head, Some(head));
+        let pending = bridge.raw_pending[0].unwrap();
+        assert_eq!(
+            (pending.source, pending.original, pending.at),
+            (source, original, head.stamp().mapped_at())
+        );
+    }
+    let packet = Packet {
+        occurrence: Occurrence(head.stamp().queue().serial()),
+        original,
+        at: head.stamp().mapped_at(),
+        release: false,
+    };
+    bridge
+        .stage
+        .bend(source, packet)
+        .map_err(BendPumpRefusal::Stage)?;
+    assert_eq!(inbox.commit_handoff(head), Ok(head));
+    assert_eq!(pending_head.take(), Some(head));
+    let pending = bridge.raw_pending[0].take().unwrap();
+    bridge.staged.push((packet.occurrence, pending));
+    Ok(Some((head, pending)))
+}
+
+#[test]
+fn actual_source_head_keeps_its_stamp_and_raw_original_through_stage_refusal() {
+    let (prepared, candidate) = history_tests::one_shot_with_live(
+        true,
+        crate::quantities::HeldNoteCount::measured(2),
+        EventCount::measured(2),
+    );
+    let (mut control, mut audio) = prepared
+        .arm_one_shot(candidate, &history_tests::mixed_profile())
+        .unwrap();
+    let (onset, request) = control
+        .submit_onset(
+            MixedIngressOriginId(190),
+            BendBridge::scope(Source::First),
+            SampleTime::new(190),
+            crate::quantities::KeyIdentity::new(60).unwrap(),
+            crate::quantities::NoteVelocity::FULL,
+        )
+        .unwrap();
+    audio.service_test_ingress_queue();
+    let onset_result = control.collect_ingress_result().unwrap();
+    assert_eq!((onset_result.id, onset_result.request), (onset, request));
+    assert!(matches!(
+        onset_result.outcome,
+        MixedIngressOutcome::Onset(Ok(_))
+    ));
+    let (owner, generations) = ledger_tests::bridge_serial_owner_with_first_rate(
+        256,
+        InputRate::new(FrameCount::new(2), InputTickSpan::new(1)).unwrap(),
+    );
+    let clock = owner.input(generations[0]).unwrap().clock().unwrap();
+    let (mut producer, mut inbox) =
+        SourceInbox::prepare(generations[0], InputCaptureHalt::detached_for_test(), clock);
+    let mut bridge = BendBridge::with_raw(2, SerialRaw { owner, generations });
+    let mut pending_head = None;
+    let originals = [
+        (100, 210, input(0xe0, 127, 127)),
+        (101, 211, input(0xe0, 0, 0)),
+        (102, 212, input(0xe0, 127, 127)),
+    ]
+    .map(|(tick, arrival, input)| InputObservation::Message {
+        tick: InputTick::new(tick),
+        arrival: SampleTime::new(arrival),
+        input,
+    });
+    let queues = originals.map(|observation| producer.submit_owned(observation).unwrap().parts().1);
+    assert_eq!(queues.map(|id| id.serial()), [1, 2, 3]);
+    bridge.frontier(Source::Second, 220);
+
+    let (first, first_raw) = pump_concrete_bend(&mut bridge, &mut inbox, &mut pending_head)
+        .unwrap()
+        .unwrap();
+    assert_eq!(first.stamp().queue(), queues[0]);
+    assert_eq!(first.stamp().mapped_at(), SampleTime::new(200));
+    let (second, second_raw) = pump_concrete_bend(&mut bridge, &mut inbox, &mut pending_head)
+        .unwrap()
+        .unwrap();
+    assert_eq!(second.stamp().queue(), queues[1]);
+    let blocked = inbox.peek_handoff().unwrap();
+    assert_eq!(blocked.stamp().queue(), queues[2]);
+    assert_eq!(
+        pump_concrete_bend(&mut bridge, &mut inbox, &mut pending_head),
+        Err(BendPumpRefusal::Stage(StageRefusal::NoPacketCredit))
+    );
+    assert_eq!(inbox.peek_handoff(), Some(blocked));
+    assert_eq!(pending_head, Some(blocked));
+    assert_eq!(
+        inbox.commit_handoff(first),
+        Err(SourceHeadError::Mismatched {
+            expected: first,
+            actual: blocked,
+        })
+    );
+    assert_eq!(inbox.peek_handoff(), Some(blocked));
+    assert_eq!(
+        bridge.raw_pending[0].unwrap().original,
+        input(0xe0, 127, 127)
+    );
+    assert_eq!(bridge.raw_issued.len(), 3);
+    assert_eq!(
+        bridge.raw_pending[0].unwrap().at,
+        blocked.stamp().mapped_at()
+    );
+    assert_eq!(bridge.raw_pending[0].unwrap().raw, bridge.raw_issued[2].1);
+
+    let (occurrence, served, outcome) = bridge.service(&mut control, &mut audio).unwrap().unwrap();
+    assert_eq!((occurrence, served), (Occurrence(1), first_raw));
+    assert!(matches!(outcome, MixedIngressOutcome::Bend(Ok(_))));
+    let (third, third_raw) = pump_concrete_bend(&mut bridge, &mut inbox, &mut pending_head)
+        .unwrap()
+        .unwrap();
+    assert_eq!(third, blocked);
+    assert_eq!(third_raw.raw, bridge.raw_issued[2].1);
+    assert_eq!(third_raw.at, blocked.stamp().mapped_at());
+    assert_eq!(pending_head, None);
+    assert_eq!(bridge.raw_issued.len(), 3);
+    let (occurrence, served, outcome) = bridge.service(&mut control, &mut audio).unwrap().unwrap();
+    assert_eq!((occurrence, served), (Occurrence(2), second_raw));
+    assert!(matches!(outcome, MixedIngressOutcome::Bend(Ok(_))));
+    let (occurrence, served, outcome) = bridge.service(&mut control, &mut audio).unwrap().unwrap();
+    assert_eq!((occurrence, served), (Occurrence(3), third_raw));
+    assert!(matches!(outcome, MixedIngressOutcome::Bend(Ok(_))));
+    assert!(inbox.is_empty());
+    assert!(inbox.close(producer).is_ok());
+    assert_eq!(
+        queued_bends(&audio)
+            .iter()
+            .map(|(at, cents)| (at.as_u64(), cents.as_f32()))
+            .collect::<Vec<_>>(),
+        vec![(200, 200.0), (202, -200.0), (204, 200.0)]
+    );
+    for generation in generations {
+        let tick = if generation == generations[0] {
+            128
+        } else {
+            256
+        };
+        let frontier = bridge
+            .raw
+            .owner
+            .advance_frontier(generation, InputTick::new(tick))
+            .unwrap();
+        assert_eq!(frontier.generation(), generation);
+    }
+    bridge.raw.owner.pump().unwrap();
+    let mut samples = [0.0_f32; 512];
+    bridge
+        .raw
+        .owner
+        .render(AudioBlockMut::new(&mut samples, 512, ChannelLayout::Mono).unwrap())
+        .unwrap();
+    bridge.raw.owner.pump().unwrap();
+    let mut receipts = Vec::new();
+    while let Some(receipt) = bridge.raw.owner.collect_input(generations[0]).unwrap() {
+        if matches!(receipt.observation, InputObservation::Message { .. }) {
+            receipts.push((receipt.id, receipt.observation));
+        }
+    }
+    assert_eq!(
+        receipts,
+        [
+            (first_raw.raw, originals[0]),
+            (second_raw.raw, originals[1]),
+            (third_raw.raw, originals[2]),
+        ]
+    );
+    assert!(
+        receipts
+            .windows(2)
+            .all(|pair| pair[0].0.serial() < pair[1].0.serial())
+    );
 }
 
 #[test]

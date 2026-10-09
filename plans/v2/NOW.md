@@ -820,8 +820,14 @@ The non-shipping example's actual `SourceInbox` now offers an exact
 peek/commit handoff. A wrong or stale handoff cannot pop the head; committing
 the matching bend releases one source-ring place, and an owned producer retry
 keeps its source attempt and next queue identity. This prepares source custody
-for the concrete bridge. It does not yet attach the example's source ring to
-the mixed stage or reserve raw admission across that handoff.
+for the concrete bridge. The private mixed fixture now imports the same
+`SourceProducer` and `SourceInbox` code used by the example host. A source bend
+passes through raw admission with its original tick and arrival, then a bounded
+stage and the private command queue at its validated mapped time. Stage refusal
+holds the exact queue head and its already issued raw ID; retry submits it once,
+and later raw receipts retain the three original observations. The fixture
+uses a detached test halt and does not install a production mixed host or
+reserve raw admission across the stage handoff.
 The concrete source service now preflights the actual raw owner before taking
 that head. It waits only when completed local raw receipts can free enough
 cells. The managed host reconciles callback completions before source service,

@@ -14,9 +14,10 @@ use crate::{
     host::{
         ConnectionGeneration, EndpointId,
         input::{
-            InputCapacity, InputCaptureError, InputCaptureSession, InputCustodyPreflight,
-            InputError, InputEventId, InputLimits, InputObservation, InputOutcome, InputRate,
-            InputReceipt, InputTick, InputTickSpan, SimulatedInputClock, SimulatedNoteInput,
+            InputCapacity, InputCaptureError, InputCaptureHalt, InputCaptureSession,
+            InputCustodyPreflight, InputError, InputEventId, InputLimits, InputObservation,
+            InputOutcome, InputRate, InputReceipt, InputTick, InputTickSpan, SimulatedInputClock,
+            SimulatedNoteInput,
         },
         session::SessionSourceOutcome,
     },

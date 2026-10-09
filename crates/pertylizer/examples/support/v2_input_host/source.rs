@@ -1,296 +1,41 @@
 //! Concrete nonblocking producer custody; the merger resolves every popped observation.
 use super::*;
-use std::sync::OnceLock;
 use synth_engine_v2::host::input::{InputTick, SimulatedInputClock};
 
+#[path = "../../../../synth_engine_v2/tests/support/source_custody.rs"]
+mod source_custody;
 #[path = "../../../../synth_engine_v2/tests/support/source_queue.rs"]
 mod source_queue;
-use source_queue::{SourceQueueCommitError, SourceQueueReader, SourceQueueWriter};
+#[allow(
+    unused_imports,
+    reason = "preserve the example host's source type paths"
+)]
+pub use source_custody::{
+    SOURCE_CELLS, SourceAccepted, SourceAttemptId, SourceHandoff, SourceHeadError, SourceInbox,
+    SourceOwnedSendError, SourceProducer, SourceQueueId, SourceQueueStamp, SourceRetiredAttempt,
+    SourceRetryToken, SourceSendError,
+};
 
-pub const SOURCE_CELLS: usize = 16;
 pub const SOURCE_OUTSTANDING: synth_engine_v2::quantities::EventCount =
     synth_engine_v2::quantities::EventCount::measured(64);
 
-#[derive(Debug, Error, PartialEq)]
-#[must_use]
-pub enum SourceSendError {
-    #[cfg(test)]
-    #[error("source ring full; retry this observation first if the source remains running")]
-    Retry(InputObservation),
-    #[error("source halted; retain this observation for shutdown reporting")]
-    Halted(InputObservation),
-    #[error("source observation invalid before publication: {1}")]
-    Invalid(InputObservation, InputError),
-}
-
-/// A source-local attempt exists before its observation enters the ring.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-#[must_use]
-pub struct SourceAttemptId {
-    generation: ConnectionGeneration,
-    serial: u64,
-}
-
-impl SourceAttemptId {
-    pub fn generation(self) -> ConnectionGeneration {
-        self.generation
-    }
-
-    pub fn serial(self) -> u64 {
-        self.serial
-    }
-}
-
-/// Custody identity for one observation accepted into a concrete source ring.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-#[must_use]
-pub struct SourceQueueId {
-    generation: ConnectionGeneration,
-    serial: u64,
-}
-
-impl SourceQueueId {
-    pub fn generation(self) -> ConnectionGeneration {
-        self.generation
-    }
-
-    pub fn serial(self) -> u64 {
-        self.serial
-    }
-}
-
-/// One queue identity and the nominal engine time validated for that packet.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-#[must_use]
-pub struct SourceQueueStamp {
-    queue: SourceQueueId,
-    mapped_at: SampleTime,
-}
-
-impl SourceQueueStamp {
-    pub fn queue(self) -> SourceQueueId {
-        self.queue
-    }
-
-    pub fn mapped_at(self) -> SampleTime {
-        self.mapped_at
-    }
-}
-
-/// The exact queued original remains paired with its checked stamp and raw result.
-#[derive(Clone, Copy, Debug, PartialEq)]
-#[must_use]
-pub struct SourceHandoff {
-    stamp: SourceQueueStamp,
-    observation: InputObservation,
-}
-
-impl SourceHandoff {
-    pub fn stamp(self) -> SourceQueueStamp {
-        self.stamp
-    }
-
-    pub fn observation(self) -> InputObservation {
-        self.observation
-    }
-}
-
-/// A source head may be committed only by the consumer that still owns it.
-#[derive(Debug, Error, PartialEq)]
-#[must_use]
-pub enum SourceHeadError {
-    #[error("source inbox has no head to commit")]
-    Empty,
-    #[error("source inbox head changed before commit")]
-    Mismatched {
-        expected: SourceHandoff,
-        actual: SourceHandoff,
-    },
-}
-
-#[derive(Debug)]
-#[must_use]
-pub struct SourceAccepted {
-    attempt: SourceAttemptId,
-    queue: SourceQueueId,
-}
-
-impl SourceAccepted {
-    pub fn parts(self) -> (SourceAttemptId, SourceQueueId) {
-        (self.attempt, self.queue)
-    }
-}
-
-/// The producer keeps the authoritative pending original if this token is lost.
-#[derive(Debug)]
-#[must_use]
-pub struct SourceRetryToken {
-    attempt: SourceAttemptId,
-    observation: InputObservation,
-}
-
-impl SourceRetryToken {
-    pub fn attempt(&self) -> SourceAttemptId {
-        self.attempt
-    }
-
-    pub fn observation(&self) -> InputObservation {
-        self.observation
-    }
-}
-
-#[derive(Debug, Error)]
-#[must_use]
-pub enum SourceOwnedSendError {
-    #[error("source ring full; retry the owned token first")]
-    Retry(SourceRetryToken),
-    #[error("source halted with an unresolved owned retry token")]
-    Halted(SourceRetryToken),
-    #[error("retry token does not match this source's pending attempt")]
-    Mismatched(SourceRetryToken),
-    #[error(transparent)]
-    Refused(#[from] SourceSendError),
-}
-
-#[derive(Clone, Copy, Debug, PartialEq)]
-#[must_use]
-pub struct SourceRetiredAttempt {
-    attempt: SourceAttemptId,
-    observation: InputObservation,
-}
-
-impl SourceRetiredAttempt {
-    pub fn attempt(self) -> SourceAttemptId {
-        self.attempt
-    }
-
-    pub fn observation(self) -> InputObservation {
-        self.observation
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq)]
-struct SourcePacket {
-    id: SourceQueueId,
-    observation: InputObservation,
-    mapped_at: SampleTime,
-}
-
-#[derive(Clone, Copy)]
-struct PendingOwned {
-    retired: SourceRetiredAttempt,
-    queue: SourceQueueId,
-    tick: InputTick,
-    arrival: Option<SampleTime>,
-    nominal: SampleTime,
-}
-
-#[must_use]
-pub struct SourceProducer {
-    halt: InputCaptureHalt,
-    queue: SourceQueueWriter<SourcePacket>,
-    generation: ConnectionGeneration,
-    serial: u64,
-    attempt_serial: u64,
-    time: Box<SourceTime>,
-    failure: Arc<OnceLock<SourceFailure>>,
-    retry: Option<InputObservation>,
-    owned_retry: Box<Option<PendingOwned>>,
-}
-#[derive(Clone, Copy)]
-struct SourceFailure {
-    observation: InputObservation,
-    reason: InputError,
-}
-struct SourceTime {
-    clock: SimulatedInputClock,
-    last_tick: Option<InputTick>,
-    last_arrival: Option<SampleTime>,
-    frontier: SampleTime,
-}
-#[must_use]
-pub struct SourceInbox {
-    generation: ConnectionGeneration,
-    queue: SourceQueueReader<SourcePacket>,
-    closed: bool,
-    failure: Arc<OnceLock<SourceFailure>>,
-    failure_resolved: bool,
-}
-
 impl SourceInbox {
-    pub fn prepare(
-        generation: ConnectionGeneration,
-        halt: InputCaptureHalt,
-        clock: SimulatedInputClock,
-    ) -> (SourceProducer, Self) {
-        let (writer, reader) = SourceQueueWriter::prepare(SOURCE_CELLS);
-        let failure = Arc::new(OnceLock::new());
-        (
-            SourceProducer {
-                halt,
-                queue: writer,
-                generation,
-                serial: 0,
-                attempt_serial: 0,
-                time: Box::new(SourceTime {
-                    clock,
-                    last_tick: None,
-                    last_arrival: None,
-                    frontier: SampleTime::ZERO,
-                }),
-                failure: Arc::clone(&failure),
-                retry: None,
-                owned_retry: Box::new(None),
-            },
-            Self {
-                generation,
-                queue: reader,
-                closed: false,
-                failure,
-                failure_resolved: false,
-            },
-        )
-    }
-
-    /// Charge both queue endpoints and their shared backing; all on non-audio threads.
-    pub fn storage_bytes() -> PreparedBytes {
-        PreparedBytes::measured(
-            (size_of::<Self>()
-                + size_of::<SourceProducer>()
-                + size_of::<SourceTime>()
-                + size_of::<Option<PendingOwned>>()
-                + size_of::<OnceLock<SourceFailure>>()
-                + size_of::<HeapRb<SourcePacket>>()
-                + SOURCE_CELLS * size_of::<SourcePacket>()
-                + 256) as u64,
-        )
-    }
-
     /// Register a terminal producer fault before any source queue is serviced.
     pub fn record_failure(
         &mut self,
         control: &mut LiveControl,
         mut receive: impl FnMut(SourceOfferReport),
     ) {
-        if !self.failure_resolved
-            && let Some(failure) = self.failure.get().copied()
-        {
-            match control.source_failed_before_ring(
-                self.generation,
-                failure.observation,
-                failure.reason,
-            ) {
-                Ok(()) => self.failure_resolved = true,
+        if let Some((observation, reason)) = self.unresolved_failure() {
+            match control.source_failed_before_ring(self.generation(), observation, reason) {
+                Ok(()) => self.resolve_failure(),
                 Err(error) => {
                     receive(SourceOfferReport::new(
-                        Err(InputOfferError::Refused(
-                            failure.observation,
-                            failure.reason,
-                        )),
+                        Err(InputOfferError::Refused(observation, reason)),
                         AuditionPacketCustody::NotQueued,
                         Some(error),
                     ));
-                    self.failure_resolved = true;
+                    self.resolve_failure();
                 }
             }
         }
@@ -334,58 +79,6 @@ impl SourceInbox {
         });
     }
 
-    /// Observe the exact queued head without releasing its ring place. The
-    /// merger must call [`Self::record_failure`] before servicing any head.
-    /// A later stage or command refusal may leave it here for a same-identity
-    /// retry.
-    pub fn peek_handoff(&self) -> Option<SourceHandoff> {
-        self.queue.peek().map(|packet| SourceHandoff {
-            stamp: SourceQueueStamp {
-                queue: packet.id,
-                mapped_at: packet.mapped_at,
-            },
-            observation: packet.observation,
-        })
-    }
-
-    /// Release one ring place only for the exact head a downstream owner took.
-    /// Call after that owner accepts the handoff or records its terminal
-    /// disposition, and after [`Self::record_failure`] for the service pass.
-    /// A wrong or stale handoff changes neither the head nor producer capacity.
-    pub fn commit_handoff(
-        &mut self,
-        expected: SourceHandoff,
-    ) -> Result<SourceHandoff, SourceHeadError> {
-        let packet = SourcePacket {
-            id: expected.stamp.queue,
-            observation: expected.observation,
-            mapped_at: expected.stamp.mapped_at,
-        };
-        let packet = match self.queue.commit_exact(packet) {
-            Ok(packet) => packet,
-            Err(SourceQueueCommitError::Empty) => return Err(SourceHeadError::Empty),
-            Err(SourceQueueCommitError::Mismatched { actual }) => {
-                return Err(SourceHeadError::Mismatched {
-                    expected,
-                    actual: SourceHandoff {
-                        stamp: SourceQueueStamp {
-                            queue: actual.id,
-                            mapped_at: actual.mapped_at,
-                        },
-                        observation: actual.observation,
-                    },
-                });
-            }
-        };
-        Ok(SourceHandoff {
-            stamp: SourceQueueStamp {
-                queue: packet.id,
-                mapped_at: packet.mapped_at,
-            },
-            observation: packet.observation,
-        })
-    }
-
     /// A queued original and its validated nominal engine time remain available
     /// beside the raw offer result. A pre-ring failure has no queued handoff.
     /// A head waits only when completed raw receipts can free its needed cells;
@@ -396,14 +89,14 @@ impl SourceInbox {
         mut receive: impl FnMut(Option<SourceHandoff>, SourceOfferReport),
     ) {
         self.record_failure(control, |report| receive(None, report));
-        let prefix = self.queue.occupied_len();
+        let prefix = self.occupied_len();
         for _ in 0..prefix {
             let Some(head) = self.peek_handoff() else {
                 break;
             };
             if matches!(
                 control.preflight_source_head(
-                    self.generation,
+                    self.generation(),
                     head.stamp().queue(),
                     head.observation(),
                 ),
@@ -412,7 +105,7 @@ impl SourceInbox {
                 break;
             }
             let report = control.offer_source_queued(
-                self.generation,
+                self.generation(),
                 head.stamp().queue(),
                 head.observation(),
             );
@@ -429,256 +122,15 @@ impl SourceInbox {
             }
         }
     }
-    /// Only an empty queue AFTER the producer joins permits source acknowledgement.
-    pub fn is_empty(&self) -> bool {
-        self.queue.is_empty()
-    }
-
-    /// Consume the unique producer endpoint after its thread returns it. A nonempty
-    /// inbox or an unresolved terminal refusal still owns source custody.
-    pub fn close(&mut self, producer: SourceProducer) -> Result<(), SourceProducer> {
-        if producer.generation != self.generation
-            || !self.is_empty()
-            || (self.failure.get().is_some() && !self.failure_resolved)
-            || producer.owned_retry.is_some()
-        {
-            return Err(producer);
-        }
-        self.closed = true;
-        Ok(())
-    }
-    pub fn is_closed(&self) -> bool {
-        self.closed
-    }
 }
+
+#[cfg(test)]
 impl SourceProducer {
-    fn invalid(&self, observation: InputObservation, reason: InputError) -> SourceSendError {
-        self.failure.get_or_init(|| SourceFailure {
-            observation,
-            reason,
-        });
-        self.halt.request_invalid();
-        SourceSendError::Invalid(observation, reason)
-    }
-
-    fn check_order(
-        &self,
-        observation: InputObservation,
-    ) -> Result<(InputTick, Option<SampleTime>, SampleTime), InputError> {
-        let (tick, arrival) = match observation {
-            InputObservation::Message { tick, arrival, .. } => (tick, Some(arrival)),
-            InputObservation::Frontier { tick } => (tick, None),
-        };
-        let nominal = self.time.clock.map(tick)?;
-        if self.time.last_tick.is_some_and(|last| tick < last) || nominal < self.time.frontier {
-            return Err(InputError::Order);
-        }
-        if let Some(arrival) = arrival {
-            if arrival < nominal {
-                return Err(InputError::Future);
-            }
-            if self.time.last_arrival.is_some_and(|last| arrival < last) {
-                return Err(InputError::Order);
-            }
-        } else if nominal <= self.time.frontier
-            || self.time.last_arrival.is_some_and(|last| nominal <= last)
-        {
-            return Err(InputError::Order);
-        }
-        Ok((tick, arrival, nominal))
-    }
-
-    fn commit_time(&mut self, tick: InputTick, arrival: Option<SampleTime>, nominal: SampleTime) {
-        self.time.last_tick = Some(tick);
-        if let Some(arrival) = arrival {
-            self.time.last_arrival = Some(arrival);
-        } else {
-            self.time.frontier = nominal;
-        }
-    }
-
-    /// Test-only value path. A full ring records its returned value as the pending
-    /// retry. A different otherwise valid value before it is a terminal order fault.
-    /// Halt ends publication and returns the original for an explicit report.
-    #[cfg(test)]
-    pub fn send(&mut self, observation: InputObservation) -> Result<(), SourceSendError> {
-        self.send_identified(observation).map(|_| ())
-    }
-
-    /// Test-only value path; mint the queue identity only on a successful push.
-    #[cfg(test)]
-    pub fn send_identified(
-        &mut self,
-        observation: InputObservation,
-    ) -> Result<SourceQueueId, SourceSendError> {
-        if self.halt.is_requested() {
-            return Err(SourceSendError::Halted(observation));
-        }
-        let (tick, arrival, nominal) = self
-            .check_order(observation)
-            .map_err(|error| self.invalid(observation, error))?;
-        if self.owned_retry.is_some() {
-            return Err(self.invalid(observation, InputError::Order));
-        }
-        if self.retry.is_some_and(|pending| pending != observation) {
-            return Err(self.invalid(observation, InputError::Order));
-        }
-        let Some(serial) = self.serial.checked_add(1) else {
-            return Err(self.invalid(observation, InputError::IdentityExhausted));
-        };
-        let id = SourceQueueId {
-            generation: self.generation,
-            serial,
-        };
-        if let Err(original) = self.queue.try_push(SourcePacket {
-            id,
-            observation,
-            mapped_at: nominal,
-        }) {
-            self.retry = Some(original.observation);
-            return Err(SourceSendError::Retry(original.observation));
-        }
-        self.serial = serial;
-        self.retry = None;
-        self.commit_time(tick, arrival, nominal);
-        Ok(id)
-    }
-
-    /// A first attempt owns an identity even when a full ring returns its token.
-    pub fn submit_owned(
-        &mut self,
-        observation: InputObservation,
-    ) -> Result<SourceAccepted, SourceOwnedSendError> {
-        if self.halt.is_requested() {
-            return Err(SourceSendError::Halted(observation).into());
-        }
-        let (tick, arrival, nominal) = self
-            .check_order(observation)
-            .map_err(|reason| self.invalid(observation, reason))?;
-        if self.retry.is_some() || self.owned_retry.is_some() {
-            return Err(self.invalid(observation, InputError::Order).into());
-        }
-        let Some(attempt_serial) = self.attempt_serial.checked_add(1) else {
-            return Err(self
-                .invalid(observation, InputError::IdentityExhausted)
-                .into());
-        };
-        let Some(queue_serial) = self.serial.checked_add(1) else {
-            return Err(self
-                .invalid(observation, InputError::IdentityExhausted)
-                .into());
-        };
-        let attempt = SourceAttemptId {
-            generation: self.generation,
-            serial: attempt_serial,
-        };
-        let queue = SourceQueueId {
-            generation: self.generation,
-            serial: queue_serial,
-        };
-        self.attempt_serial = attempt_serial;
-        if let Err(original) = self.queue.try_push(SourcePacket {
-            id: queue,
-            observation,
-            mapped_at: nominal,
-        }) {
-            *self.owned_retry = Some(PendingOwned {
-                retired: SourceRetiredAttempt {
-                    attempt,
-                    observation: original.observation,
-                },
-                queue,
-                tick,
-                arrival,
-                nominal,
-            });
-            return Err(SourceOwnedSendError::Retry(SourceRetryToken {
-                attempt,
-                observation: original.observation,
-            }));
-        }
-        self.serial = queue_serial;
-        self.commit_time(tick, arrival, nominal);
-        Ok(SourceAccepted { attempt, queue })
-    }
-
-    /// A wrong token changes neither source; the caller can return it to its owner.
-    pub fn retry_owned(
-        &mut self,
-        token: SourceRetryToken,
-    ) -> Result<SourceAccepted, SourceOwnedSendError> {
-        let Some(pending) = *self.owned_retry else {
-            return Err(SourceOwnedSendError::Mismatched(token));
-        };
-        if pending.retired.attempt != token.attempt()
-            || pending.retired.observation != token.observation()
-        {
-            return Err(SourceOwnedSendError::Mismatched(token));
-        }
-        if self.halt.is_requested() {
-            return Err(SourceOwnedSendError::Halted(token));
-        }
-        if self
-            .queue
-            .try_push(SourcePacket {
-                id: pending.queue,
-                observation: pending.retired.observation,
-                mapped_at: pending.nominal,
-            })
-            .is_err()
-        {
-            return Err(SourceOwnedSendError::Retry(token));
-        }
-        self.serial = pending.queue.serial;
-        *self.owned_retry = None;
-        self.commit_time(pending.tick, pending.arrival, pending.nominal);
-        Ok(SourceAccepted {
-            attempt: token.attempt(),
-            queue: pending.queue,
-        })
-    }
-
-    fn record_retirement(&self, pending: SourceRetiredAttempt) {
-        self.failure.get_or_init(|| SourceFailure {
-            observation: pending.observation,
-            reason: InputError::SourceQueueFull,
-        });
-        self.halt.request_invalid();
-    }
-
-    /// Terminally retire a matching token. The original remains in the producer
-    /// until this call, so loss of the token cannot silently release custody.
-    pub fn retire_owned(
-        &mut self,
-        token: SourceRetryToken,
-    ) -> Result<SourceRetiredAttempt, SourceRetryToken> {
-        match *self.owned_retry {
-            Some(pending)
-                if pending.retired.attempt == token.attempt()
-                    && pending.retired.observation == token.observation() =>
-            {
-                *self.owned_retry = None;
-                self.record_retirement(pending.retired);
-                Ok(pending.retired)
-            }
-            _ => Err(token),
-        }
-    }
-
-    /// Joined recovery can report the original even if a worker lost its token.
-    pub fn retire_pending(&mut self) -> Option<SourceRetiredAttempt> {
-        let pending = self.owned_retry.take()?;
-        self.record_retirement(pending.retired);
-        Some(pending.retired)
-    }
-
-    #[cfg(test)]
     pub(super) fn set_serial_for_test(&mut self, serial: u64) {
-        self.serial = serial;
+        self.set_serial_in_core_for_test(serial);
     }
 
-    #[cfg(test)]
     pub(super) fn set_attempt_serial_for_test(&mut self, serial: u64) {
-        self.attempt_serial = serial;
+        self.set_attempt_serial_in_core_for_test(serial);
     }
 }
