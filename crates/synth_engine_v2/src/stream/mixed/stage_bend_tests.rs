@@ -196,11 +196,18 @@ impl<R: RawBackend> BendBridge<R> {
     }
 
     /// A refused command submission does not commit the stage head or its raw handoff.
-    fn service(
+    fn submit_next(
         &mut self,
         control: &mut MixedOneShotControl,
-        audio: &mut MixedOneShotAudio,
-    ) -> Result<Option<(Occurrence, RawHandoff, MixedIngressOutcome)>, MixedBendSubmitError> {
+    ) -> Result<
+        Option<(
+            Occurrence,
+            RawHandoff,
+            super::super::MixedIngressCommandId,
+            MixedIngressRequest,
+        )>,
+        MixedBendSubmitError,
+    > {
         let Some((source, packet)) = self.stage.peek_next() else {
             return Ok(None);
         };
@@ -221,10 +228,21 @@ impl<R: RawBackend> BendBridge<R> {
             .position(|(occurrence, _)| *occurrence == packet.occurrence)
             .unwrap();
         let (_, handoff) = self.staged.remove(position);
+        Ok(Some((packet.occurrence, handoff, command, request)))
+    }
+
+    fn service(
+        &mut self,
+        control: &mut MixedOneShotControl,
+        audio: &mut MixedOneShotAudio,
+    ) -> Result<Option<(Occurrence, RawHandoff, MixedIngressOutcome)>, MixedBendSubmitError> {
+        let Some((occurrence, handoff, command, request)) = self.submit_next(control)? else {
+            return Ok(None);
+        };
         audio.service_test_ingress_queue();
         let result = control.collect_ingress_result().unwrap();
         assert_eq!((result.id, result.request), (command, request));
-        Ok(Some((packet.occurrence, handoff, result.outcome)))
+        Ok(Some((occurrence, handoff, result.outcome)))
     }
 }
 
@@ -782,6 +800,198 @@ fn full_actual_source_ring_retries_one_bend_through_raw_stage_and_command() {
         receipts,
         raw_ids.into_iter().zip(originals).collect::<Vec<_>>()
     );
+}
+
+#[test]
+fn actual_source_bends_retry_a_full_command_ring_into_callback_order() {
+    let (prepared, candidate) = history_tests::one_shot_with_live(
+        true,
+        crate::quantities::HeldNoteCount::measured(2),
+        EventCount::measured(2),
+    );
+    let (mut control, mut audio) = prepared
+        .arm_one_shot(candidate, &history_tests::mixed_profile())
+        .unwrap();
+    let scope = BendBridge::scope(Source::First);
+    let _onset = control
+        .submit_onset(
+            MixedIngressOriginId(1),
+            scope,
+            SampleTime::new(100),
+            crate::quantities::KeyIdentity::new(60).unwrap(),
+            crate::quantities::NoteVelocity::FULL,
+        )
+        .unwrap();
+    audio.service_test_ingress_queue();
+    assert!(matches!(
+        control.collect_ingress_result().unwrap().outcome,
+        MixedIngressOutcome::Onset(Ok(_))
+    ));
+
+    // Fill the ordinary command places while each pedal keeps its lift place.
+    let mut pressed = 0;
+    while control.ingress_room() > 1 {
+        let id = u64::try_from(1000 + pressed).unwrap();
+        let peer = MixedLiveScope::new(MixedLiveSource::new(id), MidiChannel::new(1));
+        assert!(matches!(
+            control
+                .submit_pedal(MixedIngressOriginId(id), peer, SampleTime::new(90), true)
+                .unwrap(),
+            MixedPedalSubmitted::Command(..)
+        ));
+        pressed += 1;
+    }
+    let (filler, _) = control
+        .submit_bend(
+            MixedIngressOriginId(2000),
+            BendBridge::scope(Source::Second),
+            SampleTime::new(100),
+            Cents::ZERO,
+        )
+        .unwrap();
+    assert_eq!(control.ingress_room(), 0);
+
+    let (owner, generations) = ledger_tests::bridge_serial_owner_with_first_limits(
+        256,
+        InputRate::new(FrameCount::new(1), InputTickSpan::new(1)).unwrap(),
+        InputCapacity::new(64).unwrap(),
+    );
+    let clock = owner.input(generations[0]).unwrap().clock().unwrap();
+    let (mut producer, mut inbox) =
+        SourceInbox::prepare(generations[0], InputCaptureHalt::detached_for_test(), clock);
+    let mut bridge = BendBridge::with_raw(2, SerialRaw { owner, generations });
+    let mut queue_ids = Vec::new();
+    for (tick, wheel) in [(110, input(0xe0, 127, 127)), (111, input(0xe0, 0, 0))] {
+        queue_ids.push(
+            producer
+                .submit_owned(InputObservation::Message {
+                    tick: InputTick::new(tick),
+                    arrival: SampleTime::new(tick),
+                    input: wheel,
+                })
+                .unwrap()
+                .parts()
+                .1,
+        );
+    }
+    bridge.frontier(Source::Second, 200);
+    let mut pending_head = None;
+    let (first_source, first_raw) = pump_concrete_bend(&mut bridge, &mut inbox, &mut pending_head)
+        .unwrap()
+        .unwrap();
+    let (second_source, second_raw) =
+        pump_concrete_bend(&mut bridge, &mut inbox, &mut pending_head)
+            .unwrap()
+            .unwrap();
+    assert_eq!(first_source.stamp().queue(), queue_ids[0]);
+    assert_eq!(second_source.stamp().queue(), queue_ids[1]);
+    assert_eq!(first_source.stamp().mapped_at(), SampleTime::new(110));
+    assert_eq!(second_source.stamp().mapped_at(), SampleTime::new(111));
+    assert_ne!(first_raw.raw, second_raw.raw);
+    assert!(inbox.close(producer).is_ok());
+
+    let before = control.last_ingress_id;
+    assert_eq!(
+        bridge.submit_next(&mut control),
+        Err(MixedBendSubmitError::Full)
+    );
+    assert_eq!(control.last_ingress_id, before);
+    assert_eq!(
+        bridge.stage.peek_next().unwrap().1.occurrence,
+        Occurrence(1)
+    );
+    assert_eq!(
+        bridge.staged,
+        vec![(Occurrence(1), first_raw), (Occurrence(2), second_raw)]
+    );
+
+    let mut actual = [0.0_f32; 384];
+    audio
+        .render_private(AudioBlockMut::new(&mut actual[..128], 128, ChannelLayout::Mono).unwrap())
+        .unwrap();
+    // The first 64 host frames are priming carry, so this has opened only
+    // quantum zero. Both bends are still ahead of the engine clock.
+    assert_eq!(audio.audio.renderer.clock(), SampleTime::new(64));
+    for _ in 0..pressed {
+        assert!(matches!(
+            control.collect_ingress_result().unwrap().outcome,
+            MixedIngressOutcome::PedalDown(Ok(_))
+        ));
+    }
+    let filler_result = control.collect_ingress_result().unwrap();
+    assert_eq!(filler_result.id, filler);
+    assert!(matches!(
+        filler_result.outcome,
+        MixedIngressOutcome::Bend(Ok(_))
+    ));
+
+    let first = bridge.submit_next(&mut control).unwrap().unwrap();
+    let second = bridge.submit_next(&mut control).unwrap().unwrap();
+    assert_eq!((first.0, first.1), (Occurrence(1), first_raw));
+    assert_eq!((second.0, second.1), (Occurrence(2), second_raw));
+    assert!(bridge.stage.peek_next().is_none());
+    assert!(bridge.staged.is_empty());
+    audio
+        .render_private(AudioBlockMut::new(&mut actual[128..], 256, ChannelLayout::Mono).unwrap())
+        .unwrap();
+    for submitted in [first, second] {
+        let result = control.collect_ingress_result().unwrap();
+        assert_eq!((result.id, result.request), (submitted.2, submitted.3));
+        let MixedIngressOutcome::Bend(Ok(bent)) = result.outcome else {
+            panic!("source bend must write one live occurrence");
+        };
+        assert_eq!(bent.written().count(), 1);
+    }
+    assert!(control.collect_ingress_result().is_none());
+    assert_eq!(audio.audio.renderer.diagnostics().late_events(), 0);
+
+    let (prepared, candidate) = history_tests::one_shot_with_live(
+        true,
+        crate::quantities::HeldNoteCount::measured(2),
+        EventCount::measured(2),
+    );
+    let (mut reference_control, mut reference) = prepared
+        .arm_one_shot(candidate, &history_tests::mixed_profile())
+        .unwrap();
+    let _note = reference_control
+        .submit_onset(
+            MixedIngressOriginId(1),
+            scope,
+            SampleTime::new(100),
+            crate::quantities::KeyIdentity::new(60).unwrap(),
+            crate::quantities::NoteVelocity::FULL,
+        )
+        .unwrap();
+    reference.service_test_ingress_queue();
+    assert!(matches!(
+        reference_control.collect_ingress_result().unwrap().outcome,
+        MixedIngressOutcome::Onset(Ok(_))
+    ));
+    for (at, cents) in [(110, 200.0), (111, -200.0)] {
+        let _bend = reference_control
+            .submit_bend(
+                MixedIngressOriginId(at),
+                scope,
+                SampleTime::new(at),
+                Cents::new(cents).unwrap(),
+            )
+            .unwrap();
+    }
+    reference.service_test_ingress_queue();
+    for _ in 0..2 {
+        let MixedIngressOutcome::Bend(Ok(bent)) =
+            reference_control.collect_ingress_result().unwrap().outcome
+        else {
+            panic!("reference bend must write one live occurrence");
+        };
+        assert_eq!(bent.written().count(), 1);
+    }
+    let mut expected = [0.0_f32; 384];
+    reference
+        .render_private(AudioBlockMut::new(&mut expected, 384, ChannelLayout::Mono).unwrap())
+        .unwrap();
+    assert_eq!(reference.audio.renderer.diagnostics().late_events(), 0);
+    assert_eq!(actual, expected);
 }
 
 #[test]

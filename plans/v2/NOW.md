@@ -834,6 +834,11 @@ Refusal keeps both stage places and raw handoffs without minting a command ID; d
 the ring admits both bends in source order at frames 320 and 321. Both fixtures
 use a detached test halt and do not install a production mixed host or
 reserve raw admission across the stage handoff.
+A callback-integrated fixture keeps the first actual source bend staged while
+the typed command ring is full. Rendering serves the filler commands at the
+next quantum boundary; the bridge then submits both original raw handoffs in
+order, and the following callback returns matching command results. Its
+partitioned audio equals a pre-serviced reference at bend frames 110 and 111.
 A further private fixture fills the actual 16-cell source ring. Its seventeenth
 bend retains an owned retry token until an exact head commit frees one place;
 retry keeps attempt 17 and receives queue identity 17. All seventeen heads then
