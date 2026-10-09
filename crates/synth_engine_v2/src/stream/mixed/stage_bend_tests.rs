@@ -10,7 +10,9 @@ use synth_core::MidiChannel;
 )]
 #[path = "../../../tests/support/source_custody.rs"]
 mod source_custody;
-use source_custody::{SourceHandoff, SourceHeadError, SourceInbox};
+use source_custody::{
+    SOURCE_CELLS, SourceHandoff, SourceHeadError, SourceInbox, SourceOwnedSendError,
+};
 
 #[path = "../../../tests/support/source_queue.rs"]
 mod source_queue;
@@ -599,6 +601,134 @@ fn actual_source_bends_keep_stage_places_and_order_when_the_command_ring_is_full
             (SampleTime::new(320), Cents::new(200.0).unwrap()),
             (SampleTime::new(321), Cents::new(-200.0).unwrap()),
         ]
+    );
+}
+
+#[test]
+fn full_actual_source_ring_retries_one_bend_through_raw_stage_and_command() {
+    let (prepared, candidate) = history_tests::one_shot_with_live(
+        true,
+        crate::quantities::HeldNoteCount::measured(2),
+        EventCount::measured(2),
+    );
+    let (mut control, mut audio) = prepared
+        .arm_one_shot(candidate, &history_tests::mixed_profile())
+        .unwrap();
+    let (owner, generations) = ledger_tests::bridge_serial_owner_with_first_limits(
+        256,
+        InputRate::new(FrameCount::new(1), InputTickSpan::new(1)).unwrap(),
+        InputCapacity::new(64).unwrap(),
+    );
+    let clock = owner.input(generations[0]).unwrap().clock().unwrap();
+    let (mut producer, mut inbox) =
+        SourceInbox::prepare(generations[0], InputCaptureHalt::detached_for_test(), clock);
+    let mut bridge = BendBridge::with_raw(2, SerialRaw { owner, generations });
+    let mut pending_head = None;
+    let originals: Vec<_> = (0..=SOURCE_CELLS)
+        .map(|index| {
+            let at = 100 + u64::try_from(index).unwrap();
+            InputObservation::Message {
+                tick: InputTick::new(at),
+                arrival: SampleTime::new(at),
+                input: if index % 2 == 0 {
+                    input(0xe0, 127, 127)
+                } else {
+                    input(0xe0, 0, 0)
+                },
+            }
+        })
+        .collect();
+    let mut queue_ids = Vec::new();
+    for observation in originals.iter().take(SOURCE_CELLS) {
+        queue_ids.push(producer.submit_owned(*observation).unwrap().parts().1);
+    }
+    let token = match producer.submit_owned(originals[SOURCE_CELLS]) {
+        Err(SourceOwnedSendError::Retry(token)) => token,
+        other => panic!("source ring must return its owned retry token: {other:?}"),
+    };
+    assert_eq!(
+        token.attempt().serial(),
+        u64::try_from(SOURCE_CELLS + 1).unwrap()
+    );
+    assert_eq!(inbox.peek_handoff().unwrap().stamp().queue(), queue_ids[0]);
+    let token = match producer.retry_owned(token) {
+        Err(SourceOwnedSendError::Retry(token)) => token,
+        other => panic!("full source ring must retain the same attempt: {other:?}"),
+    };
+    assert_eq!(
+        token.attempt().serial(),
+        u64::try_from(SOURCE_CELLS + 1).unwrap()
+    );
+    assert_eq!(inbox.peek_handoff().unwrap().stamp().queue(), queue_ids[0]);
+    bridge.frontier(Source::Second, 200);
+
+    let mut raw_ids = Vec::new();
+    let (first, first_raw) = pump_concrete_bend(&mut bridge, &mut inbox, &mut pending_head)
+        .unwrap()
+        .unwrap();
+    assert_eq!(first.stamp().queue(), queue_ids[0]);
+    raw_ids.push(first_raw.raw);
+    let (attempt, last_queue) = producer.retry_owned(token).unwrap().parts();
+    assert_eq!(attempt.serial(), u64::try_from(SOURCE_CELLS + 1).unwrap());
+    assert_eq!(
+        last_queue.serial(),
+        u64::try_from(SOURCE_CELLS + 1).unwrap()
+    );
+    queue_ids.push(last_queue);
+    assert_eq!(inbox.peek_handoff().unwrap().stamp().queue(), queue_ids[1]);
+
+    for expected in 1..=SOURCE_CELLS {
+        if expected > 1 {
+            let (head, raw) = pump_concrete_bend(&mut bridge, &mut inbox, &mut pending_head)
+                .unwrap()
+                .unwrap();
+            assert_eq!(head.stamp().queue(), queue_ids[expected - 1]);
+            raw_ids.push(raw.raw);
+        }
+        let (occurrence, handoff, outcome) =
+            bridge.service(&mut control, &mut audio).unwrap().unwrap();
+        assert_eq!(occurrence.0, u64::try_from(expected).unwrap());
+        assert_eq!(handoff.raw, raw_ids[expected - 1]);
+        assert!(matches!(outcome, MixedIngressOutcome::Bend(Ok(_))));
+    }
+    let (last, last_raw) = pump_concrete_bend(&mut bridge, &mut inbox, &mut pending_head)
+        .unwrap()
+        .unwrap();
+    assert_eq!(last.stamp().queue(), queue_ids[SOURCE_CELLS]);
+    raw_ids.push(last_raw.raw);
+    let (occurrence, handoff, outcome) = bridge.service(&mut control, &mut audio).unwrap().unwrap();
+    assert_eq!(occurrence.0, u64::try_from(SOURCE_CELLS + 1).unwrap());
+    assert_eq!(handoff.raw, last_raw.raw);
+    assert!(matches!(outcome, MixedIngressOutcome::Bend(Ok(_))));
+    assert!(inbox.is_empty());
+    assert!(inbox.close(producer).is_ok());
+    assert_eq!(bridge.raw_issued.len(), originals.len());
+
+    for generation in generations {
+        let frontier = bridge
+            .raw
+            .owner
+            .advance_frontier(generation, InputTick::new(256))
+            .unwrap();
+        assert_eq!(frontier.generation(), generation);
+    }
+    bridge.raw.owner.pump().unwrap();
+    let mut samples = [0.0_f32; 512];
+    bridge
+        .raw
+        .owner
+        .render(AudioBlockMut::new(&mut samples, 512, ChannelLayout::Mono).unwrap())
+        .unwrap();
+    bridge.raw.owner.pump().unwrap();
+    let mut receipts = Vec::new();
+    while let Some(receipt) = bridge.raw.owner.collect_input(generations[0]).unwrap() {
+        if matches!(receipt.observation, InputObservation::Message { .. }) {
+            receipts.push((receipt.id, receipt.observation));
+        }
+    }
+    assert_eq!(
+        receipts,
+        raw_ids.into_iter().zip(originals).collect::<Vec<_>>()
     );
 }
 

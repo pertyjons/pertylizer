@@ -831,6 +831,12 @@ Refusal keeps both stage places and raw handoffs without minting a command ID; d
 the ring admits both bends in source order at frames 320 and 321. Both fixtures
 use a detached test halt and do not install a production mixed host or
 reserve raw admission across the stage handoff.
+A further private fixture fills the actual 16-cell source ring. Its seventeenth
+bend retains an owned retry token until an exact head commit frees one place;
+retry keeps attempt 17 and receives queue identity 17. All seventeen heads then
+pass raw admission, stage and ordered command results, and their raw receipt
+IDs pair with the original observations. This fixture uses an empty live scope
+to isolate source capacity and command ordering from sounding bend credit.
 The concrete source service now preflights the actual raw owner before taking
 that head. It waits only when completed local raw receipts can free enough
 cells. The managed host reconciles callback completions before source service,

@@ -1426,10 +1426,19 @@ fn bridge_ready_input_with_rate(
     source: usize,
     rate: InputRate,
 ) -> (SimulatedNoteInput, ConnectionGeneration) {
+    bridge_ready_input_with_limits(epoch, source, rate, InputCapacity::new(8).unwrap())
+}
+
+fn bridge_ready_input_with_limits(
+    epoch: StreamEpoch,
+    source: usize,
+    rate: InputRate,
+    cells: InputCapacity,
+) -> (SimulatedNoteInput, ConnectionGeneration) {
     let mut raw = SimulatedNoteInput::new(
         EndpointId::new(format!("bridge-{source}")).unwrap(),
         InputLimits {
-            cells: InputCapacity::new(8).unwrap(),
+            cells,
             bytes: PreparedBytes::measured(65_536),
         },
     )
@@ -1632,6 +1641,14 @@ pub(super) fn bridge_serial_owner_with_first_rate(
     stop: u64,
     first_rate: InputRate,
 ) -> (InputCaptureSession, [ConnectionGeneration; 2]) {
+    bridge_serial_owner_with_first_limits(stop, first_rate, InputCapacity::new(8).unwrap())
+}
+
+pub(super) fn bridge_serial_owner_with_first_limits(
+    stop: u64,
+    first_rate: InputRate,
+    first_cells: InputCapacity,
+) -> (InputCaptureSession, [ConnectionGeneration; 2]) {
     let mut capture = LoopCaptureSession::prepare(
         loop_test_support::stream(0, 2048),
         loop_test_support::limits(3, 64, 1_048_576),
@@ -1640,7 +1657,7 @@ pub(super) fn bridge_serial_owner_with_first_rate(
     .unwrap();
     let epoch = capture.initial().epoch;
     let mut inputs = [
-        bridge_ready_input_with_rate(epoch, 0, first_rate),
+        bridge_ready_input_with_limits(epoch, 0, first_rate, first_cells),
         bridge_ready_input(epoch, 1),
     ];
     let generations = [inputs[0].1, inputs[1].1];
