@@ -83,7 +83,13 @@ fn key(raw: u8) -> KeyIdentity {
 
 fn onset(control: &mut MixedOneShotControl, at: u64, raw: u8) -> LiveOccurrenceId {
     let (_, request) = control
-        .submit_onset(ORIGIN, SampleTime::new(at), key(raw), NoteVelocity::FULL)
+        .submit_onset(
+            ORIGIN,
+            super::super::TEST_SCOPE,
+            SampleTime::new(at),
+            key(raw),
+            NoteVelocity::FULL,
+        )
         .expect("onset and its release place fit");
     let MixedIngressRequest::Onset { occurrence, .. } = request else {
         panic!("an onset submit returns its onset request");
@@ -137,6 +143,7 @@ fn onset_request(occurrence: LiveOccurrenceId, at: u64, raw: u8) -> MixedIngress
     MixedIngressRequest::Onset {
         origin: ORIGIN,
         occurrence,
+        scope: super::super::TEST_SCOPE,
         at: SampleTime::new(at),
         key: key(raw),
         velocity: NoteVelocity::FULL,
@@ -494,3 +501,5 @@ fn teardown_classifies_every_held_handle_by_its_audio_state() {
     );
     assert_eq!(teardown.ingress.holds_outstanding, EventCount::measured(2));
 }
+
+mod sustain;

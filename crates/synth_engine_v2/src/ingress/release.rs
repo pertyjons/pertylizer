@@ -1,5 +1,7 @@
 //! Bounded group release through the latched live producer, with no voice stealing.
 use super::{IngressRefused, PerformanceIngress};
+#[cfg(all(test, feature = "simulated-ingress"))]
+use crate::identity::LiveRangeMinter;
 use crate::{
     identity::{IdentityTable, NoteIdentity, Resolution, TableId},
     publish::ProducerClass,
@@ -105,6 +107,55 @@ impl PerformanceIngress {
         self.holds_outstanding = EventCount::measured(self.holds_outstanding.get() - count);
         // N reserved release slots become one source event; no extra queue capacity
         // is requested, even when all ordinary slots were full before this operation.
+        self.enqueue_entry(at, EventPayload::ReleaseGroup(group), false);
+        Ok(())
+    }
+
+    /// Test-only mixed group release through the audio owner's live range, with the
+    /// same preflight, hold conversion and single queue entry as the exclusive path.
+    #[cfg(all(test, feature = "simulated-ingress"))]
+    pub(crate) fn offer_mixed_release_group(
+        &mut self,
+        minter: &mut LiveRangeMinter,
+        at: SampleTime,
+        identities: &[NoteIdentity],
+        cause: ReleaseCause,
+    ) -> Result<(), IngressRefused> {
+        if identities.len() > RELEASE_GROUP_CAPACITY
+            || self.stealing != crate::ir::StealingPolicy::None
+            || self.pending_len != 0
+            || identities.len() > self.holds_outstanding.get() as usize
+        {
+            return Err(IngressRefused::ReleaseGroup);
+        }
+        self.admit(at)?;
+        for (index, identity) in identities.iter().copied().enumerate() {
+            if identities[..index].contains(&identity)
+                || minter.resolve(identity) != Resolution::Live
+            {
+                return Err(IngressRefused::ReleaseGroup);
+            }
+        }
+        let Some(first) = identities.first().copied() else {
+            return Ok(());
+        };
+        let len = u8::try_from(identities.len()).map_err(|_| IngressRefused::ReleaseGroup)?;
+        let mut group = ReleaseGroup {
+            table: first.table(),
+            indices: [0; RELEASE_GROUP_CAPACITY],
+            generations: [0; RELEASE_GROUP_CAPACITY],
+            len,
+            cause,
+        };
+        for (index, identity) in identities.iter().copied().enumerate() {
+            if minter.release(identity) != Resolution::Live {
+                return Err(IngressRefused::ReleaseGroup);
+            }
+            group.indices[index] = identity.index;
+            group.generations[index] = identity.generation;
+        }
+        let count = u32::from(len);
+        self.holds_outstanding = EventCount::measured(self.holds_outstanding.get() - count);
         self.enqueue_entry(at, EventPayload::ReleaseGroup(group), false);
         Ok(())
     }

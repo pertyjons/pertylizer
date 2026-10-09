@@ -316,6 +316,7 @@ fn bounded_stage_feeds_actual_mixed_command_results_in_time_order() {
         let (first_command, first_request) = control
             .submit_onset(
                 MixedIngressOriginId(first.occurrence.0),
+                super::TEST_SCOPE,
                 first.at,
                 key,
                 velocity,
@@ -369,6 +370,7 @@ fn bounded_stage_feeds_actual_mixed_command_results_in_time_order() {
         let (third_command, third_request) = control
             .submit_onset(
                 MixedIngressOriginId(third.occurrence.0),
+                super::TEST_SCOPE,
                 third.at,
                 key,
                 velocity,
@@ -769,7 +771,7 @@ impl<R: RawBackend> RawStageBridge<R> {
         let (handle, (command, request)) = match packet.original.event() {
             Midi1Event::NoteOn { key, velocity } => {
                 let submitted = control
-                    .submit_onset(origin, packet.at, key, velocity)
+                    .submit_onset(origin, super::TEST_SCOPE, packet.at, key, velocity)
                     .unwrap();
                 let MixedIngressRequest::Onset {
                     occurrence: handle, ..

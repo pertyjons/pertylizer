@@ -1199,8 +1199,13 @@ impl Model {
         let at = entry
             .mapped_at
             .expect("source onset must retain mapped time");
-        let (command, request) =
-            control.submit_onset(MixedIngressOriginId(entry.id.0), at, key, velocity)?;
+        let (command, request) = control.submit_onset(
+            MixedIngressOriginId(entry.id.0),
+            super::TEST_SCOPE,
+            at,
+            key,
+            velocity,
+        )?;
         let MixedIngressRequest::Onset { occurrence, .. } = request else {
             panic!("an onset submit returns its onset request");
         };
@@ -2003,6 +2008,7 @@ fn mixed_audio_queue_returns_exact_ingress_results_without_audio_service_allocat
     let (first_id, first) = control
         .submit_onset(
             MixedIngressOriginId(1),
+            super::TEST_SCOPE,
             SampleTime::new(140),
             KeyIdentity::new(60).unwrap(),
             NoteVelocity::FULL,
@@ -2011,6 +2017,7 @@ fn mixed_audio_queue_returns_exact_ingress_results_without_audio_service_allocat
     let (second_id, second) = control
         .submit_onset(
             MixedIngressOriginId(2),
+            super::TEST_SCOPE,
             SampleTime::new(150),
             KeyIdentity::new(60).unwrap(),
             NoteVelocity::FULL,
@@ -2121,7 +2128,7 @@ fn mixed_ingress_result_reservation_returns_full_request_until_collected() {
     let mut open = Vec::new();
     for _ in 0..capacity / 2 {
         let (id, request) = control
-            .submit_onset(origin, at, key, NoteVelocity::FULL)
+            .submit_onset(origin, super::TEST_SCOPE, at, key, NoteVelocity::FULL)
             .unwrap();
         let MixedIngressRequest::Onset { occurrence, .. } = request else {
             panic!("onset request");
@@ -2130,12 +2137,13 @@ fn mixed_ingress_result_reservation_returns_full_request_until_collected() {
         open.push(occurrence);
     }
     assert_eq!(
-        control.submit_onset(origin, at, key, NoteVelocity::FULL),
+        control.submit_onset(origin, super::TEST_SCOPE, at, key, NoteVelocity::FULL),
         Err(MixedOnsetSubmitError::Full)
     );
     let forged = MixedIngressRequest::Onset {
         origin,
         occurrence: open[0],
+        scope: super::TEST_SCOPE,
         at,
         key,
         velocity: NoteVelocity::FULL,
@@ -2146,13 +2154,13 @@ fn mixed_ingress_result_reservation_returns_full_request_until_collected() {
     );
     audio.service_test_ingress_queue();
     assert_eq!(
-        control.submit_onset(origin, at, key, NoteVelocity::FULL),
+        control.submit_onset(origin, super::TEST_SCOPE, at, key, NoteVelocity::FULL),
         Err(MixedOnsetSubmitError::Full)
     );
     // A full ring still carries every open handle's release.
     submitted.push(control.submit_release(origin, open[0], at).unwrap());
     assert_eq!(
-        control.submit_onset(origin, at, key, NoteVelocity::FULL),
+        control.submit_onset(origin, super::TEST_SCOPE, at, key, NoteVelocity::FULL),
         Err(MixedOnsetSubmitError::Full)
     );
     // Each result returns the full request its command carried.
@@ -2162,7 +2170,7 @@ fn mixed_ingress_result_reservation_returns_full_request_until_collected() {
     }
     submitted.push(
         control
-            .submit_onset(origin, at, key, NoteVelocity::FULL)
+            .submit_onset(origin, super::TEST_SCOPE, at, key, NoteVelocity::FULL)
             .unwrap(),
     );
     audio.service_test_ingress_queue();
@@ -2186,6 +2194,7 @@ fn mixed_ingress_command_id_exhaustion_retains_original_request() {
     let submit = |control: &mut MixedOneShotControl| {
         control.submit_onset(
             MixedIngressOriginId(1),
+            super::TEST_SCOPE,
             SampleTime::new(140),
             KeyIdentity::new(60).unwrap(),
             NoteVelocity::FULL,
@@ -2230,6 +2239,7 @@ fn mixed_ingress_result_channel_returns_non_monotone_refusal_with_original() {
     let _later = control
         .submit_onset(
             MixedIngressOriginId(1),
+            super::TEST_SCOPE,
             SampleTime::new(150),
             KeyIdentity::new(60).unwrap(),
             NoteVelocity::FULL,
@@ -2238,6 +2248,7 @@ fn mixed_ingress_result_channel_returns_non_monotone_refusal_with_original() {
     let (earlier_id, earlier) = control
         .submit_onset(
             MixedIngressOriginId(2),
+            super::TEST_SCOPE,
             SampleTime::new(140),
             KeyIdentity::new(60).unwrap(),
             NoteVelocity::FULL,
@@ -2267,6 +2278,7 @@ fn mixed_collection_retains_unresolved_ingress_command_and_result_owners() {
     let (id, request) = control
         .submit_onset(
             MixedIngressOriginId(1),
+            super::TEST_SCOPE,
             SampleTime::new(140),
             KeyIdentity::new(60).unwrap(),
             NoteVelocity::FULL,
@@ -3111,6 +3123,7 @@ fn mixed_refusal_after_source_release_reaps_settled_entry() {
     let (first_command, first) = control
         .submit_onset(
             MixedIngressOriginId(999),
+            super::TEST_SCOPE,
             SampleTime::new(150),
             KeyIdentity::new(60).unwrap(),
             NoteVelocity::FULL,
@@ -3180,6 +3193,7 @@ fn mixed_onset_refusal_after_halt_retains_ingress_credit() {
     let (first_command, first) = control
         .submit_onset(
             MixedIngressOriginId(999),
+            super::TEST_SCOPE,
             SampleTime::new(150),
             KeyIdentity::new(60).unwrap(),
             NoteVelocity::FULL,
@@ -3585,6 +3599,7 @@ fn equal_source_payloads_keep_distinct_mixed_origins_and_results() {
     let MixedIngressRequest::Onset {
         origin: first_origin,
         occurrence: first_occurrence,
+        scope: first_scope,
         at: first_at,
         key: first_key,
         velocity: first_velocity,
@@ -3595,6 +3610,7 @@ fn equal_source_payloads_keep_distinct_mixed_origins_and_results() {
     let MixedIngressRequest::Onset {
         origin: second_origin,
         occurrence: second_occurrence,
+        scope: second_scope,
         at: second_at,
         key: second_key,
         velocity: second_velocity,
@@ -3609,6 +3625,10 @@ fn equal_source_payloads_keep_distinct_mixed_origins_and_results() {
     assert_eq!(first_origin, MixedIngressOriginId(first.0));
     assert_eq!(second_origin, MixedIngressOriginId(second.0));
     assert_ne!(first_origin, second_origin);
+    assert_eq!(
+        (first_scope, second_scope),
+        (super::TEST_SCOPE, super::TEST_SCOPE)
+    );
     assert_ne!(first_occurrence, second_occurrence);
     assert_ne!(first_command, second_command);
     audio.service_test_ingress_queue();

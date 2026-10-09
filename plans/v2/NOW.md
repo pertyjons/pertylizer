@@ -722,9 +722,19 @@ same-key note, and acknowledges cell retirement before the merger reuses that
 cell. Each open handle reserves a release place; a one-slot ingress profile
 refuses arm while retaining both inputs. Tests cover release before onset-result
 collection, stale generations, same-key refusal and reuse, teardown accounting,
-and allocation-free command service. Sustain, pedal lift, Panic, bend and the
-concrete two-source bridge remain open. This slice does not lift the production
-mixed-plan refusal.
+and allocation-free command service.
+Sustain is scoped to one source's one channel. Audio owns the pedal state: a
+key-up under the pedal offers nothing and keeps its hold, and the scope's lift
+ends exactly that scope's sustained occurrences as one `SustainLift` release
+group. Each effective pedal-down reserves a command-ring place for its lift;
+redundant pedal edges are consumed and counted at the merger, and a refused
+lift leaves the pedal down and every member sustained. Tests cover scope
+isolation, repeated keys, tombstones under the pedal, a full command ring, a
+full ingress queue with every hold outstanding, and in-interval ordering. Arm
+refuses a live hold entitlement above one eight-member group, so one lift never
+needs to split a cause into several charged groups; that split, the draft's rule
+1.5 amendment, remains open with Panic, bend and the concrete two-source bridge.
+This slice does not lift the production mixed-plan refusal.
 
 ### Selected work — ordered transport through live I/O
 
