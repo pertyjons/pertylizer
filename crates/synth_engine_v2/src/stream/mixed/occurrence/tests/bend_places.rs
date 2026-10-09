@@ -371,6 +371,48 @@ fn bent_owner(bends: &[(u64, f32)]) -> (MixedOneShotControl, MixedOneShotAudio) 
 }
 
 #[test]
+fn callback_services_bends_at_quantum_open_and_preserves_carry_order() {
+    let s = scope(1, 1);
+    let (mut control, mut audio) = armed_with(true, 2);
+    let onset = onset_in(&mut control, s, 70, 60);
+    assert!(control.collect_ingress_result().is_none());
+
+    // The armed renderer begins with one quantum of priming silence. That carry
+    // does not service the onset; the clock-zero boundary does.
+    let mut actual = render_partition(&mut audio, &[64]);
+    assert!(control.collect_ingress_result().is_none());
+    actual.extend(render_partition(&mut audio, &[1]));
+    assert!(matches!(
+        outcome_for(
+            &collect_all(&mut control),
+            onset_request_in(onset, s, 70, 60)
+        ),
+        MixedIngressOutcome::Onset(Ok(_))
+    ));
+    let first = bend_at(&mut control, s, 80, 200.0);
+    let second = bend_at(&mut control, s, 81, -200.0);
+    actual.extend(render_partition(&mut audio, &[63]));
+    assert!(control.collect_ingress_result().is_none());
+
+    actual.extend(render_partition(&mut audio, &[64, 128]));
+    let results = collect_all(&mut control);
+    for request in [first, second] {
+        assert!(matches!(
+            outcome_for(&results, request),
+            MixedIngressOutcome::Bend(Ok(_))
+        ));
+    }
+
+    let (mut reference_control, mut reference) = armed_with(true, 2);
+    let _onset = onset_in(&mut reference_control, s, 70, 60);
+    let _first = bend_at(&mut reference_control, s, 80, 200.0);
+    let _second = bend_at(&mut reference_control, s, 81, -200.0);
+    reference.service_test_ingress_queue();
+    let _results = collect_all(&mut reference_control);
+    assert_eq!(actual, render_partition(&mut reference, &[320]));
+}
+
+#[test]
 fn a_bend_served_before_the_drain_sounds_at_its_own_stamp_under_every_host_partition() {
     let partitions: [&[usize]; 4] = [&[512], &[64; 8], &[1, 63, 100, 200, 148], &[37; 13]];
     let partitions = partitions.map(|partition| {

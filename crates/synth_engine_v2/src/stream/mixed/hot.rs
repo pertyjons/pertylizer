@@ -321,6 +321,12 @@ impl MixedOneShotAudio {
             self.adoption_after_quanta = Some(self.completed_quanta);
         }
 
+        // Serve only at a quantum boundary. The command prefix is fixed before
+        // opening publication, which borrows the arbiter through the render.
+        #[cfg(all(test, feature = "simulated-ingress"))]
+        if opens_quantum {
+            self.service_test_ingress_queue();
+        }
         let mut publication = self.arbiter.open(clock, usize::from(opens_quantum))?;
         let mut next = self.next;
         if opens_quantum {
