@@ -4,7 +4,10 @@ use super::*;
 use crate::quantities::Cents;
 use synth_core::MidiChannel;
 
-use super::super::occurrence::{MixedBendSubmitError, MixedLiveScope, MixedLiveSource};
+use super::super::{
+    MixedPedalSubmitted,
+    occurrence::{MixedBendSubmitError, MixedLiveScope, MixedLiveSource},
+};
 
 struct BendBridge {
     raw: [RawSource; 2],
@@ -262,5 +265,134 @@ fn raw_and_stage_keep_exact_bend_heads_until_credits_return() {
     drain(&mut audio);
     assert!(queued_bends(&audio).is_empty());
     assert_eq!(bridge.stage.pressure(Source::First), (0, 0));
+    assert!(bridge.staged.is_empty());
+}
+
+#[test]
+fn a_full_command_ring_keeps_the_selected_bend_ahead_of_its_peer() {
+    let (prepared, candidate) = history_tests::one_shot_with_live(
+        true,
+        crate::quantities::HeldNoteCount::measured(2),
+        EventCount::measured(2),
+    );
+    let (mut control, mut audio) = prepared
+        .arm_one_shot(candidate, &history_tests::mixed_profile())
+        .unwrap();
+    let first_scope = BendBridge::scope(Source::First);
+    let (onset_id, onset_request) = control
+        .submit_onset(
+            MixedIngressOriginId(60),
+            first_scope,
+            SampleTime::new(100),
+            crate::quantities::KeyIdentity::new(60).unwrap(),
+            crate::quantities::NoteVelocity::FULL,
+        )
+        .unwrap();
+    audio.service_test_ingress_queue();
+    let onset_result = control.collect_ingress_result().unwrap();
+    assert_eq!(
+        (onset_result.id, onset_result.request),
+        (onset_id, onset_request)
+    );
+    assert!(matches!(
+        onset_result.outcome,
+        MixedIngressOutcome::Onset(Ok(_))
+    ));
+
+    // Typed pedal-downs keep one ring place each for their lifts. The remaining
+    // place takes a typed zero bend on an empty scope, then no ordinary room is
+    // left for the staged source head.
+    let peer_scope = BendBridge::scope(Source::Second);
+    let mut pressed = 0;
+    while control.ingress_room() > 1 {
+        let scope = MixedLiveScope::new(
+            MixedLiveSource::new(u64::try_from(1000 + pressed).unwrap()),
+            MidiChannel::new(1),
+        );
+        assert!(matches!(
+            control
+                .submit_pedal(
+                    MixedIngressOriginId(u64::try_from(1000 + pressed).unwrap()),
+                    scope,
+                    SampleTime::new(110),
+                    true,
+                )
+                .unwrap(),
+            MixedPedalSubmitted::Command(..)
+        ));
+        pressed += 1;
+    }
+    assert_eq!(control.ingress_room(), 1);
+    let (filler_id, _) = control
+        .submit_bend(
+            MixedIngressOriginId(2000),
+            peer_scope,
+            SampleTime::new(110),
+            Cents::ZERO,
+        )
+        .unwrap();
+    assert_eq!(control.last_ingress_id, Some(filler_id));
+    assert_eq!(2 * pressed + 2, control.ingress_capacity.as_usize());
+    assert_eq!(control.ingress_room(), 0);
+
+    let mut bridge = BendBridge::new(2);
+    let first = bridge.enqueue(Source::First, 320, input(0xe0, 127, 127));
+    let peer = bridge.enqueue(Source::Second, 321, input(0xe0, 0, 0));
+    let first_raw = bridge.pump(Source::First).unwrap().unwrap();
+    let peer_raw = bridge.pump(Source::Second).unwrap().unwrap();
+    assert_eq!(bridge.stage.peek_next().unwrap().1.occurrence, first);
+    let before = control.last_ingress_id;
+    let credits_before = control.bend_credits_free;
+    let scopes_before = control.bend_scopes.clone();
+    assert_eq!(
+        bridge.service(&mut control, &mut audio),
+        Err(MixedBendSubmitError::Full)
+    );
+    assert_eq!(control.last_ingress_id, before);
+    assert_eq!(control.bend_credits_free, credits_before);
+    assert_eq!(control.bend_scopes, scopes_before);
+    assert_eq!(bridge.stage.peek_next().unwrap().1.occurrence, first);
+    assert_eq!(bridge.staged, vec![(first, first_raw), (peer, peer_raw)]);
+
+    audio.service_test_ingress_queue();
+    for _ in 0..pressed {
+        assert!(matches!(
+            control.collect_ingress_result().unwrap().outcome,
+            MixedIngressOutcome::PedalDown(Ok(_))
+        ));
+    }
+    assert!(matches!(
+        control.collect_ingress_result().unwrap().outcome,
+        MixedIngressOutcome::Bend(Ok(_))
+    ));
+    assert!(control.collect_ingress_result().is_none());
+    let (accepted_first, returned_first, first_outcome) =
+        bridge.service(&mut control, &mut audio).unwrap().unwrap();
+    assert_eq!((accepted_first, returned_first), (first, first_raw));
+    let MixedIngressOutcome::Bend(Ok(first_bent)) = first_outcome else {
+        panic!("retained first bend must apply");
+    };
+    assert_eq!(first_bent.executed_at(), SampleTime::new(320));
+    assert_eq!(first_bent.written().count(), 1);
+
+    assert_eq!(bridge.service(&mut control, &mut audio), Ok(None));
+    assert_eq!(bridge.stage.peek_next(), None);
+    assert_eq!(bridge.staged, vec![(peer, peer_raw)]);
+    bridge.frontier(Source::First, 322);
+    let (accepted_peer, returned_peer, peer_outcome) =
+        bridge.service(&mut control, &mut audio).unwrap().unwrap();
+    assert_eq!((accepted_peer, returned_peer), (peer, peer_raw));
+    let MixedIngressOutcome::Bend(Ok(peer_bent)) = peer_outcome else {
+        panic!("retained peer bend must apply");
+    };
+    assert_eq!(peer_bent.executed_at(), SampleTime::new(321));
+    assert_eq!(peer_bent.written().count(), 0);
+    assert_eq!(
+        queued_bends(&audio),
+        vec![(SampleTime::new(320), Cents::new(200.0).unwrap())]
+    );
+    drain(&mut audio);
+    drain(&mut audio);
+    assert!(queued_bends(&audio).is_empty());
     assert!(bridge.staged.is_empty());
 }

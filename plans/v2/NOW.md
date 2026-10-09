@@ -785,8 +785,13 @@ packet and raw handoff, mints no command ID, and prevents later same-source
 bends from passing it. After drain, the fixture retries the credit-refused
 bend at frame 320, first submits the already staged bend at 321, and retries
 the stage-refused bend at 322. Each live member gets a separate ordered entry.
-The fixture does not cover a bent-scope onset refused in the `B = H` case. It
-assumes prepared raw capacity. A raw owner's full admission is a terminal
+Another private fixture fills ordinary command capacity with typed pedal-downs
+and a typed zero bend while an onset owns its release reservation. The selected
+bend keeps its raw handoff and stage head without minting an ID, then executes
+when the ring drains. The later peer bend waits until the first source advances
+its frontier.
+Neither fixture covers a bent-scope onset refused in the `B = H` case. Both
+assume prepared raw capacity. A raw owner's full admission is a terminal
 discontinuity, so source-side preflight/reservation and the concrete
 example-host bridge remain open.
 
