@@ -59,12 +59,13 @@ pub(super) fn written(outcome: MixedIngressOutcome) -> Vec<LiveOccurrenceId> {
 }
 
 #[test]
-fn malformed_bend_result_stamp_scope_or_shape_keeps_command_custody() {
-    for fault in 0..3 {
+fn malformed_bend_result_stamp_scope_shape_or_members_keeps_command_custody() {
+    for fault in 0..5 {
         let (scope_a, scope_b) = (scope(1, 1), scope(2, 1));
-        let (mut control, mut audio) = armed_with(true, 2);
+        let (mut control, mut audio) = armed_with(true, 3);
         let a = onset_in(&mut control, scope_a, 100, 60);
         let b = onset_in(&mut control, scope_b, 101, 61);
+        let c = onset_in(&mut control, scope_a, 102, 62);
         audio.service_test_ingress_queue();
         let _onsets = collect_all(&mut control);
         let request = bend_at(&mut control, scope_a, 120, 30.0);
@@ -80,6 +81,16 @@ fn malformed_bend_result_stamp_scope_or_shape_keeps_command_custody() {
             2 => {
                 bent.members[0] = None;
                 bent.members[1] = Some(a);
+            }
+            3 => {
+                assert_eq!(bent.written().collect::<Vec<_>>(), vec![a, c]);
+                bent.members[1] = None;
+            }
+            4 => {
+                assert_eq!(bent.written().collect::<Vec<_>>(), vec![a, c]);
+                bent.members[1] = None;
+                bent.members[2] = Some(c);
+                assert_eq!(bent.written().collect::<Vec<_>>(), vec![a, c]);
             }
             _ => unreachable!(),
         }

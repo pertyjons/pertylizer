@@ -1313,7 +1313,7 @@ impl MixedOneShotControl {
                 });
             }
         };
-        let opened = self.occurrence_ledger.open(occurrence, scope);
+        let opened = self.occurrence_ledger.open(occurrence, scope, command);
         debug_assert!(opened, "the vacant handle stays vacant until opened");
         self.release_reserved.0 += 1;
         Ok((command, request))
@@ -1471,7 +1471,8 @@ impl MixedOneShotControl {
         }
     }
 
-    /// Collect one result. A release result settles its handle: `Retired` frees the
+    /// Collect one result. An onset records whether its handle sounds or holds a
+    /// refusal tombstone. A release result settles its handle: `Retired` frees the
     /// ledger cell for reuse; `Sustained` leaves the cell for the scope's lift and
     /// spends the release's place; a refused release returns custody and its reserved
     /// place to the merger. A lift result frees every cell it retired and settles the
@@ -1496,23 +1497,41 @@ impl MixedOneShotControl {
         expected: MixedIngressCommand,
     ) -> bool {
         match (result.request, result.outcome) {
+            (MixedIngressRequest::Onset { occurrence, .. }, MixedIngressOutcome::Onset(_)) => self
+                .occurrence_ledger
+                .is_pending_from(occurrence, result.id),
+            (MixedIngressRequest::Onset { occurrence, .. }, MixedIngressOutcome::Handle(_)) => {
+                !self
+                    .occurrence_ledger
+                    .is_pending_from(occurrence, result.id)
+            }
             (
                 MixedIngressRequest::Release { occurrence, .. },
                 MixedIngressOutcome::Release(Ok(retired)),
             ) => {
                 retired.occurrence == occurrence
                     && self.occurrence_ledger.is_releasing(occurrence, result.id)
+                    && self
+                        .occurrence_ledger
+                        .release_result_matches_sound(occurrence, retired.cause)
             }
             (
                 MixedIngressRequest::Release { occurrence, .. },
                 MixedIngressOutcome::Release(Err(_)),
-            ) => self.occurrence_ledger.is_releasing(occurrence, result.id),
+            ) => {
+                self.occurrence_ledger.is_releasing(occurrence, result.id)
+                    && self.occurrence_ledger.is_sounding(occurrence)
+            }
             (
                 MixedIngressRequest::Release { occurrence, .. },
                 MixedIngressOutcome::Sustained(sustained),
             ) => {
                 sustained == occurrence
                     && self.occurrence_ledger.is_releasing(occurrence, result.id)
+                    && self.occurrence_ledger.is_sounding(occurrence)
+            }
+            (MixedIngressRequest::Release { occurrence, .. }, MixedIngressOutcome::Handle(_)) => {
+                !self.occurrence_ledger.is_releasing(occurrence, result.id)
             }
             (
                 MixedIngressRequest::Pedal {
@@ -1580,9 +1599,16 @@ impl MixedOneShotControl {
         if let MixedIngressRequest::Panic { .. } = result.request {
             self.panic_inflight = None;
             if let MixedIngressOutcome::Panic(Ok(panicked)) = result.outcome {
-                for retired in panicked.retired() {
-                    let freed = self.occurrence_ledger.retire_sustained(retired);
-                    debug_assert!(freed, "Panic retires only sustained cells");
+                for ended in panicked.ended() {
+                    let settled = match ended {
+                        occurrence::MixedPanicEnd::Retired(retired) => {
+                            self.occurrence_ledger.retire_sustained(retired)
+                        }
+                        occurrence::MixedPanicEnd::Tombstoned(tombstone) => {
+                            self.occurrence_ledger.tombstone(tombstone)
+                        }
+                    };
+                    debug_assert!(settled, "validated Panic members remain held");
                 }
             }
             return Ok(Some(result));
@@ -1649,7 +1675,15 @@ impl MixedOneShotControl {
                     }
                 }
             }
-            MixedIngressRequest::Onset { .. } | MixedIngressRequest::Panic { .. } => {}
+            MixedIngressRequest::Onset { occurrence, .. } => {
+                if let MixedIngressOutcome::Onset(outcome) = result.outcome {
+                    let settled =
+                        self.occurrence_ledger
+                            .settle_onset(occurrence, result.id, outcome.is_ok());
+                    debug_assert!(settled, "validated onset remains pending in the ledger");
+                }
+            }
+            MixedIngressRequest::Panic { .. } => {}
         }
         Ok(Some(result))
     }

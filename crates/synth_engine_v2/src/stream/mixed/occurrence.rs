@@ -234,14 +234,6 @@ impl MixedPanicked {
     pub(super) fn ended(&self) -> impl Iterator<Item = MixedPanicEnd> + '_ {
         self.ended.iter().flatten().copied()
     }
-
-    /// Sustained cells the Panic retired; the merger frees them when it collects this.
-    pub(super) fn retired(&self) -> impl Iterator<Item = LiveOccurrenceId> + '_ {
-        self.ended().filter_map(|end| match end {
-            MixedPanicEnd::Retired(occurrence) => Some(occurrence),
-            MixedPanicEnd::Tombstoned(_) => None,
-        })
-    }
 }
 
 /// An applied Panic, or a refusal that changed no occurrence, hold or queue entry.
@@ -431,11 +423,29 @@ enum LedgerHold {
     Sustained,
 }
 
+/// Audio membership as established by collected results, independent of a
+/// release command that may already have been submitted behind this result.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum LedgerSound {
+    Pending,
+    Sounding,
+    Refused,
+    Panicked,
+}
+
+/// One handle's reservation state and its independently collected audio state.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct LedgerOccupant {
+    hold: LedgerHold,
+    sound: LedgerSound,
+    opened_by: MixedIngressCommandId,
+}
+
 /// The off-thread merger's fixed occurrence ledger. It mints handles and frees a cell
 /// only when it collects the audio half's retirement of that exact handle.
 #[derive(Debug)]
 pub(super) struct MixedOccurrenceLedger {
-    cells: Vec<CellUse<LedgerHold>>,
+    cells: Vec<CellUse<LedgerOccupant>>,
     scopes: Vec<Option<MixedLiveScope>>,
 }
 
@@ -461,22 +471,34 @@ impl MixedOccurrenceLedger {
             })
     }
 
-    fn cell_mut(&mut self, occurrence: LiveOccurrenceId) -> Option<&mut CellUse<LedgerHold>> {
+    fn cell_mut(&mut self, occurrence: LiveOccurrenceId) -> Option<&mut CellUse<LedgerOccupant>> {
         self.cells.get_mut(occurrence.cell.index()?)
     }
 
-    fn cell(&self, occurrence: LiveOccurrenceId) -> Option<CellUse<LedgerHold>> {
+    fn cell(&self, occurrence: LiveOccurrenceId) -> Option<CellUse<LedgerOccupant>> {
         self.cells.get(occurrence.cell.index()?).copied()
     }
 
     /// Take a handle `vacant` returned once its onset holds command custody.
-    pub(super) fn open(&mut self, occurrence: LiveOccurrenceId, scope: MixedLiveScope) -> bool {
+    pub(super) fn open(
+        &mut self,
+        occurrence: LiveOccurrenceId,
+        scope: MixedLiveScope,
+        command: MixedIngressCommandId,
+    ) -> bool {
         let Some(index) = occurrence.cell.index() else {
             return false;
         };
         match (self.cells.get_mut(index), self.scopes.get_mut(index)) {
             (Some(cell), Some(held_scope)) if *cell == CellUse::Free(occurrence.generation) => {
-                *cell = CellUse::Held(occurrence.generation, LedgerHold::Open);
+                *cell = CellUse::Held(
+                    occurrence.generation,
+                    LedgerOccupant {
+                        hold: LedgerHold::Open,
+                        sound: LedgerSound::Pending,
+                        opened_by: command,
+                    },
+                );
                 *held_scope = Some(scope);
                 true
             }
@@ -485,16 +507,63 @@ impl MixedOccurrenceLedger {
     }
 
     pub(super) fn is_open(&self, occurrence: LiveOccurrenceId) -> bool {
-        self.cell(occurrence) == Some(CellUse::Held(occurrence.generation, LedgerHold::Open))
+        matches!(
+            self.cell(occurrence),
+            Some(CellUse::Held(generation, LedgerOccupant { hold: LedgerHold::Open, .. }))
+                if generation == occurrence.generation
+        )
     }
 
-    fn scope_of(&self, occurrence: LiveOccurrenceId) -> Option<MixedLiveScope> {
+    fn sound_of(&self, occurrence: LiveOccurrenceId) -> Option<LedgerSound> {
         match self.cell(occurrence) {
-            Some(CellUse::Held(generation, _)) if generation == occurrence.generation => occurrence
-                .cell
-                .index()
-                .and_then(|index| self.scopes.get(index).copied().flatten()),
+            Some(CellUse::Held(generation, held)) if generation == occurrence.generation => {
+                Some(held.sound)
+            }
             Some(_) | None => None,
+        }
+    }
+
+    pub(super) fn is_pending(&self, occurrence: LiveOccurrenceId) -> bool {
+        self.sound_of(occurrence) == Some(LedgerSound::Pending)
+    }
+
+    pub(super) fn is_pending_from(
+        &self,
+        occurrence: LiveOccurrenceId,
+        command: MixedIngressCommandId,
+    ) -> bool {
+        matches!(
+            self.cell(occurrence),
+            Some(CellUse::Held(generation, LedgerOccupant {
+                sound: LedgerSound::Pending,
+                opened_by,
+                ..
+            })) if generation == occurrence.generation && opened_by == command
+        )
+    }
+
+    /// Apply the onset's ordered result without changing a later submitted
+    /// release's reservation state.
+    pub(super) fn settle_onset(
+        &mut self,
+        occurrence: LiveOccurrenceId,
+        command: MixedIngressCommandId,
+        accepted: bool,
+    ) -> bool {
+        match self.cell_mut(occurrence) {
+            Some(CellUse::Held(generation, held))
+                if *generation == occurrence.generation
+                    && held.sound == LedgerSound::Pending
+                    && held.opened_by == command =>
+            {
+                held.sound = if accepted {
+                    LedgerSound::Sounding
+                } else {
+                    LedgerSound::Refused
+                };
+                true
+            }
+            Some(_) | None => false,
         }
     }
 
@@ -503,66 +572,96 @@ impl MixedOccurrenceLedger {
         occurrence: LiveOccurrenceId,
         command: MixedIngressCommandId,
     ) -> bool {
-        self.cell(occurrence)
-            == Some(CellUse::Held(
-                occurrence.generation,
-                LedgerHold::Releasing(command),
-            ))
-    }
-
-    fn is_key_down_or_releasing(&self, occurrence: LiveOccurrenceId) -> bool {
         matches!(
             self.cell(occurrence),
-            Some(CellUse::Held(
-                generation,
-                LedgerHold::Open | LedgerHold::Releasing(_)
-            )) if generation == occurrence.generation
+            Some(CellUse::Held(generation, LedgerOccupant { hold: LedgerHold::Releasing(id), .. }))
+                if generation == occurrence.generation && id == command
         )
     }
 
-    /// Check a lift's entire retirement list before any cell can be freed.
+    pub(super) fn release_result_matches_sound(
+        &self,
+        occurrence: LiveOccurrenceId,
+        cause: MixedRetireCause,
+    ) -> bool {
+        matches!(
+            (self.sound_of(occurrence), cause),
+            (Some(LedgerSound::Sounding), MixedRetireCause::Released(_))
+                | (
+                    Some(LedgerSound::Refused),
+                    MixedRetireCause::AfterRefusal(_)
+                )
+                | (Some(LedgerSound::Panicked), MixedRetireCause::AfterPanic(_))
+        )
+    }
+
+    pub(super) fn is_sounding(&self, occurrence: LiveOccurrenceId) -> bool {
+        self.sound_of(occurrence) == Some(LedgerSound::Sounding)
+    }
+
+    /// A lift retires exactly the collected sounding cells whose keys are up
+    /// under this scope's pedal, in cell order.
     pub(super) fn can_retire_lift(&self, scope: MixedLiveScope, lifted: &MixedLifted) -> bool {
-        let mut seen = [None; RELEASE_GROUP_CAPACITY];
-        for (count, occurrence) in lifted.retired().enumerate() {
-            if !self.is_sustained(occurrence)
-                || self.scope_of(occurrence) != Some(scope)
-                || seen.contains(&Some(occurrence))
-            {
+        Self::dense(&lifted.members)
+            && lifted
+                .retired()
+                .eq(self.cells.iter().enumerate().filter_map(|(index, cell)| {
+                    let CellUse::Held(generation, held) = cell else {
+                        return None;
+                    };
+                    if held.hold != LedgerHold::Sustained
+                        || held.sound != LedgerSound::Sounding
+                        || self.scopes.get(index).copied().flatten() != Some(scope)
+                    {
+                        return None;
+                    }
+                    Some(LiveOccurrenceId {
+                        cell: LiveOccurrenceCell(u32::try_from(index).ok()?),
+                        generation: *generation,
+                    })
+                }))
+    }
+
+    fn dense<T>(members: &[Option<T>; RELEASE_GROUP_CAPACITY]) -> bool {
+        let mut ended = false;
+        for member in members {
+            if member.is_none() {
+                ended = true;
+            } else if ended {
                 return false;
             }
-            let Some(cell) = seen.get_mut(count) else {
-                return false;
-            };
-            *cell = Some(occurrence);
         }
         true
     }
 
-    /// A Panic result may retire sustained cells and tombstone open key-down cells.
-    /// Check every named cell and duplicate before settling any of them.
+    /// Panic ends exactly the collected sounding cells, retiring sustained
+    /// keys and tombstoning keys still down, in cell order.
     pub(super) fn can_settle_panic(&self, panicked: &MixedPanicked) -> bool {
-        let mut seen = [None; RELEASE_GROUP_CAPACITY];
-        for (count, end) in panicked.ended().enumerate() {
-            let (occurrence, valid) = match end {
-                MixedPanicEnd::Retired(occurrence) => (occurrence, self.is_sustained(occurrence)),
-                MixedPanicEnd::Tombstoned(occurrence) => {
-                    (occurrence, self.is_key_down_or_releasing(occurrence))
-                }
-            };
-            if !valid || seen.contains(&Some(occurrence)) {
-                return false;
-            }
-            let Some(cell) = seen.get_mut(count) else {
-                return false;
-            };
-            *cell = Some(occurrence);
-        }
-        true
+        Self::dense(&panicked.ended)
+            && panicked
+                .ended()
+                .eq(self.cells.iter().enumerate().filter_map(|(index, cell)| {
+                    let CellUse::Held(generation, held) = cell else {
+                        return None;
+                    };
+                    if held.sound != LedgerSound::Sounding {
+                        return None;
+                    }
+                    let occurrence = LiveOccurrenceId {
+                        cell: LiveOccurrenceCell(u32::try_from(index).ok()?),
+                        generation: *generation,
+                    };
+                    Some(match held.hold {
+                        LedgerHold::Sustained => MixedPanicEnd::Retired(occurrence),
+                        LedgerHold::Open | LedgerHold::Releasing(_) => {
+                            MixedPanicEnd::Tombstoned(occurrence)
+                        }
+                    })
+                }))
     }
 
-    /// Check a bend result's stamp and listed members against the command's credits
-    /// and held scope. This cannot prove complete audio membership: a later onset or
-    /// a refused/tombstoned hold can still exist in the control ledger.
+    /// Check a bend's entire member list against the audio membership established
+    /// by earlier collected results, independent of later submitted releases.
     pub(super) fn can_report_bend(
         &self,
         scope: MixedLiveScope,
@@ -573,23 +672,40 @@ impl MixedOccurrenceLedger {
         if bent.executed_at != at {
             return false;
         }
-        let mut previous = None;
-        let mut ended = false;
-        for (count, member) in bent.members.iter().enumerate() {
-            let Some(occurrence) = member else {
-                ended = true;
-                continue;
-            };
-            if ended
-                || count >= credits.as_usize()
-                || self.scope_of(*occurrence) != Some(scope)
-                || previous.is_some_and(|previous| previous >= occurrence.cell)
+        Self::dense(&bent.members)
+            && bent.written().count() <= credits.as_usize()
+            && bent
+                .written()
+                .eq(self.cells.iter().enumerate().filter_map(|(index, cell)| {
+                    let CellUse::Held(generation, held) = cell else {
+                        return None;
+                    };
+                    if held.sound != LedgerSound::Sounding
+                        || self.scopes.get(index).copied().flatten() != Some(scope)
+                    {
+                        return None;
+                    }
+                    Some(LiveOccurrenceId {
+                        cell: LiveOccurrenceCell(u32::try_from(index).ok()?),
+                        generation: *generation,
+                    })
+                }))
+    }
+
+    /// Mark a key-down occurrence ended by a collected Panic. Its exact
+    /// key-up must still retire the held cell later.
+    pub(super) fn tombstone(&mut self, occurrence: LiveOccurrenceId) -> bool {
+        match self.cell_mut(occurrence) {
+            Some(CellUse::Held(generation, held))
+                if *generation == occurrence.generation
+                    && held.sound == LedgerSound::Sounding
+                    && held.hold != LedgerHold::Sustained =>
             {
-                return false;
+                held.sound = LedgerSound::Panicked;
+                true
             }
-            previous = Some(occurrence.cell);
+            Some(_) | None => false,
         }
-        true
     }
 
     /// Mark an open handle's release as submitted under `command`.
@@ -599,8 +715,10 @@ impl MixedOccurrenceLedger {
         command: MixedIngressCommandId,
     ) -> bool {
         match self.cell_mut(occurrence) {
-            Some(cell) if *cell == CellUse::Held(occurrence.generation, LedgerHold::Open) => {
-                *cell = CellUse::Held(occurrence.generation, LedgerHold::Releasing(command));
+            Some(CellUse::Held(generation, held))
+                if *generation == occurrence.generation && held.hold == LedgerHold::Open =>
+            {
+                held.hold = LedgerHold::Releasing(command);
                 true
             }
             Some(_) | None => false,
@@ -619,7 +737,10 @@ impl MixedOccurrenceLedger {
         let Some(cell) = self.cell_mut(occurrence) else {
             return false;
         };
-        if *cell != CellUse::Held(occurrence.generation, LedgerHold::Releasing(command)) {
+        let CellUse::Held(generation, held) = cell else {
+            return false;
+        };
+        if *generation != occurrence.generation || held.hold != LedgerHold::Releasing(command) {
             return false;
         }
         match retired {
@@ -629,7 +750,7 @@ impl MixedOccurrenceLedger {
             }
             // A refused release returns custody, with its reserved place, to the merger.
             Some(_) | None => {
-                *cell = CellUse::Held(occurrence.generation, LedgerHold::Open);
+                held.hold = LedgerHold::Open;
                 true
             }
         }
@@ -642,11 +763,12 @@ impl MixedOccurrenceLedger {
         occurrence: LiveOccurrenceId,
     ) -> bool {
         match self.cell_mut(occurrence) {
-            Some(cell)
-                if *cell
-                    == CellUse::Held(occurrence.generation, LedgerHold::Releasing(command)) =>
+            Some(CellUse::Held(generation, held))
+                if *generation == occurrence.generation
+                    && held.hold == LedgerHold::Releasing(command)
+                    && held.sound == LedgerSound::Sounding =>
             {
-                *cell = CellUse::Held(occurrence.generation, LedgerHold::Sustained);
+                held.hold = LedgerHold::Sustained;
                 true
             }
             Some(_) | None => false,
@@ -655,17 +777,32 @@ impl MixedOccurrenceLedger {
 
     /// Free a sustained cell a collected lift or Panic retired.
     pub(super) fn retire_sustained(&mut self, occurrence: LiveOccurrenceId) -> bool {
-        match self.cell_mut(occurrence) {
-            Some(cell) if *cell == CellUse::Held(occurrence.generation, LedgerHold::Sustained) => {
-                *cell = CellUse::retired(occurrence.generation);
-                true
-            }
-            Some(_) | None => false,
+        let Some(cell) = self.cell_mut(occurrence) else {
+            return false;
+        };
+        if !matches!(
+            *cell,
+            CellUse::Held(
+                generation,
+                LedgerOccupant {
+                    hold: LedgerHold::Sustained,
+                    sound: LedgerSound::Sounding,
+                    ..
+                },
+            ) if generation == occurrence.generation
+        ) {
+            return false;
         }
+        *cell = CellUse::retired(occurrence.generation);
+        true
     }
 
     pub(super) fn is_sustained(&self, occurrence: LiveOccurrenceId) -> bool {
-        self.cell(occurrence) == Some(CellUse::Held(occurrence.generation, LedgerHold::Sustained))
+        matches!(
+            self.cell(occurrence),
+            Some(CellUse::Held(generation, LedgerOccupant { hold: LedgerHold::Sustained, .. }))
+                if generation == occurrence.generation
+        )
     }
 
     /// Cells the ledger was prepared with.

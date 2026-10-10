@@ -323,8 +323,7 @@ fn a_key_up_under_the_pedal_keeps_its_hold_until_the_lift() {
     }
 }
 
-#[test]
-fn forged_lift_member_from_another_scope_keeps_both_sustained_cells() {
+fn assert_invalid_lift_member_keeps_both_sustained_cells(wrong_scope: bool) {
     let (a, b) = (scope(1, 1), scope(2, 1));
     let (mut control, mut audio) = armed_with(true, 2);
     pedal(&mut control, a, 100, true);
@@ -340,12 +339,14 @@ fn forged_lift_member_from_another_scope_keeps_both_sustained_cells() {
     let MixedPedalSubmitted::Command(id, request) = pedal(&mut control, a, 120, false) else {
         panic!("the first lift is effective");
     };
+    let reserved_before = control.pedal_ledger.reserved();
+    let outstanding_before = control.ingress_outstanding;
     audio.service_test_ingress_queue();
     let actual = control.ingress_results.0.try_pop().unwrap();
     let MixedIngressOutcome::Lift(Ok(mut lifted)) = actual.outcome else {
         panic!("the actual lift retired its own scope");
     };
-    lifted.members[0] = Some(b_note);
+    lifted.members[0] = wrong_scope.then_some(b_note);
     let forged = MixedIngressResult {
         outcome: MixedIngressOutcome::Lift(Ok(lifted)),
         ..actual
@@ -363,6 +364,18 @@ fn forged_lift_member_from_another_scope_keeps_both_sustained_cells() {
     );
     assert!(control.occurrence_ledger.is_sustained(a_note));
     assert!(control.occurrence_ledger.is_sustained(b_note));
+    assert_eq!(control.pedal_ledger.reserved(), reserved_before);
+    assert_eq!(control.ingress_outstanding, outstanding_before);
+}
+
+#[test]
+fn forged_lift_member_from_another_scope_keeps_both_sustained_cells() {
+    assert_invalid_lift_member_keeps_both_sustained_cells(true);
+}
+
+#[test]
+fn omitted_lift_member_keeps_both_sustained_cells() {
+    assert_invalid_lift_member_keeps_both_sustained_cells(false);
 }
 
 #[test]

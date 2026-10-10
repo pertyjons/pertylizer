@@ -1105,11 +1105,20 @@ test injects both a physically full ring and inconsistent room accounting.
 The private owner now journals each submitted command before result collection.
 Audio faults before applying an out-of-order command; control faults before
 settling a mismatched, reordered or duplicate result. Terminal teardown retains
-the invalid packet and outstanding command custody. Bend-result collection also
-checks its nominal stamp, listed members' scope and order, dense shape and
-reserved credit bound. The control ledger cannot yet prove that the listed bend
-members are complete or were sounding when audio served the command. These are
-test-only checks, not a public mixed transfer contract or Phase 9 exit evidence.
+the invalid packet and outstanding command custody. The control ledger now
+records each collected typed onset's sound state separately from submit-time
+release custody and follows Panic tombstones. Its pending state is bound to the
+command ID that opened the ledger cell, so an earlier forged onset cannot
+settle a later typed onset's claim. A `Handle` refusal for an onset
+or release with an outstanding ledger claim is a protocol fault; direct forged
+commands retain their separate audio-table refusal tests. Collected release
+outcomes must also match the sound state. Successful bend, lift and Panic results
+must list exactly the sounding members implied by earlier collected results,
+in cell order; bend also checks its nominal stamp and reserved credit bound.
+Forged omitted members leave the result, journal and reservations unsettled.
+These test-only checks prove agreement with earlier results, not independent
+truth of those results or a public mixed transfer contract. Phase 9 exit
+evidence remains open.
 [ADR-0078](decisions/ADR-0078-host-owned-mixed-transfer-rehearsal.md) is a
 reviewed proposal for a default-off, host-owned packet transfer rehearsal.
 It requires maintainer approval before the public mixed API or feature is

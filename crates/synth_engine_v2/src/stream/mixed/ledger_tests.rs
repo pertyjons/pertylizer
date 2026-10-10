@@ -8,8 +8,8 @@ use super::{
     MixedIngressOutcome, MixedIngressRequest, MixedIngressResult, MixedIngressResultCollectError,
     MixedIngressSubmitError, MixedOneShotControl, MixedOneShotRenderError, history_tests,
     occurrence::{
-        LiveOccurrenceId, MixedOnsetSubmitError, MixedPedalSubmitError, MixedReleaseSubmitError,
-        MixedRetireCause, MixedRetired,
+        LiveOccurrenceId, MixedHandleRefused, MixedOnsetSubmitError, MixedPedalSubmitError,
+        MixedReleaseSubmitError, MixedRetireCause, MixedRetired,
     },
 };
 use crate::identity::NoteIdentity;
@@ -2667,6 +2667,174 @@ fn release_result_naming_another_occurrence_cannot_reopen_its_handle() {
         control.ingress_journal.front().map(|packet| packet.request),
         Some(request)
     );
+}
+
+#[test]
+fn a_typed_onset_handle_refusal_cannot_hide_a_pending_sound_member() {
+    let (prepared, candidate) = history_tests::one_shot_with_boundary_on(true);
+    let (mut control, mut audio) = prepared
+        .arm_one_shot(candidate, &history_tests::mixed_profile())
+        .unwrap();
+    let (id, request) = control
+        .submit_onset(
+            MixedIngressOriginId(1),
+            super::TEST_SCOPE,
+            SampleTime::new(140),
+            KeyIdentity::new(60).unwrap(),
+            NoteVelocity::FULL,
+        )
+        .unwrap();
+    let MixedIngressRequest::Onset { occurrence, .. } = request else {
+        panic!("typed onset request");
+    };
+    audio.service_test_ingress_queue();
+    let actual = control.ingress_results.0.try_pop().unwrap();
+    assert!(matches!(actual.outcome, MixedIngressOutcome::Onset(Ok(_))));
+    let forged = MixedIngressResult {
+        outcome: MixedIngressOutcome::Handle(MixedHandleRefused::Occupied),
+        ..actual
+    };
+    assert!(audio.ingress_results.0.try_push(forged).is_ok());
+    assert_eq!(
+        control.collect_ingress_result_checked(),
+        Err(MixedIngressResultCollectError::Protocol {
+            received: id,
+            expected: Some(id),
+        })
+    );
+    assert_eq!(control.invalid_ingress_result, Some(forged));
+    assert!(control.occurrence_ledger.is_pending(occurrence));
+    assert_eq!(
+        control.ingress_journal.front().map(|packet| packet.id),
+        Some(id)
+    );
+    assert_eq!(
+        control.ingress_outstanding,
+        super::MixedIngressQueueCount(1)
+    );
+}
+
+#[test]
+fn an_earlier_forged_onset_cannot_settle_a_later_typed_onsets_handle() {
+    let (prepared, candidate) = history_tests::one_shot_with_boundary_on(true);
+    let (mut control, mut audio) = prepared
+        .arm_one_shot(candidate, &history_tests::mixed_profile())
+        .unwrap();
+    let occurrence = control.occurrence_ledger.vacant().unwrap();
+    let forged_request = MixedIngressRequest::Onset {
+        origin: MixedIngressOriginId(99),
+        occurrence,
+        scope: super::TEST_SCOPE,
+        at: SampleTime::new(140),
+        key: KeyIdentity::new(60).unwrap(),
+        velocity: NoteVelocity::FULL,
+    };
+    let forged_id = control.submit_ingress(forged_request).unwrap();
+    let (typed_id, typed_request) = control
+        .submit_onset(
+            MixedIngressOriginId(1),
+            super::TEST_SCOPE,
+            SampleTime::new(141),
+            KeyIdentity::new(61).unwrap(),
+            NoteVelocity::FULL,
+        )
+        .unwrap();
+    assert_eq!(
+        typed_request,
+        MixedIngressRequest::Onset {
+            origin: MixedIngressOriginId(1),
+            occurrence,
+            scope: super::TEST_SCOPE,
+            at: SampleTime::new(141),
+            key: KeyIdentity::new(61).unwrap(),
+            velocity: NoteVelocity::FULL,
+        }
+    );
+    audio.service_test_ingress_queue();
+    assert_eq!(
+        control.collect_ingress_result_checked(),
+        Err(MixedIngressResultCollectError::Protocol {
+            received: forged_id,
+            expected: Some(forged_id),
+        })
+    );
+    assert!(
+        control
+            .occurrence_ledger
+            .is_pending_from(occurrence, typed_id)
+    );
+    assert_eq!(
+        control.ingress_journal.front().map(|packet| packet.id),
+        Some(forged_id)
+    );
+    assert_eq!(
+        control.ingress_outstanding,
+        super::MixedIngressQueueCount(2)
+    );
+}
+
+#[test]
+fn a_typed_release_handle_refusal_or_wrong_cause_cannot_reopen_its_cell() {
+    for handle_refusal in [true, false] {
+        let (prepared, candidate) = history_tests::one_shot_with_boundary_on(true);
+        let (mut control, mut audio) = prepared
+            .arm_one_shot(candidate, &history_tests::mixed_profile())
+            .unwrap();
+        let (_, onset) = control
+            .submit_onset(
+                MixedIngressOriginId(1),
+                super::TEST_SCOPE,
+                SampleTime::new(140),
+                KeyIdentity::new(60).unwrap(),
+                NoteVelocity::FULL,
+            )
+            .unwrap();
+        let MixedIngressRequest::Onset { occurrence, .. } = onset else {
+            panic!("typed onset request");
+        };
+        audio.service_test_ingress_queue();
+        let onset_result = control.collect_ingress_result().unwrap();
+        let MixedIngressOutcome::Onset(Ok(identity)) = onset_result.outcome else {
+            panic!("typed onset accepted");
+        };
+        let (id, request) = control
+            .submit_release(MixedIngressOriginId(1), occurrence, SampleTime::new(150))
+            .unwrap();
+        audio.service_test_ingress_queue();
+        let actual = control.ingress_results.0.try_pop().unwrap();
+        assert!(matches!(
+            actual.outcome,
+            MixedIngressOutcome::Release(Ok(_))
+        ));
+        let outcome = if handle_refusal {
+            MixedIngressOutcome::Handle(MixedHandleRefused::NotOpen)
+        } else {
+            MixedIngressOutcome::Release(Ok(MixedRetired {
+                occurrence,
+                cause: MixedRetireCause::AfterPanic(identity),
+            }))
+        };
+        let forged = MixedIngressResult { outcome, ..actual };
+        assert!(audio.ingress_results.0.try_push(forged).is_ok());
+        assert_eq!(
+            control.collect_ingress_result_checked(),
+            Err(MixedIngressResultCollectError::Protocol {
+                received: id,
+                expected: Some(id),
+            })
+        );
+        assert_eq!(control.invalid_ingress_result, Some(forged));
+        assert!(control.occurrence_ledger.is_releasing(occurrence, id));
+        assert!(control.occurrence_ledger.is_sounding(occurrence));
+        assert_eq!(
+            control.ingress_journal.front().map(|packet| packet.request),
+            Some(request)
+        );
+        assert_eq!(
+            control.ingress_outstanding,
+            super::MixedIngressQueueCount(1)
+        );
+    }
 }
 
 #[test]

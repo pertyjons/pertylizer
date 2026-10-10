@@ -42,8 +42,7 @@ fn panic_request(at: u64) -> MixedIngressRequest {
     }
 }
 
-#[test]
-fn forged_panic_retirement_of_an_open_cell_keeps_ledger_and_place() {
+fn assert_invalid_panic_member_keeps_ledger_and_place(wrong_kind: bool) {
     let s = scope(1, 1);
     let (mut control, mut audio) = armed_with(true, 2);
     let open = onset_in(&mut control, s, 100, 60);
@@ -56,7 +55,7 @@ fn forged_panic_retirement_of_an_open_cell_keeps_ledger_and_place() {
     let MixedIngressOutcome::Panic(Ok(mut panicked)) = actual.outcome else {
         panic!("the actual Panic applied");
     };
-    panicked.ended[0] = Some(MixedPanicEnd::Retired(open));
+    panicked.ended[0] = wrong_kind.then_some(MixedPanicEnd::Retired(open));
     let forged = super::MixedIngressResult {
         outcome: MixedIngressOutcome::Panic(Ok(panicked)),
         ..actual
@@ -66,10 +65,21 @@ fn forged_panic_retirement_of_an_open_cell_keeps_ledger_and_place() {
     assert_eq!(control.invalid_ingress_result, Some(forged));
     assert_eq!(control.panic_inflight, Some(panic_id));
     assert!(control.occurrence_ledger.is_open(open));
+    assert!(control.occurrence_ledger.is_sounding(open));
     assert_eq!(
         control.ingress_journal.front().map(|packet| packet.id),
         Some(panic_id)
     );
+}
+
+#[test]
+fn forged_panic_retirement_of_an_open_cell_keeps_ledger_and_place() {
+    assert_invalid_panic_member_keeps_ledger_and_place(true);
+}
+
+#[test]
+fn omitted_panic_tombstone_keeps_ledger_and_place() {
+    assert_invalid_panic_member_keeps_ledger_and_place(false);
 }
 
 fn applied(outcome: MixedIngressOutcome) -> MixedPanicked {
