@@ -1910,6 +1910,9 @@ fn pump_concrete_mixed<R: RawBackend>(
     pump_concrete_mixed_for_source(bridge, inbox, pending, Source::First)
 }
 
+#[path = "stage_outcome_tests.rs"]
+mod outcome;
+
 #[test]
 fn full_stage_splits_a_second_onset_and_its_key_up_without_spending_the_first_reservation() {
     for source in [Source::First, Source::Second] {

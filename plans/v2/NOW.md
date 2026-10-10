@@ -988,6 +988,22 @@ reserved cell; both raw observations remain attributable, and mixed audio
 receives only the first note pair.
 This fixture does not establish a production policy for stage-full onsets or
 ordered combined outcome delivery.
+A private source-result journal now exercises that delivery gap with a fixed
+`S + 1` places per `S`-cell source lane: at most `S` staged entries and one
+source-owned pending bend. A raw-admitted note, bend or key-up takes one place
+until its outcome is delivered; a pending bend reuses its place on retry.
+With an older onset unresolved, a later stage-full bend's terminal sound
+split waits behind that onset instead of being reported first. At a full
+journal, the next message stays at its source head before raw admission and
+keeps the same identity on retry. Private teardown returns unadmitted source
+heads without raw IDs and separately names unoffered staged entries, a
+pending bend and resolved splits. Six fixtures cover both sources for the
+capacity and retry cases and check source-fault precedence before backpressure.
+This bound relies on the private bridge collecting each mixed result during
+service. A production journal must also charge commands and results in
+flight, output-queue residency, and recorder delivery until collection.
+Frontiers carry no journal entry here, and no cross-source result order is
+claimed.
 A stage-full pedal-down splits immediately so its protected key-up and later
 raw lift advance. A private shutdown fixture reports the pending bend's
 source queue identity and raw ID before closing both owners. A separate
