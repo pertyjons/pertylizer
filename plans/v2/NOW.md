@@ -933,15 +933,28 @@ instead of a production combined dispatcher.
 A newer private source-ring policy candidate carries pedal, note, bend,
 key-up and lift through exact-head commits. A stage-full bend commits its
 source-ring head after raw admission. If no younger head is queued, it keeps
-one source-owned pending handoff with the same raw ID. Each service pass
-retries that bend first; if stage is still full and a younger message or
-frontier is queued, the bend receives an explicit sound-path split and raw
-capture advances.
+one source-owned pending handoff with the same raw ID. On the first refusal
+and on each retry, a queued younger message or frontier causes a split only
+when no stage head from either source is selected for service. A selected
+older head gets to free its place first; while it remains, the bridge keeps
+retrying the pending bend before taking the younger source head. A split
+advances raw capture without submitting the bend to mixed audio.
 The 2026-10-09 private choice gives a stage-full bend a final sound-path split
 before a younger head enters mixed stage. Immediate and frontier-triggered
 split fixtures record their raw observations; the audio scope keeps its last
 accepted value. A split return to zero leaves that non-zero bend and its
 inherited-credit cost until a later zero is accepted, which may never arrive.
+The private source-ring-to-audio-service fixture checks a positive bend
+surviving a stage-full zero split while the peer frontier blocks the older
+head. The protected key-up uses its stage place, the note inherits the positive
+value, and only a later submitted zero clears the scope. The split mints no
+command ID; all five source messages retain one raw admission each. A second
+fixture queues younger key-up and lift edges before the first bend stage
+refusal or after the older pedal-down is served. Both arrival schedules retain
+the bend and its single raw ID, then produce the same ordered bend entry and
+accepted mixed bend result. A third fixture holds a peer bend at an earlier
+stamp: serving that peer first selects this source's older note, so the pending
+bend takes the freed place without a split or second raw admission.
 Production acceptance must revisit this result and scope-capacity law together
 with ordered result attribution, stage admission and recorder delivery.
 A younger head from that source staged while the bend is still pending, or a
