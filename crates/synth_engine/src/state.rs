@@ -9,7 +9,7 @@ use std::sync::atomic::{AtomicU32 as StdAtomicU32, AtomicU64, AtomicUsize, Order
 
 use parking_lot::RwLock;
 
-use synth_core::{Amplitude, Bpm};
+use synth_core::{Amplitude, Bpm, ContentRevision};
 use synth_sequencer::Tick;
 
 use crate::instrument::InstrumentId;
@@ -571,6 +571,10 @@ pub struct EngineState {
     pub effect_count: AtomicU32,
     /// Instrument metadata snapshots for MCP and multi-GUI access.
     pub instrument_snapshots: RwLock<Vec<InstrumentSnapshot>>,
+    /// Conservative change counter for engine-command publication into
+    /// `instrument_snapshots`. It can advance for a no-op command and does not
+    /// identify an atomic project snapshot.
+    instrument_snapshot_revision: AtomicU64,
     /// Return-bus effect chains, published for the save path (the fader/name
     /// live in the `Song`; the effect chain is engine-side runtime state).
     pub return_bus_effects: RwLock<Vec<ReturnBusSnapshot>>,
@@ -662,6 +666,7 @@ impl EngineState {
             shared_graph: SharedGraphState::new(),
             effect_count: AtomicU32::new(0),
             instrument_snapshots: RwLock::new(Vec::new()),
+            instrument_snapshot_revision: AtomicU64::new(ContentRevision::INITIAL.as_u64()),
             return_bus_effects: RwLock::new(Vec::new()),
             master_effects: RwLock::new(Vec::new()),
             octave_offsets: RwLock::new(HashMap::new()),
@@ -671,6 +676,18 @@ impl EngineState {
             deferred_drop_handoff_failures: StdAtomicU32::new(0),
             sequencer_buffer_growths: StdAtomicU32::new(0),
         })
+    }
+
+    /// Revision of instrument snapshots published through engine commands.
+    /// This detects edits, may overcount no-ops, and is not an atomic version
+    /// of the whole project.
+    pub fn instrument_snapshot_revision(&self) -> ContentRevision {
+        ContentRevision::new(self.instrument_snapshot_revision.load(Ordering::Acquire))
+    }
+
+    pub(crate) fn mark_instrument_snapshot_changed(&self) {
+        self.instrument_snapshot_revision
+            .fetch_add(1, Ordering::Release);
     }
 
     /// Set the focused instrument for keyboard input.
@@ -737,6 +754,7 @@ impl Default for EngineState {
             shared_graph: SharedGraphState::new(),
             effect_count: AtomicU32::new(0),
             instrument_snapshots: RwLock::new(Vec::new()),
+            instrument_snapshot_revision: AtomicU64::new(ContentRevision::INITIAL.as_u64()),
             return_bus_effects: RwLock::new(Vec::new()),
             master_effects: RwLock::new(Vec::new()),
             octave_offsets: RwLock::new(HashMap::new()),

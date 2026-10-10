@@ -20,6 +20,104 @@ pub(super) enum SaveOutcome {
     AwaitingPath,
 }
 
+#[cfg(feature = "mcp")]
+fn reconcile_snapshot_settings(
+    ui_inst: &mut InstrumentUiState,
+    snapshot: &synth_engine::shared_state::InstrumentSnapshot,
+) {
+    // Engine mute and volume are independent. Keep every undoable instrument
+    // setting current even while the instrument is muted.
+    ui_inst.name.clone_from(&snapshot.name);
+    ui_inst.set_volume(snapshot.volume);
+    ui_inst.pan = snapshot.pan;
+    ui_inst.muted = snapshot.muted;
+    ui_inst.solo = snapshot.solo;
+    ui_inst.channel =
+        snapshot
+            .midi_channel
+            .map_or(synth_engine::MidiChannelSelection::OMNI, |channel| {
+                synth_engine::MidiChannelSelection::from_zero_indexed(channel.as_index())
+                    .unwrap_or(ui_inst.channel)
+            });
+    ui_inst.description.clone_from(&snapshot.description);
+    ui_inst.patch_description = snapshot.patch_description.clone().unwrap_or_default();
+    ui_inst.color.clone_from(&snapshot.color);
+    ui_inst.category = snapshot.category;
+    ui_inst.sidechain_source_id = snapshot.sidechain_source_id;
+    ui_inst.key_range = snapshot.key_range;
+    ui_inst.transpose = snapshot.transpose;
+    ui_inst.oversampling = snapshot.oversampling;
+    ui_inst.allocation_mode = snapshot.allocation_mode;
+    ui_inst.stealing_strategy = snapshot.stealing_strategy;
+    ui_inst.unison_detune = snapshot.unison_detune;
+    ui_inst.unison_spread = snapshot.unison_spread;
+    ui_inst.max_voices = snapshot.max_voices;
+    ui_inst.velocity_amp_sensitivity = snapshot.velocity_amp_sensitivity;
+    ui_inst.velocity_filter_sensitivity = snapshot.velocity_filter_sensitivity;
+}
+
+#[cfg(all(test, feature = "mcp"))]
+mod snapshot_settings_tests {
+    use super::*;
+    use synth_core::{Cents, Gain, NormalizedValue, VoiceCount};
+    use synth_engine::voice_allocator::{AllocationMode, StealingStrategy};
+    use synth_engine::{EngineCommand, InstrumentParam, SynthEngine, instrument::Instrument};
+
+    #[test]
+    fn mcp_settings_edits_are_mirrored_while_muted_and_survive_unmute() {
+        let (_engine, handle) = SynthEngine::new();
+        let sender = handle.command_sender();
+        let instrument_id = InstrumentId::FIRST;
+        assert!(sender.send(EngineCommand::AddInstrument {
+            instrument: Box::new(Instrument::new(instrument_id, "Lead")),
+        }));
+        assert!(sender.send(EngineCommand::SetInstrumentEnabled {
+            instrument_id,
+            enabled: false,
+        }));
+        assert!(sender.send(EngineCommand::SetInstrumentParameter {
+            instrument_id,
+            param: InstrumentParam::Volume(Gain::new(0.5)),
+        }));
+        for param in [
+            InstrumentParam::AllocationMode(AllocationMode::Mono),
+            InstrumentParam::StealingStrategy(StealingStrategy::Quietest),
+            InstrumentParam::UnisonDetune(Cents::new(50.0)),
+            InstrumentParam::UnisonSpread(NormalizedValue::new(0.25)),
+            InstrumentParam::MaxVoices(VoiceCount::new(6)),
+        ] {
+            assert!(sender.send(EngineCommand::SetInstrumentParameter {
+                instrument_id,
+                param,
+            }));
+        }
+
+        let mut ui = InstrumentUiState::new(instrument_id, "Lead");
+        ui.muted = true;
+        let muted = handle.state.instrument_snapshots.read()[0].clone();
+        reconcile_snapshot_settings(&mut ui, &muted);
+        assert!(ui.muted);
+        assert_eq!(ui.volume, Gain::new(0.5));
+        let mut settings = ui.settings();
+        assert_eq!(settings.allocation_mode, AllocationMode::Mono);
+        assert_eq!(settings.stealing_strategy, StealingStrategy::Quietest);
+        assert_eq!(settings.unison_detune, Cents::new(50.0));
+        assert_eq!(settings.unison_spread, NormalizedValue::new(0.25));
+        assert_eq!(settings.max_voices, VoiceCount::new(6));
+
+        assert!(sender.send(EngineCommand::SetInstrumentEnabled {
+            instrument_id,
+            enabled: true,
+        }));
+        let unmuted = handle.state.instrument_snapshots.read()[0].clone();
+        reconcile_snapshot_settings(&mut ui, &unmuted);
+        assert!(!ui.muted);
+        assert_eq!(ui.volume, Gain::new(0.5));
+        settings.muted = false;
+        assert_eq!(ui.settings(), settings);
+    }
+}
+
 impl SynthApp {
     /// Resolve the initial directory for the Open file dialog.
     ///
@@ -303,19 +401,8 @@ impl SynthApp {
         // Instruments added by MCP (in engine but not in GUI)
         for snap in &snapshots {
             if !gui_ids.contains(&snap.id) {
-                let channel =
-                    snap.midi_channel
-                        .map_or(synth_engine::MidiChannelSelection::OMNI, |channel| {
-                            synth_engine::MidiChannelSelection::from_zero_indexed(
-                                channel.as_index(),
-                            )
-                            .unwrap_or(synth_engine::MidiChannelSelection::CH1)
-                        });
-                let mut ui_inst = InstrumentUiState::new(snap.id, &snap.name).with_channel(channel);
-                ui_inst.volume = snap.volume;
-                ui_inst.pan = snap.pan;
-                ui_inst.muted = snap.muted;
-                ui_inst.solo = snap.solo;
+                let mut ui_inst = InstrumentUiState::new(snap.id, &snap.name);
+                reconcile_snapshot_settings(&mut ui_inst, snap);
                 self.instruments.push(ui_inst);
             }
         }
@@ -338,32 +425,11 @@ impl SynthApp {
                 .set_focused_instrument(self.active_instrument_id);
         }
 
-        // Update metadata for existing instruments from the engine snapshot.
-        // MCP is the source of truth for these fields when changed, so we
-        // mirror them here so create_project_from_app (which reads from the
-        // GUI-side InstrumentUiState) sees the latest values at save time.
+        // Mirror command-published settings for display and undo snapshots.
+        // Project saving reads these settings directly from engine snapshots.
         for snap in &snapshots {
             if let Some(ui_inst) = self.instruments.iter_mut().find(|i| i.id == snap.id) {
-                ui_inst.name = snap.name.clone();
-                if !ui_inst.muted {
-                    ui_inst.volume = snap.volume;
-                }
-                ui_inst.pan = snap.pan;
-                ui_inst.muted = snap.muted;
-                ui_inst.solo = snap.solo;
-                ui_inst.channel =
-                    snap.midi_channel
-                        .map_or(synth_engine::MidiChannelSelection::OMNI, |channel| {
-                            synth_engine::MidiChannelSelection::from_zero_indexed(
-                                channel.as_index(),
-                            )
-                            .unwrap_or(ui_inst.channel)
-                        });
-                ui_inst.description = snap.description.clone();
-                ui_inst.patch_description = snap.patch_description.clone().unwrap_or_default();
-                ui_inst.color = snap.color.clone();
-                ui_inst.category = snap.category;
-                ui_inst.sidechain_source_id = snap.sidechain_source_id;
+                reconcile_snapshot_settings(ui_inst, snap);
             }
         }
     }

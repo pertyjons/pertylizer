@@ -725,6 +725,7 @@ impl SynthApp {
         crate::dirty::ProjectRevision {
             song: self.song.revision(),
             graph: synth_core::ContentRevision::new(self.session.state().shared_graph.version()),
+            instrument_snapshot: self.session.state().instrument_snapshot_revision(),
             samples: self
                 .sample_library
                 .read()

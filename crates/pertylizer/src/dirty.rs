@@ -13,7 +13,8 @@
 //! | Term | Covers |
 //! |---|---|
 //! | [`SharedSong::revision`](synth_sequencer::SharedSong::revision) | notes, patterns, placements, tempo, time signatures, automation, Note/Mod Grid graphs, tracks, mixer controls, return buses and sends |
-//! | [`SharedGraph::version`](synth_engine::SharedGraph::version) | instruments, modules, parameters, connections |
+//! | [`SharedGraph::version`](synth_engine::SharedGraph::version) | instrument graphs, modules, module parameters, connections |
+//! | [`EngineState::instrument_snapshot_revision`](synth_engine::EngineState::instrument_snapshot_revision) | command-published instrument settings and metadata, including MCP parameter edits |
 //! | [`SampleLibrary::revision`](synth_sampler::SampleLibrary::revision) | sample import/delete/rename/metadata and destructive DSP edits |
 //! | [`ProjectRevision::ui`] | GUI-owned state the others do not hold — instrument properties and project metadata |
 //! | [`ProjectRevision::layout`] | patch-canvas layout: module positions, group boxes and their persisted fields |
@@ -26,12 +27,12 @@
 //!
 //! `layout`, `global` and `effect_order` are fingerprints rather than counters,
 //! for the same reason: the state they watch is reached from too many places for
-//! "remember to report" to hold. The last three of the seven rows had to be added
-//! after the fact, and all for one underlying reason — each watches state the
-//! save path writes that no counter owns. `global` and `effect_order` hang off
-//! `EngineState` rather than off the `SharedGraphState` whose version the `graph`
-//! counter reads; `focus` is GUI state on `SynthApp`, and its three mutation
-//! sites did not report themselves.
+//! "remember to report" to hold. `global` and `effect_order` read fields on
+//! `EngineState` rather than the `SharedGraphState` whose version the `graph`
+//! counter reads. The instrument-snapshot counter overlaps `effect_order`
+//! for command-published reorders; the fingerprint also sees writes made
+//! directly through the public snapshot lock. `focus` is GUI state on `SynthApp`,
+//! and its three mutation sites did not report themselves.
 //!
 //! # Undoing back to the saved state
 //!
@@ -48,8 +49,8 @@
 
 use synth_core::ContentRevision;
 
-/// The edit counters of every subsystem that owns part of a project, captured
-/// at one instant.
+/// The edit counters and fingerprints of the subsystems that own project state,
+/// collected during one read pass rather than as an atomic snapshot.
 ///
 /// Compared for equality only: a difference in any field means something
 /// changed. The individual values are meaningful solely against another
@@ -59,8 +60,10 @@ use synth_core::ContentRevision;
 pub(crate) struct ProjectRevision {
     /// Sequencer song: patterns, tracks, automation, grids, mixer, return buses.
     pub song: ContentRevision,
-    /// Engine graph: instruments, modules, parameters, connections, effects.
+    /// Instrument graphs, modules, module parameters, connections, effects.
     pub graph: ContentRevision,
+    /// Command-published instrument settings and metadata outside the graph.
+    pub instrument_snapshot: ContentRevision,
     /// Sample library: imports, deletions, metadata, destructive edits.
     pub samples: ContentRevision,
     /// Explicitly reported GUI-only edits — instrument properties and project
@@ -80,7 +83,7 @@ pub(crate) struct ProjectRevision {
     /// return-bus effect chains.
     ///
     /// These are all written by the save path ([`GlobalProjectState`] plus the
-    /// transport loop) and none of them are owned by the four counters above.
+    /// transport loop) and none of them are owned by the counters above.
     /// Master volume is an engine atomic; octave and glide are GUI widget
     /// state; the loop region is mirrored out of the sequencer engine rather
     /// than kept in the `Song`; and the effect chains are `RwLock`s on
@@ -264,6 +267,7 @@ mod tests {
         ProjectRevision {
             song: ContentRevision::new(song),
             graph: ContentRevision::new(graph),
+            instrument_snapshot: ContentRevision::INITIAL,
             samples: ContentRevision::new(samples),
             ui: ContentRevision::new(ui),
             layout,
@@ -302,6 +306,10 @@ mod tests {
         for changed in [
             revision(4, 7, 1, 0, 99, 42, 11),
             revision(3, 8, 1, 0, 99, 42, 11),
+            ProjectRevision {
+                instrument_snapshot: ContentRevision::new(1),
+                ..baseline
+            },
             revision(3, 7, 2, 0, 99, 42, 11),
             revision(3, 7, 1, 1, 99, 42, 11),
             revision(3, 7, 1, 0, 100, 42, 11),
@@ -328,7 +336,7 @@ mod tests {
 
     /// Every term of the global fingerprint, one mutation at a time.
     ///
-    /// Each of these is written by the save path and owned by none of the four
+    /// Each of these is written by the save path and owned by none of the
     /// counters, so before the fingerprint existed each one could be changed
     /// with the project still reporting itself clean. A term dropped from
     /// `global_fingerprint` — or a field added to `GlobalProjectState` without
@@ -478,8 +486,9 @@ mod tests {
         }
     }
 
-    /// The effect-chain order of each instrument, which is persisted but owned
-    /// by none of the counters.
+    /// The persisted effect-chain order of each instrument. The snapshot
+    /// counter detects command-published reorders; this fingerprint also
+    /// detects writes through the public snapshot lock.
     mod effect_order {
         use super::*;
         use synth_core::ModuleType;
@@ -502,9 +511,8 @@ mod tests {
             )
         }
 
-        /// The headline case: the same effects in a new sequence. Nothing is
-        /// added or removed, so no counter moves — but the file that would be
-        /// written differs.
+        /// The headline case: the same effects in a new sequence. The file
+        /// differs even though module identities and parameters are unchanged.
         #[test]
         fn reordering_an_instrument_chain_changes_the_fingerprint() {
             assert_ne!(

@@ -1,7 +1,8 @@
 //! Every major editor's mutations must reach the unsaved-changes mechanism.
 //!
-//! Dirty state is derived from three edit counters (`SharedSong::revision`,
-//! `SharedGraph::version`, `SampleLibrary::revision`) plus fingerprints of the
+//! Dirty state is derived from edit counters (`SharedSong::revision`,
+//! `SharedGraph::version`, `EngineState::instrument_snapshot_revision`,
+//! `SampleLibrary::revision`) plus fingerprints of the
 //! patch-canvas layout, of the project's global state and of each instrument's
 //! effect-chain order, plus the focused instrument. The point of that design is
 //! that an editor cannot silently bypass it — but only as long as each editor
@@ -133,11 +134,9 @@ fn rack_module_edits_mark_the_project_dirty() {
     );
 }
 
-/// Moving an effect along an instrument's chain changes nothing the three
-/// counters watch: the same modules with the same parameters, only in a new
-/// sequence. The order is persisted all the same, so it has its own fingerprint
-/// term — and that term reads `instrument_snapshots`, which is what this
-/// asserts the reorder command actually reaches.
+/// Moving an effect changes its persisted order in `instrument_snapshots`.
+/// Both the snapshot revision and the order fingerprint observe that state;
+/// this test checks that the reorder command actually publishes the new order.
 #[test]
 fn instrument_effect_chain_reorder_marks_the_project_dirty() {
     use synth_core::{InstrumentId, ModuleType};
@@ -185,7 +184,32 @@ fn instrument_effect_chain_reorder_marks_the_project_dirty() {
     );
 }
 
-/// Sample edits live in the library, the third counter.
+/// MCP sends instrument parameters through the command publisher. Volume lives
+/// in an instrument snapshot, so the graph and GUI edit counters can stay put.
+#[test]
+fn command_published_instrument_volume_advances_its_snapshot_revision() {
+    use synth_core::{Gain, InstrumentId};
+    use synth_engine::{EngineCommand, InstrumentParam, instrument::Instrument};
+
+    let (_engine, handle) = SynthEngine::new();
+    let sender = handle.command_sender();
+    assert!(sender.send(EngineCommand::AddInstrument {
+        instrument: Box::new(Instrument::new(InstrumentId::FIRST, "Lead")),
+    }));
+    let before = handle.state.instrument_snapshot_revision();
+    let graph_before = handle.state.shared_graph.version();
+    let volume = Gain::new(0.5);
+    assert!(sender.send(EngineCommand::SetInstrumentParameter {
+        instrument_id: InstrumentId::FIRST,
+        param: InstrumentParam::Volume(volume),
+    }));
+
+    assert_eq!(handle.state.instrument_snapshots.read()[0].volume, volume);
+    assert_ne!(handle.state.instrument_snapshot_revision(), before);
+    assert_eq!(handle.state.shared_graph.version(), graph_before);
+}
+
+/// Sample edits live in the library's own counter.
 #[test]
 fn sample_edits_mark_the_project_dirty() {
     use synth_sampler::{Sample, SampleLibrary, SampleMeta, SampleSource};

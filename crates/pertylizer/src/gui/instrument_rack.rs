@@ -26,7 +26,7 @@ pub struct InstrumentUiState {
     pub volume: Gain,
     /// Stereo pan position (-1.0 = left, 0.0 = center, +1.0 = right).
     pub pan: BipolarValue,
-    /// Whether this instrument is muted (uses volume = 0 for soft mute).
+    /// Whether this instrument is muted. Engine mute leaves its volume unchanged.
     pub muted: bool,
     /// Whether this instrument is soloed.
     /// When any instrument is soloed, only soloed instruments produce sound.

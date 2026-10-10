@@ -24,23 +24,27 @@ pub(crate) fn publish(command: &EngineCommand, state: &Arc<EngineState>) {
             let mut instruments = state.instrument_snapshots.write();
             instruments.retain(|snapshot| snapshot.id != instrument.id());
             instruments.push(instrument_snapshot(instrument));
+            state.mark_instrument_snapshot_changed();
         }
         EngineCommand::RemoveInstrument { instrument_id } => {
-            state
-                .instrument_snapshots
-                .write()
-                .retain(|snapshot| snapshot.id != *instrument_id);
+            {
+                let mut instruments = state.instrument_snapshots.write();
+                instruments.retain(|snapshot| snapshot.id != *instrument_id);
+                state.mark_instrument_snapshot_changed();
+            }
             state
                 .shared_graph
                 .remove_modules_for_instrument(*instrument_id);
             state
                 .shared_graph
                 .set_connections_for_instrument(*instrument_id, Vec::new());
-            for snapshot in state.instrument_snapshots.write().iter_mut() {
+            let mut instruments = state.instrument_snapshots.write();
+            for snapshot in instruments.iter_mut() {
                 if snapshot.sidechain_source_id == Some(*instrument_id) {
                     snapshot.sidechain_source_id = None;
                 }
             }
+            state.mark_instrument_snapshot_changed();
         }
         EngineCommand::RenameInstrument {
             instrument_id,
@@ -225,13 +229,15 @@ pub(crate) fn publish(command: &EngineCommand, state: &Arc<EngineState>) {
         EngineCommand::ClearAllModules => {
             state.shared_graph.clear();
             state.master_effects.write().clear();
-            for snapshot in state.instrument_snapshots.write().iter_mut() {
+            let mut instruments = state.instrument_snapshots.write();
+            for snapshot in instruments.iter_mut() {
                 snapshot.enabled = false;
                 snapshot.muted = true;
                 snapshot.module_count = 0;
                 snapshot.effect_count = 0;
                 snapshot.effect_chain_order.clear();
             }
+            state.mark_instrument_snapshot_changed();
         }
         EngineCommand::SetBypass {
             instrument_id,
@@ -328,13 +334,13 @@ fn patch_instrument(
     instrument_id: InstrumentId,
     patch: impl FnOnce(&mut InstrumentSnapshot),
 ) {
-    if let Some(snapshot) = state
-        .instrument_snapshots
-        .write()
+    let mut instruments = state.instrument_snapshots.write();
+    if let Some(snapshot) = instruments
         .iter_mut()
         .find(|snapshot| snapshot.id == instrument_id)
     {
         patch(snapshot);
+        state.mark_instrument_snapshot_changed();
     }
 }
 

@@ -220,6 +220,11 @@ Next for Phase 9, in this order:
    render one quantum after the play boundary; [EVD-0025](evidence/phase-09/EVD-0025-song-playback-partition.md)
    qualifies the song-playback partition, so item 12 is met for it and the gate is open; the application
    switch and its toggle are wired behind `v2-lowering`.
+   The application now notices command-published instrument snapshot edits, including MCP
+   volume changes that leave the graph version unchanged. Reconciliation mirrors the current
+   instrument settings even while muted, so later GUI edits, undo and unmute use their current
+   values. These revisions detect change; they do not bind one atomic `ProjectFile` to a plan
+   or replace a canonical project revision.
 7. Done: [REV-P09A](reviews/phase-09a-exit-review.md) accepts the 9A gate. Phase 9's exit remains open.
 
 ### Selected work — concurrent live host and duplex capture

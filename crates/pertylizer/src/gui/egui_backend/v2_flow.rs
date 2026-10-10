@@ -9,11 +9,15 @@ use crate::lowering::app::SongSwitch;
 use synth_engine::EngineCommand;
 
 /// The parts of the project revision that change what V2 plays. Canvas layout and focus
-/// are left out: they change constantly and never reach the lowering. The UI revision stays:
-/// it carries instrument volume, pan, mute, solo, transpose and key range, which V2 plays, so
-/// a purely cosmetic instrument edit also rebuilds, which is conservative.
-/// The last two are fingerprints of the global settings and the effect order.
+/// are left out: they change constantly and never reach the lowering. The UI revision stays
+/// for GUI-owned edits; a purely cosmetic edit may also rebuild, which is conservative.
+/// The command-published instrument snapshot revision catches sound settings such as volume,
+/// pan, mute, solo, transpose and key range, including MCP edits that do not advance the graph
+/// or GUI revision. The last two are fingerprints of the global
+/// settings and the effect order. This tuple detects changes; it does not label one atomic
+/// `ProjectFile` snapshot.
 type AudibleRevision = (
+    synth_core::ContentRevision,
     synth_core::ContentRevision,
     synth_core::ContentRevision,
     synth_core::ContentRevision,
@@ -21,6 +25,33 @@ type AudibleRevision = (
     u64,
     u64,
 );
+
+fn audible_revision_of(revision: crate::dirty::ProjectRevision) -> AudibleRevision {
+    (
+        revision.song,
+        revision.graph,
+        revision.instrument_snapshot,
+        revision.samples,
+        revision.ui,
+        revision.global,
+        revision.effect_order,
+    )
+}
+
+#[cfg(test)]
+mod revision_tests {
+    use super::*;
+
+    #[test]
+    fn command_published_instrument_edits_change_the_playback_revision() {
+        let before = crate::dirty::ProjectRevision::default();
+        let after = crate::dirty::ProjectRevision {
+            instrument_snapshot: synth_core::ContentRevision::new(1),
+            ..before
+        };
+        assert_ne!(audible_revision_of(before), audible_revision_of(after));
+    }
+}
 
 /// The V2 toggle's state on the app.
 #[derive(Default)]
@@ -43,15 +74,7 @@ impl V2State {
 
 impl SynthApp {
     fn audible_revision(&self) -> AudibleRevision {
-        let revision = self.current_revision();
-        (
-            revision.song,
-            revision.graph,
-            revision.samples,
-            revision.ui,
-            revision.global,
-            revision.effect_order,
-        )
+        audible_revision_of(self.current_revision())
     }
 
     pub(super) fn v2_active(&self) -> bool {
