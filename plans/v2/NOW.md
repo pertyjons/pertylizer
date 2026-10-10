@@ -225,6 +225,12 @@ Next for Phase 9, in this order:
    instrument settings even while muted, so later GUI edits, undo and unmute use their current
    values. These revisions detect change; they do not bind one atomic `ProjectFile` to a plan
    or replace a canonical project revision.
+   The V2 application switch now binds a SHA-256 digest of the serialized instrument, song and
+   global fields passed to lowering to each successful install sequence. Its GUI badge exposes
+   that digest only after the matching plan completes an unmuted callback; deferred edits and
+   refused installs cannot relabel the audible plan. This is a session-local lowering-input
+   identity, not a bitwise identity for non-finite raw floats, an atomic project revision or
+   MCP publication, so the full exit requirement for GUI/MCP revision matching remains open.
 7. Done: [REV-P09A](reviews/phase-09a-exit-review.md) accepts the 9A gate. Phase 9's exit remains open.
 
 ### Selected work — concurrent live host and duplex capture

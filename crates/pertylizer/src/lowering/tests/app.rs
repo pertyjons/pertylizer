@@ -1,6 +1,6 @@
 //! ADR-0077's application switch: V2 song playback around the V1 processor.
 use super::*;
-use crate::lowering::app::{MAX_CALLBACK_FRAMES, SongSwitch, wrap};
+use crate::lowering::app::{LoweredProjectDigest, MAX_CALLBACK_FRAMES, SongSwitch, wrap};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use synth_core::audio::{
@@ -138,6 +138,68 @@ fn rendered_install_acknowledges_only_a_completed_unmuted_callback() {
         control.rendered_install(),
         None,
         "the V1 callback clears it"
+    );
+}
+
+#[test]
+fn rendered_plan_digest_follows_the_project_that_was_installed() {
+    let first_project = corpus_project("subtractive-voice");
+    let mut edited_project = first_project.clone();
+    edited_project.global.master_volume = synth_core::Gain::new(0.37);
+    let first_digest = LoweredProjectDigest::of(&first_project).unwrap();
+    let edited_digest = LoweredProjectDigest::of(&edited_project).unwrap();
+    assert_ne!(first_digest, edited_digest);
+
+    let (mut control, mut processor, _) = switch();
+    assert!(control.enable(&first_project));
+    assert_eq!(control.rendered_plan(), None);
+    callback(&mut processor);
+    let first = control.rendered_plan().expect("the first plan rendered");
+    assert_eq!(first.project_digest(), first_digest);
+    assert_eq!(Some(first.plan_id()), control.rendered_plan_id());
+
+    control.project_changed(|| edited_project.clone());
+    assert_eq!(control.rendered_plan(), None, "the edit is only queued");
+    callback(&mut processor);
+    let edited = control.rendered_plan().expect("the edited plan rendered");
+    assert_ne!(edited.plan_id(), first.plan_id());
+    assert_eq!(edited.project_digest(), edited_digest);
+
+    control.play(|| first_project.clone());
+    for _ in 0..8 {
+        callback(&mut processor);
+    }
+    control.project_changed(|| first_project.clone());
+    assert_eq!(
+        control.rendered_plan().map(|plan| plan.project_digest()),
+        Some(edited_digest),
+        "a deferred edit must not relabel the audible plan"
+    );
+    control.pause();
+    let mut rebuilt = false;
+    for _ in 0..64 {
+        callback(&mut processor);
+        control.poll(|| {
+            rebuilt = true;
+            first_project.clone()
+        });
+        if rebuilt {
+            break;
+        }
+    }
+    assert!(rebuilt, "the deferred edit must eventually be installed");
+    assert_eq!(
+        control.rendered_plan(),
+        None,
+        "the new plan awaits a callback"
+    );
+    callback(&mut processor);
+    assert_eq!(
+        control
+            .rendered_plan()
+            .expect("the deferred plan rendered")
+            .project_digest(),
+        first_digest
     );
 }
 
@@ -452,15 +514,20 @@ fn an_oversized_callback_faults_v2_and_prepares_it_again() {
 #[test]
 fn play_waits_for_an_edit_it_cannot_install_yet() {
     let project = corpus_project("subtractive-voice");
+    let mut edited = project.clone();
+    edited.global.master_volume = synth_core::Gain::new(0.37);
+    let original_digest = LoweredProjectDigest::of(&project).unwrap();
+    let edited_digest = LoweredProjectDigest::of(&edited).unwrap();
+    assert_ne!(original_digest, edited_digest);
     let (mut control, mut processor, _) = switch();
     assert!(control.enable(&project));
     // No callback drains the ring; stopped edits each install a session until it is full.
     while control.can_switch() {
         control.project_changed(|| project.clone());
     }
-    control.project_changed(|| project.clone());
+    control.project_changed(|| edited.clone());
     let _notices = control.take_notices();
-    control.play(|| project.clone());
+    control.play(|| edited.clone());
     assert!(!control.is_playing(), "the old session is not started");
     assert!(
         control
@@ -470,14 +537,28 @@ fn play_waits_for_an_edit_it_cannot_install_yet() {
     );
     // Once the callback drains the ring, the edit applies and play starts the new session.
     callback(&mut processor);
-    control.poll(|| project.clone());
+    assert_eq!(
+        control.rendered_plan().map(|plan| plan.project_digest()),
+        Some(original_digest),
+        "a refused install cannot relabel the last rendered plan"
+    );
+    control.poll(|| edited.clone());
+    assert_eq!(control.rendered_plan(), None, "the retry is only queued");
     assert!(
         control
             .take_notices()
             .iter()
             .any(|n| n.contains("the edit is applied"))
     );
-    control.play(|| project.clone());
+    callback(&mut processor);
+    assert_eq!(
+        control
+            .rendered_plan()
+            .expect("the retried plan rendered")
+            .project_digest(),
+        edited_digest
+    );
+    control.play(|| edited.clone());
     assert!(control.is_playing());
 }
 

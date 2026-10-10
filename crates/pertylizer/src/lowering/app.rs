@@ -14,6 +14,7 @@ use ringbuf::{
     HeapCons, HeapProd, HeapRb,
     traits::{Consumer, Observer, Producer, Split},
 };
+use sha2::{Digest, Sha256};
 use synth_core::audio::{AudioCallbackContext, AudioError, AudioProcessor, StreamInfo};
 use synth_engine_v2::{
     plan::PlanId,
@@ -56,6 +57,57 @@ impl InstallSequence {
 
     fn from_rendered(value: u64) -> Option<Self> {
         (value != Self::NONE.0 && value != Self::NEVER.0).then_some(Self(value))
+    }
+}
+
+/// Canonical JSON projection of the project fields passed to V2 lowering,
+/// independent of the plan identity and callback installation sequence.
+/// Non-finite raw floats serialize as `null`, so this is not a bitwise identity
+/// for every possible in-memory `ProjectFile`.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[must_use]
+pub(crate) struct LoweredProjectDigest([u8; 32]);
+
+impl LoweredProjectDigest {
+    /// Hash the project fields consumed by `lower_project`. Converting to a
+    /// JSON value first gives map fields a stable key order.
+    pub(crate) fn of(project: &crate::project::ProjectFile) -> Result<Self, serde_json::Error> {
+        let value = serde_json::to_value((&project.instruments, &project.song, &project.global))?;
+        let bytes = serde_json::to_vec(&value)?;
+        let hash = Sha256::digest(bytes);
+        let mut digest = [0; 32];
+        digest.copy_from_slice(&hash);
+        Ok(Self(digest))
+    }
+}
+
+impl std::fmt::Display for LoweredProjectDigest {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        for byte in self.0 {
+            write!(f, "{byte:02x}")?;
+        }
+        Ok(())
+    }
+}
+
+/// A V2 plan and its lowering input, visible only after its installation has
+/// completed a callback without being muted.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[must_use]
+pub(crate) struct RenderedPlan {
+    install: InstallSequence,
+    plan: PlanId,
+    project: LoweredProjectDigest,
+}
+
+impl RenderedPlan {
+    pub(crate) const fn plan_id(self) -> PlanId {
+        self.plan
+    }
+
+    #[cfg(any(feature = "gui-egui", test))]
+    pub(crate) const fn project_digest(self) -> LoweredProjectDigest {
+        self.project
     }
 }
 
@@ -104,6 +156,9 @@ pub struct SongSwitch {
     commands: HeapProd<SwitchCommand>,
     retired: HeapCons<Box<SongAudio>>,
     playback: Option<SongPlayback>,
+    /// Metadata for the newest successfully queued session. Its install
+    /// sequence prevents a previous callback from labelling this plan.
+    latest_plan: Option<RenderedPlan>,
     /// `None` when the device reported a rate V2 cannot represent; V2 mode then refuses.
     rate: Option<SampleRate>,
     channels: usize,
@@ -141,6 +196,7 @@ pub fn wrap<P: AudioProcessor>(v1: P) -> (SongSwitch, EngineSwitch<P>) {
             commands,
             retired: retired_reader,
             playback: None,
+            latest_plan: None,
             rate: None,
             channels: 0,
             occupied: false,
@@ -301,9 +357,19 @@ impl SongSwitch {
     /// here; a deferred edit has not queued a replacement yet.
     #[must_use]
     pub fn rendered_plan_id(&self) -> Option<PlanId> {
-        (self.rendered_install() == Some(self.sent))
-            .then(|| self.playback.as_ref().map(SongPlayback::plan_id))
-            .flatten()
+        self.rendered_plan().map(RenderedPlan::plan_id)
+    }
+
+    /// The last completed audible installation and its serialized project
+    /// input. This session-local identity is neither a canonical project
+    /// revision nor a device-liveness indication.
+    #[must_use]
+    pub(crate) fn rendered_plan(&self) -> Option<RenderedPlan> {
+        let latest = self.latest_plan?;
+        (self.playback.is_some()
+            && latest.install == self.sent
+            && self.rendered_install() == Some(latest.install))
+        .then_some(latest)
     }
 
     /// Record the output stream's actual configuration, once it has started.
@@ -375,8 +441,10 @@ impl SongSwitch {
     fn prepare(
         &self,
         project: &crate::project::ProjectFile,
-    ) -> Result<(SongPlayback, SongAudio, Vec<String>), String> {
+    ) -> Result<(SongPlayback, SongAudio, LoweredProjectDigest, Vec<String>), String> {
         let profile = self.profile()?;
+        let digest = LoweredProjectDigest::of(project)
+            .map_err(|error| format!("V2 lowering input cannot be identified: {error}"))?;
         let lowered = lower_project(
             &project.instruments,
             &project.song,
@@ -393,11 +461,16 @@ impl SongSwitch {
             .collect();
         let (playback, audio) =
             prepare_song(lowered, profile).map_err(|error: SongPlaybackError| error.to_string())?;
-        Ok((playback, audio, unrepresented))
+        Ok((playback, audio, digest, unrepresented))
     }
 
     /// Queue a session for the callback or return its capacity/identity refusal.
-    fn install(&mut self, audio: SongAudio) -> Result<(), InstallError> {
+    fn install(
+        &mut self,
+        audio: SongAudio,
+        plan: PlanId,
+        project: LoweredProjectDigest,
+    ) -> Result<(), InstallError> {
         let sequence = self.sent.next().ok_or(InstallError::IdentityExhausted)?;
         if self
             .commands
@@ -407,6 +480,11 @@ impl SongSwitch {
             return Err(InstallError::Full);
         }
         self.sent = sequence;
+        self.latest_plan = Some(RenderedPlan {
+            install: sequence,
+            plan,
+            project,
+        });
         if self.occupied {
             self.retiring += 1;
         }
@@ -427,13 +505,13 @@ impl SongSwitch {
             return false;
         }
         match self.prepare(project) {
-            Ok((playback, audio, unrepresented)) => {
+            Ok((playback, audio, digest, unrepresented)) => {
                 // Whatever silenced an earlier V2 mode ends with this session.
                 self.muted_until.store(
                     self.sent.next().unwrap_or(InstallSequence::NEVER).as_u64(),
                     Ordering::Release,
                 );
-                if let Err(error) = self.install(audio) {
+                if let Err(error) = self.install(audio, playback.plan_id(), digest) {
                     self.notices
                         .push(format!("V2 playback cannot switch: {error}"));
                     return false;
@@ -468,6 +546,7 @@ impl SongSwitch {
         }
         self.occupied = false;
         self.playback = None;
+        self.latest_plan = None;
         self.rebuild_pending = false;
         self.disable_pending = false;
     }
@@ -481,30 +560,33 @@ impl SongSwitch {
             return false;
         }
         match self.prepare(project) {
-            Ok((playback, audio, unrepresented)) => match self.install(audio) {
-                Ok(()) => {
-                    self.playback = Some(playback);
-                    self.rebuild_pending = false;
-                    self.omissions = unrepresented;
-                    true
+            Ok((playback, audio, digest, unrepresented)) => {
+                match self.install(audio, playback.plan_id(), digest) {
+                    Ok(()) => {
+                        self.playback = Some(playback);
+                        self.rebuild_pending = false;
+                        self.omissions = unrepresented;
+                        true
+                    }
+                    Err(InstallError::Full) => {
+                        self.rebuild_pending = true;
+                        false
+                    }
+                    Err(InstallError::IdentityExhausted) => {
+                        self.disable_pending = true;
+                        self.muted_until
+                            .store(InstallSequence::NEVER.as_u64(), Ordering::Release);
+                        self.notices.push(
+                            "V2 playback stops: installation identities are exhausted".to_owned(),
+                        );
+                        false
+                    }
                 }
-                Err(InstallError::Full) => {
-                    self.rebuild_pending = true;
-                    false
-                }
-                Err(InstallError::IdentityExhausted) => {
-                    self.disable_pending = true;
-                    self.muted_until
-                        .store(InstallSequence::NEVER.as_u64(), Ordering::Release);
-                    self.notices.push(
-                        "V2 playback stops: installation identities are exhausted".to_owned(),
-                    );
-                    false
-                }
-            },
+            }
             Err(reason) => {
-                self.notices
-                    .push(format!("V2 playback stops: the edited project {reason}"));
+                self.notices.push(format!(
+                    "V2 playback stops: edited project preparation failed: {reason}"
+                ));
                 // The refused project must never play: V2 is silenced from the next callback,
                 // whatever any ring holds. Leaving V2 mode is the application's, so that V1 is
                 // reset before it is heard again.

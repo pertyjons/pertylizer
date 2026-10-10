@@ -239,29 +239,37 @@ impl SynthApp {
             return;
         };
         let omissions = switch.omissions();
-        let rendered = switch.rendered_plan_id();
+        let rendered = switch.rendered_plan();
         let text = match (rendered, omissions.len()) {
-            (Some(plan), 0) => format!("V2 {plan}"),
-            (Some(plan), count) => format!("V2 {plan}: {count} omitted"),
+            (Some(plan), 0) => format!("V2 {}", plan.plan_id()),
+            (Some(plan), count) => format!("V2 {}: {count} omitted", plan.plan_id()),
             (None, 0) => "V2 plan unconfirmed".to_owned(),
             (None, count) => format!("V2 plan unconfirmed: {count} omitted"),
         };
-        let tooltip = if rendered.is_none() {
-            let pending =
-                "The latest V2 plan has not completed a callback, or V2 output is silent.";
-            if omissions.is_empty() {
-                pending.to_owned()
-            } else {
-                format!(
-                    "{pending}\nV2 lowering omissions:\n{}",
-                    omissions.join("\n")
-                )
+        let tooltip = match rendered {
+            None => {
+                let pending =
+                    "The latest V2 plan has not completed a callback, or V2 output is silent.";
+                if omissions.is_empty() {
+                    pending.to_owned()
+                } else {
+                    format!(
+                        "{pending}\nV2 lowering omissions:\n{}",
+                        omissions.join("\n")
+                    )
+                }
             }
-        } else if omissions.is_empty() {
-            "The last completed V2 callback rendered this plan; lowering reported no omissions."
-                .to_owned()
-        } else {
-            omissions.join("\n")
+            Some(plan) => {
+                let source = format!(
+                    "The last completed V2 callback rendered this plan. Serialized project input SHA-256: {}",
+                    plan.project_digest()
+                );
+                if omissions.is_empty() {
+                    format!("{source}\nLowering reported no omissions.")
+                } else {
+                    format!("{source}\nV2 lowering omissions:\n{}", omissions.join("\n"))
+                }
+            }
         };
         ui.label(text).on_hover_text(tooltip);
     }

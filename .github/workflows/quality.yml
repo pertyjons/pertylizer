@@ -34,8 +34,12 @@ jobs:
         run: cargo build --workspace
       - name: Clippy
         run: cargo clippy --workspace --all-targets
+      - name: V2 GUI Clippy
+        run: cargo clippy -p pertylizer --all-targets --features v2-lowering
       - name: Test
         run: cargo test --workspace
+      - name: V2 GUI tests
+        run: cargo test -p pertylizer --features v2-lowering --lib gui::egui_backend::v2_flow::
       # The oversized-callback resource probe (LIMIT-0001, EVD-0006) has a
       # #[cfg(not(debug_assertions))] arm that dev-profile test runs never
       # compile; without this step no gate would ever execute or type-check it.
@@ -47,6 +51,8 @@ jobs:
         run: cargo check --workspace --all-targets --no-default-features
       - name: Complete feature set
         run: cargo check --workspace --all-targets --all-features
+      - name: Headless V2 feature
+        run: cargo check -p pertylizer --no-default-features --features v2-lowering
 
   msrv:
     name: Rust 1.98

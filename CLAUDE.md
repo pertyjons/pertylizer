@@ -108,7 +108,9 @@ python3 -B -m unittest scripts/test_check_v2_docs.py
 cargo fmt --check
 cargo build --workspace
 cargo clippy --workspace --all-targets
+cargo clippy -p pertylizer --all-targets --features v2-lowering
 cargo test --workspace
+cargo test -p pertylizer --features v2-lowering --lib gui::egui_backend::v2_flow::
 cargo test -p synth_engine --release resource_limit_probe_oversized_callback_exposes_build_mode_failure
 cargo doc --workspace --no-deps
 ```
@@ -118,6 +120,7 @@ The complete repository gate adds configuration and MSRV coverage:
 ```bash
 cargo check --workspace --all-targets --no-default-features
 cargo check --workspace --all-targets --all-features
+cargo check -p pertylizer --no-default-features --features v2-lowering
 cargo +1.98.0 check --workspace
 ```
 
@@ -126,11 +129,15 @@ cargo +1.98.0 check --workspace
 `synth_engine_v2` crate is not a dependency of that package. A bare Cargo command
 therefore does not cover every workspace target. The explicit release-mode test
 is also required because its `#[cfg(not(debug_assertions))]` branch is not
-compiled by the ordinary development-profile test run.
+compiled by the ordinary development-profile test run. The feature-specific
+Clippy and test commands cover V2's GUI flow, which the default workspace
+commands do not compile or execute; V2's switch tests already run under
+`cargo test --workspace`.
 
 The complete gate mirrors `.github/workflows/quality.yml`: the core gate plus
-the three configuration/MSRV commands above. The MSRV command requires the
-Rust 1.98 toolchain.
+the four configuration/MSRV commands above. The V2-only check covers the
+headless experimental application without default GUI features. The MSRV
+command requires the Rust 1.98 toolchain.
 
 The only pre-approved Clippy exceptions are `too_many_lines` for large
 `process()` functions, `cast_precision_loss` for `usize` to `f32` conversion in
