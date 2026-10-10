@@ -111,9 +111,13 @@ impl SynthApp {
             // then is V2 entered. If a later step fails, MIDI reconnects and V1 stays.
             self.v2.midi_port = self.midi_handler.disconnect();
             if self.silence_v1() {
+                // Read before building: an edit during the multi-owner snapshot
+                // must remain visible to the next poll instead of being labelled
+                // as already included in the installed plan.
+                let revision = self.audible_revision();
                 let project = self.create_project_from_app();
                 if switch.enable(&project) {
-                    self.v2.revision = Some(self.audible_revision());
+                    self.v2.revision = Some(revision);
                 } else {
                     self.reconnect_midi();
                 }
@@ -212,13 +216,27 @@ impl SynthApp {
             return;
         };
         let omissions = switch.omissions();
-        let text = if omissions.is_empty() {
-            "V2".to_owned()
-        } else {
-            format!("V2: {} omitted", omissions.len())
+        let rendered = switch.rendered_plan_id();
+        let text = match (rendered, omissions.len()) {
+            (Some(plan), 0) => format!("V2 {plan}"),
+            (Some(plan), count) => format!("V2 {plan}: {count} omitted"),
+            (None, 0) => "V2 plan unconfirmed".to_owned(),
+            (None, count) => format!("V2 plan unconfirmed: {count} omitted"),
         };
-        let tooltip = if omissions.is_empty() {
-            "V2 song playback is active and represents the whole project.".to_owned()
+        let tooltip = if rendered.is_none() {
+            let pending =
+                "The latest V2 plan has not completed a callback, or V2 output is silent.";
+            if omissions.is_empty() {
+                pending.to_owned()
+            } else {
+                format!(
+                    "{pending}\nV2 lowering omissions:\n{}",
+                    omissions.join("\n")
+                )
+            }
+        } else if omissions.is_empty() {
+            "The last completed V2 callback rendered this plan; lowering reported no omissions."
+                .to_owned()
         } else {
             omissions.join("\n")
         };

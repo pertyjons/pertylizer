@@ -24,6 +24,7 @@ use synth_engine_v2::{
             SessionTransferLimits,
         },
     },
+    plan::PlanId,
     profile::HostProfile,
     quantities::PreparedBytes,
     render::AudioBlockMut,
@@ -218,6 +219,11 @@ pub(crate) fn prepare_unqualified(
 }
 
 impl SongPlayback {
+    /// The immutable plan this control half and its paired audio half own.
+    pub const fn plan_id(&self) -> PlanId {
+        self.control.plan_id()
+    }
+
     /// Whether the last acknowledged or submitted transport state is playing.
     #[must_use]
     pub const fn is_playing(&self) -> bool {

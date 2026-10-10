@@ -82,8 +82,10 @@ fn rendered_install_acknowledges_only_a_completed_unmuted_callback() {
         None,
         "the install is only queued"
     );
+    assert_eq!(control.rendered_plan_id(), None);
     callback(&mut processor);
     let first = control.rendered_install().expect("first install rendered");
+    let first_plan = control.rendered_plan_id().expect("first plan rendered");
 
     control.project_changed(|| project.clone());
     control.project_changed(|| project.clone());
@@ -92,8 +94,15 @@ fn rendered_install_acknowledges_only_a_completed_unmuted_callback() {
         Some(first),
         "queued edits are not yet audible"
     );
+    assert_eq!(
+        control.rendered_plan_id(),
+        None,
+        "a queued plan cannot borrow the old acknowledgement"
+    );
     callback(&mut processor);
     let latest = control.rendered_install().expect("latest install rendered");
+    let latest_plan = control.rendered_plan_id().expect("latest plan rendered");
+    assert_ne!(latest_plan, first_plan);
     assert_eq!(
         latest.as_u64(),
         first.as_u64() + 2,
@@ -106,11 +115,16 @@ fn rendered_install_acknowledges_only_a_completed_unmuted_callback() {
         None,
         "stop mutes the prior install at once"
     );
+    assert_eq!(control.rendered_plan_id(), None);
     callback(&mut processor);
     let restarted = control
         .rendered_install()
         .expect("fresh stopped session rendered");
     assert_eq!(restarted.as_u64(), latest.as_u64() + 1);
+    let restarted_plan = control
+        .rendered_plan_id()
+        .expect("fresh stopped plan rendered");
+    assert_ne!(restarted_plan, latest_plan);
 
     control.disable();
     assert_eq!(
@@ -118,6 +132,7 @@ fn rendered_install_acknowledges_only_a_completed_unmuted_callback() {
         None,
         "removal masks the historical ack"
     );
+    assert_eq!(control.rendered_plan_id(), None);
     callback(&mut processor);
     assert_eq!(
         control.rendered_install(),

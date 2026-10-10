@@ -16,6 +16,7 @@ use ringbuf::{
 };
 use synth_core::audio::{AudioCallbackContext, AudioError, AudioProcessor, StreamInfo};
 use synth_engine_v2::{
+    plan::PlanId,
     profile::HostProfile,
     quantities::{ChannelLayout, SampleRate},
     render::AudioBlockMut,
@@ -292,6 +293,16 @@ impl SongSwitch {
         let muted_until = self.muted_until.load(Ordering::Acquire);
         (rendered >= muted_until)
             .then(|| InstallSequence::from_rendered(rendered))
+            .flatten()
+    }
+
+    /// Return the newest queued plan only after a completed callback rendered
+    /// that installation. A queued replacement leaves the older plan unnamed
+    /// here; a deferred edit has not queued a replacement yet.
+    #[must_use]
+    pub fn rendered_plan_id(&self) -> Option<PlanId> {
+        (self.rendered_install() == Some(self.sent))
+            .then(|| self.playback.as_ref().map(SongPlayback::plan_id))
             .flatten()
     }
 
