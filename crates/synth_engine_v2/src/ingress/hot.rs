@@ -59,12 +59,18 @@ impl PerformanceIngress {
         self.len
     }
 
+    /// The private mixed owner admits commands at the opening boundary, before draining.
+    #[cfg(all(test, feature = "simulated-ingress"))]
+    pub(crate) fn set_mixed_admission_clock(&mut self, clock: SampleTime) {
+        self.clock = clock;
+    }
+
     /// Charge every entry whose destination this call can reach, and keep the rest.
     ///
     /// `clock` is the render clock this call starts at. The drain records it even when it
-    /// charges nothing, because the producing half does not own the render clock and this is
-    /// the only point at which it can learn one — and it is what
-    /// `PerformanceIngress::admit`'s forward-horizon check measures against.
+    /// charges nothing, because the ordinary producing half does not own the render clock.
+    /// The private mixed owner also records it before serving its commands at this boundary.
+    /// `PerformanceIngress::admit` measures the forward horizon against this clock.
     ///
     /// **Each entry is charged to the class ADR-0046 clause 6 assigns it**, not to one class
     /// for the whole pass: a note-on spends the live share and its matching release redeems

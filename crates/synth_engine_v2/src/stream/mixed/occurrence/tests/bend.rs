@@ -59,6 +59,49 @@ pub(super) fn written(outcome: MixedIngressOutcome) -> Vec<LiveOccurrenceId> {
 }
 
 #[test]
+fn mixed_service_measures_the_horizon_from_the_current_quantum() {
+    for direct_service in [false, true] {
+        let (mut control, mut audio) = armed_with(true, 1);
+        render(&mut audio);
+        let clock = audio.audio.renderer.clock();
+        let horizon = history_tests::mixed_profile()
+            .limits()
+            .events()
+            .forward_event_horizon();
+        let edge = clock.checked_add(horizon).expect("horizon end");
+        let request = control
+            .submit_bend(ORIGIN, scope(1, 1), edge, cents(5.0))
+            .expect("bend command fits")
+            .1;
+        let beyond = edge
+            .checked_add(crate::time::FrameCount::new(1))
+            .expect("next sample");
+        let refused = control
+            .submit_bend(ORIGIN, scope(1, 1), beyond, cents(10.0))
+            .expect("second bend command fits")
+            .1;
+
+        if direct_service {
+            audio.service_test_ingress_queue();
+        } else {
+            render(&mut audio);
+        }
+        let results = collect_all(&mut control);
+        assert_eq!(written(outcome_for(&results, request)), vec![]);
+        assert_eq!(
+            outcome_for(&results, refused),
+            MixedIngressOutcome::Bend(Err(MixedBendRefused::Ingress(
+                IngressRefused::BeyondHorizon {
+                    time: beyond,
+                    horizon_end: edge,
+                }
+            )))
+        );
+        assert_eq!(audio.test_ingress.counters().beyond_horizon(), 1);
+    }
+}
+
+#[test]
 fn malformed_bend_result_stamp_scope_shape_or_members_keeps_command_custody() {
     for fault in 0..5 {
         let (scope_a, scope_b) = (scope(1, 1), scope(2, 1));

@@ -946,9 +946,10 @@ impl PerformanceIngress {
             self.counters.non_monotone = self.counters.non_monotone.saturating_add(1);
             return Err(IngressRefused::NonMonotoneStamp { time, last });
         }
-        // `HOST-INV-013`'s single evaluation. Measured from the clock the **drain** last
-        // recorded rather than from a caller's notion of now: this half does not own a clock,
-        // and a horizon measured from an offer-side guess would move with the offerer.
+        // `HOST-INV-013`'s single evaluation. Measured from the render clock recorded
+        // by the drain or by the private mixed owner's current opening boundary, rather
+        // than from a caller's notion of now: this half does not own a clock, and a
+        // horizon measured from an offer-side guess would move with the offerer.
         //
         // A store whose drain has not run yet measures from its origin, which is the
         // conservative direction — it admits less, never more.

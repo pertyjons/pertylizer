@@ -492,13 +492,14 @@ pub struct PerformanceIngress {
     /// the newtype rule exists to prevent, and an independent review found the raw one here.
     holds_outstanding: EventCount,
     epoch: StreamEpoch,
-    /// The clock the drain last saw.
+    /// The clock the drain last saw, or the private mixed owner's current opening boundary.
     ///
     /// What `admit` measures the forward horizon against: the horizon is measured
-    /// from a clock this half does not own, and the drain is the only point at which it can
-    /// record one. It is this rather than a caller's notion of "now", which would let a
-    /// caller name a later one and smuggle an entry past. A store whose drain has not run
-    /// measures from its origin, which admits less rather than more.
+    /// from a clock this half does not own, and the ordinary drain is where it can
+    /// record one. The private mixed owner records the renderer's clock before serving
+    /// commands at that same boundary. It is this rather than a caller's notion of "now",
+    /// which would let a caller name a later one and smuggle an entry past. A store whose
+    /// drain has not run measures from its origin, which admits less rather than more.
     clock: SampleTime,
     /// The latest stamp this store has accepted, so a later offer cannot go behind it.
     last_accepted: Option<SampleTime>,
