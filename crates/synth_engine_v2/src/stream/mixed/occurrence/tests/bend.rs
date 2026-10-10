@@ -1,17 +1,20 @@
 //! Channel bend tests for the private mixed owner.
 //!
-//! Every test inspects the registered ingress queue after service: a bend appends one
-//! entry per sounding or sustained member of its scope at its nominal stamp, and an
+//! Bend behavior tests inspect the registered ingress queue after service: a bend
+//! appends one entry per sounding or sustained member at its nominal stamp, and an
 //! onset on a bent scope writes its inherited bend right after its note-on. No entry is
 //! rewritten or coalesced. Each bend reserves `H` credits and a possibly bent onset one
-//! before its command identity is minted. Rendering then proves each bend resolved
-//! against a live occurrence.
+//! before its command identity is minted. Render tests check live bend resolution;
+//! result-ring pressure tests check ordered packet custody without a live member.
 
-use ringbuf::traits::{Consumer, Producer};
+use ringbuf::{
+    HeapRb,
+    traits::{Consumer, Producer, Split},
+};
 
 use super::{
     super::{
-        super::{MixedIngressQueueCount, MixedPedalSubmitted},
+        super::{MixedIngressQueueCount, MixedPedalSubmitted, OpaqueQueue},
         MixedBendRefused, MixedBendSubmitError, MixedLiveScope, MixedOnsetSubmitError,
     },
     ExhaustedResource, IngressRefused, LiveOccurrenceId, MixedIngressOutcome, MixedIngressRequest,
@@ -37,6 +40,73 @@ pub(super) fn cents(value: f32) -> Cents {
 /// A count of bend credits.
 pub(super) fn credits(count: usize) -> MixedIngressQueueCount {
     MixedIngressQueueCount(count)
+}
+
+#[test]
+fn full_result_ring_retains_each_bend_packet_and_stops_later_service() {
+    let (mut control, mut audio) = armed_with(true, 1);
+    // Deliberately make the physical result ring smaller than the arm-time
+    // reservation to exercise the otherwise unreachable failed-push path.
+    let (writer, reader) = HeapRb::<MixedIngressResult>::new(1).split();
+    control.ingress_results = OpaqueQueue(reader);
+    audio.ingress_results = OpaqueQueue(writer);
+
+    let selected_scope = scope(1, 1);
+    let mut submitted = Vec::new();
+    for (at, value) in [(100, 10.0), (101, 20.0), (102, 0.0)] {
+        submitted.push(
+            control
+                .submit_bend(ORIGIN, selected_scope, SampleTime::new(at), cents(value))
+                .expect("all three bends have reserved command places"),
+        );
+    }
+
+    audio.service_test_ingress_queue();
+    assert_eq!(audio.last_served_ingress_id, Some(submitted[1].0));
+    let pending = audio
+        .ingress_result_pending
+        .as_ref()
+        .expect("second result has one owner");
+    assert_eq!((pending.id, pending.request), submitted[1]);
+    assert!(
+        matches!(pending.outcome, MixedIngressOutcome::Bend(Ok(bent)) if bent.executed_at() == SampleTime::new(101))
+    );
+    assert_eq!(
+        audio
+            .ingress_commands
+            .0
+            .try_peek()
+            .map(|command| (command.id, command.request)),
+        Some(submitted[2])
+    );
+
+    audio.service_test_ingress_queue();
+    assert_eq!(audio.last_served_ingress_id, Some(submitted[1].0));
+    assert_eq!(
+        audio
+            .ingress_commands
+            .0
+            .try_peek()
+            .map(|command| (command.id, command.request)),
+        Some(submitted[2])
+    );
+
+    for expected in submitted {
+        let result = control
+            .collect_ingress_result()
+            .expect("next result stays in order");
+        assert_eq!((result.id, result.request), expected);
+        let MixedIngressRequest::Bend { at, .. } = expected.1 else {
+            panic!("each submitted request was a bend");
+        };
+        assert!(
+            matches!(result.outcome, MixedIngressOutcome::Bend(Ok(bent)) if bent.executed_at() == at)
+        );
+        audio.service_test_ingress_queue();
+    }
+    assert!(audio.ingress_result_pending.is_none());
+    assert!(audio.ingress_commands.0.try_peek().is_none());
+    assert!(control.collect_ingress_result().is_none());
 }
 
 pub(super) fn bend_at(
