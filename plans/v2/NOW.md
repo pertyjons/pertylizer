@@ -949,6 +949,14 @@ before a younger head enters mixed stage. Immediate and frontier-triggered
 split fixtures record their raw observations; the audio scope keeps its last
 accepted value. A split return to zero leaves that non-zero bend and its
 inherited-credit cost until a later zero is accepted, which may never arrive.
+The split fixtures cover a peer frontier below the older stage head. Both
+sources are also checked with a frontier equal to that head: while the peer
+lane is empty, the selector requires its frontier to be strictly later for
+either source, so neither equal-time head can drain. Its first-source tie
+rule applies only when both lanes already have staged heads. Whether a bend
+splits or reaches audio depends on when the peer frontier and younger
+same-source head arrive; every bend that reaches mixed audio still retains
+its nominal command order.
 The private source-ring-to-audio-service fixture checks a positive bend
 surviving a stage-full zero split while the peer frontier blocks the older
 head. The protected key-up uses its stage place, the note inherits the positive

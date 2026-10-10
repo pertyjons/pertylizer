@@ -1805,15 +1805,19 @@ fn cancel_pending_source_bend<R: RawBackend>(
 /// A raw-admitted bend leaves the source ring and may wait in one source-owned
 /// slot. A younger head makes a still-full bend terminally split only when no
 /// stage head is selected for service. Raw admission faults are not split.
-fn pump_concrete_mixed<R: RawBackend>(
+fn pump_concrete_mixed_for_source<R: RawBackend>(
     bridge: &mut RawStageBridge<R>,
     inbox: &mut SourceInbox,
     pending: &mut Option<(SourceHandoff, RawHandoff)>,
+    source: Source,
 ) -> Option<MixedSourceStep> {
     assert!(inbox.unresolved_failure().is_none());
+    assert_eq!(inbox.generation(), bridge.sources.generation(source));
+    let index = source.index();
     if let Some((held_head, handoff)) = pending.take() {
-        assert_eq!(bridge.pending_source_bends[0], Some(handoff.raw));
-        bridge.pending_source_bends[0] = None;
+        assert_eq!(handoff.source, source);
+        assert_eq!(bridge.pending_source_bends[index], Some(handoff.raw));
+        bridge.pending_source_bends[index] = None;
         return Some(match bridge.stage_handoff(handoff) {
             Ok(occurrence) => MixedSourceStep::Staged(held_head, occurrence),
             Err(
@@ -1826,7 +1830,7 @@ fn pump_concrete_mixed<R: RawBackend>(
                     MixedSourceStep::Split(held_head, refusal)
                 } else {
                     *pending = Some((held_head, handoff));
-                    bridge.pending_source_bends[0] = Some(handoff.raw);
+                    bridge.pending_source_bends[index] = Some(handoff.raw);
                     MixedSourceStep::AwaitStage(held_head, handoff)
                 }
             }
@@ -1834,12 +1838,12 @@ fn pump_concrete_mixed<R: RawBackend>(
         });
     }
     let head = inbox.peek_handoff()?;
-    assert!(bridge.pending_source_bends[0].is_none());
+    assert!(bridge.pending_source_bends[index].is_none());
     let at = head.stamp().mapped_at();
     let (tick, arrival, original) = match head.observation() {
         InputObservation::Frontier { tick } => {
             assert_eq!(tick, InputTick::new(at.as_u64()));
-            bridge.frontier(Source::First, at.as_u64());
+            bridge.frontier(source, at.as_u64());
             assert_eq!(inbox.commit_handoff(head), Ok(head));
             return Some(MixedSourceStep::Frontier(head));
         }
@@ -1850,14 +1854,14 @@ fn pump_concrete_mixed<R: RawBackend>(
         } => (tick, arrival, input),
     };
     assert_eq!((tick, arrival), (InputTick::new(at.as_u64()), at));
-    match bridge.sources.preflight(Source::First, at, original) {
+    match bridge.sources.preflight(source, at, original) {
         Ok(InputCustodyPreflight::Admit) => {}
         Ok(InputCustodyPreflight::Await(error)) => {
             return Some(MixedSourceStep::AwaitRaw(head, error));
         }
         Err(error) => panic!("raw preflight requires a terminal host fault: {error}"),
     }
-    let handoff = match bridge.admit_raw(Source::First, at, original) {
+    let handoff = match bridge.admit_raw(source, at, original) {
         Ok(handoff) => handoff,
         Err(refusal) => panic!("raw admission requires a terminal host fault: {refusal:?}"),
     };
@@ -1882,7 +1886,7 @@ fn pump_concrete_mixed<R: RawBackend>(
                 ))
             } else {
                 *pending = Some((head, handoff));
-                bridge.pending_source_bends[0] = Some(handoff.raw);
+                bridge.pending_source_bends[index] = Some(handoff.raw);
                 Some(MixedSourceStep::AwaitStage(head, handoff))
             }
         }
@@ -1892,6 +1896,14 @@ fn pump_concrete_mixed<R: RawBackend>(
             Some(MixedSourceStep::Split(head, refusal))
         }
     }
+}
+
+fn pump_concrete_mixed<R: RawBackend>(
+    bridge: &mut RawStageBridge<R>,
+    inbox: &mut SourceInbox,
+    pending: &mut Option<(SourceHandoff, RawHandoff)>,
+) -> Option<MixedSourceStep> {
+    pump_concrete_mixed_for_source(bridge, inbox, pending, Source::First)
 }
 
 #[test]
@@ -1975,8 +1987,7 @@ fn pending_source_bend_shutdown_pairs_its_queue_head_and_raw_receipt() {
     assert_eq!(receipt.matched_onset, None);
 }
 
-#[test]
-fn a_newer_key_up_splits_an_already_pending_bend_before_raw_service() {
+fn assert_newer_key_up_splits_an_already_pending_bend(source: Source, peer_frontier: SampleTime) {
     let (prepared, candidate) = history_tests::one_shot_with_live(
         true,
         crate::quantities::HeldNoteCount::measured(1),
@@ -1985,9 +1996,9 @@ fn a_newer_key_up_splits_an_already_pending_bend_before_raw_service() {
     let (mut control, mut audio) = prepared
         .arm_one_shot(candidate, &history_tests::mixed_profile())
         .unwrap();
-    let raw = [raw_source_with_cells(0, 32), raw_source(1)];
-    let generation = raw[0].generation;
-    let clock = raw[0].input.clock().unwrap();
+    let raw = [raw_source_with_cells(0, 32), raw_source_with_cells(1, 32)];
+    let generation = raw[source.index()].generation;
+    let clock = raw[source.index()].input.clock().unwrap();
     let (mut producer, mut inbox) =
         SourceInbox::prepare(generation, InputCaptureHalt::detached_for_test(), clock);
     let mut bridge = RawStageBridge::with_raw(2, raw);
@@ -2005,15 +2016,19 @@ fn a_newer_key_up_splits_an_already_pending_bend_before_raw_service() {
             .parts();
         assert_eq!(queue.serial(), u64::try_from(index + 1).unwrap());
     }
-    bridge.frontier(Source::Second, 100);
+    let peer = match source {
+        Source::First => Source::Second,
+        Source::Second => Source::First,
+    };
+    bridge.frontier(peer, peer_frontier.as_u64());
     let mut pending = None;
     let Some(MixedSourceStep::Staged(_, note_id)) =
-        pump_concrete_mixed(&mut bridge, &mut inbox, &mut pending)
+        pump_concrete_mixed_for_source(&mut bridge, &mut inbox, &mut pending, source)
     else {
         panic!("the note reserves its key-up place");
     };
     let Some(MixedSourceStep::AwaitStage(bend_head, bend_raw)) =
-        pump_concrete_mixed(&mut bridge, &mut inbox, &mut pending)
+        pump_concrete_mixed_for_source(&mut bridge, &mut inbox, &mut pending, source)
     else {
         panic!("the bend is source-owned while no later edge exists");
     };
@@ -2027,8 +2042,9 @@ fn a_newer_key_up_splits_an_already_pending_bend_before_raw_service() {
         .unwrap()
         .parts();
     assert_eq!(key_up_queue.serial(), 3);
+    let command_before_split = control.last_ingress_id;
     assert_eq!(
-        pump_concrete_mixed(&mut bridge, &mut inbox, &mut pending),
+        pump_concrete_mixed_for_source(&mut bridge, &mut inbox, &mut pending, source),
         Some(MixedSourceStep::Split(
             bend_head,
             BridgeRefused::Lane {
@@ -2037,11 +2053,13 @@ fn a_newer_key_up_splits_an_already_pending_bend_before_raw_service() {
             },
         ))
     );
+    assert_eq!(control.last_ingress_id, command_before_split);
+    assert_eq!(bend_raw.source, source);
     assert!(pending.is_none());
-    assert!(bridge.pending_source_bends[0].is_none());
-    bridge.frontier(Source::Second, 103);
+    assert!(bridge.pending_source_bends[source.index()].is_none());
+    bridge.frontier(peer, 103);
     let Some(MixedSourceStep::Staged(key_up_head, release_id)) =
-        pump_concrete_mixed(&mut bridge, &mut inbox, &mut pending)
+        pump_concrete_mixed_for_source(&mut bridge, &mut inbox, &mut pending, source)
     else {
         panic!("the protected key-up must pass the split bend");
     };
@@ -2055,10 +2073,34 @@ fn a_newer_key_up_splits_an_already_pending_bend_before_raw_service() {
     assert_eq!(release.handoff.link, Some(onset.handoff.raw));
     let (teardown, raw, _ended) = bridge.tear_down(control, audio);
     let issued = teardown.raw_issued.clone();
-    assert_eq!(
-        settle_raw_by_cancellation(raw, &issued).bridge.len(),
-        issued.len()
-    );
+    let settled = settle_raw_by_cancellation(raw, &issued);
+    assert_eq!(settled.bridge.len(), issued.len());
+    let (_, bend_receipt) = settled
+        .bridge
+        .iter()
+        .find(|(_, receipt)| receipt.id == bend_raw.raw)
+        .expect("the split bend keeps its one raw receipt");
+    assert_eq!(bend_receipt.observation, bend_head.observation());
+}
+
+#[test]
+fn a_lagging_peer_frontier_splits_first_source_bend_for_its_key_up() {
+    assert_newer_key_up_splits_an_already_pending_bend(Source::First, SampleTime::new(99));
+}
+
+#[test]
+fn an_equal_peer_frontier_splits_first_source_bend_for_its_key_up() {
+    assert_newer_key_up_splits_an_already_pending_bend(Source::First, SampleTime::new(100));
+}
+
+#[test]
+fn a_lagging_peer_frontier_splits_second_source_bend_for_its_key_up() {
+    assert_newer_key_up_splits_an_already_pending_bend(Source::Second, SampleTime::new(99));
+}
+
+#[test]
+fn an_equal_peer_frontier_splits_second_source_bend_for_its_key_up() {
+    assert_newer_key_up_splits_an_already_pending_bend(Source::Second, SampleTime::new(100));
 }
 
 #[test]
@@ -2096,7 +2138,7 @@ fn a_stage_split_zero_keeps_the_last_accepted_bend_until_a_later_zero_is_served(
             .parts();
         assert_eq!(queue.serial(), u64::try_from(index + 1).unwrap());
     }
-    bridge.frontier(Source::Second, 100);
+    bridge.frontier(Source::Second, 99);
     assert!(matches!(
         pump_concrete_mixed(&mut bridge, &mut inbox, &mut None),
         Some(MixedSourceStep::Staged(_, _))
@@ -2222,7 +2264,7 @@ fn a_source_frontier_splits_a_pending_bend_then_advances_raw_and_stage() {
             .parts();
         assert_eq!(queue.serial(), at - 99);
     }
-    bridge.frontier(Source::Second, 100);
+    bridge.frontier(Source::Second, 99);
     let mut pending = None;
     assert!(matches!(
         pump_concrete_mixed(&mut bridge, &mut inbox, &mut pending),
@@ -2776,7 +2818,7 @@ fn younger_source_edges_split_a_full_stage_bend_before_raw_capture_continues() {
             .parts();
         assert_eq!(queue.serial(), u64::try_from(index + 1).unwrap());
     }
-    bridge.frontier(Source::Second, 100);
+    bridge.frontier(Source::Second, 99);
     let mut pending = None;
     let Some(MixedSourceStep::Staged(_, down_id)) =
         pump_concrete_mixed(&mut bridge, &mut inbox, &mut pending)
@@ -2894,7 +2936,7 @@ fn a_split_source_bend_reaches_the_serial_recorder_with_its_note_pair() {
             .parts();
         assert_eq!(queue.serial(), u64::try_from(index + 1).unwrap());
     }
-    bridge.frontier(Source::Second, 100);
+    bridge.frontier(Source::Second, 99);
     let mut pending = None;
     let Some(MixedSourceStep::Staged(_, down_id)) =
         pump_concrete_mixed(&mut bridge, &mut inbox, &mut pending)
