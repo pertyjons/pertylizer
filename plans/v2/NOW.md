@@ -1073,6 +1073,11 @@ and leaves its command identity unminted through command-ring `Full`.
 Drain, exact retry and later service preserve all seventeen bend results and
 original raw observations in order. The fixture still does not prove a
 production shared charge or recorder delivery.
+Two concrete `SourceInbox` instances now also hold stage-full bends at the same
+time. Each keeps its own source head and raw ID while older stage heads drain;
+both then reach mixed as separate ordered results, followed by their exact
+key-ups. A source frontier makes the later key-up selectable. This remains a
+private two-source fixture rather than a joined production dispatcher.
 The concrete source service now preflights the actual raw owner before taking
 that head. It waits only when completed local raw receipts can free enough
 cells. The managed host reconciles callback completions before source service,

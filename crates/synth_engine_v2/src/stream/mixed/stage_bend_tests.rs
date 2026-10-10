@@ -2089,6 +2089,231 @@ fn a_lagging_peer_frontier_splits_first_source_bend_for_its_key_up() {
 }
 
 #[test]
+fn two_source_inboxes_keep_independent_pending_bends_through_mixed_results() {
+    let (prepared, candidate) = history_tests::one_shot_with_live(
+        true,
+        crate::quantities::HeldNoteCount::measured(2),
+        EventCount::measured(2),
+    );
+    let (mut control, mut audio) = prepared
+        .arm_one_shot(candidate, &history_tests::mixed_profile())
+        .unwrap();
+    let raw = [raw_source_with_cells(0, 32), raw_source_with_cells(1, 32)];
+    let (mut first_producer, mut first_inbox) = SourceInbox::prepare(
+        raw[0].generation,
+        InputCaptureHalt::detached_for_test(),
+        raw[0].input.clock().unwrap(),
+    );
+    let (mut second_producer, mut second_inbox) = SourceInbox::prepare(
+        raw[1].generation,
+        InputCaptureHalt::detached_for_test(),
+        raw[1].input.clock().unwrap(),
+    );
+    let mut bridge = RawStageBridge::with_raw(2, raw);
+    let send = |producer: &mut SourceProducer, at, input| {
+        producer
+            .submit_owned(InputObservation::Message {
+                tick: InputTick::new(at),
+                arrival: SampleTime::new(at),
+                input,
+            })
+            .unwrap()
+            .parts()
+            .1
+    };
+    let first_note = send(&mut first_producer, 100, input(0x90, 60, 100));
+    let second_note = send(&mut second_producer, 101, input(0x91, 61, 100));
+    let first_bend = send(&mut first_producer, 102, input(0xe0, 127, 127));
+    let second_bend = send(&mut second_producer, 103, input(0xe1, 127, 127));
+    let mut first_pending = None;
+    let mut second_pending = None;
+    let Some(MixedSourceStep::Staged(first_head, first_occurrence)) =
+        pump_concrete_mixed_for_source(
+            &mut bridge,
+            &mut first_inbox,
+            &mut first_pending,
+            Source::First,
+        )
+    else {
+        panic!("first source onset must stage");
+    };
+    let Some(MixedSourceStep::Staged(second_head, second_occurrence)) =
+        pump_concrete_mixed_for_source(
+            &mut bridge,
+            &mut second_inbox,
+            &mut second_pending,
+            Source::Second,
+        )
+    else {
+        panic!("second source onset must stage");
+    };
+    assert_eq!(first_head.stamp().queue(), first_note);
+    assert_eq!(second_head.stamp().queue(), second_note);
+    let Some(MixedSourceStep::AwaitStage(first_head, first_raw)) = pump_concrete_mixed_for_source(
+        &mut bridge,
+        &mut first_inbox,
+        &mut first_pending,
+        Source::First,
+    ) else {
+        panic!("first bend keeps its source-owned place");
+    };
+    let Some(MixedSourceStep::AwaitStage(second_head, second_raw)) = pump_concrete_mixed_for_source(
+        &mut bridge,
+        &mut second_inbox,
+        &mut second_pending,
+        Source::Second,
+    ) else {
+        panic!("second bend keeps its own source-owned place");
+    };
+    assert_eq!(first_head.stamp().queue(), first_bend);
+    assert_eq!(second_head.stamp().queue(), second_bend);
+    assert_eq!(first_pending, Some((first_head, first_raw)));
+    assert_eq!(second_pending, Some((second_head, second_raw)));
+    let first_release = send(&mut first_producer, 104, input(0x80, 60, 0));
+    let second_release = send(&mut second_producer, 105, input(0x81, 61, 0));
+    for (inbox, pending, source, head, raw) in [
+        (
+            &mut first_inbox,
+            &mut first_pending,
+            Source::First,
+            first_head,
+            first_raw,
+        ),
+        (
+            &mut second_inbox,
+            &mut second_pending,
+            Source::Second,
+            second_head,
+            second_raw,
+        ),
+    ] {
+        assert_eq!(
+            pump_concrete_mixed_for_source(&mut bridge, inbox, pending, source),
+            Some(MixedSourceStep::AwaitStage(head, raw)),
+            "a selected older stage head prevents a sound-path split"
+        );
+    }
+    let first_onset = bridge.service(&mut control, &mut audio).unwrap();
+    assert_eq!(first_onset.occurrence, first_occurrence);
+    assert!(first_onset.accepted());
+    let Some(MixedSourceStep::Staged(retried, first_bend_occurrence)) =
+        pump_concrete_mixed_for_source(
+            &mut bridge,
+            &mut first_inbox,
+            &mut first_pending,
+            Source::First,
+        )
+    else {
+        panic!("first bend must take its freed stage place");
+    };
+    assert_eq!(retried, first_head);
+    let second_onset = bridge.service(&mut control, &mut audio).unwrap();
+    assert_eq!(second_onset.occurrence, second_occurrence);
+    assert!(second_onset.accepted());
+    let Some(MixedSourceStep::Staged(retried, second_bend_occurrence)) =
+        pump_concrete_mixed_for_source(
+            &mut bridge,
+            &mut second_inbox,
+            &mut second_pending,
+            Source::Second,
+        )
+    else {
+        panic!("second bend must take its freed stage place");
+    };
+    assert_eq!(retried, second_head);
+    assert!(first_pending.is_none() && second_pending.is_none());
+    assert_eq!(bridge.pending_source_bends, [None, None]);
+    let Some(MixedSourceStep::Staged(first_key_up, first_released)) =
+        pump_concrete_mixed_for_source(
+            &mut bridge,
+            &mut first_inbox,
+            &mut first_pending,
+            Source::First,
+        )
+    else {
+        panic!("first protected key-up must stage");
+    };
+    let Some(MixedSourceStep::Staged(second_key_up, second_released)) =
+        pump_concrete_mixed_for_source(
+            &mut bridge,
+            &mut second_inbox,
+            &mut second_pending,
+            Source::Second,
+        )
+    else {
+        panic!("second protected key-up must stage");
+    };
+    assert_eq!(first_key_up.stamp().queue(), first_release);
+    assert_eq!(second_key_up.stamp().queue(), second_release);
+    assert_eq!(
+        (first_released, second_released),
+        (first_occurrence, second_occurrence)
+    );
+    let first_result = bridge
+        .service_bend(&mut control, &mut audio)
+        .unwrap()
+        .unwrap();
+    let second_result = bridge
+        .service_bend(&mut control, &mut audio)
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        (first_result.occurrence, first_result.handoff.raw),
+        (first_bend_occurrence, first_raw.raw)
+    );
+    assert_eq!(
+        (second_result.occurrence, second_result.handoff.raw),
+        (second_bend_occurrence, second_raw.raw)
+    );
+    for (result, handle) in [
+        (first_result, first_onset.handle),
+        (second_result, second_onset.handle),
+    ] {
+        let MixedIngressOutcome::Bend(Ok(written)) = result.outcome else {
+            panic!("each source bend must reach mixed audio");
+        };
+        assert_eq!(written.written().collect::<Vec<_>>(), vec![handle]);
+    }
+    let first_key_up_result = bridge.service(&mut control, &mut audio).unwrap();
+    assert!(
+        bridge.service(&mut control, &mut audio).is_none(),
+        "the later key-up waits for the first source's frontier"
+    );
+    let (_, first_frontier) = first_producer
+        .submit_owned(InputObservation::Frontier {
+            tick: InputTick::new(106),
+        })
+        .unwrap()
+        .parts();
+    let Some(MixedSourceStep::Frontier(frontier)) = pump_concrete_mixed_for_source(
+        &mut bridge,
+        &mut first_inbox,
+        &mut first_pending,
+        Source::First,
+    ) else {
+        panic!("the first source must close the second release's time");
+    };
+    assert_eq!(frontier.stamp().queue(), first_frontier);
+    let second_key_up_result = bridge.service(&mut control, &mut audio).unwrap();
+    assert_eq!(
+        first_key_up_result.handoff.link,
+        Some(first_onset.handoff.raw)
+    );
+    assert_eq!(
+        second_key_up_result.handoff.link,
+        Some(second_onset.handoff.raw)
+    );
+    assert!(first_inbox.close(first_producer).is_ok());
+    assert!(second_inbox.close(second_producer).is_ok());
+    let (teardown, raw, _) = bridge.tear_down(control, audio);
+    let issued = teardown.raw_issued.clone();
+    assert_eq!(
+        settle_raw_by_cancellation(raw, &issued).bridge.len(),
+        issued.len()
+    );
+}
+
+#[test]
 fn an_equal_peer_frontier_splits_first_source_bend_for_its_key_up() {
     assert_newer_key_up_splits_an_already_pending_bend(Source::First, SampleTime::new(100));
 }
