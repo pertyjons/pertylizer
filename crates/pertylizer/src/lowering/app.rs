@@ -32,9 +32,43 @@ const CHANNELS: usize = 2;
 /// Sessions in flight between the halves; one active and one retiring is the steady state.
 const SLOTS: usize = 4;
 
+/// A queued V2 session installation. Zero means no rendered installation and the
+/// maximum value is reserved for an indefinite mute, so neither is issued.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd)]
+#[must_use]
+pub struct InstallSequence(u64);
+
+impl InstallSequence {
+    const NONE: Self = Self(0);
+    const NEVER: Self = Self(u64::MAX);
+
+    fn next(self) -> Option<Self> {
+        self.0
+            .checked_add(1)
+            .filter(|value| *value < u64::MAX)
+            .map(Self)
+    }
+
+    pub const fn as_u64(self) -> u64 {
+        self.0
+    }
+
+    fn from_rendered(value: u64) -> Option<Self> {
+        (value != Self::NONE.0 && value != Self::NEVER.0).then_some(Self(value))
+    }
+}
+
 enum SwitchCommand {
     /// A session and its install sequence number, counted from 1 in queue order.
-    Install(u64, Box<SongAudio>),
+    Install(InstallSequence, Box<SongAudio>),
+}
+
+#[derive(Debug, thiserror::Error)]
+enum InstallError {
+    #[error("the V2 switch command ring is full")]
+    Full,
+    #[error("V2 installation identities are exhausted")]
+    IdentityExhausted,
 }
 
 /// The audio processor the application hands to its output stream.
@@ -55,8 +89,11 @@ pub struct EngineSwitch<P: AudioProcessor> {
     /// with at least this sequence number is active, so a session queued before the
     /// silencing request cannot end it.
     muted_until: Arc<AtomicU64>,
+    /// Last installation whose session completed a successful callback. Only the
+    /// callback writes it; control requests filter it before use.
+    rendered_install: Arc<AtomicU64>,
     /// The sequence number of the active session's install.
-    admitted: u64,
+    admitted: InstallSequence,
     scratch: Box<[f32]>,
 }
 
@@ -74,8 +111,9 @@ pub struct SongSwitch {
     /// Shared with the callback: leave V2 mode, and silence V2 until a given install.
     remove: Arc<AtomicBool>,
     muted_until: Arc<AtomicU64>,
+    rendered_install: Arc<AtomicU64>,
     /// The sequence number of the last queued install.
-    sent: u64,
+    sent: InstallSequence,
     /// Sessions the queued commands will retire and the control half has not yet collected.
     retiring: usize,
     /// An edit arrived while playing; it is lowered at the next stop or pause.
@@ -96,6 +134,7 @@ pub fn wrap<P: AudioProcessor>(v1: P) -> (SongSwitch, EngineSwitch<P>) {
     let (retired, retired_reader) = HeapRb::new(SLOTS).split();
     let remove = Arc::new(AtomicBool::new(false));
     let muted_until = Arc::new(AtomicU64::new(0));
+    let rendered_install = Arc::new(AtomicU64::new(InstallSequence::NONE.as_u64()));
     (
         SongSwitch {
             commands,
@@ -106,7 +145,8 @@ pub fn wrap<P: AudioProcessor>(v1: P) -> (SongSwitch, EngineSwitch<P>) {
             occupied: false,
             remove: Arc::clone(&remove),
             muted_until: Arc::clone(&muted_until),
-            sent: 0,
+            rendered_install: Arc::clone(&rendered_install),
+            sent: InstallSequence::NONE,
             retiring: 0,
             rebuild_pending: false,
             disable_pending: false,
@@ -122,7 +162,8 @@ pub fn wrap<P: AudioProcessor>(v1: P) -> (SongSwitch, EngineSwitch<P>) {
             removed: None,
             remove,
             muted_until,
-            admitted: 0,
+            rendered_install,
+            admitted: InstallSequence::NONE,
             scratch: vec![0.0; MAX_CALLBACK_FRAMES * CHANNELS.max(8)].into_boxed_slice(),
         },
     )
@@ -173,6 +214,10 @@ impl<P: AudioProcessor> EngineSwitch<P> {
         {
             self.removed = Some(session);
         }
+        // Publish the absent session before lifting the control-side removal
+        // request; observing `remove == false` must never expose its old ack.
+        self.rendered_install
+            .store(InstallSequence::NONE.as_u64(), Ordering::Release);
         self.remove.store(false, Ordering::Release);
         false
     }
@@ -183,6 +228,8 @@ impl<P: AudioProcessor> AudioProcessor for EngineSwitch<P> {
         self.admit_commands();
         let removing = self.admit_removal();
         let Some(song) = self.active.as_mut() else {
+            self.rendered_install
+                .store(InstallSequence::NONE.as_u64(), Ordering::Release);
             self.v1.process(output, context);
             return;
         };
@@ -195,8 +242,10 @@ impl<P: AudioProcessor> AudioProcessor for EngineSwitch<P> {
         {
             self.v1.process(scratch, context);
         }
-        if removing || self.admitted < self.muted_until.load(Ordering::Acquire) {
+        if removing || self.admitted.as_u64() < self.muted_until.load(Ordering::Acquire) {
             output.fill(0.0);
+            self.rendered_install
+                .store(InstallSequence::NONE.as_u64(), Ordering::Release);
             return;
         }
         // An oversized callback reaches the session, whose terminal fault silences it and
@@ -207,6 +256,14 @@ impl<P: AudioProcessor> AudioProcessor for EngineSwitch<P> {
         if !rendered {
             output.fill(0.0);
         }
+        self.rendered_install.store(
+            if rendered {
+                self.admitted.as_u64()
+            } else {
+                InstallSequence::NONE.as_u64()
+            },
+            Ordering::Release,
+        );
     }
 
     fn on_error(&mut self, error: AudioError) {
@@ -223,6 +280,21 @@ impl<P: AudioProcessor> AudioProcessor for EngineSwitch<P> {
 }
 
 impl SongSwitch {
+    /// The installation rendered by the last completed callback while it is still
+    /// permitted by control's current mute/removal requests. This is not a device
+    /// liveness signal: a stopped backend may never call the switch again.
+    #[must_use]
+    pub fn rendered_install(&self) -> Option<InstallSequence> {
+        if self.remove.load(Ordering::Acquire) {
+            return None;
+        }
+        let rendered = self.rendered_install.load(Ordering::Acquire);
+        let muted_until = self.muted_until.load(Ordering::Acquire);
+        (rendered >= muted_until)
+            .then(|| InstallSequence::from_rendered(rendered))
+            .flatten()
+    }
+
     /// Record the output stream's actual configuration, once it has started.
     pub fn set_stream(&mut self, stream: &StreamInfo) {
         // Device rates are far below 2^24, where every integer is exact in f32.
@@ -313,22 +385,22 @@ impl SongSwitch {
         Ok((playback, audio, unrepresented))
     }
 
-    /// Queue a session for the callback; false when the command ring is full.
-    fn install(&mut self, audio: SongAudio) -> bool {
-        let sequence = self.sent + 1;
+    /// Queue a session for the callback or return its capacity/identity refusal.
+    fn install(&mut self, audio: SongAudio) -> Result<(), InstallError> {
+        let sequence = self.sent.next().ok_or(InstallError::IdentityExhausted)?;
         if self
             .commands
             .try_push(SwitchCommand::Install(sequence, Box::new(audio)))
             .is_err()
         {
-            return false;
+            return Err(InstallError::Full);
         }
         self.sent = sequence;
         if self.occupied {
             self.retiring += 1;
         }
         self.occupied = true;
-        true
+        Ok(())
     }
 
     /// Enter V2 mode with the project as it is now, stopped at the song start. The caller
@@ -346,10 +418,13 @@ impl SongSwitch {
         match self.prepare(project) {
             Ok((playback, audio, unrepresented)) => {
                 // Whatever silenced an earlier V2 mode ends with this session.
-                self.muted_until.store(self.sent + 1, Ordering::Release);
-                if !self.install(audio) {
+                self.muted_until.store(
+                    self.sent.next().unwrap_or(InstallSequence::NEVER).as_u64(),
+                    Ordering::Release,
+                );
+                if let Err(error) = self.install(audio) {
                     self.notices
-                        .push("V2 playback is busy switching; try again".to_owned());
+                        .push(format!("V2 playback cannot switch: {error}"));
                     return false;
                 }
                 self.playback = Some(playback);
@@ -387,25 +462,35 @@ impl SongSwitch {
     }
 
     /// Replace the session with a fresh one from the project, stopped at the song start.
-    /// Returns whether the new session was queued; otherwise the old one stays and the
-    /// rebuild stays pending.
+    /// Returns whether the new session was queued. Ring pressure keeps the edit
+    /// pending; a preparation or identity refusal mutes the old session.
     fn rebuild(&mut self, project: &crate::project::ProjectFile) -> bool {
         // After a refusal nothing may lift the silence; only leaving V2 mode ends it.
         if self.disable_pending {
             return false;
         }
         match self.prepare(project) {
-            Ok((playback, audio, unrepresented)) => {
-                if self.install(audio) {
+            Ok((playback, audio, unrepresented)) => match self.install(audio) {
+                Ok(()) => {
                     self.playback = Some(playback);
                     self.rebuild_pending = false;
                     self.omissions = unrepresented;
                     true
-                } else {
+                }
+                Err(InstallError::Full) => {
                     self.rebuild_pending = true;
                     false
                 }
-            }
+                Err(InstallError::IdentityExhausted) => {
+                    self.disable_pending = true;
+                    self.muted_until
+                        .store(InstallSequence::NEVER.as_u64(), Ordering::Release);
+                    self.notices.push(
+                        "V2 playback stops: installation identities are exhausted".to_owned(),
+                    );
+                    false
+                }
+            },
             Err(reason) => {
                 self.notices
                     .push(format!("V2 playback stops: the edited project {reason}"));
@@ -413,7 +498,8 @@ impl SongSwitch {
                 // whatever any ring holds. Leaving V2 mode is the application's, so that V1 is
                 // reset before it is heard again.
                 self.disable_pending = true;
-                self.muted_until.store(u64::MAX, Ordering::Release);
+                self.muted_until
+                    .store(InstallSequence::NEVER.as_u64(), Ordering::Release);
                 false
             }
         }
@@ -476,7 +562,10 @@ impl SongSwitch {
         }
         // Silent from the next callback until the next install, the fresh session, is active;
         // a session queued earlier stays silent.
-        self.muted_until.store(self.sent + 1, Ordering::Release);
+        self.muted_until.store(
+            self.sent.next().unwrap_or(InstallSequence::NEVER).as_u64(),
+            Ordering::Release,
+        );
         // A refusal has its own notice and leaves V2 mode; retrying stop would not help.
         if !self.rebuild(&project()) && !self.disable_pending {
             self.notices.push(

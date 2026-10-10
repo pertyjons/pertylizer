@@ -72,6 +72,114 @@ fn switch() -> (SongSwitch, impl AudioProcessor, Arc<AtomicUsize>) {
 }
 
 #[test]
+fn rendered_install_acknowledges_only_a_completed_unmuted_callback() {
+    let project = corpus_project("subtractive-voice");
+    let (mut control, mut processor, _) = switch();
+    assert_eq!(control.rendered_install(), None);
+    assert!(control.enable(&project));
+    assert_eq!(
+        control.rendered_install(),
+        None,
+        "the install is only queued"
+    );
+    callback(&mut processor);
+    let first = control.rendered_install().expect("first install rendered");
+
+    control.project_changed(|| project.clone());
+    control.project_changed(|| project.clone());
+    assert_eq!(
+        control.rendered_install(),
+        Some(first),
+        "queued edits are not yet audible"
+    );
+    callback(&mut processor);
+    let latest = control.rendered_install().expect("latest install rendered");
+    assert_eq!(
+        latest.as_u64(),
+        first.as_u64() + 2,
+        "intermediate installs can be skipped"
+    );
+
+    control.stop(|| project.clone());
+    assert_eq!(
+        control.rendered_install(),
+        None,
+        "stop mutes the prior install at once"
+    );
+    callback(&mut processor);
+    let restarted = control
+        .rendered_install()
+        .expect("fresh stopped session rendered");
+    assert_eq!(restarted.as_u64(), latest.as_u64() + 1);
+
+    control.disable();
+    assert_eq!(
+        control.rendered_install(),
+        None,
+        "removal masks the historical ack"
+    );
+    callback(&mut processor);
+    assert_eq!(
+        control.rendered_install(),
+        None,
+        "the V1 callback clears it"
+    );
+}
+
+#[test]
+fn wrong_output_shape_clears_the_rendered_install_without_faulting_it() {
+    let project = corpus_project("subtractive-voice");
+    let (mut control, mut processor, _) = switch();
+    assert!(control.enable(&project));
+    callback(&mut processor);
+    let installed = control.rendered_install().expect("V2 callback rendered");
+
+    let mut output = vec![9.0; FRAMES * 2];
+    let mut wrong = context();
+    wrong.channels = 1;
+    let measured = allocation_counter::measure(|| processor.process(&mut output, &wrong));
+    assert_eq!((measured.count_total, measured.count_current), (0, 0));
+    assert!(output.iter().all(|sample| *sample == 0.0));
+    assert_eq!(control.rendered_install(), None);
+
+    callback(&mut processor);
+    assert_eq!(control.rendered_install(), Some(installed));
+}
+
+#[test]
+fn retirement_backpressure_keeps_ack_on_the_last_rendered_install() {
+    let project = corpus_project("subtractive-voice");
+    let (mut control, mut processor, _) = switch();
+    assert!(control.enable(&project));
+    callback(&mut processor);
+    for _ in 0..4 {
+        control.project_changed(|| project.clone());
+    }
+    callback(&mut processor);
+    let filled = control
+        .rendered_install()
+        .expect("last queued session rendered");
+    for _ in 0..4 {
+        control.project_changed(|| project.clone());
+    }
+    callback(&mut processor);
+    let blocked = control
+        .rendered_install()
+        .expect("one further session rendered");
+    assert_eq!(blocked.as_u64(), filled.as_u64() + 1);
+    for _ in 0..3 {
+        callback(&mut processor);
+        assert_eq!(control.rendered_install(), Some(blocked));
+    }
+    control.poll(|| project.clone());
+    callback(&mut processor);
+    assert!(
+        control.rendered_install().expect("queued sessions resumed") > blocked,
+        "retirement collection permits later installations"
+    );
+}
+
+#[test]
 fn v2_mode_takes_over_the_audio_with_its_own_transport_and_hands_back_to_v1() {
     let project = corpus_project("subtractive-voice");
     let (mut control, mut processor, calls) = switch();
@@ -282,6 +390,7 @@ fn an_oversized_callback_faults_v2_and_prepares_it_again() {
     assert!(control.enable(&project));
     let _announced = control.take_notices();
     callback(&mut processor);
+    let before_fault = control.rendered_install().expect("first session rendered");
     control.play(|| project.clone());
     let before = calls.load(Ordering::Relaxed);
     assert!(
@@ -289,6 +398,11 @@ fn an_oversized_callback_faults_v2_and_prepares_it_again() {
             .iter()
             .all(|s| *s == 0.0),
         "the oversized callback is silent"
+    );
+    assert_eq!(
+        control.rendered_install(),
+        None,
+        "faulted callback clears the ack"
     );
     assert_eq!(
         calls.load(Ordering::Relaxed),
@@ -303,6 +417,12 @@ fn an_oversized_callback_faults_v2_and_prepares_it_again() {
     assert!(
         !control.is_playing(),
         "the fresh session is stopped at the start"
+    );
+    callback(&mut processor);
+    assert!(
+        control
+            .rendered_install()
+            .is_some_and(|id| id > before_fault)
     );
     control.play(|| project.clone());
     let mut heard = false;
