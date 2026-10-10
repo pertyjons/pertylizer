@@ -1218,7 +1218,7 @@ impl Model {
     fn apply_ingress_onset_result(
         &mut self,
         occurrence: OccurrenceId,
-        result: MixedIngressResult,
+        result: &MixedIngressResult,
     ) -> Result<(), IngressResultBindError> {
         let Some(index) = self.entries.iter().position(|entry| entry.id == occurrence) else {
             return Err(IngressResultBindError::State);
@@ -1304,7 +1304,7 @@ impl Model {
     fn apply_ingress_release_result(
         &mut self,
         occurrence: OccurrenceId,
-        result: MixedIngressResult,
+        result: &MixedIngressResult,
     ) -> Result<(), IngressResultBindError> {
         let Some(entry) = self.entries.iter_mut().find(|entry| entry.id == occurrence) else {
             return Err(IngressResultBindError::State);
@@ -2420,6 +2420,7 @@ fn foreign_mixed_result_with_the_expected_id_faults_without_settlement() {
         request: request_b,
         ..foreign
     };
+    let expected_result = foreign.fields();
     assert!(audio_b.ingress_results.0.try_push(foreign).is_ok());
     let outstanding = control_b.ingress_outstanding;
     let reserved = control_b.release_reserved;
@@ -2431,7 +2432,13 @@ fn foreign_mixed_result_with_the_expected_id_faults_without_settlement() {
             expected: Some(id_b),
         })
     );
-    assert_eq!(control_b.invalid_ingress_result, Some(foreign));
+    assert_eq!(
+        control_b
+            .invalid_ingress_result
+            .as_ref()
+            .map(MixedIngressResult::fields),
+        Some(expected_result)
+    );
     assert_eq!(control_b.ingress_outstanding, outstanding);
     assert_eq!(control_b.release_reserved, reserved);
     assert_eq!(
@@ -2447,7 +2454,14 @@ fn foreign_mixed_result_with_the_expected_id_faults_without_settlement() {
     let MixedCollection::Ended(ended) = control_b.collect(audio_b).unwrap() else {
         panic!("foreign result must end the mixed owner");
     };
-    assert_eq!(ended.ingress.invalid_result, Some(foreign));
+    assert_eq!(
+        ended
+            .ingress
+            .invalid_result
+            .as_ref()
+            .map(MixedIngressResult::fields),
+        Some(expected_result)
+    );
 }
 
 #[test]
@@ -2662,11 +2676,12 @@ fn mismatched_mixed_result_halts_audio_without_settling_its_command() {
         },
         ..actual
     };
+    let expected_result = forged.fields();
     assert!(audio.ingress_results.0.try_push(forged).is_ok());
     assert_eq!(
         control.collect_ingress_result_checked(),
         Err(MixedIngressResultCollectError::Protocol {
-            received: forged.id,
+            received: id,
             expected: Some(id),
         })
     );
@@ -2690,7 +2705,14 @@ fn mismatched_mixed_result_halts_audio_without_settling_its_command() {
         panic!("invalid result must end the mixed owner");
     };
     assert_eq!(ended.end, MixedCollectionEnd::Faulted);
-    assert_eq!(ended.ingress.invalid_result, Some(forged));
+    assert_eq!(
+        ended
+            .ingress
+            .invalid_result
+            .as_ref()
+            .map(MixedIngressResult::fields),
+        Some(expected_result)
+    );
     let custody = ended.ingress.terminal_control.as_ref().unwrap();
     assert_eq!(custody.outstanding_commands.len(), 1);
     assert_eq!(custody.outstanding_commands[0].id, id);
@@ -2724,12 +2746,14 @@ fn reordered_mixed_result_retains_both_unsettled_commands() {
     assert_eq!((first.id, first.request), (onset_id, onset));
     let second = control.ingress_results.0.try_pop().unwrap();
     assert_eq!((second.id, second.request), (release_id, release));
+    let first_fields = first.fields();
+    let second_fields = second.fields();
     assert!(audio.ingress_results.0.try_push(second).is_ok());
     assert!(audio.ingress_results.0.try_push(first).is_ok());
     assert_eq!(
         control.collect_ingress_result_checked(),
         Err(MixedIngressResultCollectError::Protocol {
-            received: second.id,
+            received: release_id,
             expected: Some(onset_id),
         })
     );
@@ -2742,8 +2766,23 @@ fn reordered_mixed_result_retains_both_unsettled_commands() {
         panic!("result order fault must permit terminal teardown");
     };
     assert_eq!(ended.end, MixedCollectionEnd::Faulted);
-    assert_eq!(ended.ingress.invalid_result, Some(second));
-    assert_eq!(ended.ingress.uncollected_results, vec![first]);
+    assert_eq!(
+        ended
+            .ingress
+            .invalid_result
+            .as_ref()
+            .map(MixedIngressResult::fields),
+        Some(second_fields)
+    );
+    assert_eq!(
+        ended
+            .ingress
+            .uncollected_results
+            .iter()
+            .map(MixedIngressResult::fields)
+            .collect::<Vec<_>>(),
+        vec![first_fields]
+    );
     let custody = ended.ingress.terminal_control.as_ref().unwrap();
     assert_eq!(custody.outstanding_commands.len(), 2);
     assert_eq!(custody.outstanding_commands[0].id, onset_id);
@@ -2790,6 +2829,7 @@ fn release_result_naming_another_occurrence_cannot_reopen_its_handle() {
         })),
         ..actual
     };
+    let expected_result = forged.fields();
     assert!(audio.ingress_results.0.try_push(forged).is_ok());
     assert_eq!(
         control.collect_ingress_result_checked(),
@@ -2797,6 +2837,13 @@ fn release_result_naming_another_occurrence_cannot_reopen_its_handle() {
             received: id,
             expected: Some(id),
         })
+    );
+    assert_eq!(
+        control
+            .invalid_ingress_result
+            .as_ref()
+            .map(MixedIngressResult::fields),
+        Some(expected_result)
     );
     assert!(control.occurrence_ledger.is_releasing(occurrence, id));
     assert_eq!(
@@ -2838,6 +2885,7 @@ fn a_typed_onset_handle_refusal_cannot_hide_a_pending_sound_member() {
         outcome: MixedIngressOutcome::Handle(MixedHandleRefused::Occupied),
         ..actual
     };
+    let expected_result = forged.fields();
     assert!(audio.ingress_results.0.try_push(forged).is_ok());
     assert_eq!(
         control.collect_ingress_result_checked(),
@@ -2846,7 +2894,13 @@ fn a_typed_onset_handle_refusal_cannot_hide_a_pending_sound_member() {
             expected: Some(id),
         })
     );
-    assert_eq!(control.invalid_ingress_result, Some(forged));
+    assert_eq!(
+        control
+            .invalid_ingress_result
+            .as_ref()
+            .map(MixedIngressResult::fields),
+        Some(expected_result)
+    );
     assert!(control.occurrence_ledger.is_pending(occurrence));
     assert_eq!(
         control.ingress_journal.front().map(|packet| packet.id),
@@ -2959,6 +3013,7 @@ fn a_typed_release_handle_refusal_or_wrong_cause_cannot_reopen_its_cell() {
             }))
         };
         let forged = MixedIngressResult { outcome, ..actual };
+        let expected_result = forged.fields();
         assert!(audio.ingress_results.0.try_push(forged).is_ok());
         assert_eq!(
             control.collect_ingress_result_checked(),
@@ -2967,7 +3022,13 @@ fn a_typed_release_handle_refusal_or_wrong_cause_cannot_reopen_its_cell() {
                 expected: Some(id),
             })
         );
-        assert_eq!(control.invalid_ingress_result, Some(forged));
+        assert_eq!(
+            control
+                .invalid_ingress_result
+                .as_ref()
+                .map(MixedIngressResult::fields),
+            Some(expected_result)
+        );
         assert!(control.occurrence_ledger.is_releasing(occurrence, id));
         assert!(control.occurrence_ledger.is_sounding(occurrence));
         assert_eq!(
@@ -3003,19 +3064,31 @@ fn wrong_kind_and_duplicate_results_fault_before_ledger_mutation() {
         audio.service_test_ingress_queue();
         let actual = control.ingress_results.0.try_pop().unwrap();
         let forged = if duplicate {
+            let actual_fields = actual.fields();
+            let duplicate_result = MixedIngressResult {
+                owner: actual.owner,
+                id: actual.id,
+                request: actual.request,
+                outcome: actual.outcome,
+            };
             assert!(audio.ingress_results.0.try_push(actual).is_ok());
-            assert_eq!(control.collect_ingress_result_checked(), Ok(Some(actual)));
-            assert!(audio.ingress_results.0.try_push(actual).is_ok());
-            actual
+            assert_eq!(
+                control
+                    .collect_ingress_result_checked()
+                    .unwrap()
+                    .as_ref()
+                    .map(MixedIngressResult::fields),
+                Some(actual_fields)
+            );
+            duplicate_result
         } else {
             MixedIngressResult {
                 outcome: MixedIngressOutcome::Sustained(occurrence),
                 ..actual
             }
         };
-        if !duplicate {
-            assert!(audio.ingress_results.0.try_push(forged).is_ok());
-        }
+        let expected_result = forged.fields();
+        assert!(audio.ingress_results.0.try_push(forged).is_ok());
         assert_eq!(
             control.collect_ingress_result_checked(),
             Err(MixedIngressResultCollectError::Protocol {
@@ -3023,7 +3096,13 @@ fn wrong_kind_and_duplicate_results_fault_before_ledger_mutation() {
                 expected: (!duplicate).then_some(id),
             })
         );
-        assert_eq!(control.invalid_ingress_result, Some(forged));
+        assert_eq!(
+            control
+                .invalid_ingress_result
+                .as_ref()
+                .map(MixedIngressResult::fields),
+            Some(expected_result)
+        );
         assert_eq!(
             control.ingress_outstanding,
             super::MixedIngressQueueCount(usize::from(!duplicate))
@@ -3280,13 +3359,13 @@ fn merger_credit_alone_cannot_admit_out_of_order_mixed_ingress() {
         (second_command, second_request)
     );
     assert_eq!(
-        model.apply_ingress_onset_result(second_id, first_result),
+        model.apply_ingress_onset_result(second_id, &first_result),
         Err(IngressResultBindError::WrongCommand)
     );
     assert_eq!(
         model.apply_ingress_onset_result(
             first_id,
-            MixedIngressResult {
+            &MixedIngressResult {
                 request: second_request,
                 ..first_result
             }
@@ -3296,7 +3375,7 @@ fn merger_credit_alone_cannot_admit_out_of_order_mixed_ingress() {
     assert_eq!(
         model.apply_ingress_onset_result(
             first_id,
-            MixedIngressResult {
+            &MixedIngressResult {
                 outcome: MixedIngressOutcome::Release(Err(IngressRefused::ReleaseGroup)),
                 ..first_result
             }
@@ -3312,7 +3391,7 @@ fn merger_credit_alone_cannot_admit_out_of_order_mixed_ingress() {
         IngressDisposition::Pending
     );
     model
-        .apply_ingress_onset_result(first_id, first_result)
+        .apply_ingress_onset_result(first_id, &first_result)
         .unwrap();
     let MixedIngressOutcome::Onset(Ok(first_identity)) = first_result.outcome else {
         panic!("first source must keep its accepted mixed identity");
@@ -3322,7 +3401,7 @@ fn merger_credit_alone_cannot_admit_out_of_order_mixed_ingress() {
         IngressDisposition::Accepted(first_identity)
     );
     assert_eq!(
-        model.apply_ingress_onset_result(first_id, first_result),
+        model.apply_ingress_onset_result(first_id, &first_result),
         Err(IngressResultBindError::State)
     );
     assert_eq!(
@@ -3333,7 +3412,7 @@ fn merger_credit_alone_cannot_admit_out_of_order_mixed_ingress() {
         }))
     );
     model
-        .apply_ingress_onset_result(second_id, second_result)
+        .apply_ingress_onset_result(second_id, &second_result)
         .unwrap();
     assert_eq!(
         model.entry_mut(second_id).ingress_disposition,
@@ -3392,7 +3471,7 @@ fn serviced_source_frontier_orders_two_source_mixed_commands() {
         let result = control.collect_ingress_result().unwrap();
         assert_eq!((result.id, result.request), (command, request));
         assert!(matches!(result.outcome, MixedIngressOutcome::Onset(Ok(_))));
-        model.apply_ingress_onset_result(id, result).unwrap();
+        model.apply_ingress_onset_result(id, &result).unwrap();
     }
 }
 
@@ -3445,7 +3524,7 @@ fn merged_release_precedes_later_peer_onset_and_keeps_its_identity() {
         panic!("first source must keep its accepted mixed identity");
     };
     model
-        .apply_ingress_onset_result(first, first_result)
+        .apply_ingress_onset_result(first, &first_result)
         .unwrap();
 
     assert_eq!(
@@ -3498,7 +3577,7 @@ fn merged_release_precedes_later_peer_onset_and_keeps_its_identity() {
         }))
     );
     model
-        .apply_ingress_release_result(first, release_result)
+        .apply_ingress_release_result(first, &release_result)
         .unwrap();
     model.settle_ingress_release(first).unwrap();
     let second_result = control.collect_ingress_result().unwrap();
@@ -3511,7 +3590,7 @@ fn merged_release_precedes_later_peer_onset_and_keeps_its_identity() {
         MixedIngressOutcome::Onset(Ok(_))
     ));
     model
-        .apply_ingress_onset_result(second, second_result)
+        .apply_ingress_onset_result(second, &second_result)
         .unwrap();
 }
 
@@ -3956,7 +4035,7 @@ fn mixed_onset_result_after_source_release_keeps_exact_release_owner() {
     audio.service_test_ingress_queue();
     let result = control.collect_ingress_result().unwrap();
     assert_eq!((result.id, result.request), (command, request));
-    model.apply_ingress_onset_result(id, result).unwrap();
+    model.apply_ingress_onset_result(id, &result).unwrap();
     let IngressDisposition::Accepted(identity) = model.entry_mut(id).ingress_disposition else {
         panic!("the onset must be accepted");
     };
@@ -3983,7 +4062,7 @@ fn mixed_onset_result_after_source_release_keeps_exact_release_owner() {
     assert_eq!(
         model.apply_ingress_release_result(
             id,
-            MixedIngressResult {
+            &MixedIngressResult {
                 id: command,
                 ..release_result
             }
@@ -3993,7 +4072,7 @@ fn mixed_onset_result_after_source_release_keeps_exact_release_owner() {
     assert_eq!(
         model.apply_ingress_release_result(
             id,
-            MixedIngressResult {
+            &MixedIngressResult {
                 request,
                 ..release_result
             }
@@ -4005,14 +4084,14 @@ fn mixed_onset_result_after_source_release_keeps_exact_release_owner() {
         Err(IngressResultBindError::State)
     );
     model
-        .apply_ingress_release_result(id, release_result)
+        .apply_ingress_release_result(id, &release_result)
         .unwrap();
     model.settle_ingress_release(id).unwrap();
     model.collect_result(id).unwrap();
     assert_eq!(model.used, limits(0));
     assert!(model.entries.is_empty());
     assert_eq!(
-        model.apply_ingress_release_result(id, release_result),
+        model.apply_ingress_release_result(id, &release_result),
         Err(IngressResultBindError::State)
     );
     assert_eq!(
@@ -4086,7 +4165,7 @@ fn mixed_refusal_after_source_release_reaps_settled_entry() {
             last: SampleTime::new(150),
         }))
     );
-    model.apply_ingress_onset_result(id, result).unwrap();
+    model.apply_ingress_onset_result(id, &result).unwrap();
     assert_eq!(model.used, limits(0));
     assert!(model.entries.is_empty());
 }
@@ -4137,7 +4216,7 @@ fn mixed_onset_refusal_after_halt_retains_ingress_credit() {
         last: SampleTime::new(150),
     };
     assert_eq!(result.outcome, MixedIngressOutcome::Onset(Err(reason)));
-    model.apply_ingress_onset_result(id, result).unwrap();
+    model.apply_ingress_onset_result(id, &result).unwrap();
     assert_eq!(
         model.entry_mut(id).ingress_disposition,
         IngressDisposition::Refused(reason)
@@ -4315,7 +4394,7 @@ fn refused_mixed_release_retains_original_and_halts_model_credit() {
         (onset_result.id, onset_result.request),
         (onset_command, onset_request)
     );
-    model.apply_ingress_onset_result(id, onset_result).unwrap();
+    model.apply_ingress_onset_result(id, &onset_result).unwrap();
 
     let peer = model
         .submit_at(
@@ -4333,7 +4412,9 @@ fn refused_mixed_release_retains_original_and_halts_model_credit() {
         (peer_result.id, peer_result.request),
         (peer_command, peer_request)
     );
-    model.apply_ingress_onset_result(peer, peer_result).unwrap();
+    model
+        .apply_ingress_onset_result(peer, &peer_result)
+        .unwrap();
 
     let original = input(0x80, 60, 0);
     assert_eq!(
@@ -4372,7 +4453,7 @@ fn refused_mixed_release_retains_original_and_halts_model_credit() {
             .occupied()
             .contains(&(occurrence, super::MixedOccurrenceState::Sounding(identity)))
     );
-    model.apply_ingress_release_result(id, result).unwrap();
+    model.apply_ingress_release_result(id, &result).unwrap();
     assert_eq!(
         model.terminal_fault,
         Some((
@@ -4421,7 +4502,7 @@ fn later_mixed_release_refusal_keeps_prior_terminal_fault_and_local_original() {
         (onset_result.id, onset_result.request),
         (onset_command, onset_request)
     );
-    model.apply_ingress_onset_result(id, onset_result).unwrap();
+    model.apply_ingress_onset_result(id, &onset_result).unwrap();
     let peer = model
         .submit_at(
             ModelSource::Second,
@@ -4438,7 +4519,9 @@ fn later_mixed_release_refusal_keeps_prior_terminal_fault_and_local_original() {
         (peer_result.id, peer_result.request),
         (peer_command, peer_request)
     );
-    model.apply_ingress_onset_result(peer, peer_result).unwrap();
+    model
+        .apply_ingress_onset_result(peer, &peer_result)
+        .unwrap();
     let original = input(0x80, 60, 0);
     assert_eq!(
         model.offer_release_at(ModelSource::First, original, Some(SampleTime::new(145))),
@@ -4461,7 +4544,7 @@ fn later_mixed_release_refusal_keeps_prior_terminal_fault_and_local_original() {
         last: SampleTime::new(150),
     };
     assert_eq!(result.outcome, MixedIngressOutcome::Release(Err(reason)));
-    model.apply_ingress_release_result(id, result).unwrap();
+    model.apply_ingress_release_result(id, &result).unwrap();
     assert_eq!(
         model.terminal_fault,
         Some((
@@ -4542,14 +4625,14 @@ fn equal_source_payloads_keep_distinct_mixed_origins_and_results() {
     let first_result = control.collect_ingress_result().unwrap();
     let second_result = control.collect_ingress_result().unwrap();
     assert_eq!(
-        model.apply_ingress_onset_result(second, first_result),
+        model.apply_ingress_onset_result(second, &first_result),
         Err(IngressResultBindError::WrongCommand)
     );
     model
-        .apply_ingress_onset_result(first, first_result)
+        .apply_ingress_onset_result(first, &first_result)
         .unwrap();
     model
-        .apply_ingress_onset_result(second, second_result)
+        .apply_ingress_onset_result(second, &second_result)
         .unwrap();
     let IngressDisposition::Accepted(first_identity) = model.entry_mut(first).ingress_disposition
     else {
@@ -4609,7 +4692,7 @@ fn mixed_hold_refusal_and_later_fault_leave_serial_capture_receipts_independent(
             })) if id == ids[2] => {}
             other => panic!("unexpected mixed onset disposition: {other:?}"),
         }
-        model.apply_ingress_onset_result(id, result).unwrap();
+        model.apply_ingress_onset_result(id, &result).unwrap();
     }
     assert_raw_pressure(&model, &owner, generations);
     assert_eq!(mixed.test_ingress.counters().dropped_hold(), 1);
@@ -4681,7 +4764,7 @@ fn mixed_hold_refusal_and_later_fault_leave_serial_capture_receipts_independent(
                 }))
             );
             model
-                .apply_ingress_release_result(route.id, result)
+                .apply_ingress_release_result(route.id, &result)
                 .unwrap();
         }
         routed.push((route.id, key, raw_id));

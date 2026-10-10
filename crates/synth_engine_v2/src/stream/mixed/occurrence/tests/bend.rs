@@ -141,9 +141,16 @@ fn malformed_bend_result_stamp_scope_shape_or_members_keeps_command_custody() {
             outcome: MixedIngressOutcome::Bend(Ok(bent)),
             ..actual
         };
+        let expected_result = forged.fields();
         assert!(audio.ingress_results.0.try_push(forged).is_ok());
         assert!(control.collect_ingress_result_checked().is_err());
-        assert_eq!(control.invalid_ingress_result, Some(forged));
+        assert_eq!(
+            control
+                .invalid_ingress_result
+                .as_ref()
+                .map(MixedIngressResult::fields),
+            Some(expected_result)
+        );
         assert_eq!(control.ingress_outstanding, credits(1));
         assert_eq!(
             control.ingress_journal.front().map(|packet| packet.id),

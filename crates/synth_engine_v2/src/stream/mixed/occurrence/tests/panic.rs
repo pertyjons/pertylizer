@@ -60,9 +60,16 @@ fn assert_invalid_panic_member_keeps_ledger_and_place(wrong_kind: bool) {
         outcome: MixedIngressOutcome::Panic(Ok(panicked)),
         ..actual
     };
+    let expected_result = forged.fields();
     assert!(audio.ingress_results.0.try_push(forged).is_ok());
     assert!(control.collect_ingress_result_checked().is_err());
-    assert_eq!(control.invalid_ingress_result, Some(forged));
+    assert_eq!(
+        control
+            .invalid_ingress_result
+            .as_ref()
+            .map(super::MixedIngressResult::fields),
+        Some(expected_result)
+    );
     assert_eq!(control.panic_inflight, Some(panic_id));
     assert!(control.occurrence_ledger.is_open(open));
     assert!(control.occurrence_ledger.is_sounding(open));

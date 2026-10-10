@@ -1114,7 +1114,7 @@ enum MixedPedalSubmitted {
 }
 
 #[cfg(all(test, feature = "simulated-ingress"))]
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Debug, PartialEq)]
 #[must_use]
 struct MixedIngressResult {
     owner: MixedIngressOwner,
@@ -1125,7 +1125,18 @@ struct MixedIngressResult {
 
 #[cfg(all(test, feature = "simulated-ingress"))]
 impl MixedIngressResult {
-    fn kind_matches_request(self) -> bool {
+    fn fields(
+        &self,
+    ) -> (
+        MixedIngressOwner,
+        MixedIngressCommandId,
+        MixedIngressRequest,
+        MixedIngressOutcome,
+    ) {
+        (self.owner, self.id, self.request, self.outcome)
+    }
+
+    fn kind_matches_request(&self) -> bool {
         matches!(
             (self.request, self.outcome),
             (
@@ -1525,7 +1536,7 @@ impl MixedOneShotControl {
 
     fn result_payload_matches_ledger(
         &self,
-        result: MixedIngressResult,
+        result: &MixedIngressResult,
         expected: MixedIngressJournalEntry,
     ) -> bool {
         match (result.request, result.outcome) {
@@ -1592,7 +1603,7 @@ impl MixedOneShotControl {
     fn collect_ingress_result_checked(
         &mut self,
     ) -> Result<Option<MixedIngressResult>, MixedIngressResultCollectError> {
-        if let Some(received) = self.invalid_ingress_result {
+        if let Some(received) = self.invalid_ingress_result.as_ref() {
             return Err(MixedIngressResultCollectError::Protocol {
                 received: received.id,
                 expected: self.ingress_journal.front().map(|packet| packet.id),
@@ -1612,21 +1623,23 @@ impl MixedOneShotControl {
                 || packet.id != result.id
                 || packet.request != result.request
                 || !result.kind_matches_request()
-                || !self.result_payload_matches_ledger(result, packet)
+                || !self.result_payload_matches_ledger(&result, packet)
         }) || !place_accounted
         {
+            let received = result.id;
             self.invalid_ingress_result = Some(result);
             self.ingress_halt.store(true, Ordering::Release);
             return Err(MixedIngressResultCollectError::Protocol {
-                received: result.id,
+                received,
                 expected: expected.map(|packet| packet.id),
             });
         }
         let Some(_settled) = self.ingress_journal.pop_front() else {
+            let received = result.id;
             self.invalid_ingress_result = Some(result);
             self.ingress_halt.store(true, Ordering::Release);
             return Err(MixedIngressResultCollectError::Protocol {
-                received: result.id,
+                received,
                 expected: None,
             });
         };
@@ -2158,7 +2171,7 @@ impl MixedOneShotControl {
             #[cfg(all(test, feature = "simulated-ingress"))]
             if terminal {
                 parts.ingress.invalid_command = audio.invalid_ingress_command.take();
-                parts.ingress.invalid_result = self.invalid_ingress_result;
+                parts.ingress.invalid_result = self.invalid_ingress_result.take();
                 parts.ingress.terminal_control = Some(MixedTerminalControlCustody {
                     ingress_outstanding: self.ingress_outstanding,
                     release_reserved: self.release_reserved,
