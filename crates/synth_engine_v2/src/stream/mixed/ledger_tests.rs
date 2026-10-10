@@ -2132,6 +2132,7 @@ fn mixed_audio_queue_returns_exact_ingress_results_without_audio_service_allocat
     assert_eq!(
         control.collect_ingress_result(),
         Some(super::MixedIngressResult {
+            owner: control.ingress_owner,
             id: first_release_id,
             request: first_release,
             outcome: MixedIngressOutcome::Release(Ok(MixedRetired {
@@ -2143,6 +2144,7 @@ fn mixed_audio_queue_returns_exact_ingress_results_without_audio_service_allocat
     assert_eq!(
         control.collect_ingress_result(),
         Some(super::MixedIngressResult {
+            owner: control.ingress_owner,
             id: second_release_id,
             request: second_release,
             outcome: MixedIngressOutcome::Release(Ok(MixedRetired {
@@ -2280,6 +2282,7 @@ fn out_of_order_mixed_command_silences_the_complete_callback() {
         .arm_one_shot(candidate, &history_tests::mixed_profile())
         .unwrap();
     let invalid = super::MixedIngressCommand {
+        owner: control.ingress_owner,
         id: MixedIngressCommandId(2),
         request: MixedIngressRequest::Panic {
             origin: MixedIngressOriginId(1),
@@ -2319,6 +2322,124 @@ fn out_of_order_mixed_command_silences_the_complete_callback() {
 }
 
 #[test]
+fn foreign_mixed_command_with_the_expected_id_faults_before_audio_mutation() {
+    let (prepared_a, candidate_a) = history_tests::one_shot_with_boundary_on(true);
+    let (mut control_a, mut audio_a) = prepared_a
+        .arm_one_shot(candidate_a, &history_tests::mixed_profile())
+        .unwrap();
+    let (prepared_b, candidate_b) = history_tests::one_shot_with_boundary_on(true);
+    let (mut control_b, mut audio_b) = prepared_b
+        .arm_one_shot(candidate_b, &history_tests::mixed_profile())
+        .unwrap();
+    let onset = |control: &mut MixedOneShotControl| {
+        control
+            .submit_onset(
+                MixedIngressOriginId(1),
+                super::TEST_SCOPE,
+                SampleTime::new(140),
+                KeyIdentity::new(60).unwrap(),
+                NoteVelocity::FULL,
+            )
+            .unwrap()
+    };
+    let (id_a, request_a) = onset(&mut control_a);
+    let (id_b, request_b) = onset(&mut control_b);
+    assert_eq!((id_a, request_a), (id_b, request_b));
+    assert_ne!(control_a.ingress_owner, control_b.ingress_owner);
+    let foreign = audio_a.ingress_commands.0.try_pop().unwrap();
+    let own = audio_b.ingress_commands.0.try_pop().unwrap();
+    assert_eq!((foreign.id, foreign.request), (own.id, own.request));
+    assert!(control_b.ingress_commands.0.try_push(foreign).is_ok());
+
+    let mut output = [1.0_f32; 256];
+    assert_eq!(
+        audio_b.render_private(AudioBlockMut::new(&mut output, 256, ChannelLayout::Mono).unwrap()),
+        Err(MixedOneShotRenderError::IngressCommandOrder)
+    );
+    assert!(output.iter().all(|sample| *sample == 0.0));
+    assert_eq!(
+        audio_b
+            .invalid_ingress_command
+            .map(|packet| (packet.owner, packet.id, packet.request)),
+        Some((foreign.owner, foreign.id, foreign.request))
+    );
+    assert_eq!(audio_b.last_served_ingress_id, None);
+    assert!(audio_b.occurrences.occupied().is_empty());
+    assert_eq!(audio_b.test_ingress.holds_outstanding(), EventCount::NONE);
+    let MixedCollection::Ended(ended) = control_b.collect(audio_b).unwrap() else {
+        panic!("foreign command must end the mixed owner");
+    };
+    assert_eq!(
+        ended
+            .ingress
+            .invalid_command
+            .map(|packet| (packet.owner, packet.id, packet.request)),
+        Some((foreign.owner, foreign.id, foreign.request))
+    );
+}
+
+#[test]
+fn foreign_mixed_result_with_the_expected_id_faults_without_settlement() {
+    let (prepared_a, candidate_a) = history_tests::one_shot_with_boundary_on(true);
+    let (mut control_a, mut audio_a) = prepared_a
+        .arm_one_shot(candidate_a, &history_tests::mixed_profile())
+        .unwrap();
+    let (prepared_b, candidate_b) = history_tests::one_shot_with_boundary_on(true);
+    let (mut control_b, mut audio_b) = prepared_b
+        .arm_one_shot(candidate_b, &history_tests::mixed_profile())
+        .unwrap();
+    let onset = |control: &mut MixedOneShotControl| {
+        control
+            .submit_onset(
+                MixedIngressOriginId(1),
+                super::TEST_SCOPE,
+                SampleTime::new(140),
+                KeyIdentity::new(60).unwrap(),
+                NoteVelocity::FULL,
+            )
+            .unwrap()
+    };
+    let _ = onset(&mut control_a);
+    let (id_b, request_b) = onset(&mut control_b);
+    audio_a.service_test_ingress_queue();
+    let foreign = control_a.ingress_results.0.try_pop().unwrap();
+    assert_ne!(foreign.owner, control_b.ingress_owner);
+    let foreign = MixedIngressResult {
+        id: id_b,
+        request: request_b,
+        ..foreign
+    };
+    assert!(audio_b.ingress_results.0.try_push(foreign).is_ok());
+    let outstanding = control_b.ingress_outstanding;
+    let reserved = control_b.release_reserved;
+
+    assert_eq!(
+        control_b.collect_ingress_result_checked(),
+        Err(MixedIngressResultCollectError::Protocol {
+            received: id_b,
+            expected: Some(id_b),
+        })
+    );
+    assert_eq!(control_b.invalid_ingress_result, Some(foreign));
+    assert_eq!(control_b.ingress_outstanding, outstanding);
+    assert_eq!(control_b.release_reserved, reserved);
+    assert_eq!(
+        control_b.ingress_journal.front().map(|packet| packet.id),
+        Some(id_b)
+    );
+    let mut output = [1.0_f32; 256];
+    assert_eq!(
+        audio_b.render_private(AudioBlockMut::new(&mut output, 256, ChannelLayout::Mono).unwrap()),
+        Err(MixedOneShotRenderError::IngressResultOrder)
+    );
+    assert!(output.iter().all(|sample| *sample == 0.0));
+    let MixedCollection::Ended(ended) = control_b.collect(audio_b).unwrap() else {
+        panic!("foreign result must end the mixed owner");
+    };
+    assert_eq!(ended.ingress.invalid_result, Some(foreign));
+}
+
+#[test]
 fn duplicate_mixed_command_cannot_release_a_live_occurrence() {
     let (prepared, candidate) = history_tests::one_shot_with_boundary_on(true);
     let (mut control, mut audio) = prepared
@@ -2338,6 +2459,7 @@ fn duplicate_mixed_command_cannot_release_a_live_occurrence() {
         panic!("onset request");
     };
     let invalid = super::MixedIngressCommand {
+        owner: control.ingress_owner,
         id,
         request: MixedIngressRequest::Release {
             origin,
@@ -2396,6 +2518,7 @@ fn terminal_command_order_fault_reports_unanswered_packets_and_reservations() {
         )
         .unwrap();
     let invalid = super::MixedIngressCommand {
+        owner: control.ingress_owner,
         id: onset_id,
         request: MixedIngressRequest::Panic {
             origin,
@@ -2923,6 +3046,7 @@ fn a_lost_reserved_command_place_refuses_without_spending_release_or_lift_custod
     // Break the private queue/count invariant. The reserved places must remain
     // owned by the release and lift on refusal.
     let forged = super::MixedIngressCommand {
+        owner: control.ingress_owner,
         id: MixedIngressCommandId(u64::MAX),
         request: MixedIngressRequest::Panic { origin, at },
         bend_credits: super::MixedIngressQueueCount::NONE,
@@ -3015,6 +3139,7 @@ fn mixed_ingress_result_channel_returns_non_monotone_refusal_with_original() {
     assert_eq!(
         control.collect_ingress_result(),
         Some(super::MixedIngressResult {
+            owner: control.ingress_owner,
             id: earlier_id,
             request: earlier,
             outcome: MixedIngressOutcome::Onset(Err(IngressRefused::NonMonotoneStamp {
@@ -3821,6 +3946,7 @@ fn mixed_onset_result_after_source_release_keeps_exact_release_owner() {
     assert_eq!(
         release_result,
         MixedIngressResult {
+            owner: control.ingress_owner,
             id: release_command,
             request: release,
             outcome: MixedIngressOutcome::Release(Ok(MixedRetired {

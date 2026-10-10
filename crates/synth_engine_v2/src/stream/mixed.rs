@@ -880,6 +880,8 @@ pub(crate) struct MixedOneShotArmRefusal {
 pub(crate) struct MixedOneShotControl {
     control: MixedStreamControl,
     #[cfg(all(test, feature = "simulated-ingress"))]
+    ingress_owner: MixedIngressOwner,
+    #[cfg(all(test, feature = "simulated-ingress"))]
     ingress_commands: OpaqueQueue<HeapProd<MixedIngressCommand>>,
     #[cfg(all(test, feature = "simulated-ingress"))]
     ingress_results: OpaqueQueue<HeapCons<MixedIngressResult>>,
@@ -939,6 +941,16 @@ impl<T> std::fmt::Debug for OpaqueQueue<T> {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[must_use]
 struct MixedIngressCommandId(u64);
+
+/// The prepared plan, stream and note table that own one private transfer.
+#[cfg(all(test, feature = "simulated-ingress"))]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[must_use]
+struct MixedIngressOwner {
+    plan: PlanId,
+    epoch: StreamEpoch,
+    table: TableId,
+}
 
 #[cfg(all(test, feature = "simulated-ingress"))]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1048,6 +1060,7 @@ enum MixedIngressRequest {
 #[cfg(all(test, feature = "simulated-ingress"))]
 #[derive(Clone, Copy, Debug)]
 struct MixedIngressCommand {
+    owner: MixedIngressOwner,
     id: MixedIngressCommandId,
     request: MixedIngressRequest,
     /// Bend credits the merger reserved for this command before minting `id`. Audio
@@ -1093,6 +1106,7 @@ enum MixedPedalSubmitted {
 #[derive(Clone, Copy, Debug, PartialEq)]
 #[must_use]
 struct MixedIngressResult {
+    owner: MixedIngressOwner,
     id: MixedIngressCommandId,
     request: MixedIngressRequest,
     outcome: MixedIngressOutcome,
@@ -1194,6 +1208,7 @@ impl MixedOneShotControl {
             .ok_or(MixedIngressSubmitError::IdentityExhausted(request))?;
         let id = MixedIngressCommandId(serial);
         let packet = MixedIngressCommand {
+            owner: self.ingress_owner,
             id,
             request,
             bend_credits,
@@ -1575,7 +1590,9 @@ impl MixedOneShotControl {
             _ => self.ingress_outstanding > MixedIngressQueueCount::NONE,
         };
         if expected.is_none_or(|packet| {
-            packet.id != result.id
+            packet.owner != self.ingress_owner
+                || result.owner != self.ingress_owner
+                || packet.id != result.id
                 || packet.request != result.request
                 || !result.kind_matches_request()
                 || !self.result_payload_matches_ledger(result, packet)
@@ -1847,6 +1864,8 @@ pub(crate) struct MixedOneShotAudio {
     render_started: bool,
     #[cfg(all(test, feature = "simulated-ingress"))]
     test_ingress: PerformanceIngress,
+    #[cfg(all(test, feature = "simulated-ingress"))]
+    ingress_owner: MixedIngressOwner,
     /// What each live handle names; the merger's ledger has the same width.
     #[cfg(all(test, feature = "simulated-ingress"))]
     occurrences: MixedOccurrenceTable,
@@ -2700,9 +2719,17 @@ impl MixedJoinedPrepared {
         // The initial list's open tokens are pairing state only; audio publishes
         // that list and mints its occurrences itself.
         drop(outstanding);
+        #[cfg(all(test, feature = "simulated-ingress"))]
+        let ingress_owner = MixedIngressOwner {
+            plan: control.plan.id(),
+            epoch: control.epoch,
+            table: control.table,
+        };
         Ok((
             MixedOneShotControl {
                 control,
+                #[cfg(all(test, feature = "simulated-ingress"))]
+                ingress_owner,
                 #[cfg(all(test, feature = "simulated-ingress"))]
                 ingress_commands: OpaqueQueue(ingress_command_writer),
                 #[cfg(all(test, feature = "simulated-ingress"))]
@@ -2764,6 +2791,8 @@ impl MixedJoinedPrepared {
                 test_fail_after_ingress_at: None,
                 #[cfg(all(test, feature = "simulated-ingress"))]
                 test_ingress,
+                #[cfg(all(test, feature = "simulated-ingress"))]
+                ingress_owner,
                 #[cfg(all(test, feature = "simulated-ingress"))]
                 occurrences: MixedOccurrenceTable::prepare(
                     occurrence_width,

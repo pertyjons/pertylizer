@@ -226,7 +226,7 @@ impl MixedOneShotAudio {
             let expected = self
                 .last_served_ingress_id
                 .map_or(Some(1), |id| id.0.checked_add(1));
-            if expected != Some(command.id.0) {
+            if command.owner != self.ingress_owner || expected != Some(command.id.0) {
                 self.invalid_ingress_command = Some(command);
                 return;
             }
@@ -280,6 +280,7 @@ impl MixedOneShotAudio {
                 granted.as_usize().saturating_sub(spent.as_usize()),
             ));
             let result = MixedIngressResult {
+                owner: command.owner,
                 id: command.id,
                 request: command.request,
                 outcome,

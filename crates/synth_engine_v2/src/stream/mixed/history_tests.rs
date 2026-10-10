@@ -613,6 +613,7 @@ fn private_mixed_channel_reports_conflict_with_direct_test_live_ownership() {
     assert_eq!(
         control.collect_ingress_result(),
         Some(MixedIngressResult {
+            owner: control.ingress_owner,
             id,
             request,
             outcome: MixedIngressOutcome::Onset(Err(IngressRefused::MixedTestConflict)),
