@@ -37,9 +37,10 @@ maintainer's explicit approval before implementation.
 - The private mixed owner already has a registered ingress store, bend-credit
   accounting, a handle ledger and reserved release places. It also has pedal,
   lift and Panic machinery, but this rehearsal does not expose those offers.
-- The ingress store's `last_accepted` fence observes only events it queues.
-  A release of a refused onset tombstone retires its handle without an ingress
-  offer, so the store cannot be the sole source-order or horizon guard.
+- A memberless mixed bend advances the ingress store's `last_accepted` fence
+  without writing a queue entry. A release of a refused onset tombstone
+  retires its handle without an ingress offer, so the store cannot be the
+  sole source-order or horizon guard.
 - ADR-0032 clause 21 and HOST-INV-013 require a far-future ingress event to
   be rejected and counted once, without parking it until its timestamp.
 
@@ -53,30 +54,71 @@ maintainer's explicit approval before implementation.
    replacement, loop playback, hardware input and an application route remain
    refused. Repository shipping targets must not enable the feature, and the
    crate-boundary test must enforce that condition.
-2. **Host-owned packet custody.** The crate returns opaque, non-cloneable
-   command packets and accepts opaque result packets. The host owns bounded
-   SPSC command and result queues; `ringbuf` remains dev-only here. Arm checks
+2. **Host-owned queue custody.** The crate mints, moves and consumes opaque,
+   non-cloneable command and result packets through host-owned bounded SPSC
+   queues. The host holds non-cloneable bound wrappers and cannot directly
+   push, pop or clone packets through them. The host must retain every wrapper
+   until joined teardown and destroy it only off the audio thread; dropping a
+   wrapper earlier violates the host contract and may lose queued packets.
+   `ringbuf` remains dev-only here. Arm checks
    capacities observed from both queues against its admitted command/result
    bound, including the places withheld for exact key-ups, and charges a
-   preallocated outstanding-command journal. A failed command push returns
-   the same packet for retry at the head. No younger command passes it and
-   no command ID or release reservation is reused. There is no arbitrary
-   cancellation while the stream continues. Joined terminal teardown names
-   every unsent, unserved and uncollected packet and outstanding handle.
-   Queue allocation and final resource destruction occur off the audio thread.
+   preallocated outstanding-command journal. A pre-consumption command/result
+   journal-capacity or bend-credit refusal returns the source observation for
+   ordered retry without minting a packet. A failed physical command push
+   after that preflight is a terminal host fault: control retains the minted
+   packet in one prepared pending slot for joined teardown. No younger command
+   passes it, and its command ID and any release reservation remain reserved.
+   There is no arbitrary cancellation while the stream continues.
+   With all bound wrappers returned and queue obligations honored, joined
+   terminal teardown names every unsent, unserved and uncollected packet and
+   outstanding handle. If a wrapper is missing, the retained journal still
+   names its outstanding command IDs and handles, but the lost queue contents
+   cannot be recovered or claimed as
+   accounted for. After callback quiescence, a missing-wrapper shutdown reports
+   `MissingEndpoint`, stops both halves, lists the retained journal IDs and
+   handles, drains available bound consumers, and marks each queue whose
+   consumer is missing as having unknown contents. It cannot report complete
+   joined custody. The qualified host allocates and destroys queues off the
+   audio thread.
+   The rehearsal uses crate-defined bounded SPSC queue traits. Arm consumes
+   one unsplit host command queue and one unsplit host result queue, checks
+   their reported capacities and that both are empty, and returns both queues
+   unchanged on any arm refusal.
+   A successful arm returns privately bound command-producer/result-consumer
+   and command-consumer/result-producer wrappers to the host. The host owns the
+   concrete queues inside those wrappers; neither mixed owner retains a queue
+   half. The host lends its control wrappers mutably to each submit and collect
+   call and its audio wrappers mutably to each callback; ownership stays with
+   the host. Each call checks the wrapper's private owner and queue binding
+   before touching it; a foreign wrapper raises a terminal transfer fault and
+   remains with its host owner. A queue trait implementation must provide
+   exclusive, unaliased halves and FIFO delivery,
+   report its true fixed capacity and occupancy, retain every accepted packet
+   exactly once, and return the exact packet on a failed `try_push`. Its callback
+   `try_push`/`try_pop` must be bounded, nonblocking, allocation-free, lock-free
+   and panic-free. Joined teardown first checks every supplied wrapper binding.
+   On any mismatch it refuses the entire join, returning both mixed halves
+   and every supplied wrapper unchanged, with neither queue drained; the host
+   can retry with the correct wrappers. Only when no wrapper is foreign does
+   a missing wrapper select the partial `MissingEndpoint` shutdown above.
+   With correct wrappers, teardown accounts for their remaining contents
+   beside each half's internal custody.
 3. **Order.** Each packet binds the owner, plan, epoch, identity table, source
    and one gap-free increasing command ID. The control owner checks that each
    consumed source observation's **nominal** `SampleTime` is not earlier than
    the preceding consumed observation. Equal stamps retain command-ID order.
-   A transient pre-consumption capacity or bend-credit refusal returns the
+   A transient pre-consumption journal-capacity or bend-credit refusal returns the
    original without advancing that frontier. Identity exhaustion includes
    the increasing command ID and the live-occurrence ledger **when a new
    onset finds no vacant, unexhausted cell despite available command and hold
    room**. Retiring one cell at its generation limit does not fault the stream
    while another cell is free. At the no-vacancy onset, identity exhaustion
    returns the original without advancing the frontier and raises a terminal
-   transfer fault. It must not be reported as transient ring `Full` or become
-   a permanent onset retry on a running stream.
+   transfer fault. It must not be reported as a transient journal-capacity
+   refusal or become a permanent onset retry on a running stream. A failed
+   physical queue push is a terminal host fault, not a transient journal-capacity
+   refusal.
    An observation consumed into a packet advances it even if audio later
    refuses the note or bend. The audio owner independently checks ID, origin
    and nondecreasing nominal time for every served packet **before** ledger or
@@ -115,17 +157,23 @@ maintainer's explicit approval before implementation.
    head of the preallocated outstanding journal. A foreign, duplicate,
    reordered or mismatched result changes no ledger, count or reservation;
    it remains owned for joined teardown and faults the transfer without
-   panicking. Every transfer fault, whether detected by control or audio,
+   panicking. Every terminal host fault is a transfer fault. Every transfer
+   fault, whether detected by control or audio,
    stops command service and causes the audio owner to silence the complete
    callback in which it observes the fault and every later callback until
    off-thread reprepare. A control-side fault reaches audio through a
    prepared atomic halt signal. Joined teardown reports sounding identities
    and outstanding release places; no note keeps sounding through a halted
-   stream. Packet service allocates nothing, takes no lock, makes
-   no system call and does not panic. If the result queue is full, audio
-   keeps one result in prepared storage and stops command service until that
-   result is transferred. A missing command/result is a terminal host fault;
-   the outstanding journal prevents credit reuse and names it at teardown.
+   stream. Packet service, including calls into the host's qualified queue
+   implementation, allocates nothing, takes no lock, makes no system call and
+   does not panic. The outstanding-command bound means a truthful, sufficiently
+   sized result queue cannot fill from this transfer's own results. A failed
+   physical result push is therefore a terminal host fault: audio retains the
+   result in its prepared pending slot, stops command service and silences the
+   observing callback. A missing command/result is a terminal host fault when
+   detected by a later ID gap or joined teardown; a missing final packet has
+   no earlier liveness signal. The outstanding journal prevents credit reuse
+   and names its command ID at teardown.
 
 ## Falsifiers and required proof
 
@@ -133,8 +181,10 @@ maintainer's explicit approval before implementation.
   fails to imply `simulated-ingress`; or the constructor admits a missing or
   second producer, a second source, pedal, Panic, a non-initial candidate,
   plan replacement, loop playback or a crossed target partition.
-- An undersized observed command or result queue arms, or a full queue loses
-  an accepted key-up packet, its handle, command ID or reserved place.
+- An undersized or non-empty command or result queue arms; a falsely reported
+  capacity causes a failed push without a terminal fault; an unbound endpoint
+  reaches a queue operation; or a failed physical push loses its prepared
+  pending packet, handle, command ID or reserved place.
 - A source observation or forged audio packet at a stamp below its respective
   frontier mutates a note, bend or ledger, or lets a younger packet run. Equal
   stamps fail to retain command-ID order.
@@ -142,9 +192,9 @@ maintainer's explicit approval before implementation.
   packet fails to advance its frontier.
 - Command-ID exhaustion or an otherwise admissible onset with no unexhausted
   vacant handle cell lets the stream continue, advances the control frontier,
-  loses the original observation, reports transient ring `Full`, or fails to
-  silence audio once the transfer fault is observed. Conversely, retiring one
-  exhausted cell while another is free must not fault the stream.
+  loses the original observation, reports transient journal-capacity refusal,
+  or fails to silence audio once the transfer fault is observed. Conversely,
+  retiring one exhausted cell while another is free must not fault the stream.
 - A refused onset's tombstone key-up bypasses the horizon check, a far-future
   packet is counted more or less than once, or its stream keeps serving later
   packets. The original and outstanding handle must appear at teardown.
@@ -155,21 +205,44 @@ maintainer's explicit approval before implementation.
   different occurrence, loses its immutable nominal stamp, or fails to
   retire its accepted handle. An onset on a bent scope misses its inherited
   value or spends no credit; a refused bend leaks one.
-- A full result queue drops a result or serves a younger command past it;
-  a foreign or reordered result changes the ledger or panics instead of
-  faulting; or a callback allocates, locks, panics or performs final resource
-  destruction.
+- A forced full result queue loses its pending result, serves a younger
+  command, or fails to raise a terminal transfer fault; a foreign or reordered
+  result changes the ledger or panics instead of faulting; or the concrete
+  host endpoint used in the fixture allocates, locks, blocks, panics or performs
+  final resource destruction in a callback.
 - Any transfer fault, including a source-order fault, foreign or reordered
   command or result, horizon failure or missing packet, fails to silence the
   complete callback in which audio observes it and every later callback.
 
 The first integration fixture compiles the library **without** `cfg(test)`.
 It carries a simulated note-on, bend and exact key-up beside a compiled note
-over a host-owned SPSC ring, and compares one-call, 64-frame, 256-frame and
-irregular callback partitions. It exercises a full command queue, a full
-result queue, foreign and reordered **command** delivery from two prepared
-owners, and foreign and reordered result delivery. It also tests a
-control-side backward-time halt reaching audio through the atomic signal.
+over a host-owned SPSC ring, and compares fault-free output across one-call,
+64-frame, 256-frame and irregular callback partitions. Separate fault fixtures:
+
+- Refuse undersized and host-reported non-empty command and result queues at
+  arm and verify that both concrete queues return unchanged. A crate-internal
+  arm fixture seeds an opaque packet before the check and verifies its custody.
+- Inject full command and result queues whose capacities were falsely
+  reported. Check that the control pending slot retains the command's ID,
+  handle and release reservation, or the audio pending slot retains the
+  result. No younger command is served. Joined teardown names each packet;
+  the callback that observes the fault and every later callback are silent.
+- Deliver foreign and reordered commands and results from two prepared
+  owners. Pass one owner's bound wrapper into the other's control and audio
+  calls. Check that the receiving half faults before queue access and that
+  audio silences the observing callback. A join with a wrong wrapper returns
+  both halves and all wrappers unchanged without draining either queue;
+  retrying with the correct wrappers accounts for every outstanding packet.
+- Raise a control-side backward-time fault and verify that its atomic halt
+  reaches audio. Count allocations around the complete callback, including
+  concrete queue operations, and inspect that queue implementation for locks,
+  blocking, system calls, panic and callback-time destruction.
+- Omit one wrapper after quiescence and verify that `MissingEndpoint` names
+  outstanding IDs and handles, marks the queue whose consumer was omitted as
+  having unknown contents, and never claims complete joined custody. A
+  loss-injecting queue fixture confirms that a missing final packet is first
+  reported at teardown.
+
 Crate-internal unit tests force command-ID exhaustion, a no-vacancy onset
 with exhausted empty cells and other held cells despite command room, and
 continued use of another free cell after one cell exhausts. They also inject
@@ -178,8 +251,7 @@ packet and a duplicate command; the opaque public API cannot forge or
 practically exhaust those cases.
 A deterministic render-step unit fixture injects an audio-detected horizon
 fault **after the first quantum** of a multi-quantum callback, and proves
-that the complete observing block and later blocks are silent. The command
-and result fault fixtures also check halt and subsequent silence. The
+that the complete observing block and later blocks are silent. The
 required gate commands are:
 
 ```bash

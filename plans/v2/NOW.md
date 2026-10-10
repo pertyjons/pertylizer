@@ -1119,6 +1119,15 @@ Forged omitted members leave the result, journal and reservations unsettled.
 These test-only checks prove agreement with earlier results, not independent
 truth of those results or a public mixed transfer contract. Phase 9 exit
 evidence remains open.
+
+The private mixed service now measures forward-horizon admission from the
+current quantum's opening clock, including direct service calls. A boundary
+test accepts a bend at the horizon and refuses the next sample exactly once.
+Each private command and result also carries its prepared plan, epoch and
+identity-table owner. Foreign packets with an otherwise valid first command
+ID fault before audio or ledger mutation, silence the callback, and remain
+named at teardown. These checks remain behind the test-only mixed path.
+
 [ADR-0078](decisions/ADR-0078-host-owned-mixed-transfer-rehearsal.md) is a
 reviewed proposal for a default-off, host-owned packet transfer rehearsal.
 It requires maintainer approval before the public mixed API or feature is
