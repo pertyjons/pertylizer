@@ -222,6 +222,7 @@ impl MixedOneShotAudio {
                 .map_or(Some(1), |id| id.0.checked_add(1));
             if command.owner != self.ingress_owner || expected != Some(command.id.0) {
                 self.invalid_ingress_command = Some(command);
+                self.ingress_halt.store(true, Ordering::Release);
                 return;
             }
             self.last_served_ingress_id = Some(command.id);

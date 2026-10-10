@@ -47,7 +47,18 @@ fn exhausted_occurrence_cells_do_not_masquerade_as_transient_ring_full() {
     );
     assert_eq!(control.last_ingress_id, last_id);
     assert_eq!(control.ingress_room(), control.ingress_capacity.as_usize());
+    assert!(
+        control
+            .ingress_halt
+            .load(std::sync::atomic::Ordering::Acquire)
+    );
+    assert_eq!(
+        control.terminal_identity_fault,
+        Some(super::super::MixedIngressIdentityFault::OccurrenceCells)
+    );
 
+    let (mut control, _audio) = armed(true);
+    control.occurrence_ledger.cells.fill(CellUse::Exhausted);
     control.occurrence_ledger.cells[0] = CellUse::Free(LiveOccurrenceGeneration::FIRST);
     let held = onset(&mut control, 140, 60);
     assert_eq!(held.cell, LiveOccurrenceCell(0));
@@ -64,8 +75,22 @@ fn exhausted_occurrence_cells_do_not_masquerade_as_transient_ring_full() {
         Err(MixedOnsetSubmitError::IdentityExhausted)
     );
     assert_eq!(control.last_ingress_id, held_id);
+    assert!(
+        control
+            .ingress_halt
+            .load(std::sync::atomic::Ordering::Acquire)
+    );
+    assert_eq!(
+        control.terminal_identity_fault,
+        Some(super::super::MixedIngressIdentityFault::OccurrenceCells)
+    );
 
+    let (mut control, _audio) = armed(true);
+    control.occurrence_ledger.cells.fill(CellUse::Exhausted);
+    control.occurrence_ledger.cells[0] = CellUse::Free(LiveOccurrenceGeneration::FIRST);
     control.occurrence_ledger.cells[1] = CellUse::Free(LiveOccurrenceGeneration::FIRST);
+    let held = onset(&mut control, 140, 60);
+    assert_eq!(held.cell, LiveOccurrenceCell(0));
     let (_, request) = control
         .submit_onset(
             ORIGIN,
@@ -79,6 +104,54 @@ fn exhausted_occurrence_cells_do_not_masquerade_as_transient_ring_full() {
         panic!("an onset submit returns its onset request");
     };
     assert_eq!(occurrence.cell, LiveOccurrenceCell(1));
+}
+
+#[test]
+fn exhausted_cells_wait_for_command_room_and_inherited_bend_credit() {
+    let (mut control, _audio) = armed(true);
+    control.occurrence_ledger.cells.fill(CellUse::Exhausted);
+    control.ingress_outstanding = control.ingress_capacity;
+    assert_eq!(
+        control.submit_onset(
+            ORIGIN,
+            super::super::TEST_SCOPE,
+            SampleTime::new(140),
+            key(60),
+            NoteVelocity::FULL,
+        ),
+        Err(MixedOnsetSubmitError::Full)
+    );
+    assert!(
+        !control
+            .ingress_halt
+            .load(std::sync::atomic::Ordering::Acquire)
+    );
+    assert_eq!(control.last_ingress_id, None);
+
+    let (mut control, _audio) = armed(true);
+    control.occurrence_ledger.cells.fill(CellUse::Exhausted);
+    control.bend_scopes[0] = Some(super::super::MixedBendScopeCell {
+        scope: super::super::TEST_SCOPE,
+        latest: super::super::MixedIngressCommandId(1),
+        accepted_nonzero: true,
+    });
+    control.bend_credits_free = super::super::MixedIngressQueueCount::NONE;
+    assert_eq!(
+        control.submit_onset(
+            ORIGIN,
+            super::super::TEST_SCOPE,
+            SampleTime::new(140),
+            key(60),
+            NoteVelocity::FULL,
+        ),
+        Err(MixedOnsetSubmitError::BendCredit)
+    );
+    assert!(
+        !control
+            .ingress_halt
+            .load(std::sync::atomic::Ordering::Acquire)
+    );
+    assert_eq!(control.last_ingress_id, None);
 }
 
 #[test]

@@ -1111,7 +1111,12 @@ accounting, and joined teardown names the pending packet.
 The private owner now journals each submitted command before result collection.
 Audio faults before applying an out-of-order command; control faults before
 settling a mismatched, reordered or duplicate result. Terminal teardown retains
-the invalid packet and outstanding command custody. The control ledger now
+the invalid packet and outstanding command custody. An exhausted command ID
+halts before capacity or bend-credit refusal; a no-vacancy onset halts after
+those preflight checks. Terminal control custody distinguishes the two
+identity causes. An audio-detected invalid command also publishes the
+shared halt; later control calls that observe it refuse new submits, and audio
+stops serving younger queued commands. The control ledger
 records each collected typed onset's sound state separately from submit-time
 release custody and follows Panic tombstones. Its pending state is bound to the
 command ID that opened the ledger cell, so an earlier forged onset cannot

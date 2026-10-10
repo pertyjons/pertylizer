@@ -204,7 +204,9 @@ impl MixedStreamAudio {
 impl MixedOneShotAudio {
     #[cfg(all(test, feature = "simulated-ingress"))]
     fn ingress_halt_error(&self) -> MixedOneShotRenderError {
-        if self.ingress_result_pending.is_some() {
+        if self.invalid_ingress_command.is_some() {
+            MixedOneShotRenderError::IngressCommandOrder
+        } else if self.ingress_result_pending.is_some() {
             MixedOneShotRenderError::IngressResultPush
         } else {
             MixedOneShotRenderError::IngressTransferHalt

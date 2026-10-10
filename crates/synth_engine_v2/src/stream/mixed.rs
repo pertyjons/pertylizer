@@ -895,6 +895,8 @@ pub(crate) struct MixedOneShotControl {
     #[cfg(all(test, feature = "simulated-ingress"))]
     ingress_command_pending: Option<MixedIngressCommand>,
     #[cfg(all(test, feature = "simulated-ingress"))]
+    terminal_identity_fault: Option<MixedIngressIdentityFault>,
+    #[cfg(all(test, feature = "simulated-ingress"))]
     invalid_ingress_result: Option<MixedIngressResult>,
     #[cfg(all(test, feature = "simulated-ingress"))]
     ingress_halt: Arc<AtomicBool>,
@@ -948,6 +950,13 @@ impl<T> std::fmt::Debug for OpaqueQueue<T> {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[must_use]
 struct MixedIngressCommandId(u64);
+
+#[cfg(all(test, feature = "simulated-ingress"))]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum MixedIngressIdentityFault {
+    CommandId,
+    OccurrenceCells,
+}
 
 /// The prepared plan, stream and note table that own one private transfer.
 #[cfg(all(test, feature = "simulated-ingress"))]
@@ -1214,6 +1223,15 @@ enum MixedIngressPushError {
 
 #[cfg(all(test, feature = "simulated-ingress"))]
 impl MixedOneShotControl {
+    fn command_id_exhausted(&self) -> bool {
+        self.last_ingress_id == Some(MixedIngressCommandId(u64::MAX))
+    }
+
+    fn terminal_identity_refusal(&mut self, cause: MixedIngressIdentityFault) {
+        self.terminal_identity_fault = Some(cause);
+        self.ingress_halt.store(true, Ordering::Release);
+    }
+
     /// Ring places neither carrying a command or result nor reserved for a release or
     /// a lift.
     fn ingress_room(&self) -> usize {
@@ -1241,6 +1259,10 @@ impl MixedOneShotControl {
     ) -> Result<MixedIngressCommandId, MixedIngressSubmitError> {
         if self.ingress_halt.load(Ordering::Acquire) {
             return Err(MixedIngressSubmitError::Halted(request));
+        }
+        if self.command_id_exhausted() {
+            self.terminal_identity_refusal(MixedIngressIdentityFault::CommandId);
+            return Err(MixedIngressSubmitError::IdentityExhausted(request));
         }
         if self.ingress_room() == 0 {
             return Err(MixedIngressSubmitError::Full(request));
@@ -1274,8 +1296,11 @@ impl MixedOneShotControl {
         }
         let serial = self
             .last_ingress_id
-            .map_or(Some(1), |id| id.0.checked_add(1))
-            .ok_or(MixedIngressPushError::IdentityExhausted(request))?;
+            .map_or(Some(1), |id| id.0.checked_add(1));
+        let Some(serial) = serial else {
+            self.terminal_identity_refusal(MixedIngressIdentityFault::CommandId);
+            return Err(MixedIngressPushError::IdentityExhausted(request));
+        };
         let id = MixedIngressCommandId(serial);
         let packet = MixedIngressCommand {
             owner: self.ingress_owner,
@@ -1343,6 +1368,10 @@ impl MixedOneShotControl {
         if self.ingress_halt.load(Ordering::Acquire) {
             return Err(MixedPanicSubmitError::Halted);
         }
+        if self.command_id_exhausted() {
+            self.terminal_identity_refusal(MixedIngressIdentityFault::CommandId);
+            return Err(MixedPanicSubmitError::IdentityExhausted);
+        }
         if let Some(pending) = self.panic_inflight {
             return Err(MixedPanicSubmitError::Pending(pending));
         }
@@ -1378,6 +1407,10 @@ impl MixedOneShotControl {
         if self.ingress_halt.load(Ordering::Acquire) {
             return Err(MixedOnsetSubmitError::Halted);
         }
+        if self.command_id_exhausted() {
+            self.terminal_identity_refusal(MixedIngressIdentityFault::CommandId);
+            return Err(MixedOnsetSubmitError::IdentityExhausted);
+        }
         if self.ingress_room() < 2 {
             return Err(MixedOnsetSubmitError::Full);
         }
@@ -1385,10 +1418,6 @@ impl MixedOneShotControl {
         // owns a ring place, or is sustained and owns an outstanding hold. If the ring
         // has two free places but no vacant cell, its generations are exhausted rather
         // than the onset being transiently blocked by ring capacity.
-        let occurrence = self
-            .occurrence_ledger
-            .vacant()
-            .ok_or(MixedOnsetSubmitError::IdentityExhausted)?;
         let credits = if self.scope_may_bend(scope) {
             MixedIngressQueueCount(1)
         } else {
@@ -1396,6 +1425,11 @@ impl MixedOneShotControl {
         };
         self.reserve_bend_credits(credits)
             .map_err(|_| MixedOnsetSubmitError::BendCredit)?;
+        let Some(occurrence) = self.occurrence_ledger.vacant() else {
+            self.unreserve_bend_credits(credits);
+            self.terminal_identity_refusal(MixedIngressIdentityFault::OccurrenceCells);
+            return Err(MixedOnsetSubmitError::IdentityExhausted);
+        };
         let request = MixedIngressRequest::Onset {
             origin,
             occurrence,
@@ -1444,6 +1478,10 @@ impl MixedOneShotControl {
         if !self.occurrence_ledger.is_open(occurrence) {
             return Err(MixedReleaseSubmitError::NotOpen(occurrence));
         }
+        if self.command_id_exhausted() {
+            self.terminal_identity_refusal(MixedIngressIdentityFault::CommandId);
+            return Err(MixedReleaseSubmitError::IdentityExhausted(occurrence));
+        }
         let request = MixedIngressRequest::Release {
             origin,
             occurrence,
@@ -1490,6 +1528,10 @@ impl MixedOneShotControl {
     ) -> Result<(MixedIngressCommandId, MixedIngressRequest), MixedBendSubmitError> {
         if self.ingress_halt.load(Ordering::Acquire) {
             return Err(MixedBendSubmitError::Halted);
+        }
+        if self.command_id_exhausted() {
+            self.terminal_identity_refusal(MixedIngressIdentityFault::CommandId);
+            return Err(MixedBendSubmitError::IdentityExhausted);
         }
         if self.ingress_room() == 0 {
             return Err(MixedBendSubmitError::Full);
@@ -1565,6 +1607,10 @@ impl MixedOneShotControl {
         }
         if self.pedal_ledger.classify(scope, down) == MixedPedalEdge::Redundant {
             return Ok(MixedPedalSubmitted::Redundant);
+        }
+        if self.command_id_exhausted() {
+            self.terminal_identity_refusal(MixedIngressIdentityFault::CommandId);
+            return Err(MixedPedalSubmitError::IdentityExhausted);
         }
         let request = MixedIngressRequest::Pedal {
             origin,
@@ -1930,6 +1976,7 @@ struct MixedIngressTeardown {
 #[cfg(all(test, feature = "simulated-ingress"))]
 #[derive(Debug)]
 struct MixedTerminalControlCustody {
+    terminal_identity_fault: Option<MixedIngressIdentityFault>,
     ingress_outstanding: MixedIngressQueueCount,
     release_reserved: MixedIngressQueueCount,
     pedal_reserved: MixedIngressQueueCount,
@@ -2289,6 +2336,7 @@ impl MixedOneShotControl {
                 parts.ingress.invalid_result = self.invalid_ingress_result.take();
                 parts.ingress.pending_command = self.ingress_command_pending.take();
                 parts.ingress.terminal_control = Some(MixedTerminalControlCustody {
+                    terminal_identity_fault: self.terminal_identity_fault,
                     ingress_outstanding: self.ingress_outstanding,
                     release_reserved: self.release_reserved,
                     pedal_reserved: MixedIngressQueueCount(self.pedal_ledger.reserved()),
@@ -2887,6 +2935,8 @@ impl MixedJoinedPrepared {
                 ingress_journal: VecDeque::with_capacity(ring_places),
                 #[cfg(all(test, feature = "simulated-ingress"))]
                 ingress_command_pending: None,
+                #[cfg(all(test, feature = "simulated-ingress"))]
+                terminal_identity_fault: None,
                 #[cfg(all(test, feature = "simulated-ingress"))]
                 invalid_ingress_result: None,
                 #[cfg(all(test, feature = "simulated-ingress"))]

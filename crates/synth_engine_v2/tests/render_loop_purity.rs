@@ -541,9 +541,15 @@ fn every_call_the_render_loop_makes_is_inside_the_checked_region() {
         .collect::<Vec<_>>()
         .join("\n");
 
-    // The private mixed audio path publishes one terminal result-push fault.
-    // Keep this `store` exception tied to that exact Release atomic write.
-    assert!(source.contains("self.ingress_halt.store(true, Ordering::Release);"));
+    // The private mixed audio path publishes terminal command-order and
+    // result-push faults. Keep both `store` exceptions tied to these exact
+    // Release atomic writes.
+    assert_eq!(
+        source
+            .matches("self.ingress_halt.store(true, Ordering::Release);")
+            .count(),
+        2
+    );
 
     let defined: Vec<String> = source
         .lines()
@@ -580,7 +586,7 @@ fn every_call_the_render_loop_makes_is_inside_the_checked_region() {
     let std_calls = [
         // ADR-0070's prepared AtomicU8 terminal signal: a load and one bounded
         // exchange, no reset, allocation, lock or retry loop. The one Release
-        // `AtomicBool::store` above publishes a private mixed result-push fault.
+        // `AtomicBool::store` above publishes private mixed terminal faults.
         // Arc is only borrowed.
         "load",
         "compare_exchange",
@@ -1207,8 +1213,8 @@ fn every_call_the_render_loop_makes_is_inside_the_checked_region() {
     }
 
     assert_eq!(
-        store_calls, 1,
-        "the sole region store must publish the mixed terminal fault"
+        store_calls, 2,
+        "both region stores must publish mixed terminal faults"
     );
     assert!(
         unresolved.is_empty(),

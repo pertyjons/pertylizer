@@ -29,7 +29,7 @@ use crate::{
     },
     profile::{CaptureLimits, CaptureLimitsInput, RecordingLimits},
     quantities::{
-        CapturePassCount, CaptureResultCount, CaptureSourceCount, ChannelLayout, EventCount,
+        CapturePassCount, CaptureResultCount, CaptureSourceCount, Cents, ChannelLayout, EventCount,
         HeldNoteCount, KeyIdentity, NoteVelocity, PreparedBytes, ProjectionTickCount, SampleRate,
         TrackedInputNoteCount,
     },
@@ -2231,7 +2231,7 @@ fn mixed_ingress_result_reservation_returns_full_request_until_collected() {
 }
 
 #[test]
-fn mixed_ingress_command_id_exhaustion_retains_original_request() {
+fn mixed_ingress_command_id_exhaustion_halts_without_spending_places() {
     let (prepared, candidate) = history_tests::one_shot_with_boundary_on(true);
     let (mut control, mut audio) = prepared
         .arm_one_shot(candidate, &history_tests::mixed_profile())
@@ -2256,7 +2256,7 @@ fn mixed_ingress_command_id_exhaustion_retains_original_request() {
     );
     assert_eq!(
         control.submit_release(MixedIngressOriginId(1), occurrence, SampleTime::new(150)),
-        Err(MixedReleaseSubmitError::IdentityExhausted(occurrence))
+        Err(MixedReleaseSubmitError::Halted)
     );
     assert_eq!(
         control.ingress_outstanding,
@@ -2266,12 +2266,224 @@ fn mixed_ingress_command_id_exhaustion_retains_original_request() {
     assert_eq!(control.occurrence_ledger.held(), 1);
     assert_eq!(control.release_reserved, super::MixedIngressQueueCount(1));
     assert!(control.occurrence_ledger.is_open(occurrence));
+    assert!(
+        control
+            .ingress_halt
+            .load(std::sync::atomic::Ordering::Acquire)
+    );
+    assert_eq!(
+        control.collect_ingress_result_checked(),
+        Err(MixedIngressResultCollectError::Halted)
+    );
+    assert_eq!(submit(&mut control), Err(MixedOnsetSubmitError::Halted));
+    let mut output = [1.0_f32; 64];
+    assert_eq!(
+        audio.render_private(AudioBlockMut::new(&mut output, 64, ChannelLayout::Mono).unwrap()),
+        Err(MixedOneShotRenderError::IngressTransferHalt)
+    );
+    assert!(output.iter().all(|sample| *sample == 0.0));
+    let MixedCollection::Ended(ended) = control.collect(audio).unwrap() else {
+        panic!("identity exhaustion must end the pair");
+    };
+    assert_eq!(ended.ingress.unserved_commands.len(), 1);
+    assert_eq!(
+        ended
+            .ingress
+            .terminal_control
+            .as_ref()
+            .unwrap()
+            .release_reserved,
+        super::MixedIngressQueueCount(1)
+    );
+    assert_eq!(
+        ended
+            .ingress
+            .terminal_control
+            .as_ref()
+            .unwrap()
+            .terminal_identity_fault,
+        Some(super::MixedIngressIdentityFault::CommandId)
+    );
+}
+
+#[test]
+fn exhausted_command_id_precedes_command_room_and_bend_credit_refusals() {
+    for short_credit in [false, true] {
+        let (prepared, candidate) = history_tests::one_shot_with_boundary_on(true);
+        let (mut control, _audio) = prepared
+            .arm_one_shot(candidate, &history_tests::mixed_profile())
+            .unwrap();
+        control.last_ingress_id = Some(MixedIngressCommandId(u64::MAX));
+        if short_credit {
+            control.bend_credits_free = super::MixedIngressQueueCount::NONE;
+        } else {
+            control.ingress_outstanding = control.ingress_capacity;
+        }
+        let prior_outstanding = control.ingress_outstanding;
+        let prior_free = control.bend_credits_free;
+        assert_eq!(
+            control.submit_bend(
+                MixedIngressOriginId(1),
+                super::TEST_SCOPE,
+                SampleTime::new(140),
+                Cents::new(20.0).unwrap(),
+            ),
+            Err(super::occurrence::MixedBendSubmitError::IdentityExhausted)
+        );
+        assert!(
+            control
+                .ingress_halt
+                .load(std::sync::atomic::Ordering::Acquire)
+        );
+        assert_eq!(control.ingress_outstanding, prior_outstanding);
+        assert_eq!(control.bend_credits_free, prior_free);
+        assert_eq!(
+            control.last_ingress_id,
+            Some(MixedIngressCommandId(u64::MAX))
+        );
+        assert!(control.ingress_command_pending.is_none());
+        assert_eq!(
+            control.terminal_identity_fault,
+            Some(super::MixedIngressIdentityFault::CommandId)
+        );
+    }
+}
+
+#[test]
+fn typed_identity_exhaustion_precedes_other_submit_refusals() {
+    let arm = || {
+        let (prepared, candidate) = history_tests::one_shot_with_boundary_on(true);
+        prepared
+            .arm_one_shot(candidate, &history_tests::mixed_profile())
+            .unwrap()
+    };
+    let origin = MixedIngressOriginId(1);
+    let at = SampleTime::new(140);
+    let (mut onset, _audio) = arm();
+    onset.last_ingress_id = Some(MixedIngressCommandId(u64::MAX));
+    onset.ingress_outstanding = onset.ingress_capacity;
+    assert_eq!(
+        onset.submit_onset(
+            origin,
+            super::TEST_SCOPE,
+            at,
+            KeyIdentity::new(60).unwrap(),
+            NoteVelocity::FULL,
+        ),
+        Err(MixedOnsetSubmitError::IdentityExhausted)
+    );
+    assert_eq!(
+        onset.terminal_identity_fault,
+        Some(super::MixedIngressIdentityFault::CommandId)
+    );
+
+    let (mut inherited, _audio) = arm();
+    inherited.last_ingress_id = Some(MixedIngressCommandId(u64::MAX));
+    inherited.bend_scopes[0] = Some(super::MixedBendScopeCell {
+        scope: super::TEST_SCOPE,
+        latest: MixedIngressCommandId(1),
+        accepted_nonzero: true,
+    });
+    inherited.bend_credits_free = super::MixedIngressQueueCount::NONE;
+    assert_eq!(
+        inherited.submit_onset(
+            origin,
+            super::TEST_SCOPE,
+            at,
+            KeyIdentity::new(60).unwrap(),
+            NoteVelocity::FULL,
+        ),
+        Err(MixedOnsetSubmitError::IdentityExhausted)
+    );
+    assert_eq!(
+        inherited.bend_credits_free,
+        super::MixedIngressQueueCount::NONE
+    );
+
+    let (mut pedal, _audio) = arm();
+    pedal.last_ingress_id = Some(MixedIngressCommandId(u64::MAX));
+    pedal.ingress_outstanding = pedal.ingress_capacity;
+    assert_eq!(
+        pedal.submit_pedal(origin, super::TEST_SCOPE, at, true),
+        Err(MixedPedalSubmitError::IdentityExhausted)
+    );
+    assert_eq!(pedal.pedal_ledger.reserved(), 0);
+
+    let (mut release, _audio) = arm();
+    let (_, request) = release
+        .submit_onset(
+            origin,
+            super::TEST_SCOPE,
+            at,
+            KeyIdentity::new(60).unwrap(),
+            NoteVelocity::FULL,
+        )
+        .unwrap();
+    let MixedIngressRequest::Onset { occurrence, .. } = request else {
+        panic!("onset owns one handle");
+    };
+    release.last_ingress_id = Some(MixedIngressCommandId(u64::MAX));
+    release.ingress_outstanding = release.ingress_capacity;
+    assert_eq!(
+        release.submit_release(origin, occurrence, SampleTime::new(141)),
+        Err(MixedReleaseSubmitError::IdentityExhausted(occurrence))
+    );
+    assert!(release.occurrence_ledger.is_open(occurrence));
+    assert_eq!(release.release_reserved, super::MixedIngressQueueCount(1));
+
+    let (mut panic, _audio) = arm();
+    assert!(panic.submit_panic(origin, at).is_ok());
+    panic.last_ingress_id = Some(MixedIngressCommandId(u64::MAX));
+    assert_eq!(
+        panic.submit_panic(origin, SampleTime::new(141)),
+        Err(MixedPanicSubmitError::IdentityExhausted)
+    );
+    assert!(
+        panic
+            .ingress_halt
+            .load(std::sync::atomic::Ordering::Acquire)
+    );
+}
+
+#[test]
+fn retired_key_up_reports_not_open_before_exhausted_command_id() {
+    let (prepared, candidate) = history_tests::one_shot_with_boundary_on(true);
+    let (mut control, mut audio) = prepared
+        .arm_one_shot(candidate, &history_tests::mixed_profile())
+        .unwrap();
+    let origin = MixedIngressOriginId(1);
+    let at = SampleTime::new(140);
+    let (_, onset) = control
+        .submit_onset(
+            origin,
+            super::TEST_SCOPE,
+            at,
+            KeyIdentity::new(60).unwrap(),
+            NoteVelocity::FULL,
+        )
+        .unwrap();
+    let MixedIngressRequest::Onset { occurrence, .. } = onset else {
+        panic!("onset owns one handle");
+    };
     audio.service_test_ingress_queue();
     assert!(control.collect_ingress_result().is_some());
-    assert!(control.collect_ingress_result().is_none());
+    let released = control.submit_release(origin, occurrence, SampleTime::new(141));
+    assert!(released.is_ok());
+    audio.service_test_ingress_queue();
+    assert!(control.collect_ingress_result().is_some());
+    control.last_ingress_id = Some(MixedIngressCommandId(u64::MAX));
     assert_eq!(
-        submit(&mut control),
-        Err(MixedOnsetSubmitError::IdentityExhausted)
+        control.submit_release(origin, occurrence, SampleTime::new(142)),
+        Err(MixedReleaseSubmitError::NotOpen(occurrence))
+    );
+    assert!(
+        !control
+            .ingress_halt
+            .load(std::sync::atomic::Ordering::Acquire)
+    );
+    assert_eq!(
+        control.last_ingress_id,
+        Some(MixedIngressCommandId(u64::MAX))
     );
 }
 
@@ -2306,7 +2518,25 @@ fn out_of_order_mixed_command_silences_the_complete_callback() {
         Some(invalid_id)
     );
     assert_eq!(audio.last_served_ingress_id, None);
-    assert!(control.collect_ingress_result().is_none());
+    assert!(
+        control
+            .ingress_halt
+            .load(std::sync::atomic::Ordering::Acquire)
+    );
+    assert_eq!(
+        control.submit_onset(
+            MixedIngressOriginId(2),
+            super::TEST_SCOPE,
+            SampleTime::new(141),
+            KeyIdentity::new(61).unwrap(),
+            NoteVelocity::FULL,
+        ),
+        Err(MixedOnsetSubmitError::Halted)
+    );
+    assert_eq!(
+        control.collect_ingress_result_checked(),
+        Err(MixedIngressResultCollectError::Halted)
+    );
     let mut later = [1.0_f32; 64];
     assert_eq!(
         audio.render_private(AudioBlockMut::new(&mut later, 64, ChannelLayout::Mono).unwrap()),
@@ -2507,10 +2737,18 @@ fn duplicate_mixed_command_cannot_release_a_live_occurrence() {
         audio.test_ingress.holds_outstanding(),
         EventCount::measured(1)
     );
-    let result = control.collect_ingress_result().unwrap();
-    assert_eq!((result.id, result.request), (id, onset));
-    assert!(matches!(result.outcome, MixedIngressOutcome::Onset(Ok(_))));
-    assert!(control.collect_ingress_result().is_none());
+    assert_eq!(
+        control.collect_ingress_result_checked(),
+        Err(MixedIngressResultCollectError::Halted)
+    );
+    assert_eq!(
+        control
+            .ingress_results
+            .0
+            .try_peek()
+            .map(|result| (result.id, result.request)),
+        Some((id, onset))
+    );
     let mut block = [1.0_f32; 128];
     assert_eq!(
         audio.render_private(AudioBlockMut::new(&mut block, 64, ChannelLayout::Stereo).unwrap()),
@@ -2531,6 +2769,14 @@ fn duplicate_mixed_command_cannot_release_a_live_occurrence() {
         Some(id)
     );
     assert_eq!(ended.ingress.last_served_id, Some(id));
+    assert_eq!(ended.ingress.uncollected_results.len(), 1);
+    assert_eq!(
+        (
+            ended.ingress.uncollected_results[0].id,
+            ended.ingress.uncollected_results[0].request
+        ),
+        (id, onset)
+    );
 }
 
 #[test]
