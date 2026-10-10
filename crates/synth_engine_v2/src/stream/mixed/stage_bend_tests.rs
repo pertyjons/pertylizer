@@ -1804,7 +1804,11 @@ fn cancel_pending_source_bend<R: RawBackend>(
 
 /// A raw-admitted bend leaves the source ring and may wait in one source-owned
 /// slot. A younger head makes a still-full bend terminally split only when no
-/// stage head is selected for service. Raw admission faults are not split.
+/// stage head is selected for service. A stage-full onset cannot use this wait
+/// slot: its required key-up place may be held by an earlier onset whose key-up
+/// is behind it in source order. The refused onset and its linked key-up receive
+/// terminal sound splits with their original raw handoffs. Raw admission faults
+/// are not split.
 fn pump_concrete_mixed_for_source<R: RawBackend>(
     bridge: &mut RawStageBridge<R>,
     inbox: &mut SourceInbox,
@@ -1904,6 +1908,138 @@ fn pump_concrete_mixed<R: RawBackend>(
     pending: &mut Option<(SourceHandoff, RawHandoff)>,
 ) -> Option<MixedSourceStep> {
     pump_concrete_mixed_for_source(bridge, inbox, pending, Source::First)
+}
+
+#[test]
+fn full_stage_splits_a_second_onset_and_its_key_up_without_spending_the_first_reservation() {
+    for source in [Source::First, Source::Second] {
+        let (prepared, candidate) = history_tests::one_shot_with_live(
+            true,
+            crate::quantities::HeldNoteCount::measured(1),
+            EventCount::measured(1),
+        );
+        let (mut control, mut audio) = prepared
+            .arm_one_shot(candidate, &history_tests::mixed_profile())
+            .unwrap();
+        let raw = [raw_source_with_cells(0, 32), raw_source_with_cells(1, 32)];
+        let generation = raw[source.index()].generation;
+        let clock = raw[source.index()].input.clock().unwrap();
+        let (mut producer, mut inbox) =
+            SourceInbox::prepare(generation, InputCaptureHalt::detached_for_test(), clock);
+        let mut bridge = RawStageBridge::with_raw(2, raw);
+        let peer = if source == Source::First {
+            Source::Second
+        } else {
+            Source::First
+        };
+        bridge.frontier(peer, 99);
+        for (index, (at, input)) in [
+            (100, input(0x90, 60, 100)),
+            (101, input(0x90, 60, 100)),
+            (102, input(0x80, 60, 0)),
+            (103, input(0x80, 60, 0)),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let (_, queue) = producer
+                .submit_owned(InputObservation::Message {
+                    tick: InputTick::new(at),
+                    arrival: SampleTime::new(at),
+                    input,
+                })
+                .unwrap()
+                .parts();
+            assert_eq!(queue.serial(), u64::try_from(index + 1).unwrap());
+        }
+        let (_, frontier_queue) = producer
+            .submit_owned(InputObservation::Frontier {
+                tick: InputTick::new(104),
+            })
+            .unwrap()
+            .parts();
+        assert_eq!(frontier_queue.serial(), 5);
+        let mut pending = None;
+        let Some(MixedSourceStep::Staged(first_head, first_occurrence)) =
+            pump_concrete_mixed_for_source(&mut bridge, &mut inbox, &mut pending, source)
+        else {
+            panic!("the first onset must reserve its key-up place");
+        };
+        assert_eq!(bridge.stage.pressure(source), (1, 1));
+        let Some(MixedSourceStep::Split(
+            second_head,
+            BridgeRefused::Lane {
+                handoff: second_raw,
+                reason: LaneRefusal::Stage(StageRefusal::NoPacketCredit),
+            },
+        )) = pump_concrete_mixed_for_source(&mut bridge, &mut inbox, &mut pending, source)
+        else {
+            panic!("a second onset cannot wait for the key-up behind it");
+        };
+        assert_eq!(second_raw.link, None);
+        assert!(pending.is_none());
+        assert_eq!(bridge.pending_source_bends, [None, None]);
+        assert_eq!(bridge.stage.pressure(source), (1, 1));
+        assert_eq!(inbox.peek_handoff().unwrap().stamp().queue().serial(), 3);
+        let Some(MixedSourceStep::Staged(_, released_occurrence)) =
+            pump_concrete_mixed_for_source(&mut bridge, &mut inbox, &mut pending, source)
+        else {
+            panic!("the first key-up must redeem its reserved place");
+        };
+        assert_eq!(released_occurrence, first_occurrence);
+        assert_eq!(bridge.stage.pressure(source), (2, 0));
+        let Some(MixedSourceStep::Split(
+            _,
+            BridgeRefused::Lane {
+                handoff: second_release,
+                reason: LaneRefusal::UnstagedOnset,
+            },
+        )) = pump_concrete_mixed_for_source(&mut bridge, &mut inbox, &mut pending, source)
+        else {
+            panic!("the split onset's key-up must keep its raw link without a stage cell");
+        };
+        assert_eq!(second_release.link, Some(second_raw.raw));
+        assert_eq!(bridge.stage.pressure(source), (2, 0));
+        assert!(matches!(
+            pump_concrete_mixed_for_source(&mut bridge, &mut inbox, &mut pending, source),
+            Some(MixedSourceStep::Frontier(_))
+        ));
+        assert!(inbox.is_empty());
+        assert!(pending.is_none());
+        assert!(inbox.close(producer).is_ok());
+        bridge.frontier(peer, 105);
+        let onset = bridge.service(&mut control, &mut audio).unwrap();
+        assert_eq!(onset.occurrence, first_occurrence);
+        assert!(onset.accepted());
+        let released = bridge.service(&mut control, &mut audio).unwrap();
+        assert_eq!(released.handoff.link, Some(onset.handoff.raw));
+        assert!(released.accepted());
+        assert!(bridge.service(&mut control, &mut audio).is_none());
+        assert_eq!(bridge.stage.pressure(source), (0, 0));
+        assert_eq!(
+            (
+                first_head.stamp().queue().serial(),
+                second_head.stamp().queue().serial()
+            ),
+            (1, 2)
+        );
+        let (teardown, raw, _) = bridge.tear_down(control, audio);
+        assert!(teardown.unoffered.is_empty());
+        assert!(teardown.reservations.is_empty());
+        assert!(teardown.refused_onsets.is_empty());
+        let issued = teardown.raw_issued;
+        let issued_ids: Vec<_> = issued
+            .iter()
+            .filter_map(|(owner, id, _)| (*owner == source).then_some(*id))
+            .collect();
+        assert_eq!(issued_ids.len(), 5);
+        assert_eq!(issued_ids[1], second_raw.raw);
+        assert_eq!(issued_ids[3], second_release.raw);
+        assert_eq!(
+            settle_raw_by_cancellation(raw, &issued).bridge.len(),
+            issued.len()
+        );
+    }
 }
 
 #[test]

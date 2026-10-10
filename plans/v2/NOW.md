@@ -978,6 +978,16 @@ Production acceptance must revisit this result and scope-capacity law together
 with ordered result attribution, stage admission and recorder delivery.
 A younger head from that source staged while the bend is still pending, or a
 retry that takes a second raw ID, falsifies the private candidate.
+A two-cell stage fixture extends the earlier raw-only onset capacity case
+through the source ring for both sources. A first onset owns its future key-up
+place; a second onset behind it cannot wait for that place because the first
+key-up is behind the second onset in source order. The private bridge returns
+a terminal sound split for the second onset and its raw-linked key-up without
+minting a stage occurrence or reservation. The first key-up redeems its
+reserved cell; both raw observations remain attributable, and mixed audio
+receives only the first note pair.
+This fixture does not establish a production policy for stage-full onsets or
+ordered combined outcome delivery.
 A stage-full pedal-down splits immediately so its protected key-up and later
 raw lift advance. A private shutdown fixture reports the pending bend's
 source queue identity and raw ID before closing both owners. A separate
