@@ -886,7 +886,7 @@ pub(crate) struct MixedOneShotControl {
     #[cfg(all(test, feature = "simulated-ingress"))]
     ingress_results: OpaqueQueue<HeapCons<MixedIngressResult>>,
     #[cfg(all(test, feature = "simulated-ingress"))]
-    ingress_journal: VecDeque<MixedIngressCommand>,
+    ingress_journal: VecDeque<MixedIngressJournalEntry>,
     #[cfg(all(test, feature = "simulated-ingress"))]
     invalid_ingress_result: Option<MixedIngressResult>,
     #[cfg(all(test, feature = "simulated-ingress"))]
@@ -1058,13 +1058,24 @@ enum MixedIngressRequest {
 }
 
 #[cfg(all(test, feature = "simulated-ingress"))]
-#[derive(Clone, Copy, Debug)]
+#[derive(Debug)]
+#[must_use]
 struct MixedIngressCommand {
     owner: MixedIngressOwner,
     id: MixedIngressCommandId,
     request: MixedIngressRequest,
     /// Bend credits the merger reserved for this command before minting `id`. Audio
     /// spends at most these and returns the rest when it serves the command.
+    bend_credits: MixedIngressQueueCount,
+}
+
+/// Copyable expectations for one outstanding command, without packet custody.
+#[cfg(all(test, feature = "simulated-ingress"))]
+#[derive(Clone, Copy, Debug)]
+struct MixedIngressJournalEntry {
+    owner: MixedIngressOwner,
+    id: MixedIngressCommandId,
+    request: MixedIngressRequest,
     bend_credits: MixedIngressQueueCount,
 }
 
@@ -1213,11 +1224,17 @@ impl MixedOneShotControl {
             request,
             bend_credits,
         };
+        let journal = MixedIngressJournalEntry {
+            owner: self.ingress_owner,
+            id,
+            request,
+            bend_credits,
+        };
         self.ingress_commands
             .0
             .try_push(packet)
             .map_err(|command| MixedIngressSubmitError::Full(command.request))?;
-        self.ingress_journal.push_back(packet);
+        self.ingress_journal.push_back(journal);
         self.last_ingress_id = Some(id);
         Ok(id)
     }
@@ -1509,7 +1526,7 @@ impl MixedOneShotControl {
     fn result_payload_matches_ledger(
         &self,
         result: MixedIngressResult,
-        expected: MixedIngressCommand,
+        expected: MixedIngressJournalEntry,
     ) -> bool {
         match (result.request, result.outcome) {
             (MixedIngressRequest::Onset { occurrence, .. }, MixedIngressOutcome::Onset(_)) => self
@@ -1794,7 +1811,9 @@ struct MixedTerminalControlCustody {
     bend_credits_free: MixedIngressQueueCount,
     bend_credits_return_pending: MixedIngressQueueCount,
     bend_scopes: Vec<MixedBendScopeCell>,
-    outstanding_commands: Vec<MixedIngressCommand>,
+    /// Outstanding expectations, separate from owning packets in queues or
+    /// the invalid-command slot and from packets already served by audio.
+    outstanding_commands: Vec<MixedIngressJournalEntry>,
 }
 
 #[derive(Debug)]
@@ -2042,7 +2061,7 @@ fn mixed_teardown_parts(
             pedals_down: audio.occurrences.pedals_down(),
             released_after_refusal: audio.occurrences.released_after_refusal(),
             released_after_panic: audio.occurrences.released_after_panic(),
-            invalid_command: audio.invalid_ingress_command,
+            invalid_command: None,
             invalid_result: None,
             last_served_id: audio.last_served_ingress_id,
             unserved_commands: Vec::new(),
@@ -2138,6 +2157,7 @@ impl MixedOneShotControl {
             let mut parts = parts;
             #[cfg(all(test, feature = "simulated-ingress"))]
             if terminal {
+                parts.ingress.invalid_command = audio.invalid_ingress_command.take();
                 parts.ingress.invalid_result = self.invalid_ingress_result;
                 parts.ingress.terminal_control = Some(MixedTerminalControlCustody {
                     ingress_outstanding: self.ingress_outstanding,

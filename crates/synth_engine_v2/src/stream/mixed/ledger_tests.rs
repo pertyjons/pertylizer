@@ -2290,6 +2290,7 @@ fn out_of_order_mixed_command_silences_the_complete_callback() {
         },
         bend_credits: super::MixedIngressQueueCount::NONE,
     };
+    let invalid_id = invalid.id;
     assert!(control.ingress_commands.0.try_push(invalid).is_ok());
     let mut first = [1.0_f32; 256];
     assert_eq!(
@@ -2298,8 +2299,11 @@ fn out_of_order_mixed_command_silences_the_complete_callback() {
     );
     assert!(first.iter().all(|sample| *sample == 0.0));
     assert_eq!(
-        audio.invalid_ingress_command.map(|packet| packet.id),
-        Some(invalid.id)
+        audio
+            .invalid_ingress_command
+            .as_ref()
+            .map(|packet| packet.id),
+        Some(invalid_id)
     );
     assert_eq!(audio.last_served_ingress_id, None);
     assert!(control.collect_ingress_result().is_none());
@@ -2315,8 +2319,12 @@ fn out_of_order_mixed_command_silences_the_complete_callback() {
     };
     assert_eq!(ended.end, MixedCollectionEnd::Faulted);
     assert_eq!(
-        ended.ingress.invalid_command.map(|packet| packet.id),
-        Some(invalid.id)
+        ended
+            .ingress
+            .invalid_command
+            .as_ref()
+            .map(|packet| packet.id),
+        Some(invalid_id)
     );
     assert_eq!(ended.ingress.last_served_id, None);
 }
@@ -2349,6 +2357,7 @@ fn foreign_mixed_command_with_the_expected_id_faults_before_audio_mutation() {
     let foreign = audio_a.ingress_commands.0.try_pop().unwrap();
     let own = audio_b.ingress_commands.0.try_pop().unwrap();
     assert_eq!((foreign.id, foreign.request), (own.id, own.request));
+    let foreign_fields = (foreign.owner, foreign.id, foreign.request);
     assert!(control_b.ingress_commands.0.try_push(foreign).is_ok());
 
     let mut output = [1.0_f32; 256];
@@ -2358,10 +2367,12 @@ fn foreign_mixed_command_with_the_expected_id_faults_before_audio_mutation() {
     );
     assert!(output.iter().all(|sample| *sample == 0.0));
     assert_eq!(
-        audio_b
-            .invalid_ingress_command
-            .map(|packet| (packet.owner, packet.id, packet.request)),
-        Some((foreign.owner, foreign.id, foreign.request))
+        audio_b.invalid_ingress_command.as_ref().map(|packet| (
+            packet.owner,
+            packet.id,
+            packet.request
+        )),
+        Some(foreign_fields)
     );
     assert_eq!(audio_b.last_served_ingress_id, None);
     assert!(audio_b.occurrences.occupied().is_empty());
@@ -2374,7 +2385,7 @@ fn foreign_mixed_command_with_the_expected_id_faults_before_audio_mutation() {
             .ingress
             .invalid_command
             .map(|packet| (packet.owner, packet.id, packet.request)),
-        Some((foreign.owner, foreign.id, foreign.request))
+        Some(foreign_fields)
     );
 }
 
@@ -2471,7 +2482,10 @@ fn duplicate_mixed_command_cannot_release_a_live_occurrence() {
     assert!(control.ingress_commands.0.try_push(invalid).is_ok());
     audio.service_test_ingress_queue();
     assert_eq!(
-        audio.invalid_ingress_command.map(|packet| packet.id),
+        audio
+            .invalid_ingress_command
+            .as_ref()
+            .map(|packet| packet.id),
         Some(id)
     );
     assert_eq!(audio.last_served_ingress_id, Some(id));
@@ -2495,7 +2509,11 @@ fn duplicate_mixed_command_cannot_release_a_live_occurrence() {
     };
     assert_eq!(ended.end, MixedCollectionEnd::Faulted);
     assert_eq!(
-        ended.ingress.invalid_command.map(|packet| packet.id),
+        ended
+            .ingress
+            .invalid_command
+            .as_ref()
+            .map(|packet| packet.id),
         Some(id)
     );
     assert_eq!(ended.ingress.last_served_id, Some(id));
@@ -2531,7 +2549,10 @@ fn terminal_command_order_fault_reports_unanswered_packets_and_reservations() {
     let bend_credits_free = control.bend_credits_free;
     audio.service_test_ingress_queue();
     assert_eq!(
-        audio.invalid_ingress_command.map(|packet| packet.id),
+        audio
+            .invalid_ingress_command
+            .as_ref()
+            .map(|packet| packet.id),
         Some(onset_id)
     );
     let MixedCollection::Ended(ended) = control.collect(audio).unwrap() else {
@@ -2541,7 +2562,7 @@ fn terminal_command_order_fault_reports_unanswered_packets_and_reservations() {
     let report = &ended.ingress;
     let custody = report.terminal_control.as_ref().unwrap();
     assert_eq!(
-        report.invalid_command.map(|packet| packet.id),
+        report.invalid_command.as_ref().map(|packet| packet.id),
         Some(onset_id)
     );
     assert_eq!(report.last_served_id, Some(onset_id));
@@ -3045,13 +3066,17 @@ fn a_lost_reserved_command_place_refuses_without_spending_release_or_lift_custod
 
     // Break the private queue/count invariant. The reserved places must remain
     // owned by the release and lift on refusal.
-    let forged = super::MixedIngressCommand {
-        owner: control.ingress_owner,
-        id: MixedIngressCommandId(u64::MAX),
-        request: MixedIngressRequest::Panic { origin, at },
-        bend_credits: super::MixedIngressQueueCount::NONE,
-    };
-    while control.ingress_commands.0.try_push(forged).is_ok() {}
+    loop {
+        let forged = super::MixedIngressCommand {
+            owner: control.ingress_owner,
+            id: MixedIngressCommandId(u64::MAX),
+            request: MixedIngressRequest::Panic { origin, at },
+            bend_credits: super::MixedIngressQueueCount::NONE,
+        };
+        if control.ingress_commands.0.try_push(forged).is_err() {
+            break;
+        }
+    }
     let last_id = control.last_ingress_id;
     assert_eq!(
         control.submit_release(origin, occurrence, at),
