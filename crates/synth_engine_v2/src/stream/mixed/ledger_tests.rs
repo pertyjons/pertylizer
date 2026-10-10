@@ -2511,9 +2511,9 @@ fn duplicate_mixed_command_cannot_release_a_live_occurrence() {
     assert_eq!((result.id, result.request), (id, onset));
     assert!(matches!(result.outcome, MixedIngressOutcome::Onset(Ok(_))));
     assert!(control.collect_ingress_result().is_none());
-    let mut block = [1.0_f32; 64];
+    let mut block = [1.0_f32; 128];
     assert_eq!(
-        audio.render_private(AudioBlockMut::new(&mut block, 64, ChannelLayout::Mono).unwrap()),
+        audio.render_private(AudioBlockMut::new(&mut block, 64, ChannelLayout::Stereo).unwrap()),
         Err(MixedOneShotRenderError::IngressCommandOrder)
     );
     assert!(block.iter().all(|sample| *sample == 0.0));

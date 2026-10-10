@@ -11,10 +11,14 @@ use ringbuf::{
     HeapRb,
     traits::{Consumer, Producer, Split},
 };
+use std::sync::atomic::Ordering;
 
 use super::{
     super::{
-        super::{MixedIngressQueueCount, MixedPedalSubmitted, OpaqueQueue},
+        super::{
+            MixedCollection, MixedCollectionEnd, MixedIngressQueueCount, MixedOneShotRenderError,
+            MixedPedalSubmitted, OpaqueQueue,
+        },
         MixedBendRefused, MixedBendSubmitError, MixedLiveScope, MixedOnsetSubmitError,
     },
     ExhaustedResource, IngressRefused, LiveOccurrenceId, MixedIngressOutcome, MixedIngressRequest,
@@ -28,8 +32,8 @@ use super::{
 };
 use crate::{
     ingress::{MixedBendOrigin, ReleaseCause},
-    quantities::{Cents, EventCount, HeldNoteCount, NoteVelocity},
-    render::{EventPayload, NoteEdge},
+    quantities::{Cents, ChannelLayout, EventCount, HeldNoteCount, NoteVelocity},
+    render::{AudioBlockMut, EventPayload, NoteEdge},
     time::SampleTime,
 };
 
@@ -43,7 +47,7 @@ pub(super) fn credits(count: usize) -> MixedIngressQueueCount {
 }
 
 #[test]
-fn full_result_ring_retains_each_bend_packet_and_stops_later_service() {
+fn full_result_ring_terminally_retains_bends_and_unserved_commands() {
     let (mut control, mut audio) = armed_with(true, 1);
     // Deliberately make the physical result ring smaller than the arm-time
     // reservation to exercise the otherwise unreachable failed-push path.
@@ -80,8 +84,16 @@ fn full_result_ring_retains_each_bend_packet_and_stops_later_service() {
         Some(submitted[2])
     );
 
+    assert!(audio.ingress_halt.load(Ordering::Acquire));
     audio.service_test_ingress_queue();
     assert_eq!(audio.last_served_ingress_id, Some(submitted[1].0));
+    assert_eq!(
+        audio
+            .ingress_result_pending
+            .as_ref()
+            .map(|result| (result.id, result.request)),
+        Some(submitted[1])
+    );
     assert_eq!(
         audio
             .ingress_commands
@@ -91,22 +103,109 @@ fn full_result_ring_retains_each_bend_packet_and_stops_later_service() {
         Some(submitted[2])
     );
 
-    for expected in submitted {
-        let result = control
-            .collect_ingress_result()
-            .expect("next result stays in order");
-        assert_eq!((result.id, result.request), expected);
-        let MixedIngressRequest::Bend { at, .. } = expected.1 else {
-            panic!("each submitted request was a bend");
-        };
-        assert!(
-            matches!(result.outcome, MixedIngressOutcome::Bend(Ok(bent)) if bent.executed_at() == at)
-        );
-        audio.service_test_ingress_queue();
+    let mut observing = [1.0_f32; 128];
+    assert_eq!(
+        audio
+            .render_private(AudioBlockMut::new(&mut observing, 64, ChannelLayout::Stereo).unwrap()),
+        Err(MixedOneShotRenderError::IngressResultPush)
+    );
+    assert!(observing.iter().all(|sample| *sample == 0.0));
+    let mut later = [1.0_f32; 64];
+    assert_eq!(
+        audio.render_private(AudioBlockMut::new(&mut later, 64, ChannelLayout::Mono).unwrap()),
+        Err(MixedOneShotRenderError::Faulted)
+    );
+    assert!(later.iter().all(|sample| *sample == 0.0));
+
+    let MixedCollection::Ended(ended) = control.collect(audio).unwrap() else {
+        panic!("result push fault must end the pair");
+    };
+    assert_eq!(ended.end, MixedCollectionEnd::Faulted);
+    assert_eq!(
+        ended.report.fault,
+        Some(MixedOneShotRenderError::IngressResultPush)
+    );
+    assert_eq!(
+        ended
+            .ingress
+            .uncollected_results
+            .iter()
+            .map(|result| (result.id, result.request))
+            .collect::<Vec<_>>(),
+        vec![submitted[0]]
+    );
+    assert_eq!(
+        ended
+            .ingress
+            .pending_result
+            .as_ref()
+            .map(|result| (result.id, result.request)),
+        Some(submitted[1])
+    );
+    assert_eq!(
+        ended
+            .ingress
+            .unserved_commands
+            .iter()
+            .map(|command| (command.id, command.request))
+            .collect::<Vec<_>>(),
+        vec![submitted[2]]
+    );
+    assert_eq!(
+        ended
+            .ingress
+            .terminal_control
+            .as_ref()
+            .unwrap()
+            .outstanding_commands
+            .iter()
+            .map(|entry| (entry.id, entry.request))
+            .collect::<Vec<_>>(),
+        submitted
+    );
+}
+
+#[test]
+fn result_push_fault_in_later_quantum_silences_whole_callback() {
+    let (mut control, mut audio) = armed_with(true, 1);
+    let (writer, reader) = HeapRb::<MixedIngressResult>::new(1).split();
+    control.ingress_results = OpaqueQueue(reader);
+    audio.ingress_results = OpaqueQueue(writer);
+
+    let mut first_half = [0.0_f32; 100];
+    audio
+        .render_private(AudioBlockMut::new(&mut first_half, 100, ChannelLayout::Mono).unwrap())
+        .unwrap();
+    assert_eq!(audio.audio.renderer.carry_frames(), 28);
+
+    let (_reference_control, mut reference_audio) = armed_with(true, 1);
+    let mut reference_first = [0.0_f32; 100];
+    reference_audio
+        .render_private(AudioBlockMut::new(&mut reference_first, 100, ChannelLayout::Mono).unwrap())
+        .unwrap();
+    let mut reference_observing = [0.0_f32; 256];
+    reference_audio
+        .render_private(
+            AudioBlockMut::new(&mut reference_observing, 256, ChannelLayout::Mono).unwrap(),
+        )
+        .unwrap();
+    assert!(
+        reference_observing[..28]
+            .iter()
+            .any(|sample| *sample != 0.0)
+    );
+
+    for (at, value) in [(300, 10.0), (301, 20.0), (302, 0.0)] {
+        let (_id, _request) = control
+            .submit_bend(ORIGIN, scope(1, 1), SampleTime::new(at), cents(value))
+            .unwrap();
     }
-    assert!(audio.ingress_result_pending.is_none());
-    assert!(audio.ingress_commands.0.try_peek().is_none());
-    assert!(control.collect_ingress_result().is_none());
+    let mut observing = [1.0_f32; 256];
+    assert_eq!(
+        audio.render_private(AudioBlockMut::new(&mut observing, 256, ChannelLayout::Mono).unwrap()),
+        Err(MixedOneShotRenderError::IngressResultPush)
+    );
+    assert!(observing.iter().all(|sample| *sample == 0.0));
 }
 
 pub(super) fn bend_at(

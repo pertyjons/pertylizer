@@ -202,6 +202,15 @@ impl MixedStreamAudio {
 
 #[allow(dead_code)] // Private callback remains unreachable by production hosts.
 impl MixedOneShotAudio {
+    #[cfg(all(test, feature = "simulated-ingress"))]
+    fn ingress_halt_error(&self) -> MixedOneShotRenderError {
+        if self.ingress_result_pending.is_some() {
+            MixedOneShotRenderError::IngressResultPush
+        } else {
+            MixedOneShotRenderError::IngressResultOrder
+        }
+    }
+
     /// Read the private owner's state and charges without moving its capsule.
     pub(crate) fn report(&self) -> MixedOneShotRenderReport {
         MixedOneShotRenderReport {
@@ -232,6 +241,19 @@ impl MixedOneShotAudio {
             output.silence();
             return Err(MixedOneShotRenderError::Faulted);
         }
+        #[cfg(all(test, feature = "simulated-ingress"))]
+        if self.ingress_halt.load(Ordering::Acquire) {
+            let error = self.ingress_halt_error();
+            self.fault = Some(error);
+            self.audio.renderer.terminal_mixed_fault(&mut output);
+            return Err(error);
+        }
+        #[cfg(all(test, feature = "simulated-ingress"))]
+        if self.invalid_ingress_command.is_some() {
+            self.fault = Some(MixedOneShotRenderError::IngressCommandOrder);
+            self.audio.renderer.terminal_mixed_fault(&mut output);
+            return Err(MixedOneShotRenderError::IngressCommandOrder);
+        }
         let renderer = &self.audio.renderer;
         if output.layout() != renderer.plan().channel_layout()
             || u64::try_from(output.frames()).map_or(true, |frames| {
@@ -239,18 +261,6 @@ impl MixedOneShotAudio {
             })
         {
             return Err(MixedOneShotRenderError::OutputShape);
-        }
-        #[cfg(all(test, feature = "simulated-ingress"))]
-        if self.ingress_halt.load(Ordering::Acquire) {
-            self.fault = Some(MixedOneShotRenderError::IngressResultOrder);
-            self.audio.renderer.terminal_mixed_fault(&mut output);
-            return Err(MixedOneShotRenderError::IngressResultOrder);
-        }
-        #[cfg(all(test, feature = "simulated-ingress"))]
-        if self.invalid_ingress_command.is_some() {
-            self.fault = Some(MixedOneShotRenderError::IngressCommandOrder);
-            self.audio.renderer.terminal_mixed_fault(&mut output);
-            return Err(MixedOneShotRenderError::IngressCommandOrder);
         }
         if output.frames() == 0 {
             return Ok(());
@@ -320,7 +330,7 @@ impl MixedOneShotAudio {
     ) -> Result<(), MixedOneShotRenderError> {
         #[cfg(all(test, feature = "simulated-ingress"))]
         if self.ingress_halt.load(Ordering::Acquire) {
-            return Err(MixedOneShotRenderError::IngressResultOrder);
+            return Err(self.ingress_halt_error());
         }
         let clock = self.audio.renderer.clock();
         if opens_quantum && !self.adopted && clock == self.timing.effective() {
@@ -346,6 +356,9 @@ impl MixedOneShotAudio {
             self.service_test_ingress_queue();
             if self.invalid_ingress_command.is_some() {
                 return Err(MixedOneShotRenderError::IngressCommandOrder);
+            }
+            if self.ingress_halt.load(Ordering::Acquire) {
+                return Err(self.ingress_halt_error());
             }
         }
         let mut publication = self.arbiter.open(clock, usize::from(opens_quantum))?;

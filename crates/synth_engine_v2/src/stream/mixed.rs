@@ -292,6 +292,9 @@ pub(crate) enum MixedOneShotRenderError {
     #[error("private mixed ingress result does not match the next command")]
     IngressResultOrder,
     #[cfg(all(test, feature = "simulated-ingress"))]
+    #[error("private mixed ingress result queue refused a prepared packet")]
+    IngressResultPush,
+    #[cfg(all(test, feature = "simulated-ingress"))]
     #[error("injected private mixed fault after ingress charge")]
     InjectedAfterIngress,
     #[error("mixed one-shot compiled event at {event} missed clock {clock}")]

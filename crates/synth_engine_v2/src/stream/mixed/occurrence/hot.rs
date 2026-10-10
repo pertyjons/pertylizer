@@ -210,12 +210,6 @@ impl MixedOneShotAudio {
         }
         self.test_ingress
             .set_mixed_admission_clock(self.audio.renderer.clock());
-        if let Some(pending) = self.ingress_result_pending.take()
-            && let Err(pending) = self.ingress_results.0.try_push(pending)
-        {
-            self.ingress_result_pending = Some(pending);
-            return;
-        }
         loop {
             if self.ingress_halt.load(Ordering::Acquire) {
                 return;
@@ -287,6 +281,7 @@ impl MixedOneShotAudio {
             };
             if let Err(result) = self.ingress_results.0.try_push(result) {
                 self.ingress_result_pending = Some(result);
+                self.ingress_halt.store(true, Ordering::Release);
                 break;
             }
         }

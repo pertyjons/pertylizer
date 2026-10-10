@@ -541,6 +541,10 @@ fn every_call_the_render_loop_makes_is_inside_the_checked_region() {
         .collect::<Vec<_>>()
         .join("\n");
 
+    // The private mixed audio path publishes one terminal result-push fault.
+    // Keep this `store` exception tied to that exact Release atomic write.
+    assert!(source.contains("self.ingress_halt.store(true, Ordering::Release);"));
+
     let defined: Vec<String> = source
         .lines()
         .filter_map(|line| {
@@ -575,9 +579,12 @@ fn every_call_the_render_loop_makes_is_inside_the_checked_region() {
     // sort where `sort_by_key` would allocate.
     let std_calls = [
         // ADR-0070's prepared AtomicU8 terminal signal: a load and one bounded
-        // exchange, no reset, allocation, lock or retry loop. Arc is only borrowed.
+        // exchange, no reset, allocation, lock or retry loop. The one Release
+        // `AtomicBool::store` above publishes a private mixed result-push fault.
+        // Arc is only borrowed.
         "load",
         "compare_exchange",
+        "store",
         // VM scalar math and bounded iterator traversal; no allocator or fallible index.
         "any",
         "rev",
@@ -816,7 +823,7 @@ fn every_call_the_render_loop_makes_is_inside_the_checked_region() {
         "and_then",
         // `ringbuf`'s single-producer single-consumer `try_pop` and `try_push`, in the
         // private mixed owner's live command service. Both rings are allocated with their
-        // fixed capacity at arm, off-thread; each call moves one `Copy` value through
+        // fixed capacity at arm, off-thread; each call moves one owned value through
         // that storage and one atomic index, and returns `None` or the rejected value
         // rather than waiting, growing or panicking. The service's allocation test covers
         // them behaviourally.
@@ -1114,6 +1121,7 @@ fn every_call_the_render_loop_makes_is_inside_the_checked_region() {
     ];
 
     let mut unresolved: Vec<String> = Vec::new();
+    let mut store_calls = 0;
     let bytes: Vec<char> = source.chars().collect();
     for (index, character) in bytes.iter().enumerate() {
         if *character != '(' {
@@ -1135,6 +1143,9 @@ fn every_call_the_render_loop_makes_is_inside_the_checked_region() {
         if name.chars().next().is_some_and(char::is_uppercase) {
             // A tuple-struct or enum-variant construction, not a call.
             continue;
+        }
+        if name == "store" {
+            store_calls += 1;
         }
 
         // A **module-qualified** call reaches out of this file whatever it is named, and
@@ -1195,6 +1206,10 @@ fn every_call_the_render_loop_makes_is_inside_the_checked_region() {
         }
     }
 
+    assert_eq!(
+        store_calls, 1,
+        "the sole region store must publish the mixed terminal fault"
+    );
     assert!(
         unresolved.is_empty(),
         "the render loop calls names that are neither defined in hot.rs nor justified in \
