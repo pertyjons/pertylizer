@@ -207,7 +207,7 @@ impl MixedOneShotAudio {
         if self.ingress_result_pending.is_some() {
             MixedOneShotRenderError::IngressResultPush
         } else {
-            MixedOneShotRenderError::IngressResultOrder
+            MixedOneShotRenderError::IngressTransferHalt
         }
     }
 

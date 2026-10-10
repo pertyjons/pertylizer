@@ -334,10 +334,14 @@ pub(super) enum MixedBendRefused {
     Ingress(IngressRefused),
 }
 
-/// Why the merger could not submit a bend. The caller keeps its input and no command
-/// identity was minted.
+/// Why the merger could not submit a bend. A physical push fault retains the
+/// minted command; other refusals mint nothing.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Error)]
 pub(super) enum MixedBendSubmitError {
+    #[error("mixed ingress transfer is halted")]
+    Halted,
+    #[error("mixed ingress bend command queue refused a minted packet")]
+    PhysicalPush,
     #[error("no command-ring place for a bend")]
     Full,
     #[error("no prepared bend scope cell is free")]
@@ -353,10 +357,14 @@ pub(super) enum MixedBendSubmitError {
     IdentityExhausted,
 }
 
-/// Why the merger could not stage an onset. The caller keeps its input; nothing was
-/// minted.
+/// Why the merger could not stage an onset. A physical push fault retains the
+/// minted command; other refusals mint nothing.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Error)]
 pub(super) enum MixedOnsetSubmitError {
+    #[error("mixed ingress transfer is halted")]
+    Halted,
+    #[error("mixed ingress onset command queue refused a minted packet")]
+    PhysicalPush,
     #[error("no command-ring place for an onset and its reserved release")]
     Full,
     /// The onset's scope may carry a non-zero bend, and no credit is free for the
@@ -367,10 +375,14 @@ pub(super) enum MixedOnsetSubmitError {
     IdentityExhausted,
 }
 
-/// Why the merger could not submit a pedal edge. The caller keeps its input and the
-/// merger's pedal state is unchanged.
+/// Why the merger could not submit a pedal edge. A physical push fault retains
+/// the minted command and its ledger charge; other refusals change no state.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Error)]
 pub(super) enum MixedPedalSubmitError {
+    #[error("mixed ingress transfer is halted")]
+    Halted,
+    #[error("mixed ingress pedal command queue refused a minted packet")]
+    PhysicalPush,
     #[error("no command-ring place for a pedal-down and its reserved lift")]
     Full,
     #[error("the reserved pedal-lift place is unavailable")]
@@ -379,22 +391,29 @@ pub(super) enum MixedPedalSubmitError {
     IdentityExhausted,
 }
 
-/// Why the merger refused a Panic at the caller boundary, before acceptance. The caller
-/// keeps its input and no command was pushed.
+/// Why the merger refused a Panic. A physical push fault retains the minted
+/// command and its protected place; other refusals mint nothing.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Error)]
 pub(super) enum MixedPanicSubmitError {
+    #[error("mixed ingress transfer is halted")]
+    Halted,
+    #[error("mixed ingress Panic command queue refused a minted packet")]
+    PhysicalPush,
     #[error("an earlier Panic {0:?} still holds the protected place")]
     Pending(MixedIngressCommandId),
-    #[error("the protected Panic place is not free in the command ring")]
-    RingFull,
     #[error("mixed ingress command identity is exhausted")]
     IdentityExhausted,
 }
 
-/// Why the merger could not submit a release. The handle stays open with its
-/// reserved place.
+/// Why the merger could not submit a release. A physical push fault retains the
+/// minted command and moves the handle into releasing state; other refusals
+/// keep the handle open with its reserved place.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Error)]
 pub(super) enum MixedReleaseSubmitError {
+    #[error("mixed ingress transfer is halted")]
+    Halted,
+    #[error("mixed ingress release command queue refused a minted packet")]
+    PhysicalPush,
     #[error("the live occurrence is not open at the merger")]
     NotOpen(LiveOccurrenceId),
     #[error("the live occurrence's reserved release place is unavailable")]

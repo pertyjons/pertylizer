@@ -16,10 +16,11 @@ use std::sync::atomic::Ordering;
 use super::{
     super::{
         super::{
-            MixedCollection, MixedCollectionEnd, MixedIngressQueueCount, MixedOneShotRenderError,
-            MixedPedalSubmitted, OpaqueQueue,
+            MixedCollection, MixedCollectionEnd, MixedIngressCommand, MixedIngressQueueCount,
+            MixedOneShotRenderError, MixedPedalSubmitted, OpaqueQueue,
         },
         MixedBendRefused, MixedBendSubmitError, MixedLiveScope, MixedOnsetSubmitError,
+        MixedReleaseSubmitError,
     },
     ExhaustedResource, IngressRefused, LiveOccurrenceId, MixedIngressOutcome, MixedIngressRequest,
     MixedIngressResult, MixedOccurrenceState, MixedOneShotAudio, MixedOneShotControl,
@@ -44,6 +45,227 @@ pub(super) fn cents(value: f32) -> Cents {
 /// A count of bend credits.
 pub(super) fn credits(count: usize) -> MixedIngressQueueCount {
     MixedIngressQueueCount(count)
+}
+
+#[test]
+fn full_command_ring_terminally_retains_bend_and_silences_audio() {
+    let (mut control, mut audio) = armed_with(true, 1);
+    let (writer, reader) = HeapRb::<MixedIngressCommand>::new(1).split();
+    control.ingress_commands = OpaqueQueue(writer);
+    audio.ingress_commands = OpaqueQueue(reader);
+
+    let first = control
+        .submit_bend(ORIGIN, scope(1, 1), SampleTime::new(100), cents(10.0))
+        .unwrap();
+    let free_before = control.bend_credits_free;
+    assert_eq!(
+        control.submit_bend(ORIGIN, scope(1, 2), SampleTime::new(101), cents(20.0)),
+        Err(MixedBendSubmitError::PhysicalPush)
+    );
+    let pending = control.ingress_command_pending.as_ref().unwrap();
+    assert_eq!(pending.id.0, first.0.0 + 1);
+    assert_eq!(pending.bend_credits, control.bend_credits_per_bend);
+    assert_eq!(control.last_ingress_id, Some(pending.id));
+    assert_eq!(control.ingress_journal.len(), 2);
+    assert_eq!(control.ingress_outstanding, MixedIngressQueueCount(2));
+    assert_eq!(
+        control.bend_credits_free.as_usize(),
+        free_before.as_usize() - control.bend_credits_per_bend.as_usize()
+    );
+    let expected_free = control.bend_credits_free;
+    assert!(control.scope_may_bend(scope(1, 2)));
+    assert_eq!(
+        control.collect_ingress_result_checked(),
+        Err(super::super::super::MixedIngressResultCollectError::Halted)
+    );
+    assert_eq!(
+        control.submit_bend(ORIGIN, scope(1, 3), SampleTime::new(102), cents(30.0)),
+        Err(MixedBendSubmitError::Halted)
+    );
+
+    let mut output = [1.0_f32; 64];
+    assert_eq!(
+        audio.render_private(AudioBlockMut::new(&mut output, 64, ChannelLayout::Mono).unwrap()),
+        Err(MixedOneShotRenderError::IngressTransferHalt)
+    );
+    assert!(output.iter().all(|sample| *sample == 0.0));
+    let MixedCollection::Ended(ended) = control.collect(audio).unwrap() else {
+        panic!("terminal command push must end the pair");
+    };
+    assert_eq!(ended.end, MixedCollectionEnd::Faulted);
+    assert_eq!(
+        ended.report.fault,
+        Some(MixedOneShotRenderError::IngressTransferHalt)
+    );
+    assert_eq!(
+        ended
+            .ingress
+            .pending_command
+            .as_ref()
+            .map(|command| command.id.0),
+        Some(first.0.0 + 1)
+    );
+    assert_eq!(ended.ingress.unserved_commands.len(), 1);
+    let custody = ended.ingress.terminal_control.as_ref().unwrap();
+    assert_eq!(custody.outstanding_commands.len(), 2);
+    assert_eq!(custody.bend_credits_free, expected_free);
+    assert!(
+        custody
+            .bend_scopes
+            .iter()
+            .any(|cell| cell.scope == scope(1, 2) && cell.latest.0 == first.0.0 + 1)
+    );
+}
+
+#[test]
+fn full_command_ring_keeps_bent_onsets_release_place_and_inherited_credit() {
+    let (mut control, mut audio) = armed_with(true, 1);
+    let bent_scope = scope(1, 1);
+    let first = control
+        .submit_bend(ORIGIN, bent_scope, SampleTime::new(100), cents(10.0))
+        .unwrap();
+    assert_eq!(control.last_ingress_id, Some(first.0));
+    audio.service_test_ingress_queue();
+    assert!(control.collect_ingress_result().is_some());
+    assert!(control.scope_may_bend(bent_scope));
+
+    let (writer, reader) = HeapRb::<MixedIngressCommand>::new(1).split();
+    control.ingress_commands = OpaqueQueue(writer);
+    audio.ingress_commands = OpaqueQueue(reader);
+    let filler = control
+        .submit_bend(ORIGIN, scope(1, 2), SampleTime::new(101), cents(20.0))
+        .unwrap();
+    assert_eq!(control.last_ingress_id, Some(filler.0));
+    let free_before = control.bend_credits_free;
+    assert_eq!(
+        control.submit_onset(
+            ORIGIN,
+            bent_scope,
+            SampleTime::new(102),
+            key(60),
+            NoteVelocity::FULL,
+        ),
+        Err(MixedOnsetSubmitError::PhysicalPush)
+    );
+    let pending = control.ingress_command_pending.as_ref().unwrap();
+    let MixedIngressRequest::Onset { occurrence, .. } = pending.request else {
+        panic!("pending onset must keep its handle");
+    };
+    assert!(control.occurrence_ledger.is_open(occurrence));
+    assert_eq!(control.release_reserved, MixedIngressQueueCount(1));
+    assert_eq!(pending.bend_credits, MixedIngressQueueCount(1));
+    assert_eq!(
+        control.bend_credits_free.as_usize(),
+        free_before.as_usize() - 1
+    );
+    assert_eq!(control.ingress_outstanding, MixedIngressQueueCount(2));
+    let pending_id = pending.id;
+    let mut output = [1.0_f32; 64];
+    assert_eq!(
+        audio.render_private(AudioBlockMut::new(&mut output, 64, ChannelLayout::Mono).unwrap()),
+        Err(MixedOneShotRenderError::IngressTransferHalt)
+    );
+    assert!(output.iter().all(|sample| *sample == 0.0));
+    let MixedCollection::Ended(ended) = control.collect(audio).unwrap() else {
+        panic!("onset push failure must be terminal");
+    };
+    assert_eq!(
+        ended
+            .ingress
+            .pending_command
+            .as_ref()
+            .map(|command| command.id),
+        Some(pending_id)
+    );
+    let custody = ended.ingress.terminal_control.as_ref().unwrap();
+    assert_eq!(custody.release_reserved, MixedIngressQueueCount(1));
+    assert_eq!(custody.outstanding_commands.len(), 2);
+}
+
+#[test]
+fn full_command_ring_keeps_unbent_onsets_release_place_without_bend_credit() {
+    let (mut control, mut audio) = armed_with(true, 1);
+    let (writer, reader) = HeapRb::<MixedIngressCommand>::new(1).split();
+    control.ingress_commands = OpaqueQueue(writer);
+    audio.ingress_commands = OpaqueQueue(reader);
+    let filler = control
+        .submit_bend(ORIGIN, scope(1, 1), SampleTime::new(100), cents(10.0))
+        .unwrap();
+    let free_before = control.bend_credits_free;
+    assert_eq!(
+        control.submit_onset(
+            ORIGIN,
+            scope(1, 2),
+            SampleTime::new(101),
+            key(60),
+            NoteVelocity::FULL,
+        ),
+        Err(MixedOnsetSubmitError::PhysicalPush)
+    );
+    let pending = control.ingress_command_pending.as_ref().unwrap();
+    assert_eq!(pending.id.0, filler.0.0 + 1);
+    assert_eq!(pending.bend_credits, MixedIngressQueueCount::NONE);
+    assert_eq!(control.bend_credits_free, free_before);
+    assert_eq!(control.release_reserved, MixedIngressQueueCount(1));
+    assert_eq!(control.ingress_outstanding, MixedIngressQueueCount(2));
+}
+
+#[test]
+fn full_command_ring_moves_key_up_place_to_pending_command_at_teardown() {
+    let (mut control, mut audio) = armed_with(true, 1);
+    let (writer, reader) = HeapRb::<MixedIngressCommand>::new(1).split();
+    control.ingress_commands = OpaqueQueue(writer);
+    audio.ingress_commands = OpaqueQueue(reader);
+    let (onset_id, onset) = control
+        .submit_onset(
+            ORIGIN,
+            scope(1, 1),
+            SampleTime::new(100),
+            key(60),
+            NoteVelocity::FULL,
+        )
+        .unwrap();
+    let MixedIngressRequest::Onset { occurrence, .. } = onset else {
+        panic!("onset owns one handle");
+    };
+    assert_eq!(control.release_reserved, MixedIngressQueueCount(1));
+    assert_eq!(
+        control.submit_release(ORIGIN, occurrence, SampleTime::new(101)),
+        Err(MixedReleaseSubmitError::PhysicalPush)
+    );
+    let pending_id = control.ingress_command_pending.as_ref().unwrap().id;
+    assert_eq!(pending_id.0, onset_id.0 + 1);
+    assert!(
+        control
+            .occurrence_ledger
+            .is_releasing(occurrence, pending_id)
+    );
+    assert_eq!(control.release_reserved, MixedIngressQueueCount::NONE);
+    assert_eq!(control.ingress_outstanding, MixedIngressQueueCount(2));
+    assert_eq!(control.ingress_journal.len(), 2);
+
+    let mut output = [1.0_f32; 64];
+    assert_eq!(
+        audio.render_private(AudioBlockMut::new(&mut output, 64, ChannelLayout::Mono).unwrap()),
+        Err(MixedOneShotRenderError::IngressTransferHalt)
+    );
+    assert!(output.iter().all(|sample| *sample == 0.0));
+    let MixedCollection::Ended(ended) = control.collect(audio).unwrap() else {
+        panic!("key-up push failure must be terminal");
+    };
+    assert_eq!(
+        ended
+            .ingress
+            .pending_command
+            .as_ref()
+            .map(|command| command.id),
+        Some(pending_id)
+    );
+    assert_eq!(ended.ingress.unserved_commands.len(), 1);
+    let custody = ended.ingress.terminal_control.as_ref().unwrap();
+    assert_eq!(custody.release_reserved, MixedIngressQueueCount::NONE);
+    assert_eq!(custody.ingress_outstanding, MixedIngressQueueCount(2));
+    assert_eq!(custody.outstanding_commands.len(), 2);
 }
 
 #[test]

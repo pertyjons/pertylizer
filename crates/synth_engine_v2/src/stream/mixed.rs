@@ -289,8 +289,8 @@ pub(crate) enum MixedOneShotRenderError {
     #[error("private mixed ingress command identity is out of order")]
     IngressCommandOrder,
     #[cfg(all(test, feature = "simulated-ingress"))]
-    #[error("private mixed ingress result does not match the next command")]
-    IngressResultOrder,
+    #[error("private mixed ingress transfer halted by its peer")]
+    IngressTransferHalt,
     #[cfg(all(test, feature = "simulated-ingress"))]
     #[error("private mixed ingress result queue refused a prepared packet")]
     IngressResultPush,
@@ -890,6 +890,10 @@ pub(crate) struct MixedOneShotControl {
     ingress_results: OpaqueQueue<HeapCons<MixedIngressResult>>,
     #[cfg(all(test, feature = "simulated-ingress"))]
     ingress_journal: VecDeque<MixedIngressJournalEntry>,
+    /// A minted command returned by a failed physical push. The terminal owner
+    /// retains it until joined off-thread teardown.
+    #[cfg(all(test, feature = "simulated-ingress"))]
+    ingress_command_pending: Option<MixedIngressCommand>,
     #[cfg(all(test, feature = "simulated-ingress"))]
     invalid_ingress_result: Option<MixedIngressResult>,
     #[cfg(all(test, feature = "simulated-ingress"))]
@@ -1170,6 +1174,8 @@ impl MixedIngressResult {
 #[cfg(all(test, feature = "simulated-ingress"))]
 #[derive(Clone, Copy, Debug, PartialEq, Error)]
 enum MixedIngressResultCollectError {
+    #[error("mixed ingress transfer is halted")]
+    Halted,
     #[error("mixed ingress result does not match the next submitted command")]
     Protocol {
         received: MixedIngressCommandId,
@@ -1180,10 +1186,30 @@ enum MixedIngressResultCollectError {
 #[cfg(all(test, feature = "simulated-ingress"))]
 #[derive(Debug, Error, PartialEq)]
 enum MixedIngressSubmitError {
+    #[error("mixed ingress transfer is halted")]
+    Halted(MixedIngressRequest),
     #[error("mixed ingress command or result capacity is full")]
     Full(MixedIngressRequest),
     #[error("mixed ingress command identity is exhausted")]
     IdentityExhausted(MixedIngressRequest),
+    #[error("mixed ingress command queue refused a minted packet")]
+    PhysicalPush {
+        id: MixedIngressCommandId,
+        request: MixedIngressRequest,
+    },
+}
+
+/// A physical push can fail only after minting; logical capacity is checked by
+/// the ordinary submit path before it calls this layer.
+#[cfg(all(test, feature = "simulated-ingress"))]
+#[derive(Debug)]
+enum MixedIngressPushError {
+    Halted(MixedIngressRequest),
+    IdentityExhausted(MixedIngressRequest),
+    PhysicalPush {
+        id: MixedIngressCommandId,
+        request: MixedIngressRequest,
+    },
 }
 
 #[cfg(all(test, feature = "simulated-ingress"))]
@@ -1213,12 +1239,28 @@ impl MixedOneShotControl {
         request: MixedIngressRequest,
         bend_credits: MixedIngressQueueCount,
     ) -> Result<MixedIngressCommandId, MixedIngressSubmitError> {
+        if self.ingress_halt.load(Ordering::Acquire) {
+            return Err(MixedIngressSubmitError::Halted(request));
+        }
         if self.ingress_room() == 0 {
             return Err(MixedIngressSubmitError::Full(request));
         }
-        let id = self.push_ingress(request, bend_credits)?;
-        self.ingress_outstanding.0 += 1;
-        Ok(id)
+        match self.push_ingress(request, bend_credits) {
+            Ok(id) => {
+                self.ingress_outstanding.0 += 1;
+                Ok(id)
+            }
+            Err(MixedIngressPushError::PhysicalPush { id, request }) => {
+                self.ingress_outstanding.0 += 1;
+                Err(MixedIngressSubmitError::PhysicalPush { id, request })
+            }
+            Err(MixedIngressPushError::Halted(request)) => {
+                Err(MixedIngressSubmitError::Halted(request))
+            }
+            Err(MixedIngressPushError::IdentityExhausted(request)) => {
+                Err(MixedIngressSubmitError::IdentityExhausted(request))
+            }
+        }
     }
 
     /// Mint the next command identity and push the command. Room is the caller's check.
@@ -1226,11 +1268,14 @@ impl MixedOneShotControl {
         &mut self,
         request: MixedIngressRequest,
         bend_credits: MixedIngressQueueCount,
-    ) -> Result<MixedIngressCommandId, MixedIngressSubmitError> {
+    ) -> Result<MixedIngressCommandId, MixedIngressPushError> {
+        if self.ingress_halt.load(Ordering::Acquire) {
+            return Err(MixedIngressPushError::Halted(request));
+        }
         let serial = self
             .last_ingress_id
             .map_or(Some(1), |id| id.0.checked_add(1))
-            .ok_or(MixedIngressSubmitError::IdentityExhausted(request))?;
+            .ok_or(MixedIngressPushError::IdentityExhausted(request))?;
         let id = MixedIngressCommandId(serial);
         let packet = MixedIngressCommand {
             owner: self.ingress_owner,
@@ -1244,13 +1289,17 @@ impl MixedOneShotControl {
             request,
             bend_credits,
         };
-        self.ingress_commands
-            .0
-            .try_push(packet)
-            .map_err(|command| MixedIngressSubmitError::Full(command.request))?;
+        let pushed = self.ingress_commands.0.try_push(packet);
         self.ingress_journal.push_back(journal);
         self.last_ingress_id = Some(id);
-        Ok(id)
+        match pushed {
+            Ok(()) => Ok(id),
+            Err(command) => {
+                self.ingress_command_pending = Some(command);
+                self.ingress_halt.store(true, Ordering::Release);
+                Err(MixedIngressPushError::PhysicalPush { id, request })
+            }
+        }
     }
 
     /// Take `needed` bend credits after collecting audio's returns, or report how many
@@ -1291,20 +1340,25 @@ impl MixedOneShotControl {
         origin: MixedIngressOriginId,
         at: SampleTime,
     ) -> Result<(MixedIngressCommandId, MixedIngressRequest), MixedPanicSubmitError> {
+        if self.ingress_halt.load(Ordering::Acquire) {
+            return Err(MixedPanicSubmitError::Halted);
+        }
         if let Some(pending) = self.panic_inflight {
             return Err(MixedPanicSubmitError::Pending(pending));
         }
         let request = MixedIngressRequest::Panic { origin, at };
         // Panic carries no bend credit, so an exhausted budget never refuses it.
-        let command = self
-            .push_ingress(request, MixedIngressQueueCount::NONE)
-            .map_err(|error| match error {
-                // Ordinary commands never exceed `ingress_capacity`, so this needs a defect.
-                MixedIngressSubmitError::Full(_) => MixedPanicSubmitError::RingFull,
-                MixedIngressSubmitError::IdentityExhausted(_) => {
-                    MixedPanicSubmitError::IdentityExhausted
-                }
-            })?;
+        let command = match self.push_ingress(request, MixedIngressQueueCount::NONE) {
+            Ok(command) => command,
+            Err(MixedIngressPushError::PhysicalPush { id, .. }) => {
+                self.panic_inflight = Some(id);
+                return Err(MixedPanicSubmitError::PhysicalPush);
+            }
+            Err(MixedIngressPushError::Halted(_)) => return Err(MixedPanicSubmitError::Halted),
+            Err(MixedIngressPushError::IdentityExhausted(_)) => {
+                return Err(MixedPanicSubmitError::IdentityExhausted);
+            }
+        };
         self.panic_inflight = Some(command);
         Ok((command, request))
     }
@@ -1321,6 +1375,9 @@ impl MixedOneShotControl {
         key: crate::quantities::KeyIdentity,
         velocity: crate::quantities::NoteVelocity,
     ) -> Result<(MixedIngressCommandId, MixedIngressRequest), MixedOnsetSubmitError> {
+        if self.ingress_halt.load(Ordering::Acquire) {
+            return Err(MixedOnsetSubmitError::Halted);
+        }
         if self.ingress_room() < 2 {
             return Err(MixedOnsetSubmitError::Full);
         }
@@ -1347,33 +1404,43 @@ impl MixedOneShotControl {
             key,
             velocity,
         };
-        let command = match self.submit_ingress_with(request, credits) {
-            Ok(command) => command,
-            Err(error) => {
+        let (command, physical_push_fault) = match self.submit_ingress_with(request, credits) {
+            Ok(command) => (command, false),
+            Err(MixedIngressSubmitError::PhysicalPush { id, .. }) => (id, true),
+            Err(MixedIngressSubmitError::Halted(_)) => {
                 self.unreserve_bend_credits(credits);
-                return Err(match error {
-                    MixedIngressSubmitError::Full(_) => MixedOnsetSubmitError::Full,
-                    MixedIngressSubmitError::IdentityExhausted(_) => {
-                        MixedOnsetSubmitError::IdentityExhausted
-                    }
-                });
+                return Err(MixedOnsetSubmitError::Halted);
+            }
+            Err(MixedIngressSubmitError::Full(_)) => {
+                self.unreserve_bend_credits(credits);
+                return Err(MixedOnsetSubmitError::Full);
+            }
+            Err(MixedIngressSubmitError::IdentityExhausted(_)) => {
+                self.unreserve_bend_credits(credits);
+                return Err(MixedOnsetSubmitError::IdentityExhausted);
             }
         };
         let opened = self.occurrence_ledger.open(occurrence, scope, command);
         debug_assert!(opened, "the vacant handle stays vacant until opened");
         self.release_reserved.0 += 1;
+        if physical_push_fault {
+            return Err(MixedOnsetSubmitError::PhysicalPush);
+        }
         Ok((command, request))
     }
 
     /// Submit the release of an open handle into the place its onset reserved.
-    /// If the queue or its accounting has lost that place, leave the handle open
-    /// and report the broken reservation to the caller.
+    /// A preflight refusal leaves the handle open. A physical push failure
+    /// retains the command and moves the handle to releasing before halting.
     fn submit_release(
         &mut self,
         origin: MixedIngressOriginId,
         occurrence: LiveOccurrenceId,
         at: SampleTime,
     ) -> Result<(MixedIngressCommandId, MixedIngressRequest), MixedReleaseSubmitError> {
+        if self.ingress_halt.load(Ordering::Acquire) {
+            return Err(MixedReleaseSubmitError::Halted);
+        }
         if !self.occurrence_ledger.is_open(occurrence) {
             return Err(MixedReleaseSubmitError::NotOpen(occurrence));
         }
@@ -1383,29 +1450,37 @@ impl MixedOneShotControl {
             at,
         };
         self.release_reserved.0 -= 1;
-        let command = match self.submit_ingress(request) {
-            Ok(command) => command,
-            Err(error) => {
+        let (command, physical_push_fault) = match self.submit_ingress(request) {
+            Ok(command) => (command, false),
+            Err(MixedIngressSubmitError::PhysicalPush { id, .. }) => (id, true),
+            Err(MixedIngressSubmitError::Halted(_)) => {
                 self.release_reserved.0 += 1;
-                return Err(match error {
-                    MixedIngressSubmitError::Full(_) => {
-                        MixedReleaseSubmitError::ReservedPlaceUnavailable(occurrence)
-                    }
-                    MixedIngressSubmitError::IdentityExhausted(_) => {
-                        MixedReleaseSubmitError::IdentityExhausted(occurrence)
-                    }
-                });
+                return Err(MixedReleaseSubmitError::Halted);
+            }
+            Err(MixedIngressSubmitError::Full(_)) => {
+                self.release_reserved.0 += 1;
+                return Err(MixedReleaseSubmitError::ReservedPlaceUnavailable(
+                    occurrence,
+                ));
+            }
+            Err(MixedIngressSubmitError::IdentityExhausted(_)) => {
+                self.release_reserved.0 += 1;
+                return Err(MixedReleaseSubmitError::IdentityExhausted(occurrence));
             }
         };
         let releasing = self.occurrence_ledger.begin_release(occurrence, command);
         debug_assert!(releasing, "an open handle accepts its release");
+        if physical_push_fault {
+            return Err(MixedReleaseSubmitError::PhysicalPush);
+        }
         Ok((command, request))
     }
 
     /// Submit one channel bend for `scope` into an ordinary ring place. A new
     /// non-zero scope reserves one audio bend-table cell, and every bend reserves `H`
     /// bend credits, before its command identity is minted. Bends are not coalesced: a
-    /// full ring, scope table or credit budget refuses the caller, which keeps its input.
+    /// full logical ring, scope table or credit budget refuses before minting.
+    /// A failed physical push retains the minted bend and halts the stream.
     fn submit_bend(
         &mut self,
         origin: MixedIngressOriginId,
@@ -1413,6 +1488,9 @@ impl MixedOneShotControl {
         at: SampleTime,
         cents: Cents,
     ) -> Result<(MixedIngressCommandId, MixedIngressRequest), MixedBendSubmitError> {
+        if self.ingress_halt.load(Ordering::Acquire) {
+            return Err(MixedBendSubmitError::Halted);
+        }
         if self.ingress_room() == 0 {
             return Err(MixedBendSubmitError::Full);
         }
@@ -1439,16 +1517,20 @@ impl MixedOneShotControl {
             at,
             cents,
         };
-        let command = match self.submit_ingress_with(request, needed) {
-            Ok(command) => command,
-            Err(error) => {
+        let (command, physical_push_fault) = match self.submit_ingress_with(request, needed) {
+            Ok(command) => (command, false),
+            Err(MixedIngressSubmitError::PhysicalPush { id, .. }) => (id, true),
+            Err(MixedIngressSubmitError::Halted(_)) => {
                 self.unreserve_bend_credits(needed);
-                return Err(match error {
-                    MixedIngressSubmitError::Full(_) => MixedBendSubmitError::Full,
-                    MixedIngressSubmitError::IdentityExhausted(_) => {
-                        MixedBendSubmitError::IdentityExhausted
-                    }
-                });
+                return Err(MixedBendSubmitError::Halted);
+            }
+            Err(MixedIngressSubmitError::Full(_)) => {
+                self.unreserve_bend_credits(needed);
+                return Err(MixedBendSubmitError::Full);
+            }
+            Err(MixedIngressSubmitError::IdentityExhausted(_)) => {
+                self.unreserve_bend_credits(needed);
+                return Err(MixedBendSubmitError::IdentityExhausted);
             }
         };
         if let Some(index) = existing.or(vacant)
@@ -1460,13 +1542,17 @@ impl MixedOneShotControl {
                 accepted_nonzero: cell.is_some_and(|cell| cell.accepted_nonzero),
             });
         }
+        if physical_push_fault {
+            return Err(MixedBendSubmitError::PhysicalPush);
+        }
         Ok((command, request))
     }
 
     /// Submit one sustain edge for `scope`. Only an edge that changes the merger's
     /// pedal state is pushed. An effective pedal-down needs its own place and one more
-    /// that it reserves for the scope's lift. A broken queue or accounting
-    /// reservation is reported without changing the scope's pedal state.
+    /// that it reserves for the scope's lift. Preflight refusals leave the pedal
+    /// state unchanged. A failed physical push retains the command and its
+    /// corresponding pedal state before halting.
     fn submit_pedal(
         &mut self,
         origin: MixedIngressOriginId,
@@ -1474,6 +1560,9 @@ impl MixedOneShotControl {
         at: SampleTime,
         down: bool,
     ) -> Result<MixedPedalSubmitted, MixedPedalSubmitError> {
+        if self.ingress_halt.load(Ordering::Acquire) {
+            return Err(MixedPedalSubmitError::Halted);
+        }
         if self.pedal_ledger.classify(scope, down) == MixedPedalEdge::Redundant {
             return Ok(MixedPedalSubmitted::Redundant);
         }
@@ -1487,13 +1576,23 @@ impl MixedOneShotControl {
             if self.ingress_room() < 2 || !self.pedal_ledger.can_press(scope) {
                 return Err(MixedPedalSubmitError::Full);
             }
-            let command = self.submit_ingress(request).map_err(|error| match error {
-                MixedIngressSubmitError::Full(_) => MixedPedalSubmitError::Full,
-                MixedIngressSubmitError::IdentityExhausted(_) => {
-                    MixedPedalSubmitError::IdentityExhausted
+            let (command, physical_push_fault) = match self.submit_ingress(request) {
+                Ok(command) => (command, false),
+                Err(MixedIngressSubmitError::PhysicalPush { id, .. }) => (id, true),
+                Err(MixedIngressSubmitError::Halted(_)) => {
+                    return Err(MixedPedalSubmitError::Halted);
                 }
-            })?;
+                Err(MixedIngressSubmitError::Full(_)) => {
+                    return Err(MixedPedalSubmitError::Full);
+                }
+                Err(MixedIngressSubmitError::IdentityExhausted(_)) => {
+                    return Err(MixedPedalSubmitError::IdentityExhausted);
+                }
+            };
             self.pedal_ledger.press(scope, command);
+            if physical_push_fault {
+                return Err(MixedPedalSubmitError::PhysicalPush);
+            }
             return Ok(MixedPedalSubmitted::Command(command, request));
         }
         // The scope's reserved place becomes room for the lift itself.
@@ -1503,16 +1602,21 @@ impl MixedOneShotControl {
                 self.pedal_ledger.lift(scope, command);
                 Ok(MixedPedalSubmitted::Command(command, request))
             }
-            Err(error) => {
+            Err(MixedIngressSubmitError::PhysicalPush { id, .. }) => {
+                self.pedal_ledger.lift(scope, id);
+                Err(MixedPedalSubmitError::PhysicalPush)
+            }
+            Err(MixedIngressSubmitError::Halted(_)) => {
                 self.pedal_ledger.return_reservation();
-                Err(match error {
-                    MixedIngressSubmitError::Full(_) => {
-                        MixedPedalSubmitError::ReservedPlaceUnavailable
-                    }
-                    MixedIngressSubmitError::IdentityExhausted(_) => {
-                        MixedPedalSubmitError::IdentityExhausted
-                    }
-                })
+                Err(MixedPedalSubmitError::Halted)
+            }
+            Err(MixedIngressSubmitError::Full(_)) => {
+                self.pedal_ledger.return_reservation();
+                Err(MixedPedalSubmitError::ReservedPlaceUnavailable)
+            }
+            Err(MixedIngressSubmitError::IdentityExhausted(_)) => {
+                self.pedal_ledger.return_reservation();
+                Err(MixedPedalSubmitError::IdentityExhausted)
             }
         }
     }
@@ -1529,6 +1633,7 @@ impl MixedOneShotControl {
     fn collect_ingress_result(&mut self) -> Option<MixedIngressResult> {
         match self.collect_ingress_result_checked() {
             Ok(result) => result,
+            Err(MixedIngressResultCollectError::Halted) => None,
             Err(error) => panic!(
                 "private mixed result protocol fault: {error}; received={:?}; expected={:?}",
                 self.invalid_ingress_result,
@@ -1606,11 +1711,15 @@ impl MixedOneShotControl {
     fn collect_ingress_result_checked(
         &mut self,
     ) -> Result<Option<MixedIngressResult>, MixedIngressResultCollectError> {
+        let halted = self.ingress_halt.load(Ordering::Acquire);
         if let Some(received) = self.invalid_ingress_result.as_ref() {
             return Err(MixedIngressResultCollectError::Protocol {
                 received: received.id,
                 expected: self.ingress_journal.front().map(|packet| packet.id),
             });
+        }
+        if halted {
+            return Err(MixedIngressResultCollectError::Halted);
         }
         let Some(result) = self.ingress_results.0.try_pop() else {
             return Ok(None);
@@ -1811,6 +1920,7 @@ struct MixedIngressTeardown {
     invalid_result: Option<MixedIngressResult>,
     last_served_id: Option<MixedIngressCommandId>,
     unserved_commands: Vec<MixedIngressCommand>,
+    pending_command: Option<MixedIngressCommand>,
     uncollected_results: Vec<MixedIngressResult>,
     pending_result: Option<MixedIngressResult>,
     terminal_control: Option<MixedTerminalControlCustody>,
@@ -1828,7 +1938,8 @@ struct MixedTerminalControlCustody {
     bend_credits_return_pending: MixedIngressQueueCount,
     bend_scopes: Vec<MixedBendScopeCell>,
     /// Outstanding expectations, separate from owning packets in queues or
-    /// the invalid-command slot and from packets already served by audio.
+    /// the invalid-command and pending-command slots, and from packets already
+    /// served by audio.
     outstanding_commands: Vec<MixedIngressJournalEntry>,
 }
 
@@ -2081,6 +2192,7 @@ fn mixed_teardown_parts(
             invalid_result: None,
             last_served_id: audio.last_served_ingress_id,
             unserved_commands: Vec::new(),
+            pending_command: None,
             uncollected_results: Vec::new(),
             pending_result: None,
             terminal_control: None,
@@ -2175,6 +2287,7 @@ impl MixedOneShotControl {
             if terminal {
                 parts.ingress.invalid_command = audio.invalid_ingress_command.take();
                 parts.ingress.invalid_result = self.invalid_ingress_result.take();
+                parts.ingress.pending_command = self.ingress_command_pending.take();
                 parts.ingress.terminal_control = Some(MixedTerminalControlCustody {
                     ingress_outstanding: self.ingress_outstanding,
                     release_reserved: self.release_reserved,
@@ -2772,6 +2885,8 @@ impl MixedJoinedPrepared {
                 ingress_results: OpaqueQueue(ingress_result_reader),
                 #[cfg(all(test, feature = "simulated-ingress"))]
                 ingress_journal: VecDeque::with_capacity(ring_places),
+                #[cfg(all(test, feature = "simulated-ingress"))]
+                ingress_command_pending: None,
                 #[cfg(all(test, feature = "simulated-ingress"))]
                 invalid_ingress_result: None,
                 #[cfg(all(test, feature = "simulated-ingress"))]

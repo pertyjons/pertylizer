@@ -1098,10 +1098,16 @@ recorded entry history reconstructs equal scope values through frame 511.
 This is a private experiment, not the unapproved draft's D5 coalescing marker
 and not acceptance of a production bend contract. This slice does not lift
 the production mixed-plan refusal.
-Private mixed release and pedal-lift submission now returns a typed
-`ReservedPlaceUnavailable` error if its reserved command place is unexpectedly
-missing, while retaining the handle, lift reservation and command ID. A focused
-test injects both a physically full ring and inconsistent room accounting.
+Private mixed release and pedal-lift submission returns typed
+`ReservedPlaceUnavailable` on inconsistent room accounting before minting an
+ID; the handle and lift reservation remain available for retry. If the
+physical command ring instead refuses a minted packet, the private owner
+retains that exact packet, its journal entry, ID and capacity charge in a
+terminal pending slot. Release moves its handle to releasing, lift spends its
+reserved place, and the shared halt silences the observing audio callback.
+The same terminal custody rule covers onset, bend, pedal press and Panic.
+Focused tests inject both physical ring failure and inconsistent room
+accounting, and joined teardown names the pending packet.
 The private owner now journals each submitted command before result collection.
 Audio faults before applying an out-of-order command; control faults before
 settling a mismatched, reordered or duplicate result. Terminal teardown retains

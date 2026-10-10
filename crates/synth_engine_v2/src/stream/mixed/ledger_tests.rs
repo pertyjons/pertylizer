@@ -8,8 +8,8 @@ use super::{
     MixedIngressOutcome, MixedIngressRequest, MixedIngressResult, MixedIngressResultCollectError,
     MixedIngressSubmitError, MixedOneShotControl, MixedOneShotRenderError, history_tests,
     occurrence::{
-        LiveOccurrenceId, MixedHandleRefused, MixedOnsetSubmitError, MixedPedalSubmitError,
-        MixedReleaseSubmitError, MixedRetireCause, MixedRetired,
+        LiveOccurrenceId, MixedHandleRefused, MixedOnsetSubmitError, MixedPanicSubmitError,
+        MixedPedalSubmitError, MixedReleaseSubmitError, MixedRetireCause, MixedRetired,
     },
 };
 use crate::identity::NoteIdentity;
@@ -2448,7 +2448,7 @@ fn foreign_mixed_result_with_the_expected_id_faults_without_settlement() {
     let mut output = [1.0_f32; 256];
     assert_eq!(
         audio_b.render_private(AudioBlockMut::new(&mut output, 256, ChannelLayout::Mono).unwrap()),
-        Err(MixedOneShotRenderError::IngressResultOrder)
+        Err(MixedOneShotRenderError::IngressTransferHalt)
     );
     assert!(output.iter().all(|sample| *sample == 0.0));
     let MixedCollection::Ended(ended) = control_b.collect(audio_b).unwrap() else {
@@ -2686,6 +2686,13 @@ fn mismatched_mixed_result_halts_audio_without_settling_its_command() {
         })
     );
     assert_eq!(
+        control.collect_ingress_result_checked(),
+        Err(MixedIngressResultCollectError::Protocol {
+            received: id,
+            expected: Some(id),
+        })
+    );
+    assert_eq!(
         control.ingress_outstanding,
         super::MixedIngressQueueCount(1)
     );
@@ -2697,7 +2704,7 @@ fn mismatched_mixed_result_halts_audio_without_settling_its_command() {
     let mut block = [1.0_f32; 256];
     assert_eq!(
         audio.render_private(AudioBlockMut::new(&mut block, 256, ChannelLayout::Mono).unwrap()),
-        Err(MixedOneShotRenderError::IngressResultOrder)
+        Err(MixedOneShotRenderError::IngressTransferHalt)
     );
     assert!(block.iter().all(|sample| *sample == 0.0));
     assert!(audio.audio.renderer.diagnostics().needs_reprepare());
@@ -3112,8 +3119,26 @@ fn wrong_kind_and_duplicate_results_fault_before_ledger_mutation() {
     }
 }
 
+fn fill_physical_command_ring(
+    control: &mut MixedOneShotControl,
+    origin: MixedIngressOriginId,
+    at: SampleTime,
+) {
+    loop {
+        let forged = super::MixedIngressCommand {
+            owner: control.ingress_owner,
+            id: MixedIngressCommandId(u64::MAX),
+            request: MixedIngressRequest::Panic { origin, at },
+            bend_credits: super::MixedIngressQueueCount::NONE,
+        };
+        if control.ingress_commands.0.try_push(forged).is_err() {
+            break;
+        }
+    }
+}
+
 #[test]
-fn a_lost_reserved_command_place_refuses_without_spending_release_or_lift_custody() {
+fn a_lost_reserved_command_place_terminally_retains_release_custody() {
     let (prepared, candidate) = history_tests::one_shot_with_boundary_on(true);
     let (mut control, _audio) = prepared
         .arm_one_shot(candidate, &history_tests::mixed_profile())
@@ -3143,36 +3168,38 @@ fn a_lost_reserved_command_place_refuses_without_spending_release_or_lift_custod
         panic!("pedal-down request");
     };
 
-    // Break the private queue/count invariant. The reserved places must remain
-    // owned by the release and lift on refusal.
-    loop {
-        let forged = super::MixedIngressCommand {
-            owner: control.ingress_owner,
-            id: MixedIngressCommandId(u64::MAX),
-            request: MixedIngressRequest::Panic { origin, at },
-            bend_credits: super::MixedIngressQueueCount::NONE,
-        };
-        if control.ingress_commands.0.try_push(forged).is_err() {
-            break;
-        }
-    }
+    // Break the private queue/count invariant. The release must become an
+    // outstanding unsent command, while the untouched lift keeps its place.
+    fill_physical_command_ring(&mut control, origin, at);
     let last_id = control.last_ingress_id;
     assert_eq!(
         control.submit_release(origin, occurrence, at),
-        Err(MixedReleaseSubmitError::ReservedPlaceUnavailable(
-            occurrence
-        ))
+        Err(MixedReleaseSubmitError::PhysicalPush)
     );
-    assert!(control.occurrence_ledger.is_open(occurrence));
-    assert_eq!(control.release_reserved, super::MixedIngressQueueCount(1));
-    assert_eq!(control.last_ingress_id, last_id);
+    let pending_id = control.ingress_command_pending.as_ref().unwrap().id;
+    assert_eq!(control.last_ingress_id, Some(pending_id));
+    assert_eq!(pending_id.0, last_id.unwrap().0 + 1);
+    assert!(
+        control
+            .occurrence_ledger
+            .is_releasing(occurrence, pending_id)
+    );
+    assert_eq!(
+        control.release_reserved,
+        super::MixedIngressQueueCount::NONE
+    );
+    assert!(
+        control
+            .ingress_halt
+            .load(std::sync::atomic::Ordering::Acquire)
+    );
     assert_eq!(
         control.submit_pedal(origin, super::TEST_SCOPE, at, false),
-        Err(MixedPedalSubmitError::ReservedPlaceUnavailable)
+        Err(MixedPedalSubmitError::Halted)
     );
     assert_eq!(control.pedal_ledger.reserved(), 1);
     assert!(control.pedal_ledger.is_down(super::TEST_SCOPE));
-    assert_eq!(control.last_ingress_id, last_id);
+    assert_eq!(control.last_ingress_id, Some(pending_id));
 
     // The accounting guard can also refuse before reaching the physical ring.
     let (prepared, candidate) = history_tests::one_shot_with_boundary_on(true);
@@ -3212,6 +3239,145 @@ fn a_lost_reserved_command_place_refuses_without_spending_release_or_lift_custod
     assert_eq!(counted.pedal_ledger.reserved(), 1);
     assert!(counted.pedal_ledger.is_down(super::TEST_SCOPE));
     assert_eq!(counted.last_ingress_id, last_id);
+}
+
+#[test]
+fn physical_pedal_press_failure_keeps_its_lift_place_and_pending_packet() {
+    let (prepared, candidate) = history_tests::one_shot_with_boundary_on(true);
+    let (mut control, mut audio) = prepared
+        .arm_one_shot(candidate, &history_tests::mixed_profile())
+        .unwrap();
+    let origin = MixedIngressOriginId(1);
+    let at = SampleTime::new(140);
+    fill_physical_command_ring(&mut control, origin, at);
+    assert_eq!(
+        control.submit_pedal(origin, super::TEST_SCOPE, at, true),
+        Err(MixedPedalSubmitError::PhysicalPush)
+    );
+    let pending_id = control.ingress_command_pending.as_ref().unwrap().id;
+    assert_eq!(control.last_ingress_id, Some(pending_id));
+    assert_eq!(
+        control.ingress_outstanding,
+        super::MixedIngressQueueCount(1)
+    );
+    assert_eq!(control.pedal_ledger.reserved(), 1);
+    assert!(control.pedal_ledger.is_down(super::TEST_SCOPE));
+    let mut output = [1.0_f32; 64];
+    assert_eq!(
+        audio.render_private(AudioBlockMut::new(&mut output, 64, ChannelLayout::Mono).unwrap()),
+        Err(MixedOneShotRenderError::IngressTransferHalt)
+    );
+    assert!(output.iter().all(|sample| *sample == 0.0));
+    let MixedCollection::Ended(ended) = control.collect(audio).unwrap() else {
+        panic!("pedal press push failure must be terminal");
+    };
+    assert_eq!(
+        ended.report.fault,
+        Some(MixedOneShotRenderError::IngressTransferHalt)
+    );
+    assert_eq!(
+        ended
+            .ingress
+            .pending_command
+            .as_ref()
+            .map(|command| command.id),
+        Some(pending_id)
+    );
+    let custody = ended.ingress.terminal_control.as_ref().unwrap();
+    assert_eq!(custody.pedal_reserved, super::MixedIngressQueueCount(1));
+    assert_eq!(custody.outstanding_commands.len(), 1);
+}
+
+#[test]
+fn physical_pedal_lift_failure_moves_its_reserved_place_to_pending_packet() {
+    let (prepared, candidate) = history_tests::one_shot_with_boundary_on(true);
+    let (mut control, mut audio) = prepared
+        .arm_one_shot(candidate, &history_tests::mixed_profile())
+        .unwrap();
+    let origin = MixedIngressOriginId(1);
+    let at = SampleTime::new(140);
+    assert!(matches!(
+        control.submit_pedal(origin, super::TEST_SCOPE, at, true),
+        Ok(super::MixedPedalSubmitted::Command(..))
+    ));
+    audio.service_test_ingress_queue();
+    assert!(control.collect_ingress_result().is_some());
+    assert_eq!(control.pedal_ledger.reserved(), 1);
+    fill_physical_command_ring(&mut control, origin, at);
+    assert_eq!(
+        control.submit_pedal(origin, super::TEST_SCOPE, at, false),
+        Err(MixedPedalSubmitError::PhysicalPush)
+    );
+    let pending_id = control.ingress_command_pending.as_ref().unwrap().id;
+    assert_eq!(control.pedal_ledger.reserved(), 0);
+    assert!(!control.pedal_ledger.is_down(super::TEST_SCOPE));
+    assert_eq!(
+        control.ingress_outstanding,
+        super::MixedIngressQueueCount(1)
+    );
+    let mut output = [1.0_f32; 64];
+    assert_eq!(
+        audio.render_private(AudioBlockMut::new(&mut output, 64, ChannelLayout::Mono).unwrap()),
+        Err(MixedOneShotRenderError::IngressTransferHalt)
+    );
+    let MixedCollection::Ended(ended) = control.collect(audio).unwrap() else {
+        panic!("pedal lift push failure must be terminal");
+    };
+    assert_eq!(
+        ended
+            .ingress
+            .pending_command
+            .as_ref()
+            .map(|command| command.id),
+        Some(pending_id)
+    );
+    let custody = ended.ingress.terminal_control.as_ref().unwrap();
+    assert_eq!(custody.pedal_reserved, super::MixedIngressQueueCount::NONE);
+    assert_eq!(
+        custody.ingress_outstanding,
+        super::MixedIngressQueueCount(1)
+    );
+}
+
+#[test]
+fn physical_panic_failure_keeps_protected_place_and_pending_packet() {
+    let (prepared, candidate) = history_tests::one_shot_with_boundary_on(true);
+    let (mut control, mut audio) = prepared
+        .arm_one_shot(candidate, &history_tests::mixed_profile())
+        .unwrap();
+    let origin = MixedIngressOriginId(1);
+    let at = SampleTime::new(140);
+    fill_physical_command_ring(&mut control, origin, at);
+    assert_eq!(
+        control.submit_panic(origin, at),
+        Err(MixedPanicSubmitError::PhysicalPush)
+    );
+    let pending_id = control.ingress_command_pending.as_ref().unwrap().id;
+    assert_eq!(control.panic_inflight, Some(pending_id));
+    assert_eq!(
+        control.ingress_outstanding,
+        super::MixedIngressQueueCount::NONE
+    );
+    assert_eq!(control.ingress_journal.len(), 1);
+    let mut output = [1.0_f32; 64];
+    assert_eq!(
+        audio.render_private(AudioBlockMut::new(&mut output, 64, ChannelLayout::Mono).unwrap()),
+        Err(MixedOneShotRenderError::IngressTransferHalt)
+    );
+    let MixedCollection::Ended(ended) = control.collect(audio).unwrap() else {
+        panic!("Panic push failure must be terminal");
+    };
+    assert_eq!(
+        ended
+            .ingress
+            .pending_command
+            .as_ref()
+            .map(|command| command.id),
+        Some(pending_id)
+    );
+    let custody = ended.ingress.terminal_control.as_ref().unwrap();
+    assert_eq!(custody.panic_inflight, Some(pending_id));
+    assert_eq!(custody.outstanding_commands.len(), 1);
 }
 
 #[test]
