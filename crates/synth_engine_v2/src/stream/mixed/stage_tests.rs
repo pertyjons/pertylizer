@@ -934,7 +934,25 @@ struct RawStageBridge<R = [RawSource; 2]> {
     raw_issued: Vec<(Source, InputEventId, Option<InputEventId>)>,
     /// A source-owned bend pending outside the ring blocks that source's frontier.
     pending_source_bends: [Option<InputEventId>; 2],
+    /// A minted bend whose physical command push failed owns its raw handoff
+    /// here, while control owns the terminal command packet.
+    terminal_bends: Vec<TerminalBendSubmission>,
     next_occurrence: u64,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct TerminalBendSubmission {
+    occurrence: Occurrence,
+    handoff: RawHandoff,
+    command: super::MixedIngressCommandId,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct SubmittedBend {
+    occurrence: Occurrence,
+    handoff: RawHandoff,
+    command: super::MixedIngressCommandId,
+    request: MixedIngressRequest,
 }
 
 impl RawStageBridge {
@@ -965,6 +983,7 @@ impl<R: RawBackend> RawStageBridge<R> {
             split_pedals: Vec::with_capacity(2 * (cells_per_source - 1)),
             raw_issued: Vec::new(),
             pending_source_bends: [None; 2],
+            terminal_bends: Vec::new(),
             next_occurrence: 1,
         }
     }
@@ -1479,27 +1498,9 @@ impl<R: RawBackend> RawStageBridge<R> {
         }
     }
 
-    /// A caller-side bend refusal retains the selected stage head and its raw
-    /// handoff. The same source/channel scope reaches mixed ingress unchanged.
-    fn service_bend(
-        &mut self,
-        control: &mut MixedOneShotControl,
-        audio: &mut MixedOneShotAudio,
-    ) -> Result<Option<BendCombinedResult>, MixedBendSubmitError> {
-        let Some((source, packet)) = self.stage.peek_next() else {
-            return Ok(None);
-        };
-        let Midi1Event::PitchBend { value } = packet.original.event() else {
-            return Ok(None);
-        };
-        let cents = crate::quantities::Cents::new(value.as_f32() * 200.0)
-            .expect("a validated MIDI bend has finite cents");
-        let (command, request) = control.submit_bend(
-            MixedIngressOriginId(packet.occurrence.0),
-            self.scope_for_selected(source, packet),
-            packet.at,
-            cents,
-        )?;
+    /// Move the selected stage bend's raw handoff into its command or result
+    /// owner after a command identity has been minted.
+    fn take_selected_bend(&mut self, source: Source, packet: Packet) -> RawHandoff {
         self.stage.commit_next(source, packet);
         let position = self
             .handoffs
@@ -1511,12 +1512,80 @@ impl<R: RawBackend> RawStageBridge<R> {
             (handoff.source, handoff.original, handoff.at),
             (source, packet.original, packet.at)
         );
+        handoff
+    }
+
+    /// A pre-mint refusal retains the selected stage head and raw handoff.
+    /// A failed physical push has minted an ID, so its raw handoff instead
+    /// follows the pending command into terminal bridge custody.
+    fn submit_selected_bend(
+        &mut self,
+        control: &mut MixedOneShotControl,
+    ) -> Result<Option<SubmittedBend>, MixedBendSubmitError> {
+        let Some((source, packet)) = self.stage.peek_next() else {
+            return Ok(None);
+        };
+        let Midi1Event::PitchBend { value } = packet.original.event() else {
+            return Ok(None);
+        };
+        let cents = crate::quantities::Cents::new(value.as_f32() * 200.0)
+            .expect("a validated MIDI bend has finite cents");
+        let origin = MixedIngressOriginId(packet.occurrence.0);
+        let scope = self.scope_for_selected(source, packet);
+        let submitted = control.submit_bend(origin, scope, packet.at, cents);
+        let (command, request) = match submitted {
+            Ok(submitted) => submitted,
+            Err(MixedBendSubmitError::PhysicalPush) => {
+                let pending = control
+                    .ingress_command_pending
+                    .as_ref()
+                    .expect("a failed physical push retains its minted bend");
+                assert_eq!(
+                    pending.request,
+                    MixedIngressRequest::Bend {
+                        origin,
+                        scope,
+                        at: packet.at,
+                        cents,
+                    }
+                );
+                let command = pending.id;
+                let handoff = self.take_selected_bend(source, packet);
+                self.terminal_bends.push(TerminalBendSubmission {
+                    occurrence: packet.occurrence,
+                    handoff,
+                    command,
+                });
+                return Err(MixedBendSubmitError::PhysicalPush);
+            }
+            Err(error) => return Err(error),
+        };
+        let handoff = self.take_selected_bend(source, packet);
+        Ok(Some(SubmittedBend {
+            occurrence: packet.occurrence,
+            handoff,
+            command,
+            request,
+        }))
+    }
+
+    fn service_bend(
+        &mut self,
+        control: &mut MixedOneShotControl,
+        audio: &mut MixedOneShotAudio,
+    ) -> Result<Option<BendCombinedResult>, MixedBendSubmitError> {
+        let Some(submitted) = self.submit_selected_bend(control)? else {
+            return Ok(None);
+        };
         audio.service_test_ingress_queue();
         let result = control.collect_ingress_result().unwrap();
-        assert_eq!((result.id, result.request), (command, request));
+        assert_eq!(
+            (result.id, result.request),
+            (submitted.command, submitted.request)
+        );
         Ok(Some(BendCombinedResult {
-            handoff,
-            occurrence: packet.occurrence,
+            handoff: submitted.handoff,
+            occurrence: submitted.occurrence,
             outcome: result.outcome,
         }))
     }
@@ -1874,6 +1943,7 @@ enum OnsetAtTeardown {
 struct BridgeTeardown {
     raw_issued: Vec<(Source, InputEventId, Option<InputEventId>)>,
     unoffered: Vec<RawHandoff>,
+    terminal_bends: Vec<TerminalBendSubmission>,
     reservations: Vec<(Source, Occurrence, InputEventId)>,
     pedal_lifts: Vec<(Source, MidiChannel, Occurrence, InputEventId)>,
     /// Cross-references an unoffered lift's raw ID to its raw down ID.
@@ -1956,9 +2026,32 @@ impl<R: RawBackend> RawStageBridge<R> {
         let MixedCollection::Ended(ended) = control.collect(audio).unwrap() else {
             panic!("a pending or faulted mixed owner must end at teardown");
         };
+        assert!(self.terminal_bends.len() <= 1);
+        for terminal in &self.terminal_bends {
+            let pending = ended
+                .ingress
+                .pending_command
+                .as_ref()
+                .expect("a terminal bend owns the pending command packet");
+            assert_eq!(pending.id, terminal.command);
+            assert!(matches!(pending.request, MixedIngressRequest::Bend { .. }));
+            assert_eq!(
+                ended
+                    .ingress
+                    .terminal_control
+                    .as_ref()
+                    .expect("a physical push fault retains control custody")
+                    .outstanding_commands
+                    .iter()
+                    .filter(|entry| entry.id == terminal.command)
+                    .count(),
+                1
+            );
+        }
         let mut teardown = BridgeTeardown {
             raw_issued: std::mem::take(&mut self.raw_issued),
             unoffered: Vec::new(),
+            terminal_bends: std::mem::take(&mut self.terminal_bends),
             reservations: Vec::new(),
             pedal_lifts: Vec::new(),
             staged_pedal_lifts: Vec::new(),
@@ -2092,6 +2185,7 @@ impl<R: RawBackend> RawStageBridge<R> {
                 && self.paired_pedal_lifts.is_empty()
                 && self.unstaged_pedal_downs.is_empty()
                 && self.split_pedals.is_empty()
+                && self.terminal_bends.is_empty()
         );
         for (occurrence, result) in self.onset_results.drain(..) {
             let state = match result {

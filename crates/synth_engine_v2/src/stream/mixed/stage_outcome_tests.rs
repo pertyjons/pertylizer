@@ -2,6 +2,11 @@
 
 use std::collections::VecDeque;
 
+use ringbuf::{
+    HeapRb,
+    traits::{Consumer, Producer, Split},
+};
+
 use super::*;
 
 #[derive(Debug, PartialEq)]
@@ -18,6 +23,8 @@ enum JournalState {
         release: bool,
     },
     AwaitStage,
+    SubmittedBend(SubmittedBend),
+    TerminalPendingBend(TerminalBendSubmission),
     Ready(JournalOutcome),
 }
 
@@ -29,8 +36,8 @@ struct JournalEntry {
 }
 
 /// This private note/bend/key-up proof keeps one charge from raw admission
-/// until ordered delivery. Service is synchronous; production must also charge
-/// commands and results that have left the stage but remain in flight.
+/// until ordered delivery. Notes are serviced synchronously; a submitted bend
+/// keeps its charge through the physical command and result queues.
 struct SourceOutcomeJournal {
     entries: VecDeque<JournalEntry>,
     capacity: usize,
@@ -40,6 +47,12 @@ struct SourceOutcomeJournal {
 enum TerminalJournalState {
     Unoffered,
     PendingBend,
+    PendingCommand,
+    UnservedCommand,
+    UncollectedResult,
+    PendingResult,
+    InvalidCommand,
+    InvalidResult,
     Resolved,
 }
 
@@ -166,6 +179,58 @@ impl SourceOutcomeJournal {
         entry.state = JournalState::Ready(JournalOutcome::Bend(result));
     }
 
+    fn submit_bend(&mut self, submitted: SubmittedBend) {
+        let entry = self
+            .entries
+            .iter_mut()
+            .find(|entry| entry.raw == submitted.handoff.raw)
+            .expect("submitted bend owns an admitted journal entry");
+        assert_eq!(
+            entry.state,
+            JournalState::Staged {
+                occurrence: submitted.occurrence,
+                release: false,
+            }
+        );
+        entry.state = JournalState::SubmittedBend(submitted);
+    }
+
+    fn terminalize_failed_bend_push(&mut self, terminal: TerminalBendSubmission) {
+        let entry = self
+            .entries
+            .iter_mut()
+            .find(|entry| entry.raw == terminal.handoff.raw)
+            .expect("failed bend push owns an admitted journal entry");
+        assert_eq!(
+            entry.state,
+            JournalState::Staged {
+                occurrence: terminal.occurrence,
+                release: false,
+            }
+        );
+        entry.state = JournalState::TerminalPendingBend(terminal);
+    }
+
+    fn finish_submitted_bend(&mut self, result: super::super::super::MixedIngressResult) {
+        let entry = self
+            .entries
+            .iter_mut()
+            .find(|entry| {
+                matches!(entry.state, JournalState::SubmittedBend(submitted) if submitted.command == result.id)
+            })
+            .expect("collected result names one submitted bend");
+        let JournalState::SubmittedBend(submitted) = entry.state else {
+            panic!("the matched journal entry stays submitted");
+        };
+        assert_eq!(result.request, submitted.request);
+        assert!(matches!(result.outcome, MixedIngressOutcome::Bend(_)));
+        entry.state = JournalState::Ready(JournalOutcome::Bend(BendCombinedResult {
+            handoff: submitted.handoff,
+            occurrence: submitted.occurrence,
+            outcome: result.outcome,
+        }));
+    }
+
     fn deliver(&mut self) -> Option<JournalEntry> {
         if self
             .entries
@@ -182,6 +247,7 @@ impl SourceOutcomeJournal {
         &self,
         teardown: &BridgeTeardown,
         pending: Option<PendingBendCancellation>,
+        ended: Option<&MixedOneShotTeardown>,
     ) -> Vec<(SourceHandoff, InputEventId, TerminalJournalState)> {
         self.entries
             .iter()
@@ -217,6 +283,113 @@ impl SourceOutcomeJournal {
                             Some(entry.raw)
                         );
                         TerminalJournalState::PendingBend
+                    }
+                    JournalState::TerminalPendingBend(terminal) => {
+                        assert_eq!(terminal.handoff.raw, entry.raw);
+                        assert_eq!(
+                            teardown
+                                .terminal_bends
+                                .iter()
+                                .filter(|held| **held == terminal)
+                                .count(),
+                            1
+                        );
+                        let ended = ended.expect("a failed bend push needs mixed terminal custody");
+                        assert_eq!(
+                            ended
+                                .ingress
+                                .pending_command
+                                .as_ref()
+                                .map(|packet| packet.id),
+                            Some(terminal.command)
+                        );
+                        assert_eq!(
+                            ended
+                                .ingress
+                                .terminal_control
+                                .as_ref()
+                                .expect("terminal control retains the command journal")
+                                .outstanding_commands
+                                .iter()
+                                .filter(|command| command.id == terminal.command)
+                                .count(),
+                            1
+                        );
+                        TerminalJournalState::PendingCommand
+                    }
+                    JournalState::SubmittedBend(submitted) => {
+                        assert_eq!(submitted.handoff.raw, entry.raw);
+                        assert!(
+                            teardown
+                                .unoffered
+                                .iter()
+                                .all(|handoff| handoff.raw != entry.raw)
+                        );
+                        let ended = ended.expect("a submitted bend needs mixed terminal custody");
+                        let unserved = ended
+                            .ingress
+                            .unserved_commands
+                            .iter()
+                            .filter(|packet| packet.id == submitted.command)
+                            .count();
+                        let uncollected = ended
+                            .ingress
+                            .uncollected_results
+                            .iter()
+                            .filter(|result| result.id == submitted.command)
+                            .count();
+                        let pending_result = usize::from(
+                            ended
+                                .ingress
+                                .pending_result
+                                .as_ref()
+                                .is_some_and(|result| result.id == submitted.command),
+                        );
+                        let invalid_command = usize::from(
+                            ended
+                                .ingress
+                                .invalid_command
+                                .as_ref()
+                                .is_some_and(|packet| packet.id == submitted.command),
+                        );
+                        let invalid_result = usize::from(
+                            ended
+                                .ingress
+                                .invalid_result
+                                .as_ref()
+                                .is_some_and(|result| result.id == submitted.command),
+                        );
+                        assert_eq!(
+                            unserved
+                                + uncollected
+                                + pending_result
+                                + invalid_command
+                                + invalid_result,
+                            1
+                        );
+                        assert_eq!(
+                            ended
+                                .ingress
+                                .terminal_control
+                                .as_ref()
+                                .expect("terminal control retains the outstanding journal")
+                                .outstanding_commands
+                                .iter()
+                                .filter(|command| command.id == submitted.command)
+                                .count(),
+                            1
+                        );
+                        if unserved == 1 {
+                            TerminalJournalState::UnservedCommand
+                        } else if uncollected == 1 {
+                            TerminalJournalState::UncollectedResult
+                        } else if pending_result == 1 {
+                            TerminalJournalState::PendingResult
+                        } else if invalid_command == 1 {
+                            TerminalJournalState::InvalidCommand
+                        } else {
+                            TerminalJournalState::InvalidResult
+                        }
                     }
                     JournalState::Ready(JournalOutcome::Split(_)) => {
                         assert!(
@@ -506,7 +679,7 @@ fn full_result_journal_teardown_keeps_resolved_splits_and_unoffered_onset() {
         );
         assert!(pending.is_none());
         let (teardown, raw, _) = bridge.tear_down(control, audio);
-        let terminal = journal.terminal_records(&teardown, None);
+        let terminal = journal.terminal_records(&teardown, None, None);
         assert_eq!(
             terminal
                 .iter()
@@ -641,7 +814,7 @@ fn two_staged_bends_and_one_pending_bend_fill_the_per_source_bound() {
         let cancelled = cancel_pending_source_bend(&mut bridge, &mut pending).unwrap();
         assert_eq!((cancelled.source, cancelled.raw), (head, raw));
         let (teardown, raw_owner, _) = bridge.tear_down(control, audio);
-        let terminal = journal.terminal_records(&teardown, Some(cancelled));
+        let terminal = journal.terminal_records(&teardown, Some(cancelled), None);
         assert_eq!(
             terminal
                 .iter()
@@ -723,10 +896,426 @@ fn producer_fault_precedes_full_journal_backpressure() {
     );
     assert!(inbox.close(producer).is_ok());
     let (teardown, raw, _) = bridge.tear_down(control, audio);
-    assert_eq!(journal.terminal_records(&teardown, None).len(), 3);
+    assert_eq!(journal.terminal_records(&teardown, None, None).len(), 3);
     let issued = teardown.raw_issued;
     assert_eq!(
         settle_raw_by_cancellation(raw, &issued).bridge.len(),
         issued.len()
     );
+}
+
+#[test]
+fn physical_bend_push_moves_raw_handoff_out_of_stage_into_terminal_command_custody() {
+    let (prepared, candidate) = history_tests::one_shot_with_live(
+        true,
+        crate::quantities::HeldNoteCount::measured(1),
+        EventCount::measured(1),
+    );
+    let (mut control, mut audio) = prepared
+        .arm_one_shot(candidate, &history_tests::mixed_profile())
+        .unwrap();
+    let (mut bridge, producer, mut inbox, peer) = journal_fixture(Source::First);
+    let mut journal = SourceOutcomeJournal::new(2);
+    let mut pending = None;
+    let original = input(0xe0, 127, 127);
+    let mut producer = producer;
+    send(&mut producer, 100, original);
+    let step = pump_journaled(
+        &mut bridge,
+        &mut inbox,
+        &mut pending,
+        Source::First,
+        &mut journal,
+    );
+    let Some(JournalPumpStep::Advanced(MixedSourceStep::Staged(_, occurrence))) = step else {
+        panic!("the bend enters raw and stage with a journal place");
+    };
+    bridge.frontier(peer, 101);
+    assert_eq!(bridge.stage.pressure(Source::First), (1, 0));
+    let raw = bridge.handoffs[0].2;
+    while control
+        .ingress_commands
+        .0
+        .try_push(super::super::super::MixedIngressCommand {
+            owner: control.ingress_owner,
+            id: super::super::super::MixedIngressCommandId(u64::MAX),
+            request: MixedIngressRequest::Panic {
+                origin: MixedIngressOriginId(900),
+                at: SampleTime::new(90),
+            },
+            bend_credits: super::super::super::MixedIngressQueueCount::NONE,
+        })
+        .is_ok()
+    {}
+    assert!(control.ingress_room() > 0);
+    assert_eq!(
+        bridge.service_bend(&mut control, &mut audio),
+        Err(MixedBendSubmitError::PhysicalPush)
+    );
+    let minted = control.ingress_command_pending.as_ref().unwrap().id;
+    journal.terminalize_failed_bend_push(bridge.terminal_bends[0]);
+    assert_eq!(bridge.stage.pressure(Source::First), (0, 0));
+    assert!(bridge.handoffs.is_empty());
+    assert_eq!(
+        bridge.terminal_bends,
+        vec![TerminalBendSubmission {
+            occurrence,
+            handoff: raw,
+            command: minted,
+        }]
+    );
+    assert_eq!(control.last_ingress_id, Some(minted));
+    let mut output = [1.0_f32; 64];
+    assert_eq!(
+        audio.render_private(AudioBlockMut::new(&mut output, 64, ChannelLayout::Mono).unwrap()),
+        Err(MixedOneShotRenderError::IngressTransferHalt)
+    );
+    assert!(output.iter().all(|sample| *sample == 0.0));
+    let (teardown, raw_owners, ended) = bridge.tear_down(control, audio);
+    assert_eq!(
+        journal
+            .terminal_records(&teardown, None, Some(&ended))
+            .iter()
+            .map(|(_, _, state)| *state)
+            .collect::<Vec<_>>(),
+        vec![TerminalJournalState::PendingCommand]
+    );
+    assert_eq!(teardown.terminal_bends.len(), 1);
+    assert!(teardown.unoffered.is_empty());
+    assert!(teardown.reservations.is_empty());
+    assert_eq!(teardown.terminal_bends[0].handoff, raw);
+    assert_eq!(
+        ended
+            .ingress
+            .pending_command
+            .as_ref()
+            .map(|packet| packet.id),
+        Some(minted)
+    );
+    assert_eq!(
+        ended
+            .ingress
+            .unserved_commands
+            .iter()
+            .filter(|packet| packet.id == minted)
+            .count(),
+        0
+    );
+    let issued = teardown.raw_issued;
+    assert!(inbox.close(producer).is_ok());
+    assert_eq!(issued.iter().filter(|(_, id, _)| *id == raw.raw).count(), 1);
+    assert_eq!(
+        settle_raw_by_cancellation(raw_owners, &issued).bridge.len(),
+        issued.len()
+    );
+}
+
+#[test]
+fn in_flight_bend_keeps_its_journal_place_through_command_and_result_queues() {
+    for source in [Source::First, Source::Second] {
+        let (prepared, candidate) = history_tests::one_shot_with_live(
+            true,
+            crate::quantities::HeldNoteCount::measured(1),
+            EventCount::measured(1),
+        );
+        let (mut control, mut audio) = prepared
+            .arm_one_shot(candidate, &history_tests::mixed_profile())
+            .unwrap();
+        let (mut bridge, mut producer, mut inbox, peer) = journal_fixture(source);
+        let mut journal = SourceOutcomeJournal::new(2);
+        let mut pending = None;
+        send(&mut producer, 100, input(0xe0, 0, 64));
+        send(&mut producer, 101, input(0x90, 60, 100));
+        send(&mut producer, 102, input(0xe0, 127, 127));
+        send(&mut producer, 103, input(0x80, 60, 0));
+
+        assert!(matches!(
+            pump_journaled(&mut bridge, &mut inbox, &mut pending, source, &mut journal),
+            Some(JournalPumpStep::Advanced(MixedSourceStep::Staged(_, _)))
+        ));
+        bridge.frontier(peer, 101);
+        let submitted = bridge.submit_selected_bend(&mut control).unwrap().unwrap();
+        journal.submit_bend(submitted);
+        assert_eq!(bridge.stage.pressure(source), (0, 0));
+        assert_eq!(
+            control.ingress_outstanding,
+            super::super::super::MixedIngressQueueCount(1)
+        );
+        assert!(journal.deliver().is_none());
+        assert!(matches!(
+            pump_journaled(&mut bridge, &mut inbox, &mut pending, source, &mut journal),
+            Some(JournalPumpStep::Advanced(MixedSourceStep::Staged(_, _)))
+        ));
+        assert!(matches!(
+            pump_journaled(&mut bridge, &mut inbox, &mut pending, source, &mut journal),
+            Some(JournalPumpStep::Advanced(MixedSourceStep::Split(
+                _,
+                BridgeRefused::Lane {
+                    reason: LaneRefusal::Stage(StageRefusal::NoPacketCredit),
+                    ..
+                }
+            )))
+        ));
+        assert!(journal.is_full());
+        let held = inbox.peek_handoff().unwrap();
+        assert_eq!(held.stamp().queue().serial(), 4);
+        let issued = bridge.raw_issued.len();
+        for _ in 0..2 {
+            assert_eq!(
+                pump_journaled(&mut bridge, &mut inbox, &mut pending, source, &mut journal),
+                Some(JournalPumpStep::AwaitJournal(held))
+            );
+            assert_eq!(bridge.raw_issued.len(), issued);
+            assert_eq!(control.last_ingress_id, Some(submitted.command));
+        }
+        audio.service_test_ingress_queue();
+        assert_eq!(
+            control.ingress_results.0.try_peek().map(|result| result.id),
+            Some(submitted.command)
+        );
+        assert!(journal.deliver().is_none());
+        assert_eq!(
+            pump_journaled(&mut bridge, &mut inbox, &mut pending, source, &mut journal),
+            Some(JournalPumpStep::AwaitJournal(held))
+        );
+        assert_eq!(bridge.raw_issued.len(), issued);
+        let result = control.collect_ingress_result_checked().unwrap().unwrap();
+        journal.finish_submitted_bend(result);
+        assert_eq!(delivered_serial(journal.deliver().unwrap()), 1);
+        assert!(journal.deliver().is_none());
+        assert!(matches!(
+            pump_journaled(&mut bridge, &mut inbox, &mut pending, source, &mut journal),
+            Some(JournalPumpStep::Advanced(MixedSourceStep::Staged(head, _))) if head == held
+        ));
+        assert!(inbox.close(producer).is_ok());
+        bridge.frontier(peer, 104);
+        let onset = bridge.service(&mut control, &mut audio).unwrap();
+        assert!(onset.accepted());
+        journal.finish_note(onset);
+        assert_eq!(delivered_serial(journal.deliver().unwrap()), 2);
+        assert_eq!(delivered_serial(journal.deliver().unwrap()), 3);
+        let release = bridge.service(&mut control, &mut audio).unwrap();
+        assert!(release.accepted());
+        journal.finish_note(release);
+        assert_eq!(delivered_serial(journal.deliver().unwrap()), 4);
+        assert!(journal.entries.is_empty());
+        let (teardown, raw, _) = bridge.tear_down(control, audio);
+        let issued = teardown.raw_issued;
+        assert_eq!(
+            settle_raw_by_cancellation(raw, &issued).bridge.len(),
+            issued.len()
+        );
+    }
+}
+
+#[test]
+fn terminal_in_flight_bend_names_the_exact_command_or_result_queue_custody() {
+    for result_queued in [false, true] {
+        let source = Source::First;
+        let (prepared, candidate) = history_tests::one_shot_with_live(
+            true,
+            crate::quantities::HeldNoteCount::measured(1),
+            EventCount::measured(1),
+        );
+        let (mut control, mut audio) = prepared
+            .arm_one_shot(candidate, &history_tests::mixed_profile())
+            .unwrap();
+        let (mut bridge, mut producer, mut inbox, peer) = journal_fixture(source);
+        let mut journal = SourceOutcomeJournal::new(2);
+        let mut pending = None;
+        send(&mut producer, 100, input(0xe0, 0, 64));
+        send(&mut producer, 101, input(0x90, 60, 100));
+        send(&mut producer, 102, input(0xe0, 127, 127));
+        send(&mut producer, 103, input(0x80, 60, 0));
+        assert!(matches!(
+            pump_journaled(&mut bridge, &mut inbox, &mut pending, source, &mut journal),
+            Some(JournalPumpStep::Advanced(MixedSourceStep::Staged(_, _)))
+        ));
+        bridge.frontier(peer, 101);
+        let submitted = bridge.submit_selected_bend(&mut control).unwrap().unwrap();
+        journal.submit_bend(submitted);
+        assert!(matches!(
+            pump_journaled(&mut bridge, &mut inbox, &mut pending, source, &mut journal),
+            Some(JournalPumpStep::Advanced(MixedSourceStep::Staged(_, _)))
+        ));
+        assert!(matches!(
+            pump_journaled(&mut bridge, &mut inbox, &mut pending, source, &mut journal),
+            Some(JournalPumpStep::Advanced(MixedSourceStep::Split(_, _)))
+        ));
+        assert!(journal.is_full());
+        let held = inbox.peek_handoff().unwrap();
+        assert_eq!(held.stamp().queue().serial(), 4);
+        if result_queued {
+            audio.service_test_ingress_queue();
+            assert_eq!(
+                control.ingress_results.0.try_peek().map(|result| result.id),
+                Some(submitted.command)
+            );
+        } else {
+            assert!(audio.ingress_commands.0.try_peek().is_some());
+        }
+        control
+            .ingress_halt
+            .store(true, std::sync::atomic::Ordering::Release);
+        let cancelled = cancel_unadmitted_source_heads(&mut inbox);
+        assert_eq!(cancelled, vec![held]);
+        assert!(inbox.close(producer).is_ok());
+        let (teardown, raw, ended) = bridge.tear_down(control, audio);
+        let terminal = journal.terminal_records(&teardown, None, Some(&ended));
+        assert_eq!(
+            terminal
+                .iter()
+                .map(|(head, _, state)| (head.stamp().queue().serial(), *state))
+                .collect::<Vec<_>>(),
+            vec![
+                (
+                    1,
+                    if result_queued {
+                        TerminalJournalState::UncollectedResult
+                    } else {
+                        TerminalJournalState::UnservedCommand
+                    }
+                ),
+                (2, TerminalJournalState::Unoffered),
+                (3, TerminalJournalState::Resolved),
+            ]
+        );
+        assert_eq!(teardown.unoffered.len(), 1);
+        assert_eq!(teardown.reservations.len(), 1);
+        assert!(
+            teardown
+                .unoffered
+                .iter()
+                .all(|handoff| handoff.raw != submitted.handoff.raw)
+        );
+        assert!(
+            teardown
+                .reservations
+                .iter()
+                .all(|(_, _, raw)| *raw != submitted.handoff.raw)
+        );
+        let issued = teardown.raw_issued;
+        assert_eq!(
+            settle_raw_by_cancellation(raw, &issued).bridge.len(),
+            issued.len()
+        );
+    }
+}
+
+#[test]
+fn terminal_bend_faults_name_pending_result_and_invalid_packets() {
+    for fault in [
+        TerminalJournalState::PendingResult,
+        TerminalJournalState::InvalidCommand,
+        TerminalJournalState::InvalidResult,
+    ] {
+        let (prepared, candidate) = history_tests::one_shot_with_live(
+            true,
+            crate::quantities::HeldNoteCount::measured(1),
+            EventCount::measured(1),
+        );
+        let (mut control, mut audio) = prepared
+            .arm_one_shot(candidate, &history_tests::mixed_profile())
+            .unwrap();
+        if fault == TerminalJournalState::PendingResult {
+            let (writer, reader) =
+                HeapRb::<super::super::super::MixedIngressResult>::new(1).split();
+            control.ingress_results = super::super::super::OpaqueQueue(reader);
+            audio.ingress_results = super::super::super::OpaqueQueue(writer);
+            let earlier = control
+                .submit_bend(
+                    MixedIngressOriginId(900),
+                    source_scope(Source::First, input(0xe0, 0, 64)),
+                    SampleTime::new(90),
+                    crate::quantities::Cents::new(0.0).unwrap(),
+                )
+                .unwrap();
+            audio.service_test_ingress_queue();
+            assert_eq!(
+                control
+                    .ingress_results
+                    .0
+                    .try_peek()
+                    .map(|result| (result.id, result.request)),
+                Some(earlier)
+            );
+        }
+        let (mut bridge, mut producer, mut inbox, peer) = journal_fixture(Source::First);
+        let mut journal = SourceOutcomeJournal::new(2);
+        let mut pending = None;
+        send(&mut producer, 100, input(0xe0, 127, 127));
+        assert!(matches!(
+            pump_journaled(
+                &mut bridge,
+                &mut inbox,
+                &mut pending,
+                Source::First,
+                &mut journal
+            ),
+            Some(JournalPumpStep::Advanced(MixedSourceStep::Staged(_, _)))
+        ));
+        bridge.frontier(peer, 101);
+        let submitted = bridge.submit_selected_bend(&mut control).unwrap().unwrap();
+        journal.submit_bend(submitted);
+        if fault == TerminalJournalState::InvalidCommand {
+            audio.last_served_ingress_id = Some(submitted.command);
+        }
+        audio.service_test_ingress_queue();
+        match fault {
+            TerminalJournalState::PendingResult => {
+                assert_eq!(
+                    audio
+                        .ingress_result_pending
+                        .as_ref()
+                        .map(|result| result.id),
+                    Some(submitted.command)
+                );
+            }
+            TerminalJournalState::InvalidCommand => {
+                assert_eq!(
+                    audio
+                        .invalid_ingress_command
+                        .as_ref()
+                        .map(|packet| packet.id),
+                    Some(submitted.command)
+                );
+            }
+            TerminalJournalState::InvalidResult => {
+                let actual = control.ingress_results.0.try_pop().unwrap();
+                assert_eq!(actual.id, submitted.command);
+                let forged = super::super::super::MixedIngressResult {
+                    request: MixedIngressRequest::Panic {
+                        origin: MixedIngressOriginId(901),
+                        at: SampleTime::new(101),
+                    },
+                    ..actual
+                };
+                assert!(audio.ingress_results.0.try_push(forged).is_ok());
+                assert!(control.collect_ingress_result_checked().is_err());
+                assert_eq!(
+                    control
+                        .invalid_ingress_result
+                        .as_ref()
+                        .map(|result| result.id),
+                    Some(submitted.command)
+                );
+            }
+            _ => unreachable!(),
+        }
+        assert!(inbox.close(producer).is_ok());
+        let (teardown, raw, ended) = bridge.tear_down(control, audio);
+        assert_eq!(
+            journal
+                .terminal_records(&teardown, None, Some(&ended))
+                .iter()
+                .map(|(_, _, state)| *state)
+                .collect::<Vec<_>>(),
+            vec![fault]
+        );
+        let issued = teardown.raw_issued;
+        assert_eq!(
+            settle_raw_by_cancellation(raw, &issued).bridge.len(),
+            issued.len()
+        );
+    }
 }

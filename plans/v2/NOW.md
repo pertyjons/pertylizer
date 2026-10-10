@@ -1000,8 +1000,19 @@ heads without raw IDs and separately names unoffered staged entries, a
 pending bend and resolved splits. Six fixtures cover both sources for the
 capacity and retry cases and check source-fault precedence before backpressure.
 This bound relies on the private bridge collecting each mixed result during
-service. A production journal must also charge commands and results in
-flight, output-queue residency, and recorder delivery until collection.
+service for notes. A further fixture keeps one bend's journal and raw charge
+through the actual command ring and then the uncollected result ring. A full
+journal makes its younger key-up wait before raw admission until control
+collects that bend result; independent result collection is therefore a
+liveness requirement. Terminal fixtures name the bend in either queue and
+in the pending-result, invalid-command and invalid-result fault slots, and name
+the younger split and staged onset separately. In the `RawStageBridge` fixture,
+a physical bend-command push failure moves its raw handoff out of stage into
+terminal bridge and journal custody, paired with the control owner's pending
+minted packet. A production journal
+must extend this shared charge across all in-flight commands, output-queue
+residency and recorder delivery until collection, under the actual producer
+partition.
 Frontiers carry no journal entry here, and no cross-source result order is
 claimed.
 A stage-full pedal-down splits immediately so its protected key-up and later
