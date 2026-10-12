@@ -246,6 +246,11 @@ real-producer capacity matrix. Its component probes pass, but the coverage audit
 production capacity: common host admission, same-stream live transport activation and a
 representative workload remain missing. All six shares, release holds and ingress depths retain
 their provisional status. No physical loopback is connected.
+On 2026-10-12, Linux enumerated an Akai MPK mini Play mk3 as ALSA sequencer
+client 24, port 0 (`09e8:0050`). Enumeration alone supplies no F10 paired
+reference, F11 clock bridge, or arrival-uncertainty result. The maintainer chose
+to defer macOS and Windows physical V2 qualification; the current Phase 9 exit
+gate has not yet been amended to reflect that scope choice.
 
 ### Deferred design work — mixed producer activation
 
