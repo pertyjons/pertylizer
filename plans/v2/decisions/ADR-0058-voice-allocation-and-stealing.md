@@ -6,7 +6,7 @@
 | Status | Accepted |
 | Phase | 6 |
 | Created | 2026-09-05 |
-| Last reviewed | 2026-09-05 |
+| Last reviewed | 2026-10-12 |
 | Related | ADR-0046, ADR-0047, ADR-0001, `SOUND-INV-017`, `SOUND-INV-021`, `SOUND-INV-025`, `P06-S002`, `P06-S003`, `P06-S007`, `CORPUS-0002` |
 | Supersedes | — |
 | Superseded by | — |
@@ -137,7 +137,12 @@ How the taken voice ends:
    superseded generation. That release is an orphan under ADR-0047 clause 4 and is refused
    as one — but it is **counted under its own name**, `released_after_steal`, not under the
    orphan count that reports a producer defect: the producer did nothing wrong. On the
-   compiled path preparation knows the victim and drops the release as a named
+   live path, if releasing the chosen victim would retire its index at the generation
+   ceiling, the new note is refused before the victim or its release hold changes.
+   The victim's own release remains deliverable and performs the retirement.
+   *Corrected in Phase 9 on 2026-10-12 after a reduced-generation live-steal test
+   exposed that releasing first could strand the victim's note and hold.*
+   On the compiled path, preparation knows the victim and drops the release as a named
    transformation (ADR-0001 clause 16), as it drops a crossing release today, so nothing
    reaches the audio thread to be counted. Per-note expression addressed to the stolen
    identity is likewise an orphan; what expression the *new* note inherits is `P06-S003`'s.

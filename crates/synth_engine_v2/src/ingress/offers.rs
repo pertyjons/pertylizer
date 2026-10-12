@@ -502,6 +502,15 @@ impl PerformanceIngress {
                 resource: ExhaustedResource::Identity,
             });
         };
+        // The replacement must use the victim's index. At the generation ceiling,
+        // release retires that index instead of freeing it; refuse before ending the
+        // victim or consuming its hold.
+        if table.release_would_retire(victim) {
+            self.counters.dropped_identity = self.counters.dropped_identity.saturating_add(1);
+            return Err(IngressRefused::Dropped {
+                resource: ExhaustedResource::Identity,
+            });
+        }
         let victim_note = table.note_of(victim);
         let retrigger = matches!(self.stealing, crate::ir::StealingPolicy::SameNote { .. })
             && victim_note == Some(note)

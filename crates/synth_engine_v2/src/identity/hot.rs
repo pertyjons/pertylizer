@@ -279,6 +279,13 @@ impl IdentityTable {
         }
     }
 
+    /// Whether releasing this live occurrence would retire its index.
+    /// A steal must check this before ending its victim, since it needs the freed index
+    /// for the replacement note in the same operation.
+    pub(crate) fn release_would_retire(&self, identity: NoteIdentity) -> bool {
+        self.resolve(identity) == Resolution::Live && identity.generation >= self.generation_ceiling
+    }
+
     /// Release the note an identity names, freeing its index for reuse.
     ///
     /// Returns what the identity resolved to. Only [`Resolution::Live`] releases anything:

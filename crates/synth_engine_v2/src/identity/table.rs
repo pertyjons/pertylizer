@@ -30,6 +30,13 @@ fn producer_spans(producer_ranges: &[HeldNoteCount]) -> Vec<Range> {
 }
 
 impl IdentityTable {
+    /// Lower the ceiling before the first mint to exercise retirement paths.
+    #[cfg(all(test, feature = "simulated-ingress"))]
+    pub(crate) fn set_generation_ceiling_for_test(&mut self, ceiling: u32) {
+        assert_eq!(self.minted, 0, "set the test ceiling before minting");
+        self.generation_ceiling = ceiling;
+    }
+
     /// Split only a fresh two-producer table into disjoint absolute-index minters.
     /// A refusal returns the intact table, including any outstanding obligations.
     /// The caller must choose which producer is compiled before exposing either owner.

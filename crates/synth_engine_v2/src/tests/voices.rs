@@ -6,9 +6,13 @@
 //! is not, and that the report charges exactly what preparation holds per instance.
 
 use crate::compile::{RenderConfig, compile};
+#[cfg(feature = "simulated-ingress")]
+use crate::identity::ProducerId;
 use crate::identity::{
     CompiledRangeMinter, IdentityTable, LiveRangeMinter, OrphanCause, Resolution,
 };
+#[cfg(feature = "simulated-ingress")]
+use crate::ingress::{ExhaustedResource, IngressRefused, PerformanceIngress};
 use crate::ir::{
     ExecutionScope, GraphIr, IrNodeKind, NodeId, NoteProducerDeclaration, PlanDeclarations, PortId,
     SignalDomain, StealingPolicy,
@@ -523,6 +527,28 @@ fn voice_composed(
     envelope_sensitivity: NormalizedLevel,
     scaler: Option<NormalizedLevel>,
 ) -> GraphIr {
+    voice_composed_for(
+        notes,
+        stealing,
+        attack,
+        envelope_sensitivity,
+        scaler,
+        NoteProducerDeclaration {
+            compiled: true,
+            simultaneous_notes: HeldNoteCount::measured(notes),
+            simultaneous_holds: EventCount::NONE,
+        },
+    )
+}
+
+fn voice_composed_for(
+    notes: u32,
+    stealing: StealingPolicy,
+    attack: Seconds,
+    envelope_sensitivity: NormalizedLevel,
+    scaler: Option<NormalizedLevel>,
+    producer: NoteProducerDeclaration,
+) -> GraphIr {
     let mut builder = GraphIr::builder()
         .node(
             OSCILLATOR,
@@ -584,17 +610,105 @@ fn voice_composed(
             crate::tuning::PreparedTuning::equal_temperament().expect("12-TET prepares"),
         )
         .declaring(PlanDeclarations {
-            note_producers: vec![NoteProducerDeclaration {
-                compiled: true,
-                simultaneous_notes: HeldNoteCount::measured(notes),
-                simultaneous_holds: EventCount::NONE,
-            }],
+            note_producers: vec![producer],
             held_notes: HeldNoteCount::measured(notes),
             stealing,
             ..PlanDeclarations::default()
         })
         .build()
         .expect("a readable plan")
+}
+
+#[cfg(feature = "simulated-ingress")]
+#[test]
+fn a_live_steal_at_generation_exhaustion_preserves_the_victim_and_its_hold() {
+    // Admission requires holds <= notes, so the full two-voice case reaches
+    // the transfer-hold path when both notes and reservations are occupied.
+    let graph = voice_composed_for(
+        2,
+        StealingPolicy::Oldest {
+            fade: FrameCount::new(FADE),
+        },
+        Seconds::ZERO,
+        NormalizedLevel::FULL,
+        None,
+        NoteProducerDeclaration {
+            compiled: false,
+            simultaneous_notes: HeldNoteCount::measured(2),
+            simultaneous_holds: EventCount::measured(2),
+        },
+    );
+    let plan = admit(&graph);
+    let slot = plan.resolve_note(ENVELOPE).expect("a live note target");
+    let (mut control, renderer) =
+        StreamControl::open(plan.clone(), ORIGIN).expect("the live stream opens");
+    control.minter_mut().set_generation_ceiling_for_test(0);
+    let mut ingress = PerformanceIngress::prepare(&profile(), &plan, ProducerId::new(0), &renderer)
+        .expect("the live store prepares");
+    let key = |midi| KeyIdentity::new(midi).expect("a keyboard key");
+    let first = control
+        .offer_note_on(
+            &mut ingress,
+            SampleTime::ZERO,
+            slot,
+            key(60),
+            NoteVelocity::FULL,
+        )
+        .expect("first voice");
+    let second = control
+        .offer_note_on(
+            &mut ingress,
+            SampleTime::new(Q),
+            slot,
+            key(67),
+            NoteVelocity::FULL,
+        )
+        .expect("second voice");
+    assert_eq!(
+        control.offer_note_on(
+            &mut ingress,
+            SampleTime::new(4 * Q + 5),
+            slot,
+            key(72),
+            NoteVelocity::FULL,
+        ),
+        Err(IngressRefused::Dropped {
+            resource: ExhaustedResource::Identity,
+        }),
+        "a retiring victim must remain live"
+    );
+    assert_eq!(control.minter_mut().live(), 2);
+    assert_eq!(control.minter_mut().retired(), 0);
+    assert_eq!(control.minter_mut().resolve(first), Resolution::Live);
+    assert_eq!(control.minter_mut().resolve(second), Resolution::Live);
+    assert_eq!(ingress.holds_outstanding(), EventCount::measured(2));
+    assert_eq!(ingress.counters().dropped_identity(), 1);
+    assert_eq!(ingress.counters().orphan_releases(), 0);
+
+    control
+        .offer_note_off(&mut ingress, SampleTime::new(20 * Q), first)
+        .expect("the refused steal left the first release deliverable");
+    assert_eq!(control.minter_mut().retired(), 1);
+    assert_eq!(ingress.holds_outstanding(), EventCount::measured(1));
+    assert_eq!(
+        control.offer_note_on(
+            &mut ingress,
+            SampleTime::new(21 * Q),
+            slot,
+            key(75),
+            NoteVelocity::FULL,
+        ),
+        Err(IngressRefused::Dropped {
+            resource: ExhaustedResource::Identity,
+        }),
+        "range erosion must not be reported as a leaked hold"
+    );
+    control
+        .offer_note_off(&mut ingress, SampleTime::new(22 * Q), second)
+        .expect("the second release remains deliverable");
+    assert_eq!(ingress.holds_outstanding(), EventCount::NONE);
+    assert_eq!(control.minter_mut().retired(), 2);
+    assert_eq!(control.live_notes_open(), HeldNoteCount::NONE);
 }
 
 /// A full-velocity note-on at `key` from `at`, released `length` frames later.

@@ -1115,11 +1115,15 @@ storage assigned to compiled signal lifetimes.
     **The live boundary steals the same way, and the renderer sees one shape.** A live note-on
     that finds every admitted index held takes a voice under the plan's policy at the offer,
     off the audio thread: the minter carries each live index's node, key and mint order and
-    names the victim. The queue drains head-first and requires non-decreasing stamps, so the
-    start `fade` frames on cannot be queued ahead of offers that follow: the fade is queued at
-    the offer and the start waits outside the queue, one slot per identity index, until the
-    drain's window reaches it, when it is published as the same reset and note-on the compiled
-    path stamps; a release offered while the start is pending waits with it, displaced by the
+    names the victim. If releasing that victim would retire its index at the generation
+    ceiling, the offer drops the new note with an identity-shortage count before changing
+    the victim, its release hold or its pending state. The victim's own release remains
+    deliverable and performs the retirement. The queue drains head-first and requires
+    non-decreasing stamps, so the start `fade` frames on cannot be queued ahead of offers
+    that follow: the fade is queued at the offer and the start waits outside the queue,
+    one slot per identity index, until the drain's window reaches it, when it is
+    published as the same reset and note-on the compiled path stamps; a release offered
+    while the start is pending waits with it, displaced by the
     same `fade`. The taken note's own later release is counted at the boundary as
     `released_after_steal`, never queued and never an orphan. **A committed voice is not
     taken**, on either path: a voice whose deferred start has not yet happened, or whose

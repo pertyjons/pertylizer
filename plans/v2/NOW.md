@@ -1292,6 +1292,11 @@ Phase 3 is complete. Its exit review accepted these bounded residuals:
 | P03-R003 | Note events carry identity but not typed pitch and velocity | **Closed.** A note-on carries a validated key and velocity, resolves the key through the plan's prepared tuning, expands to the control writes its scope declares, and a saved note's own magnitudes reach it. Phase 6 still owns the full composition law, which the work list is explicit this does not decide |
 | P03-R004 | Numeric note-index and generation widths are safe by checked bounds and fail-closed exhaustion, but not endurance-qualified against a real live workload | Validate the widths before a production live adapter; generation exhaustion retires and reports instead of aliasing |
 
+The live stealing path now refuses a replacement before releasing its victim
+when that release would retire the victim's index. A reduced generation-ceiling
+test checks that the victim's own release still discharges its hold. P03-R004's
+representative production-live endurance and width selection remain open.
+
 ## Later-owned work
 
 - Phase 6 owned `P04-R001`'s composition law and `SOUND-INV-021`'s **bend** clause; both are
