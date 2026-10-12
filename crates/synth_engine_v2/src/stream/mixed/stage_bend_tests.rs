@@ -2,6 +2,7 @@
 
 use super::*;
 use crate::quantities::Cents;
+use ringbuf::traits::Producer;
 use synth_core::MidiChannel;
 
 #[allow(
@@ -80,6 +81,7 @@ struct BendBridge<R = [RawSource; 2]> {
     raw_pending: [Option<RawHandoff>; 2],
     raw_issued: Vec<(Source, InputEventId)>,
     staged: Vec<(Occurrence, RawHandoff)>,
+    terminal_bends: Vec<TerminalBendSubmission>,
     stage: Stage,
     next_occurrence: u64,
 }
@@ -118,6 +120,7 @@ impl<R: RawBackend> BendBridge<R> {
             raw_pending: [None, None],
             raw_issued: Vec::new(),
             staged: Vec::new(),
+            terminal_bends: Vec::new(),
             stage: Stage::new(cells_per_source),
             next_occurrence: 1,
         }
@@ -207,7 +210,8 @@ impl<R: RawBackend> BendBridge<R> {
         self.stage.frontier(source, SampleTime::new(at)).unwrap();
     }
 
-    /// A refused command submission does not commit the stage head or its raw handoff.
+    /// Pre-mint refusals retain stage custody. A failed physical push has a
+    /// minted command, so the handoff moves into terminal bridge custody.
     fn submit_next(
         &mut self,
         control: &mut MixedOneShotControl,
@@ -235,12 +239,36 @@ impl<R: RawBackend> BendBridge<R> {
             })
             .expect("a selected bend keeps its raw handoff");
         let raw = self.staged[position].1.raw;
-        let (command, request) = control.submit_bend(
-            MixedIngressOriginId(packet.occurrence.0),
-            bound_scope(self.source_set, source, raw, packet.original),
-            packet.at,
-            cents,
-        )?;
+        let origin = MixedIngressOriginId(packet.occurrence.0);
+        let scope = bound_scope(self.source_set, source, raw, packet.original);
+        let (command, request) = match control.submit_bend(origin, scope, packet.at, cents) {
+            Ok(submitted) => submitted,
+            Err(MixedBendSubmitError::PhysicalPush) => {
+                let pending = control
+                    .ingress_command_pending
+                    .as_ref()
+                    .expect("the failed physical push keeps its minted packet");
+                assert_eq!(
+                    pending.request,
+                    MixedIngressRequest::Bend {
+                        origin,
+                        scope,
+                        at: packet.at,
+                        cents,
+                    }
+                );
+                let command = pending.id;
+                self.stage.commit_next(source, packet);
+                let (_, handoff) = self.staged.remove(position);
+                self.terminal_bends.push(TerminalBendSubmission {
+                    occurrence: packet.occurrence,
+                    handoff,
+                    command,
+                });
+                return Err(MixedBendSubmitError::PhysicalPush);
+            }
+            Err(error) => return Err(error),
+        };
         self.stage.commit_next(source, packet);
         let (_, handoff) = self.staged.remove(position);
         Ok(Some((packet.occurrence, handoff, command, request)))
@@ -446,6 +474,86 @@ fn same_source_bends_keep_channel_and_command_order() {
             ),
         ]
     );
+}
+
+#[test]
+fn physical_bend_push_moves_the_older_bend_out_of_stage_in_bend_bridge() {
+    let (prepared, candidate) = history_tests::one_shot_with_live(
+        true,
+        crate::quantities::HeldNoteCount::measured(1),
+        EventCount::measured(1),
+    );
+    let (mut control, mut audio) = prepared
+        .arm_one_shot(candidate, &history_tests::mixed_profile())
+        .unwrap();
+    let mut bridge = BendBridge::new(2);
+    let first = bridge.enqueue(Source::First, 100, input(0xe0, 127, 127));
+    let second = bridge.enqueue(Source::First, 101, input(0xe0, 0, 0));
+    let first_raw = bridge.pump(Source::First).unwrap().unwrap();
+    let second_raw = bridge.pump(Source::First).unwrap().unwrap();
+    bridge.frontier(Source::Second, 102);
+    while control
+        .ingress_commands
+        .0
+        .try_push(super::super::MixedIngressCommand {
+            owner: control.ingress_owner,
+            id: super::super::MixedIngressCommandId(u64::MAX),
+            request: MixedIngressRequest::Panic {
+                origin: MixedIngressOriginId(900),
+                at: SampleTime::new(90),
+            },
+            bend_credits: super::super::MixedIngressQueueCount::NONE,
+        })
+        .is_ok()
+    {}
+    assert!(control.ingress_room() > 0);
+    assert_eq!(
+        bridge.submit_next(&mut control),
+        Err(MixedBendSubmitError::PhysicalPush)
+    );
+    let minted = control.ingress_command_pending.as_ref().unwrap().id;
+    assert_eq!(bridge.stage.peek_next().unwrap().1.occurrence, second);
+    assert_eq!(bridge.staged, vec![(second, second_raw)]);
+    assert_eq!(
+        bridge.terminal_bends,
+        vec![TerminalBendSubmission {
+            occurrence: first,
+            handoff: first_raw,
+            command: minted,
+        }]
+    );
+    let mut output = [1.0_f32; 64];
+    assert_eq!(
+        audio.render_private(AudioBlockMut::new(&mut output, 64, ChannelLayout::Mono).unwrap()),
+        Err(MixedOneShotRenderError::IngressTransferHalt)
+    );
+    assert!(output.iter().all(|sample| *sample == 0.0));
+    let MixedCollection::Ended(ended) = control.collect(audio).unwrap() else {
+        panic!("a physical command push failure ends the mixed owner");
+    };
+    assert_eq!(
+        ended
+            .ingress
+            .pending_command
+            .as_ref()
+            .map(|packet| packet.id),
+        Some(minted)
+    );
+    assert_eq!(
+        ended
+            .ingress
+            .terminal_control
+            .as_ref()
+            .unwrap()
+            .outstanding_commands
+            .iter()
+            .filter(|packet| packet.id == minted)
+            .count(),
+        1
+    );
+    assert_eq!(bridge.raw_issued.len(), 2);
+    assert_eq!(bridge.raw_issued[0].1, first_raw.raw);
+    assert_eq!(bridge.raw_issued[1].1, second_raw.raw);
 }
 
 /// Feed the actual producer's validated head into the existing private raw,
