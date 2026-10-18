@@ -248,6 +248,13 @@ impl LiveInputStream {
         if at < self.clock() || !at.as_u64().is_multiple_of(u64::from(QUANTUM_FRAMES)) {
             return Err(LiveInputError::Shape);
         }
+        // A compiled cut names no live occurrence, and a whole-owner reset belongs to the
+        // mixed owner; the live store would refuse either later, inside a callback.
+        if cause == ReleaseCause::CompiledPanic || cause == ReleaseCause::Reset {
+            return Err(LiveInputError::Ingress(
+                crate::ingress::IngressRefused::ReleaseGroup,
+            ));
+        }
         if self.end.is_none_or(|(prior, _)| at < prior) {
             self.end = Some((at, cause));
         }

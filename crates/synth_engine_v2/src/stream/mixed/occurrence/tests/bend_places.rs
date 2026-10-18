@@ -62,29 +62,29 @@ fn a_retired_notes_undrained_bend_entry_keeps_its_credit_until_it_drains() {
     for case in [Retirement::Release, Retirement::Lift, Retirement::Panic] {
         let (bent_scope, plain_scope, kept_scope) = (scope(1, 1), scope(2, 1), scope(3, 1));
         let (mut control, audio) = armed_with(true, 4);
-        let depth = audio.test_ingress.queue_capacity_for_test();
+        let depth = audio.test_ingress.queue_capacity();
         let budget = audio.test_ingress.mixed_bend_budget();
         if case == Retirement::Lift {
-            pedal(&mut control, bent_scope, 90, true);
-            pedal(&mut control, plain_scope, 90, true);
+            pedal(&mut control, bent_scope, 5, true);
+            pedal(&mut control, plain_scope, 5, true);
         }
-        let bent = onset_in(&mut control, bent_scope, 100, 60);
-        let plain = onset_in(&mut control, plain_scope, 100, 61);
-        let kept = onset_in(&mut control, kept_scope, 100, 62);
-        let bend = bend_at(&mut control, bent_scope, 110, 40.0);
+        let bent = onset_in(&mut control, bent_scope, 10, 60);
+        let plain = onset_in(&mut control, plain_scope, 10, 61);
+        let kept = onset_in(&mut control, kept_scope, 10, 62);
+        let bend = bend_at(&mut control, bent_scope, 20, 40.0);
         let mut audio = service_without_allocation(audio);
         let results = collect_all(&mut control);
         let ibent = accepted(outcome_for(
             &results,
-            onset_request_in(bent, bent_scope, 100, 60),
+            onset_request_in(bent, bent_scope, 10, 60),
         ));
         let iplain = accepted(outcome_for(
             &results,
-            onset_request_in(plain, plain_scope, 100, 61),
+            onset_request_in(plain, plain_scope, 10, 61),
         ));
         let ikept = accepted(outcome_for(
             &results,
-            onset_request_in(kept, kept_scope, 100, 62),
+            onset_request_in(kept, kept_scope, 10, 62),
         ));
         assert_eq!(written(outcome_for(&results, bend)), vec![bent]);
         assert_eq!(queued_bends(&control, &audio), 1, "{case:?}");
@@ -92,18 +92,18 @@ fn a_retired_notes_undrained_bend_entry_keeps_its_credit_until_it_drains() {
         // Retire `bent` while its bend entry is undrained, and `plain`, which has none.
         match case {
             Retirement::Release => {
-                release(&mut control, bent, 111);
-                release(&mut control, plain, 111);
+                release(&mut control, bent, 21);
+                release(&mut control, plain, 21);
             }
             Retirement::Lift => {
-                release(&mut control, bent, 111);
-                release(&mut control, plain, 111);
-                pedal(&mut control, bent_scope, 112, false);
-                pedal(&mut control, plain_scope, 112, false);
+                release(&mut control, bent, 21);
+                release(&mut control, plain, 21);
+                pedal(&mut control, bent_scope, 22, false);
+                pedal(&mut control, plain_scope, 22, false);
             }
             Retirement::Panic => {
                 let _panic = control
-                    .submit_panic(ORIGIN, SampleTime::new(112))
+                    .submit_panic(ORIGIN, SampleTime::new(22))
                     .expect("protected place");
             }
         }
@@ -120,7 +120,7 @@ fn a_retired_notes_undrained_bend_entry_keeps_its_credit_until_it_drains() {
             Retirement::Release => {
                 for (note, identity) in [(bent, ibent), (plain, iplain)] {
                     assert_eq!(
-                        outcome_for(&results, release_request(note, 111)),
+                        outcome_for(&results, release_request(note, 21)),
                         MixedIngressOutcome::Release(Ok(MixedRetired {
                             occurrence: note,
                             cause: MixedRetireCause::Released(identity),
@@ -131,7 +131,7 @@ fn a_retired_notes_undrained_bend_entry_keeps_its_credit_until_it_drains() {
             Retirement::Lift => {
                 for scope in [bent_scope, plain_scope] {
                     assert!(matches!(
-                        outcome_for(&results, pedal_request(scope, 112, false)),
+                        outcome_for(&results, pedal_request(scope, 22, false)),
                         MixedIngressOutcome::Lift(Ok(_))
                     ));
                 }
@@ -157,7 +157,7 @@ fn a_retired_notes_undrained_bend_entry_keeps_its_credit_until_it_drains() {
         // holds its credit: retirement returns none.
         let bend_at_position = entries(&audio)
             .into_iter()
-            .position(|entry| entry == Entry::Bend(ibent, 40.0, 110))
+            .position(|entry| entry == Entry::Bend(ibent, 40.0, 20))
             .expect("the retired note's bend stays queued");
         assert!(bend_at_position < ended_by(ibent).expect("the note's end is queued"));
         let live = usize::from(case != Retirement::Panic);
@@ -481,6 +481,9 @@ fn the_bend_credit_invariant_holds_under_a_scripted_command_storm() {
     let mut open: Vec<LiveOccurrenceId> = Vec::new();
     let (mut bend_entries, mut bend_credit_refusals) = (0, 0);
     let (mut onset_slot_refusals, mut lifts, mut panics) = (0_u64, 0, 0);
+    // Submitted bends in command order. One behind a parked Panic is served by a later
+    // render rather than by its own step's service.
+    let mut pending_bends = std::collections::VecDeque::new();
     let slot = IngressRefused::Dropped {
         resource: crate::ingress::ExhaustedResource::Slot,
     };
@@ -520,7 +523,10 @@ fn the_bend_credit_invariant_holds_under_a_scripted_command_storm() {
             9..=12 => {
                 let value = Cents::new(draw(401) as f32 - 200.0).expect("bend");
                 match control.submit_bend(ORIGIN, s, stamp, value) {
-                    Ok((_, request)) => bend = Some((request, value)),
+                    Ok((_, request)) => {
+                        bend = Some((request, value));
+                        pending_bends.push_back((request, value));
+                    }
                     Err(MixedBendSubmitError::Credits { needed, .. }) => {
                         assert_eq!(needed, credits(8));
                         bend_credit_refusals += 1;
@@ -546,6 +552,7 @@ fn the_bend_credit_invariant_holds_under_a_scripted_command_storm() {
             }
         }
         // Service only appends: every entry already queued keeps its place and value.
+        let served_now = audio.parked_panic.is_none();
         let before = entries(&audio);
         audio.service_test_ingress_queue();
         let after = entries(&audio);
@@ -569,32 +576,41 @@ fn the_bend_credit_invariant_holds_under_a_scripted_command_storm() {
                 }
                 MixedIngressOutcome::Lift(Ok(_)) => lifts += 1,
                 MixedIngressOutcome::Bend(Ok(bent)) => {
-                    let Some((request, value)) = bend else {
+                    let Some((request, value)) = pending_bends.pop_front() else {
                         panic!("step {step}: an unexpected bend result");
                     };
                     assert_eq!(result.request, request);
-                    // The bend appended exactly one entry per member, in member order,
-                    // at its own stamp.
-                    assert_eq!(bent.executed_at(), stamp);
-                    let expected = bent
-                        .written()
-                        .map(|member| {
-                            let identity = identity_of(&audio, member).expect("a live member");
-                            Entry::Bend(identity, value.as_f32(), at)
-                        })
-                        .collect::<Vec<_>>();
-                    assert_eq!(
-                        after.get(before.len()..),
-                        Some(expected.as_slice()),
-                        "step {step}"
-                    );
-                    bend_entries += expected.len();
+                    let MixedIngressRequest::Bend { at: bent_at, .. } = request else {
+                        panic!("step {step}: a bend result for another request");
+                    };
+                    // The bend executed at its own stamp.
+                    assert_eq!(bent.executed_at(), bent_at);
+                    // Served in this step, it appended exactly one entry per member, in
+                    // member order, at its own stamp.
+                    if served_now && bend == Some((request, value)) {
+                        let expected = bent
+                            .written()
+                            .map(|member| {
+                                let identity = identity_of(&audio, member).expect("a live member");
+                                Entry::Bend(identity, value.as_f32(), at)
+                            })
+                            .collect::<Vec<_>>();
+                        assert_eq!(
+                            after.get(before.len()..),
+                            Some(expected.as_slice()),
+                            "step {step}"
+                        );
+                    }
+                    bend_entries += bent.written().count();
                 }
                 _ => {}
             }
         }
         let _free = free_units(&audio);
-        let _credits = settled_credits(&control, &audio);
+        // Commands behind a parked Panic stay in flight with their credits.
+        if audio.parked_panic.is_none() {
+            let _credits = settled_credits(&control, &audio);
+        }
     }
     // The storm reached every branch it claims to cover.
     assert!(onset_slot_refusals > 0, "the queue never saturated");

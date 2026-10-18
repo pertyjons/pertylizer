@@ -1,0 +1,54 @@
+EVD-0026 first frozen stereo collection: compact results
+source revision: 99c63395681434cec522ee902845b80fe2d5b055
+UTC: 2026-10-17T12:10:33.795025+00:00
+raw artifact: /home/per/pertylizer-evidence/phase-09/EVD-0026-99c63395-stereo-run.txt
+raw SHA-256: 9ed1d10a812de896075bc0c32abdf89287356d592076dd79c2d3232e6e0a283d
+raw bytes: 2790300
+raw purpose: complete command/environment, eight configurations, every callback duration, both owner snapshots and all resource observations
+process exit: 0; first collection, no discarded or failed prefix
+CPU: 0; Intel Core i7-13700H; governor: performance (unchanged); clocksource: tsc
+Linux 7.2.11-200.fc44.x86_64; glibc 2.43; Rust 1.99.1; Cargo 1.99.1; LLVM 23.1.1
+layout: Stereo; callback: 64 frames; script sound holds: 4; source count: 2
+per run: 11024 callbacks; first 1024 excluded only from timing estimator; 10000 timed
+callback allocation checks: all 88192 callbacks passed zero total allocation count, zero net count and zero net bytes
+functional controls: attribution, fence, true admission boundaries, pressure partitions and raw 64-key custody passed before each configuration
+All raw durations below are recomputed from the retained trace; no timer-floor subtraction.
+rate_hz,kind,max_ns,p999_ns,deadline_ns,empty_floor_ns,requested_heap_peak_bytes
+44100,reference,68039,33832,362811,9,29532253
+44100,selected,64324,28930,362811,9,27213917
+48000,reference,74460,33927,333333,9,29594653
+48000,selected,60143,30390,333333,9,27276317
+96000,reference,68008,35061,166666,9,30362653
+96000,selected,57942,30384,166666,9,28044317
+192000,reference,74828,34713,83333,9,31898653
+192000,selected,56934,30556,83333,9,29580317
+
+Required-path maxima (as retained):
+rate=44100 kind=reference paths seek_or_loop=44.277µs loop=44.277µs stop=24.478µs start=22.706µs panic=27.82µs reset=59.514µs pressure=68.039µs
+rate=44100 kind=selected paths seek_or_loop=29.462µs loop=29.462µs stop=23.596µs start=20.427µs panic=25.214µs reset=64.324µs pressure=48.942µs
+rate=48000 kind=reference paths seek_or_loop=36.518µs loop=36.518µs stop=24.579µs start=25.074µs panic=27.51µs reset=74.46µs pressure=72.212µs
+rate=48000 kind=selected paths seek_or_loop=38.068µs loop=38.068µs stop=21.046µs start=20.832µs panic=25.746µs reset=60.143µs pressure=49.959µs
+rate=96000 kind=reference paths seek_or_loop=41.408µs loop=39.589µs stop=24.274µs start=21.714µs panic=28.327µs reset=62.914µs pressure=68.008µs
+rate=96000 kind=selected paths seek_or_loop=38.132µs loop=38.132µs stop=27.653µs start=24.655µs panic=27.838µs reset=57.942µs pressure=50.111µs
+rate=192000 kind=reference paths seek_or_loop=42.413µs loop=42.413µs stop=23.595µs start=22.752µs panic=27.715µs reset=61.274µs pressure=74.828µs
+rate=192000 kind=selected paths seek_or_loop=43.847µs loop=43.847µs stop=20.758µs start=23.334µs panic=26.542µs reset=56.934µs pressure=49.288µs
+
+Componentwise high waters were identical in all eight runs:
+producers [Compiled, AuthoredRuntime, Live, Session, Internal, Release] = [6, undefined, 64, 57, undefined, 4]
+holds=4; performance=68; commands=36; results=36; stage=[18,18]; raw_inputs=[20,20]
+raw_packets=38; raw_completions=38; raw_commands=1; raw_actions=40
+source physical occupancy=[18,18]; source contract capacity=128, ordinary limit=16
+All high waters fit the frozen bounds; unavailable classes were not measured as zero.
+Owner maxima are combined componentwise, not added. Full owner snapshots remain in the raw artifact.
+
+Selected configuration, identical across rates except rate and one-second horizon:
+shares [Compiled, AuthoredRuntime, Live, Session, Internal, Release] = [32,96,320,128,32,352]
+max_events_per_quantum=960; release_hold_capacity=32; max_scheduled_events_in_flight=4192
+performance=160; commands=192; results=192; stage=64 per source; raw_inputs=288 per source
+raw_packets=128; raw_completions=128; raw_commands=32; raw_actions=512; raw_action_bytes=262144
+Selection was recomputed after each selected run and reproduced the same configuration.
+All renderers reported zero rejected timed-control writes and usage within prepared writable extents.
+Every sound and raw owner joined with complete custody; source message/frontier and exact release links passed.
+
+Scope: Supports this fixed serial stereo rehearsal only. Mono, continuous device callbacks, concurrent scheduling, physical timing, and unavailable mixed producers remain unqualified.
+Reproduction: use the exact collector command in the EVD record on the clean source revision above; timing samples will differ. Preserve this raw artifact for the exact observations.

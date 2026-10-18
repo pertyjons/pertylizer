@@ -118,6 +118,37 @@ fn impulse_visits_every_mapped_frame_including_multiple_turns_inside_a_quantum()
     }
 }
 
+#[test]
+fn impulse_is_silent_on_a_held_quantum_even_at_its_own_position() {
+    use crate::time::{PlanPosition, QuantumTimeline};
+
+    // The held position equal to the target, and one inside the linear reach of the
+    // quantum, which a kernel reading only `position_at(0)` would place at frame 5.
+    for held in [17_u64, 12] {
+        let prepared = PreparedNode::Impulse {
+            position: PlanPosition::new(17),
+        };
+        let mut state = NodeState::initial(&prepared);
+        let mut out = [9.0_f32; 64];
+        crate::node::kernels::impulse(
+            &prepared,
+            &mut state,
+            &mut NodeIo {
+                out: &mut out,
+                channels: crate::quantities::ChannelLayout::Mono,
+                inputs: [InputBuffer::Unpatched; MAX_INPUTS],
+                timeline: QuantumTimeline::held(Some(PlanPosition::new(held))),
+                controls: &[],
+                ramps: &[],
+                samples: &[],
+                scripts: crate::script::ScriptResources::default(),
+                history: &mut [],
+            },
+        );
+        assert_eq!(out, [0.0_f32; 64], "held at {held}");
+    }
+}
+
 /// `frames` frames at [`RATE`], as the seconds the prepared record now carries: the kernel
 /// rounds the product back to exactly `frames`.
 fn secs(frames: SegmentFrames) -> crate::quantities::Seconds {

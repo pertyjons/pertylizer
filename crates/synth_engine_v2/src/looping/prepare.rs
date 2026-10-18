@@ -154,7 +154,7 @@ impl CompiledLoopStream {
                 cursor: 0,
                 interval,
                 position: settings.entry,
-                pass: LoopPassId(1),
+                pass: LoopPassId::FIRST,
                 started: false,
                 tokens,
                 held,
@@ -315,21 +315,75 @@ pub(super) fn admit_programs(
     interval: LoopInterval,
     profile: &HostProfile,
 ) -> Result<(), LoopPrepareError> {
-    let length = interval.end().as_u64() - interval.start().as_u64();
-    let first_wrap = interval.end().as_u64() - initial.start.as_u64();
+    let offsets = |program: &LoopProgram| -> Result<Vec<u64>, LoopPrepareError> {
+        let mut offsets = Vec::new();
+        offsets
+            .try_reserve_exact(program.events.len())
+            .map_err(|_| LoopPrepareError::Allocation)?;
+        offsets.extend(program.events.iter().map(|event| event.offset.as_u64()));
+        Ok(offsets)
+    };
+    let wrap_cost = |end_held: HeldNoteCount| {
+        repeating
+            .catch_up
+            .len()
+            .checked_add(end_held.get() as usize)
+            .and_then(|value| value.checked_add(1))
+            .ok_or(LoopPrepareError::Layout)
+    };
+    admit_loop_shape(
+        &LoopAdmissionShape {
+            length: interval.end().as_u64() - interval.start().as_u64(),
+            first_wrap: interval.end().as_u64() - initial.start.as_u64(),
+            entry_session: initial
+                .catch_up
+                .len()
+                .checked_add(1)
+                .ok_or(LoopPrepareError::Layout)?,
+            entry_compiled: &offsets(initial)?,
+            first_wrap_session: wrap_cost(initial.end_held)?,
+            wrap_session: wrap_cost(repeating.end_held)?,
+            repeating_compiled: &offsets(repeating)?,
+        },
+        profile,
+    )
+}
+
+/// One loop's Session and Compiled charges, as frame offsets from its entry boundary
+/// and from each wrap. Shared by the exclusive owner and the mixed owner's loop offer.
+pub(crate) struct LoopAdmissionShape<'a> {
+    /// Frames in one pass; positive.
+    pub(crate) length: u64,
+    /// Frames from the entry boundary to the first wrap.
+    pub(crate) first_wrap: u64,
+    /// Session charges at the entry boundary.
+    pub(crate) entry_session: usize,
+    /// The entry pass's compiled events, from the entry boundary, each before `first_wrap`.
+    pub(crate) entry_compiled: &'a [u64],
+    /// Session charges at the first wrap, which ends the entry pass's open notes.
+    pub(crate) first_wrap_session: usize,
+    /// Session charges at every later wrap.
+    pub(crate) wrap_session: usize,
+    /// One repeating pass's compiled events, from its wrap, each before `length`.
+    pub(crate) repeating_compiled: &'a [u64],
+}
+
+/// Admit a loop's periodic steady state and its entry junction against `profile`'s
+/// Session and Compiled shares. The windows slide, so the result holds for every
+/// quantum alignment the entry boundary or a wrap can take.
+pub(crate) fn admit_loop_shape(
+    shape: &LoopAdmissionShape<'_>,
+    profile: &HostProfile,
+) -> Result<(), LoopPrepareError> {
+    let length = shape.length;
+    let first_wrap = shape.first_wrap;
     let copies = u64::from(QUANTUM_FRAMES)
         .div_ceil(length)
         .checked_add(2)
         .ok_or(LoopPrepareError::Layout)?;
     let shares = profile.limits().events().shares();
-    let repeated_cost = repeating
-        .catch_up
-        .len()
-        .checked_add(repeating.end_held.get() as usize)
-        .and_then(|value| value.checked_add(1))
-        .ok_or(LoopPrepareError::Layout)?;
     let mut periodic_session = Vec::new();
-    add_repeated(&mut periodic_session, 0, repeated_cost)?;
+    add_repeated(&mut periodic_session, 0, shape.wrap_session)?;
     admit_loop(
         &periodic_session,
         PlanPosition::ZERO,
@@ -341,10 +395,10 @@ pub(super) fn admit_programs(
         source,
     })?;
 
-    let periodic_compiled: Vec<_> = repeating
-        .events
+    let periodic_compiled: Vec<_> = shape
+        .repeating_compiled
         .iter()
-        .map(|event| PlanPosition::new(event.offset.as_u64()))
+        .map(|offset| PlanPosition::new(*offset))
         .collect();
     admit_loop(
         &periodic_compiled,
@@ -358,16 +412,11 @@ pub(super) fn admit_programs(
     })?;
 
     let mut session = Vec::new();
-    let initial_cost = initial
-        .catch_up
-        .len()
-        .checked_add(1)
-        .ok_or(LoopPrepareError::Layout)?;
-    add_repeated(&mut session, 0, initial_cost)?;
-    let mut compiled: Vec<_> = initial
-        .events
+    add_repeated(&mut session, 0, shape.entry_session)?;
+    let mut compiled: Vec<_> = shape
+        .entry_compiled
         .iter()
-        .map(|event| PlanPosition::new(event.offset.as_u64()))
+        .map(|offset| PlanPosition::new(*offset))
         .collect();
     for pass in 0..copies {
         let at = length
@@ -375,23 +424,17 @@ pub(super) fn admit_programs(
             .and_then(|offset| first_wrap.checked_add(offset))
             .ok_or(LoopPrepareError::Layout)?;
         let cost = if pass == 0 {
-            repeating
-                .catch_up
-                .len()
-                .checked_add(initial.end_held.get() as usize)
-                .and_then(|value| value.checked_add(1))
-                .ok_or(LoopPrepareError::Layout)?
+            shape.first_wrap_session
         } else {
-            repeated_cost
+            shape.wrap_session
         };
         add_repeated(&mut session, at, cost)?;
         compiled
-            .try_reserve(repeating.events.len())
+            .try_reserve(shape.repeating_compiled.len())
             .map_err(|_| LoopPrepareError::Allocation)?;
-        for event in &repeating.events {
+        for offset in shape.repeating_compiled {
             compiled.push(PlanPosition::new(
-                at.checked_add(event.offset.as_u64())
-                    .ok_or(LoopPrepareError::Layout)?,
+                at.checked_add(*offset).ok_or(LoopPrepareError::Layout)?,
             ));
         }
     }

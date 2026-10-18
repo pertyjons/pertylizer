@@ -468,6 +468,9 @@ pub enum SchedulePrepareError {
 /// Why a prepared schedule could not serve one renderer call.
 #[derive(Debug, Clone, Copy, PartialEq, Error)]
 pub enum ScheduledRenderError {
+    #[cfg(feature = "simulated-ingress")]
+    #[error("running replacement state or ownership is inconsistent")]
+    RunningReplacementState,
     /// Epoch equality does not identify one prepared plan/table instance.
     #[error("compiled schedule owns table {schedule}, but the renderer owns {renderer}")]
     TableMismatch {
@@ -878,7 +881,7 @@ pub(crate) fn stamp_compiled_counted(
 /// entry, and asks.
 ///
 /// Off the audio thread: it allocates as it grows, bounded by the producer's admitted range.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub(crate) struct OpenNotes<T> {
     entries: Vec<OpenNote<T>>,
     /// Notes taken by a steal whose own release is still to come, with the tag they had.

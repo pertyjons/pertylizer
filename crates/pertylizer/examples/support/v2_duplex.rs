@@ -137,7 +137,7 @@ fn format(config: &cpal::SupportedStreamConfig) -> Result<OutputFormat, Error> {
         layout,
     })
 }
-fn select(host: &cpal::Host, id: &str, input: bool) -> Result<cpal::Device, Error> {
+pub(super) fn select(host: &cpal::Host, id: &str, input: bool) -> Result<cpal::Device, Error> {
     let devices: Vec<_> = if input {
         host.input_devices()?.collect()
     } else {
@@ -150,17 +150,106 @@ fn select(host: &cpal::Host, id: &str, input: bool) -> Result<cpal::Device, Erro
     }
     Err(format!("ALSA endpoint unavailable: {id}").into())
 }
+/// An explicit supported PCM representation, selected before streams are built.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[must_use]
+struct DuplexFormat(SampleFormat);
+impl DuplexFormat {
+    fn parse(value: &str) -> Result<Self, Error> {
+        match value {
+            "f32" => Ok(Self(SampleFormat::F32)),
+            "i32" => Ok(Self(SampleFormat::I32)),
+            "i16" => Ok(Self(SampleFormat::I16)),
+            _ => Err("duplex --format must be f32, i32 or i16".into()),
+        }
+    }
+}
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum ReopenRate {
+    #[default]
+    Alternate,
+    RepeatDefault,
+}
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[must_use]
+pub(super) struct DuplexOptions {
+    format: Option<DuplexFormat>,
+    reopen: ReopenRate,
+}
+impl DuplexOptions {
+    pub(super) fn parse(arguments: &[String]) -> Result<Self, Error> {
+        let mut options = Self::default();
+        let mut arguments = arguments.iter();
+        while let Some(argument) = arguments.next() {
+            match argument.as_str() {
+                "--format" if options.format.is_none() => {
+                    let value = arguments
+                        .next()
+                        .ok_or("--format requires f32, i32 or i16")?;
+                    options.format = Some(DuplexFormat::parse(value)?);
+                }
+                "--repeat-default" if options.reopen == ReopenRate::Alternate => {
+                    options.reopen = ReopenRate::RepeatDefault;
+                }
+                _ => return Err(format!("unknown or repeated duplex option: {argument}").into()),
+            }
+        }
+        Ok(options)
+    }
+    fn attempts(self) -> [bool; 2] {
+        match self.reopen {
+            ReopenRate::Alternate => [false, true],
+            ReopenRate::RepeatDefault => [false, false],
+        }
+    }
+}
+fn choose_config(
+    default: &cpal::SupportedStreamConfig,
+    ranges: &[cpal::SupportedStreamConfigRange],
+    alternate: bool,
+    requested: Option<DuplexFormat>,
+) -> Result<cpal::SupportedStreamConfig, Error> {
+    if !alternate && requested.is_none() {
+        return Ok(*default);
+    }
+    let rate = if alternate {
+        if default.sample_rate() == 44_100 {
+            48_000
+        } else {
+            44_100
+        }
+    } else {
+        default.sample_rate()
+    };
+    let format = requested.map_or(default.sample_format(), |format| format.0);
+    for range in ranges {
+        if range.channels() == default.channels()
+            && range.sample_format() == format
+            && range.min_sample_rate() <= rate
+            && range.max_sample_rate() >= rate
+        {
+            return Ok(range.with_sample_rate(rate));
+        }
+    }
+    Err(format!(
+        "endpoint does not advertise {:?} at {rate} Hz with {} channels",
+        format,
+        default.channels()
+    )
+    .into())
+}
 fn supported(
     device: &cpal::Device,
     input: bool,
     alternate: bool,
+    requested: Option<DuplexFormat>,
 ) -> Result<cpal::SupportedStreamConfig, Error> {
     let default = if input {
         device.default_input_config()?
     } else {
         device.default_output_config()?
     };
-    if !alternate {
+    if !alternate && requested.is_none() {
         return Ok(default);
     }
     let ranges: Vec<_> = if input {
@@ -168,36 +257,20 @@ fn supported(
     } else {
         device.supported_output_configs()?.collect()
     };
-    let requested = if default.sample_rate() == 44_100 {
-        48_000
-    } else {
-        44_100
-    };
-    for range in ranges {
-        if range.channels() == default.channels()
-            && range.sample_format() == default.sample_format()
-            && range.min_sample_rate() <= requested
-            && range.max_sample_rate() >= requested
-        {
-            return Ok(range.with_sample_rate(requested));
-        }
-    }
-    Err(format!("endpoint does not support requested reconfiguration to {requested} Hz").into())
+    choose_config(&default, &ranges, alternate, requested)
 }
-fn attempt(
-    input: &cpal::Device,
-    output: &cpal::Device,
-    duration: Duration,
-    alternate: bool,
-) -> Result<(PcmTake, bool), Error> {
-    let input_config = supported(input, true, alternate)?;
-    let output_config = supported(output, false, alternate)?;
-    let input_format = format(&input_config)?;
-    let output_format = format(&output_config)?;
+/// Shared format checks only: opening both streams, actual buffer negotiation,
+/// allocation admission, clock quality and physical routing remain untested here.
+pub(super) fn validate_pair(
+    input: &cpal::SupportedStreamConfig,
+    output: &cpal::SupportedStreamConfig,
+) -> Result<(OutputFormat, OutputFormat), Error> {
+    let input_format = format(input)?;
+    let output_format = format(output)?;
     if input_format.layout != output_format.layout {
         return Err("duplex requires equal input/output channel layouts".into());
     }
-    for config in [&input_config, &output_config] {
+    for config in [input, output] {
         if !matches!(
             config.sample_format(),
             SampleFormat::F32 | SampleFormat::I32 | SampleFormat::I16
@@ -205,6 +278,18 @@ fn attempt(
             return Err("duplex requires F32, I32 or I16 samples".into());
         }
     }
+    Ok((input_format, output_format))
+}
+fn attempt(
+    input: &cpal::Device,
+    output: &cpal::Device,
+    duration: Duration,
+    alternate: bool,
+    requested: Option<DuplexFormat>,
+) -> Result<(PcmTake, bool), Error> {
+    let input_config = supported(input, true, alternate, requested)?;
+    let output_config = supported(output, false, alternate, requested)?;
+    let (input_format, output_format) = validate_pair(&input_config, &output_config)?;
     let maximum = 8192;
     let channels = input_format.layout.channels();
     let (input_owner, output_owner, mut worker, bytes) = pcm::prepare(
@@ -404,19 +489,30 @@ fn attempt(
     );
     Ok((take, lost))
 }
-pub fn run(host: &cpal::Host, input: &str, output: &str, seconds: &str) -> Result<(), Error> {
+pub(super) fn run(
+    host: &cpal::Host,
+    input: &str,
+    output: &str,
+    seconds: &str,
+    options: DuplexOptions,
+) -> Result<(), Error> {
     let seconds: u32 = seconds.parse()?;
     if !(1..=30).contains(&seconds) {
         return Err("duplex duration must be 1 to 30 seconds per attempt".into());
     }
+    println!(
+        "duplex_format_selection={:?} reopen_rate={:?}",
+        options.format, options.reopen
+    );
     let mut takes = Vec::with_capacity(2);
-    for alternate in [false, true] {
+    for alternate in options.attempts() {
         let result = (|| {
             attempt(
                 &select(host, input, true)?,
                 &select(host, output, false)?,
                 Duration::from_secs(u64::from(seconds)),
                 alternate,
+                options.format,
             )
         })();
         match result {
@@ -442,4 +538,119 @@ pub fn run(host: &cpal::Host, input: &str, output: &str, seconds: &str) -> Resul
         takes.len()
     );
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use cpal::{SupportedBufferSize, SupportedStreamConfigRange};
+    fn range(format: SampleFormat, low: u32, high: u32) -> SupportedStreamConfigRange {
+        SupportedStreamConfigRange::new(
+            2,
+            low,
+            high,
+            SupportedBufferSize::Range { min: 64, max: 512 },
+            format,
+        )
+    }
+    #[test]
+    fn explicit_i16_admits_an_i24_default_without_silently_falling_back() {
+        let default = range(SampleFormat::I24, 48_000, 48_000).with_sample_rate(48_000);
+        let available = [range(SampleFormat::I16, 44_100, 48_000)];
+        assert_eq!(
+            choose_config(&default, &available, false, None).expect("unchanged default"),
+            default
+        );
+        let explicit = Some(DuplexFormat::parse("i16").expect("format"));
+        for alternate in [false, true] {
+            let selected = choose_config(&default, &available, alternate, explicit)
+                .expect("explicit supported format");
+            assert_eq!(selected.sample_format(), SampleFormat::I16);
+            assert_eq!(
+                selected.sample_rate(),
+                if alternate { 44_100 } else { 48_000 }
+            );
+            assert!(validate_pair(&selected, &selected).is_ok());
+        }
+        assert!(
+            choose_config(
+                &default,
+                &available,
+                false,
+                Some(DuplexFormat::parse("f32").expect("format"))
+            )
+            .is_err()
+        );
+        assert!(DuplexFormat::parse("i24").is_err());
+        assert!(DuplexFormat::parse("").is_err());
+    }
+    #[test]
+    fn explicit_format_does_not_invent_a_rate_or_change_the_channel_layout() {
+        let default = range(SampleFormat::I24, 48_000, 48_000).with_sample_rate(48_000);
+        let explicit = Some(DuplexFormat::parse("i16").expect("format"));
+        assert!(
+            choose_config(
+                &default,
+                &[range(SampleFormat::I16, 44_100, 44_100)],
+                false,
+                explicit
+            )
+            .is_err()
+        );
+        assert!(
+            choose_config(
+                &default,
+                &[SupportedStreamConfigRange::new(
+                    1,
+                    48_000,
+                    48_000,
+                    SupportedBufferSize::Unknown,
+                    SampleFormat::I16
+                )],
+                false,
+                explicit
+            )
+            .is_err()
+        );
+        assert!(
+            choose_config(
+                &default,
+                &[range(SampleFormat::I16, 48_000, 48_000)],
+                true,
+                explicit
+            )
+            .is_err()
+        );
+    }
+    #[test]
+    fn duplex_options_keep_legacy_reconfiguration_and_require_explicit_overrides() {
+        let arguments = |values: &[&str]| {
+            values
+                .iter()
+                .map(|value| (*value).to_owned())
+                .collect::<Vec<_>>()
+        };
+        let legacy = DuplexOptions::parse(&[]).expect("legacy invocation");
+        assert_eq!(legacy.format, None);
+        assert_eq!(legacy.attempts(), [false, true]);
+        let explicit = DuplexOptions::parse(&arguments(&["--format", "i16", "--repeat-default"]))
+            .expect("explicit options");
+        assert_eq!(
+            explicit.format,
+            Some(DuplexFormat::parse("i16").expect("format"))
+        );
+        assert_eq!(explicit.attempts(), [false, false]);
+        for values in [
+            &["--format"][..],
+            &["--format", "i24"],
+            &["--format", "i16", "--format", "f32"],
+            &["--repeat-default", "--repeat-default"],
+            &["--unknown"],
+        ] {
+            assert!(
+                DuplexOptions::parse(&arguments(values)).is_err(),
+                "{values:?}"
+            );
+        }
+    }
 }

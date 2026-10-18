@@ -140,6 +140,8 @@ pub enum SessionError {
     },
     #[error("ordered session allocation failed")]
     Allocation,
+    #[error("the initial running activation did not reach its prepared boundary")]
+    InitialActivation,
     #[error("ordered session is already enabled")]
     AlreadyEnabled,
     #[error("ordered session is not enabled")]

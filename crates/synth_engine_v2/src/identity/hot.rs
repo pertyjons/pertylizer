@@ -169,6 +169,15 @@ impl LiveRangeMinter {
     pub fn release(&mut self, identity: NoteIdentity) -> Resolution {
         self.0.release(identity)
     }
+
+    /// How many live occurrences this range holds. Read when a reset retires its owner.
+    #[cfg(any(
+        all(test, feature = "simulated-ingress"),
+        feature = "mixed-transfer-rehearsal"
+    ))]
+    pub(crate) const fn live(&self) -> u32 {
+        self.0.live
+    }
 }
 
 impl IdentityTable {
@@ -417,6 +426,38 @@ impl LiveNotes {
             }
         }
         false
+    }
+
+    /// Compiled-session readmission may retire only this explicitly declared range.
+    #[cfg(feature = "simulated-ingress")]
+    pub(crate) fn has_live_outside(&self, producer: ProducerId) -> bool {
+        let Some(range) = self.ranges.get(usize::from(producer.as_u16())) else {
+            return self.has_live();
+        };
+        let first = range.start as usize;
+        let Some(last) = first.checked_add(range.len as usize) else {
+            return true;
+        };
+        if last > self.slots.len() {
+            return true;
+        }
+        for (index, note) in self.slots.iter().enumerate() {
+            if note.is_some() && !(first..last).contains(&index) {
+                return true;
+            }
+        }
+        false
+    }
+
+    #[cfg(feature = "simulated-ingress")]
+    pub(crate) fn live_count(&self) -> HeldNoteCount {
+        let mut count = 0_u32;
+        for note in &self.slots {
+            if note.is_some() {
+                count = count.saturating_add(1);
+            }
+        }
+        HeldNoteCount::measured(count)
     }
 
     /// Which table's occurrences this registry accepts.
@@ -672,5 +713,29 @@ impl IdentityTable {
                 Some(Slot::Live { .. })
             )
         })
+    }
+}
+
+#[cfg(feature = "simulated-ingress")]
+impl LiveNotes {
+    pub(crate) fn can_continue_plan(&self, from: crate::plan::PlanId, note_count: usize) -> bool {
+        for entry in &self.slots {
+            if let Some(note) = entry
+                && (note.note.plan() != from || note.note.index() >= note_count)
+            {
+                return false;
+            }
+        }
+        true
+    }
+
+    /// All rows were checked without mutation; table, index and generations stay intact.
+    pub(crate) fn continue_plan(&mut self, to: crate::plan::PlanId) {
+        for entry in &mut self.slots {
+            let Some(note) = entry else {
+                continue;
+            };
+            note.note = NoteSlot::new(to, note.note.index());
+        }
     }
 }

@@ -1,4 +1,5 @@
 //! Shared non-shipping source custody used by the example host and private mixed tests.
+use super::Midi1Event;
 use super::{
     ConnectionGeneration, InputCaptureHalt, InputError, InputObservation, InputTick, PreparedBytes,
     SampleTime, SimulatedInputClock,
@@ -6,19 +7,104 @@ use super::{
 use ringbuf::HeapRb;
 use std::{
     mem::size_of,
-    sync::{Arc, OnceLock},
+    sync::{
+        Arc, OnceLock,
+        atomic::{AtomicBool, Ordering},
+    },
 };
 use thiserror::Error;
 
 use super::source_queue::{SourceQueueCommitError, SourceQueueReader, SourceQueueWriter};
 
 pub const SOURCE_CELLS: usize = 16;
+/// Ordinary source observations retain the previous 16-place flow limit.
+/// Protected key and pedal releases may use the physical cells beyond it.
+pub const SOURCE_BACKING_CELLS: usize = 128;
+/// Held onsets each owning a protected release place; the next onset is refused.
+pub const MAX_RESERVED_NOTES: usize = 64;
+const MIDI_CHANNELS: usize = 16;
+const MAX_RESERVED_PEDALS: usize = MIDI_CHANNELS;
+const _: () =
+    assert!(SOURCE_CELLS + MAX_RESERVED_NOTES + MAX_RESERVED_PEDALS <= SOURCE_BACKING_CELLS - 2);
+
+/// A host-owned halt for source producers that no raw owner requests, so raw capture can
+/// stop while its sources keep publishing. Requesting it neither allocates nor blocks, so
+/// an audio callback may request it.
+#[allow(
+    dead_code,
+    reason = "the example host's sources share its raw owner's halt"
+)]
+#[derive(Clone, Default)]
+#[must_use]
+pub struct SourceHostHalt {
+    signal: Arc<AtomicBool>,
+}
+
+#[allow(
+    dead_code,
+    reason = "the example host's sources share its raw owner's halt"
+)]
+impl SourceHostHalt {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn request(&self) {
+        self.signal.store(true, Ordering::Release);
+    }
+
+    pub fn is_requested(&self) -> bool {
+        self.signal.load(Ordering::Acquire)
+    }
+}
+
+/// What stops a source producer. A producer fault requests it, so it is terminal for the
+/// whole host either way.
+#[derive(Clone)]
+#[must_use]
+pub enum SourceHalt {
+    /// The raw owner's halt: raw capture interrupting itself also stops the source.
+    Raw(InputCaptureHalt),
+    /// The host's own halt: only the host stops the source, and a producer fault leaves
+    /// the raw owner's halt to the host.
+    Host(SourceHostHalt),
+}
+
+impl SourceHalt {
+    fn is_requested(&self) -> bool {
+        match self {
+            Self::Raw(halt) => halt.is_requested(),
+            Self::Host(halt) => halt.is_requested(),
+        }
+    }
+
+    fn request_invalid(&self) {
+        match self {
+            Self::Raw(halt) => halt.request_invalid(),
+            Self::Host(halt) => halt.request(),
+        }
+    }
+}
+
+impl From<InputCaptureHalt> for SourceHalt {
+    fn from(halt: InputCaptureHalt) -> Self {
+        Self::Raw(halt)
+    }
+}
+
+impl From<SourceHostHalt> for SourceHalt {
+    fn from(halt: SourceHostHalt) -> Self {
+        Self::Host(halt)
+    }
+}
 
 #[derive(Debug, Error, PartialEq)]
 #[must_use]
 pub enum SourceSendError {
     #[cfg(test)]
-    #[error("source ring full; retry this observation first if the source remains running")]
+    #[error(
+        "source ordinary queue capacity reached; retry this observation first if the source remains running"
+    )]
     Retry(InputObservation),
     #[error("source halted; retain this observation for shutdown reporting")]
     Halted(InputObservation),
@@ -145,7 +231,7 @@ impl SourceRetryToken {
 #[derive(Debug, Error)]
 #[must_use]
 pub enum SourceOwnedSendError {
-    #[error("source ring full; retry the owned token first")]
+    #[error("source ordinary queue capacity reached; retry the owned token first")]
     Retry(SourceRetryToken),
     #[error("source halted with an unresolved owned retry token")]
     Halted(SourceRetryToken),
@@ -186,16 +272,104 @@ struct PendingOwned {
     tick: InputTick,
     arrival: Option<SampleTime>,
     nominal: SampleTime,
+    reservation: ReservationChange,
+}
+
+#[derive(Clone, Copy)]
+enum ReservationChange {
+    Ordinary,
+    NoteOn(usize),
+    KeyUp(usize),
+    PedalDown(usize),
+    PedalUp(usize),
+}
+
+impl ReservationChange {
+    fn is_protected_release(self) -> bool {
+        matches!(self, Self::KeyUp(_) | Self::PedalUp(_))
+    }
+}
+
+struct SourceReservations {
+    /// Same-key repeats each own one release place; each key-up spends one.
+    keys: [u8; MIDI_CHANNELS * 128],
+    pedals: [bool; MAX_RESERVED_PEDALS],
+    notes: usize,
+}
+
+impl Default for SourceReservations {
+    fn default() -> Self {
+        Self {
+            keys: [0; MIDI_CHANNELS * 128],
+            pedals: [false; MAX_RESERVED_PEDALS],
+            notes: 0,
+        }
+    }
+}
+
+impl SourceReservations {
+    fn change(&self, observation: InputObservation) -> Result<ReservationChange, InputError> {
+        let InputObservation::Message { input, .. } = observation else {
+            return Ok(ReservationChange::Ordinary);
+        };
+        let channel = usize::from(input.channel().as_u8() - 1);
+        Ok(match input.event() {
+            Midi1Event::NoteOn { key, .. } => {
+                if self.notes == MAX_RESERVED_NOTES {
+                    return Err(InputError::ProtectedCapacity);
+                }
+                ReservationChange::NoteOn(channel * 128 + key.as_index())
+            }
+            Midi1Event::KeyRelease { key, .. } => {
+                let index = channel * 128 + key.as_index();
+                if self.keys[index] == 0 {
+                    ReservationChange::Ordinary
+                } else {
+                    ReservationChange::KeyUp(index)
+                }
+            }
+            Midi1Event::Sustain { down: true } if !self.pedals[channel] => {
+                ReservationChange::PedalDown(channel)
+            }
+            Midi1Event::Sustain { down: false } if self.pedals[channel] => {
+                ReservationChange::PedalUp(channel)
+            }
+            Midi1Event::Sustain { .. } | Midi1Event::PitchBend { .. } => {
+                ReservationChange::Ordinary
+            }
+        })
+    }
+
+    fn commit(&mut self, change: ReservationChange) {
+        match change {
+            ReservationChange::NoteOn(index) => {
+                self.keys[index] += 1;
+                self.notes += 1;
+            }
+            ReservationChange::KeyUp(index) => {
+                self.keys[index] -= 1;
+                self.notes -= 1;
+            }
+            ReservationChange::PedalDown(channel) => {
+                self.pedals[channel] = true;
+            }
+            ReservationChange::PedalUp(channel) => {
+                self.pedals[channel] = false;
+            }
+            ReservationChange::Ordinary => {}
+        }
+    }
 }
 
 #[must_use]
 pub struct SourceProducer {
-    halt: InputCaptureHalt,
+    halt: Box<SourceHalt>,
     queue: SourceQueueWriter<SourcePacket>,
     generation: ConnectionGeneration,
     serial: u64,
     attempt_serial: u64,
     time: Box<SourceTime>,
+    reservations: Box<SourceReservations>,
     failure: Arc<OnceLock<SourceFailure>>,
     retry: Option<InputObservation>,
     owned_retry: Box<Option<PendingOwned>>,
@@ -221,16 +395,17 @@ pub struct SourceInbox {
 }
 
 impl SourceInbox {
+    /// `halt` is the raw owner's halt, shared, or a host halt raw capture never requests.
     pub fn prepare(
         generation: ConnectionGeneration,
-        halt: InputCaptureHalt,
+        halt: impl Into<SourceHalt>,
         clock: SimulatedInputClock,
     ) -> (SourceProducer, Self) {
-        let (writer, reader) = SourceQueueWriter::prepare(SOURCE_CELLS);
+        let (writer, reader) = SourceQueueWriter::prepare(SOURCE_BACKING_CELLS);
         let failure = Arc::new(OnceLock::new());
         (
             SourceProducer {
-                halt,
+                halt: Box::new(halt.into()),
                 queue: writer,
                 generation,
                 serial: 0,
@@ -241,6 +416,7 @@ impl SourceInbox {
                     last_arrival: None,
                     frontier: SampleTime::ZERO,
                 }),
+                reservations: Box::default(),
                 failure: Arc::clone(&failure),
                 retry: None,
                 owned_retry: Box::new(None),
@@ -260,11 +436,13 @@ impl SourceInbox {
         PreparedBytes::measured(
             (size_of::<Self>()
                 + size_of::<SourceProducer>()
+                + size_of::<SourceHalt>()
                 + size_of::<SourceTime>()
+                + size_of::<SourceReservations>()
                 + size_of::<Option<PendingOwned>>()
                 + size_of::<OnceLock<SourceFailure>>()
                 + size_of::<HeapRb<SourcePacket>>()
-                + SOURCE_CELLS * size_of::<SourcePacket>()
+                + SOURCE_BACKING_CELLS * size_of::<SourcePacket>()
                 + 256) as u64,
         )
     }
@@ -408,6 +586,13 @@ impl SourceProducer {
         }
     }
 
+    fn has_room(&self, change: ReservationChange) -> bool {
+        // Each accepted onset and effective pedal-down owns one protected
+        // release place. The preparation-time bound above makes every such
+        // release fit even while all ordinary places are occupied.
+        change.is_protected_release() || self.queue.occupied_len() < SOURCE_CELLS
+    }
+
     /// Test-only value path. A full ring records its returned value as the pending
     /// retry. A different otherwise valid value before it is a terminal order fault.
     /// Halt ends publication and returns the original for an explicit report.
@@ -434,6 +619,10 @@ impl SourceProducer {
         if self.retry.is_some_and(|pending| pending != observation) {
             return Err(self.invalid(observation, InputError::Order));
         }
+        let reservation = self
+            .reservations
+            .change(observation)
+            .map_err(|error| self.invalid(observation, error))?;
         let Some(serial) = self.serial.checked_add(1) else {
             return Err(self.invalid(observation, InputError::IdentityExhausted));
         };
@@ -441,6 +630,10 @@ impl SourceProducer {
             generation: self.generation,
             serial,
         };
+        if !self.has_room(reservation) {
+            self.retry = Some(observation);
+            return Err(SourceSendError::Retry(observation));
+        }
         if let Err(original) = self.queue.try_push(SourcePacket {
             id,
             observation,
@@ -450,6 +643,7 @@ impl SourceProducer {
             return Err(SourceSendError::Retry(original.observation));
         }
         self.serial = serial;
+        self.reservations.commit(reservation);
         self.retry = None;
         self.commit_time(tick, arrival, nominal);
         Ok(id)
@@ -469,6 +663,10 @@ impl SourceProducer {
         if self.retry.is_some() || self.owned_retry.is_some() {
             return Err(self.invalid(observation, InputError::Order).into());
         }
+        let reservation = self
+            .reservations
+            .change(observation)
+            .map_err(|error| self.invalid(observation, error))?;
         let Some(attempt_serial) = self.attempt_serial.checked_add(1) else {
             return Err(self
                 .invalid(observation, InputError::IdentityExhausted)
@@ -488,27 +686,34 @@ impl SourceProducer {
             serial: queue_serial,
         };
         self.attempt_serial = attempt_serial;
-        if let Err(original) = self.queue.try_push(SourcePacket {
-            id: queue,
-            observation,
-            mapped_at: nominal,
-        }) {
+        if !self.has_room(reservation)
+            || self
+                .queue
+                .try_push(SourcePacket {
+                    id: queue,
+                    observation,
+                    mapped_at: nominal,
+                })
+                .is_err()
+        {
             *self.owned_retry = Some(PendingOwned {
                 retired: SourceRetiredAttempt {
                     attempt,
-                    observation: original.observation,
+                    observation,
                 },
                 queue,
                 tick,
                 arrival,
                 nominal,
+                reservation,
             });
             return Err(SourceOwnedSendError::Retry(SourceRetryToken {
                 attempt,
-                observation: original.observation,
+                observation,
             }));
         }
         self.serial = queue_serial;
+        self.reservations.commit(reservation);
         self.commit_time(tick, arrival, nominal);
         Ok(SourceAccepted { attempt, queue })
     }
@@ -529,18 +734,20 @@ impl SourceProducer {
         if self.halt.is_requested() {
             return Err(SourceOwnedSendError::Halted(token));
         }
-        if self
-            .queue
-            .try_push(SourcePacket {
-                id: pending.queue,
-                observation: pending.retired.observation,
-                mapped_at: pending.nominal,
-            })
-            .is_err()
+        if !self.has_room(pending.reservation)
+            || self
+                .queue
+                .try_push(SourcePacket {
+                    id: pending.queue,
+                    observation: pending.retired.observation,
+                    mapped_at: pending.nominal,
+                })
+                .is_err()
         {
             return Err(SourceOwnedSendError::Retry(token));
         }
         self.serial = pending.queue.serial;
+        self.reservations.commit(pending.reservation);
         *self.owned_retry = None;
         self.commit_time(pending.tick, pending.arrival, pending.nominal);
         Ok(SourceAccepted {

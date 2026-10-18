@@ -6,8 +6,9 @@
 | Status | Accepted |
 | Phase | 9 |
 | Created | 2026-09-12 |
-| Last reviewed | 2026-09-12 |
-| Related | ADR-0061, ADR-0063, ADR-0050, IO-INV-002 |
+| Last reviewed | 2026-10-17 |
+| Related | ADR-0061, ADR-0063, ADR-0047, ADR-0048, ADR-0050, ADR-0082, IO-INV-002 |
+| Amends | ADR-0047 clause 8 solely for explicit isolated compiled-note retirement at stopped readmission; identities never migrate |
 | Supersedes | — |
 | Superseded by | — |
 
@@ -151,23 +152,31 @@ identity table is new even when the same `CompiledPlan` was cloned. Only this
 compiled-session owner can reach the private same-epoch constructor. Raw events,
 live ingress, capture and authored Note YAMS remain outside this constructor.
 Scheduler, activation and ordinary-command table preflight protects the reachable
-same-epoch paths. ADR-0047's outstanding-obligation refusal remains in force;
-ADR-0048's held-note transition is not enabled by this stopped-only stage.
+same-epoch paths. The 2026-10-17 extension permits explicit retirement of isolated
+compiled occurrences with the old owner. This resolves only that stopped reset
+case of ADR-0048; general held-note continuity remains proposed.
 
-Preparation requires acknowledged stopped playback, zero ordinary command credits
-and no obligations in the authoritative minter. Installation separately inspects
-the renderer's live-note registry: stamping a closed compiled list can leave the
-minter empty while Stop freezes a sounding note in the renderer. Candidates name
-the authoritative table whose minter preparation checked. If an intervening
-uncollected readmission changed the current table, installation also
-checks that pair's retained preparation-time minter-obligation flag. Command
-watermark equality and the frozen credit interval establish that this intervening
-minter has not changed. A later candidate cannot skip obligations in an earlier
-uncollected pair. The registry query scans at most the admitted identity partition
-and changes nothing. A replacement with outgoing obligations receives a retained
-refusal, rather than waiting indefinitely while transport admission is frozen. This
-gate protects note obligations; it is not a crossfade, tail-preservation or general
-DSP-state migration mechanism.
+Preparation requires acknowledged stopped playback and zero ordinary command
+credits. Outstanding activations, an adopted ingress store, open external notes
+or any declared noncompiled identity range retain refusal. Only an isolated
+compiled producer may retire its notes with the old minter and registry. The
+receipt reports `retired_compiled_notes`; no identity reaches the new table.
+Installation independently refuses mixed registries or notes outside that
+compiled producer. On Play, existing activation semantics cut crossing notes
+and restore parameter layers; later note onsets use the new table.
+
+Candidates name the authoritative table whose minter preparation checked. If
+an intervening uncollected readmission changed the current table, installation
+also checks that pair's retained preparation-time minter-obligation flag,
+including compiled notes. Command watermark equality and the frozen credit
+interval establish that this intermediate minter has not changed. A later
+candidate cannot skip an earlier uncollected pair's obligations. Registry queries
+are bounded by the admitted identity partition. Refusals retain the complete
+owner rather than losing it while transport admission is frozen. The separate
+[non-voice state experiment](../specs/spec-host-io-lifecycle.md#experimental-compatible-global-state-readmission)
+excludes every note target and magnitude destination from state transfer, so
+retirement cannot orphan a held envelope outside Voice scope. Ordinary replacement
+retains fresh DSP state. This adds no sounding-voice continuity or crossfade.
 
 Exactly five replacement credits cover caller-held unpublished candidates,
 mailbox cells, in-flight installation and every retained return. The first free

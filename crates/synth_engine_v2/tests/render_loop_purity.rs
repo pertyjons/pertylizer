@@ -53,8 +53,11 @@ use std::path::{Path, PathBuf};
 /// ADR-0070 adds the borrowed terminal signal and split input/audio callback wrapper.
 /// The private mixed boundary operation joins when the bound audio half first moves
 /// its compiled anchor and release state together. Its live command service joins
-/// with the occurrence table that resolves live handles on the audio half.
-const REGION: [&str; 43] = [
+/// with the occurrence table that resolves live handles on the audio half. The private
+/// whole-owner reset joins with its boundary decision, cross-fade and discarded quantum.
+/// Rehearsal counter mutations and the seed-row walk have their own checked hot file;
+/// off-thread usage and storage snapshots remain outside this region.
+const REGION: [&str; 53] = [
     "src/recording/notes/loop_capture/ordered/input/capture/transfer/hot.rs",
     "src/recording/notes/loop_capture/ordered/input/hot.rs",
     "src/recording/notes/loop_capture/ordered/input/clock.rs",
@@ -73,8 +76,13 @@ const REGION: [&str; 43] = [
     "src/host/session/hot.rs",
     "src/host/session/transfer/hot.rs",
     "src/host/session/transfer/replacement/hot.rs",
+    "src/host/session/transfer/replacement/running/hot.rs",
     "src/host/session/source/hot.rs",
     "src/render/hot.rs",
+    "src/render/migration/hot.rs",
+    "src/render/continuation.rs",
+    "src/host/session/transfer/replacement/continuation/hot.rs",
+    "src/render/rehearsal/hot.rs",
     "src/render/slot.rs",
     "src/observe/hot.rs",
     "src/schedule/hot.rs",
@@ -86,6 +94,11 @@ const REGION: [&str; 43] = [
     "src/stream/live.rs",
     "src/stream/mixed/hot.rs",
     "src/stream/mixed/occurrence/hot.rs",
+    "src/stream/mixed/reset/hot.rs",
+    "src/stream/mixed/reset/host/publication_hot.rs",
+    "src/stream/mixed/transfer/publication.rs",
+    "src/stream/mixed/transfer/publication/mailbox/hot.rs",
+    "src/host/mixed_input/hot.rs",
     "src/host/live/hot.rs",
     "src/host/live/parameter_hot.rs",
     "src/host/live/swap_hot.rs",
@@ -439,6 +452,26 @@ fn the_check_is_reading_the_file_it_thinks_it_is() {
         );
     }
 
+    let rehearsal = read_region_file("src/render/rehearsal/hot.rs");
+    for expected in [
+        "fn increment",
+        "fn begin_controls",
+        "fn require_total",
+        "fn require_control",
+        "fn wrote_control",
+        "fn reject_control",
+        "fn payloads",
+        "fn seeded_rows",
+        "fn adoption_gates",
+        "fn observe_rehearsal_seeds",
+        "for slot in &self.parameter_slots",
+    ] {
+        assert!(
+            rehearsal.contains(expected),
+            "the checked rehearsal counter/seed path moved: {expected}"
+        );
+    }
+
     let scheduler = scheduler_hot_path_source();
     assert!(
         scheduler.len() > 1_000,
@@ -542,14 +575,28 @@ fn every_call_the_render_loop_makes_is_inside_the_checked_region() {
         .join("\n");
 
     // The private mixed audio path publishes terminal command-order and
-    // result-push faults. Keep both `store` exceptions tied to these exact
-    // Release atomic writes.
+    // result-push faults. The reset pair also halts its active owner and the
+    // secondary owner on a terminal callback fault. Keep these `store`
+    // exceptions tied to the exact Release atomic writes.
     assert_eq!(
         source
             .matches("self.ingress_halt.store(true, Ordering::Release);")
             .count(),
         2
     );
+    for receiver in ["self.active", "successor", "old"] {
+        assert_eq!(
+            source
+                .matches(&format!(
+                    "{receiver}.ingress_halt.store(true, Ordering::Release);"
+                ))
+                .count(),
+            1
+        );
+    }
+    assert_eq!(source.matches("seal.reset_seal_state(").count(), 1);
+    assert_eq!(source.matches("seal.reset_seal_decide(").count(), 1);
+    assert_eq!(source.matches("seal.reset_seal_decline(").count(), 1);
 
     let defined: Vec<String> = source
         .lines()
@@ -563,6 +610,7 @@ fn every_call_the_render_loop_makes_is_inside_the_checked_region() {
                 .or_else(|| trimmed.strip_prefix("pub(crate) fn "))
                 .or_else(|| trimmed.strip_prefix("pub(super) fn "))
                 .or_else(|| trimmed.strip_prefix("pub(crate) const fn "))
+                .or_else(|| trimmed.strip_prefix("pub(super) const fn "))
         })
         .filter_map(|rest| rest.split(['(', '<']).next())
         .map(|name| name.trim().to_owned())
@@ -847,6 +895,16 @@ fn every_call_the_render_loop_makes_is_inside_the_checked_region() {
         // `written` walks at most eight prepared Option cells without allocation.
         "give_back",
         "written",
+        // MixedResetSeal::reset_seal_state reads three atomics and checked Copy IDs;
+        // the exact call site above keeps this exception local to reset admission.
+        "reset_seal_state",
+        // MixedResetSeal::reset_seal_decide is audio's one decision at `B`: an Acquire
+        // load of the phase, a Relaxed load of the sealed successor and one AcqRel
+        // `compare_exchange` on the phase, with no retry loop. reset_seal_decline is one Release store
+        // of that phase. Neither allocates, locks or can panic; the exact call sites
+        // above keep both local to the reset boundary.
+        "reset_seal_decide",
+        "reset_seal_decline",
         // HostProfile::capabilities is a Copy field read. AudioBlockMut::samples_mut
         // borrows its already validated, bounded sample slice without allocation.
         "capabilities",
@@ -923,6 +981,9 @@ fn every_call_the_render_loop_makes_is_inside_the_checked_region() {
         // candidate carries. It grows nothing and its bound is checked before it writes.
         "release_all",
         "note_targets",
+        // CompiledPlan::compiled_note_producer is a const read of the admitted
+        // Option<ProducerId>, with no traversal, allocation or identity minting.
+        "compiled_note_producer",
         "channel_layout",
         "forward_event_horizon",
         "max_events_per_quantum",
@@ -1213,8 +1274,8 @@ fn every_call_the_render_loop_makes_is_inside_the_checked_region() {
     }
 
     assert_eq!(
-        store_calls, 2,
-        "both region stores must publish mixed terminal faults"
+        store_calls, 7,
+        "the five terminal-fault stores and two private Panic service-clock stores remain in the scanned region"
     );
     assert!(
         unresolved.is_empty(),

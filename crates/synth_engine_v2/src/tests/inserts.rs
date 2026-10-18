@@ -95,7 +95,7 @@ fn a_delays_history_is_charged_as_the_renderer_allocates_it() {
     assert_eq!(
         renderer.history_bytes_held(),
         line * 2 * size_of::<f32>()
-            + (renderer.prepared_record_count().get() as usize + 1) * size_of::<usize>(),
+            + renderer.prepared_record_count().get() as usize * size_of::<Box<[f32]>>(),
     );
     assert_eq!(
         crate::node::history_bytes(delay(), rate()),

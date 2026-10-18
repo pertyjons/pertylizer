@@ -9,7 +9,7 @@
 | Last reviewed | 2026-09-21 |
 | Related | ADR-0071, ADR-0024, ADR-0054, IO-INV-004, TAKE-INV-002 |
 | Supersedes | ADR-0050's off-thread-only minter rule and ADR-0046 clause 6, ADR-0047 clause 7 and ADR-0050 clause 8's release timing, solely for the exclusive immutable live owner below |
-| Superseded by | ADR-0073 for reusable cells, source quota and bend; ADR-0009 for the separate reset consumer |
+| Superseded by | ADR-0073 for reusable cells, source quota and bend; ADR-0009 for the separate reset consumer; [ADR-0078](ADR-0078-host-owned-mixed-transfer-rehearsal.md) permits only its default-off mixed transfer exception to the exclusive-live-owner rule |
 
 The finite quota and unsupported-bend sections below record the original decision.
 [ADR-0073](ADR-0073-continuous-simulated-live-input.md) replaces those clauses and

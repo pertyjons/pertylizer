@@ -120,7 +120,7 @@ pub(super) enum Queued {
 
 /// Live entries still waiting in the registered ingress queue, in queue order.
 pub(super) fn queued(audio: &MixedOneShotAudio) -> Vec<Queued> {
-    let mut queue = vec![None; audio.test_ingress.queue_capacity_for_test()];
+    let mut queue = vec![None; audio.test_ingress.queue_capacity()];
     let len = audio
         .test_ingress
         .copy_queue_for_test(&mut queue)
@@ -841,7 +841,7 @@ fn a_full_command_ring_refuses_a_new_pedal_down_but_never_a_key_up_or_lift() {
 fn a_lift_needs_no_ingress_place_when_the_queue_is_full_and_every_hold_is_out() {
     let (s, other) = (scope(1, 1), scope(2, 1));
     let (mut control, mut audio) = armed_with(true, 6);
-    let depth = audio.test_ingress.queue_capacity_for_test();
+    let depth = audio.test_ingress.queue_capacity();
     let budget = audio.test_ingress.mixed_bend_budget();
     // The bend-credit budget leaves exactly the six notes' entries and holds as ordinary
     // room: `B = C - 2H`.

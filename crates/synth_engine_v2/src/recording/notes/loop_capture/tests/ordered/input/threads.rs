@@ -744,7 +744,7 @@ fn source_stall_does_not_hold_ordered_stop_and_delayed_note_retains_its_refusal(
 
 #[test]
 fn late_quality_from_second_input_survives_prior_faults_before_reunion() {
-    for path in 0..9 {
+    for path in 0..10 {
         let (mut control, audio, _halt, generations) = split(8, 32);
         for (port, generation) in generations.into_iter().enumerate() {
             let _id = control
@@ -764,13 +764,14 @@ fn late_quality_from_second_input_survives_prior_faults_before_reunion() {
         let pre_ring_reason = match path {
             3 | 5 => InputError::SourceQueueFull,
             4 | 6 => InputError::IdentityExhausted,
+            9 => InputError::ProtectedCapacity,
             _ => InputError::Order,
         };
         if path == 7 {
             control
                 .record_post_source_ring_failure(generations[1], original, InputError::Full)
                 .unwrap();
-        } else if path == 3 || path == 4 {
+        } else if matches!(path, 3 | 4 | 9) {
             control
                 .record_pre_ring_failure(generations[1], original, pre_ring_reason)
                 .unwrap();
@@ -840,6 +841,8 @@ fn late_quality_from_second_input_survives_prior_faults_before_reunion() {
                     InputError::SourceQueueFull
                 } else if path == 4 {
                     InputError::IdentityExhausted
+                } else if path == 9 {
+                    InputError::ProtectedCapacity
                 } else {
                     InputError::Order
                 }

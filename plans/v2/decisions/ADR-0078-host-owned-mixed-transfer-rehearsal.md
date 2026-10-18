@@ -3,31 +3,34 @@
 | Field | Value |
 |---|---|
 | ID | ADR-0078 |
-| Status | Proposed |
+| Status | Accepted |
 | Phase | 9 |
 | Created | 2026-10-10 |
-| Last reviewed | 2026-10-10 |
+| Last reviewed | 2026-10-17 |
 | Related | ADR-0023, ADR-0032, ADR-0043, ADR-0046, ADR-0047, ADR-0050, ADR-0053, ADR-0054, ADR-0068, ADR-0072, ADR-0075, ADR-0076 |
-| Amends | If accepted: ADR-0046 clause 6, ADR-0047 clause 7, ADR-0050 clause 8, ADR-0072's exclusive-live-owner exception and ADR-0076 decision 3, solely for the default-off rehearsal below |
+| Amends | ADR-0046 clause 6, ADR-0047 clause 7, ADR-0050 clause 8, ADR-0072's exclusive-live-owner exception and ADR-0076 decision 3, solely for the default-off rehearsal below |
 | Supersedes | — |
-| Superseded by | — |
+| Superseded by | [ADR-0081](ADR-0081-combined-host-software-boundary.md) extends the bound default-off software host; production qualification remains gated |
 
 ## Decision boundary
 
-The private mixed owner can offer note-on, bend and release beside compiled
-playback, but its command and result rings and mixed ingress offers compile
-only under `cfg(all(test, feature = "simulated-ingress"))`. A non-test host cannot
-reach them. ADR-0076 keeps a mixed stream refused until Phase 9 exit, and
+Before this decision, the private mixed owner could offer note-on, bend and
+release beside compiled playback only under
+`cfg(all(test, feature = "simulated-ingress"))`; a non-test host could not reach
+its command and result rings. ADR-0076 keeps a production mixed stream
+refused until Phase 9 exit, and
 ADR-0072's audio-owned identity and release-timing exception covers only an
-exclusive live owner. This proposal asks for a **separate, non-shipping Rust
-API rehearsal**, not acceptance of the combined host or Phase 9 exit.
+exclusive live owner. This record permits a **separate, non-shipping Rust API
+rehearsal**, not acceptance of the combined host or Phase 9 exit.
 
-The new default-off `mixed-transfer-rehearsal` feature would imply
+The new default-off `mixed-transfer-rehearsal` feature implies
 `simulated-ingress`. It adds a feature declaration to the crate manifest but
 no dependency edge, persisted or wire change, application route, or change
 to `PerformanceIngress::prepare`'s `MixedProducerPlan` refusal. The public
 boundary and its narrow exception to accepted ownership rules require the
-maintainer's explicit approval before implementation.
+maintainer's explicit approval. The maintainer approved this public rehearsal
+boundary and feature on 2026-10-14 when requesting Phase 9 mixed-producer
+work items 1–6, which included this step.
 
 ## Verified premises
 
@@ -44,7 +47,7 @@ maintainer's explicit approval before implementation.
 - ADR-0032 clause 21 and HOST-INV-013 require a far-future ingress event to
   be rejected and counted once, without parking it until its timestamp.
 
-## Proposed rule
+## Decision
 
 1. **Scope and feature.** A new constructor under
    `mixed-transfer-rehearsal` arms only the existing bound, closed, initial
@@ -71,7 +74,7 @@ maintainer's explicit approval before implementation.
    wrapper earlier violates the host contract and may lose queued packets.
    `ringbuf` remains dev-only here. Arm checks
    capacities observed from both queues against its admitted command/result
-   bound, including the places withheld for exact key-ups, and charges a
+   bound `C`, including the places withheld for exact key-ups, and charges a
    preallocated outstanding-command journal. A pre-consumption command/result
    journal-capacity or bend-credit refusal returns the source observation for
    ordered retry without minting a packet. A failed physical command push
@@ -84,6 +87,15 @@ maintainer's explicit approval before implementation.
    becomes free. For a failed onset push, its exact key-up place and any
    inherited bend credit stay reserved. No younger command passes it. There is
    no arbitrary cancellation while the stream continues.
+   A pre-consumption `Full` returns the exact observation but does not promise
+   that retry will eventually succeed. Open handles can keep their release
+   places after all commands and results have drained. The later combined host
+   must either retry while a named outstanding obligation can free room, or
+   record a per-occurrence split refusal and consume that onset's raw-linked
+   release without offering it to mixed ingress. A lost source is closed
+   through joined teardown, which classifies its unresolved handles; Panic
+   alone cannot recover a missing key-up because it retains a tombstone for
+   that key-up. This rehearsal admits no source-loss recovery rule.
    With all bound wrappers returned and queue obligations honored, joined
    terminal teardown names every unsent, unserved and uncollected packet and
    outstanding handle. If a wrapper is missing, the retained journal still
@@ -193,12 +205,13 @@ maintainer's explicit approval before implementation.
    in audio's prepared invalid-command slot for teardown. A beyond-horizon
    packet uses that same slot. The current private path's
    per-event `NonMonotoneStamp` outcome is not this public transfer rule.
-4. **One horizon check.** Audio checks every ordered packet against the
+4. **One horizon decision.** Audio checks every ordered packet against the
    profile's forward horizon at ingress admission, before any occurrence or
    ingress mutation. This includes a key-up that would only consume a
-   tombstone. The checked admission is carried into the store offer without
-   rechecking the horizon. A beyond-horizon packet is rejected and counted
-   **once**, then raises a terminal transfer fault with its original ID and
+   tombstone. The store's offer may repeat the same comparison after audio
+   preflight while its clock and the packet stamp are unchanged; a successful
+   preflight cannot then refuse or count again. A beyond-horizon packet is
+   rejected and counted **once**, then raises a terminal transfer fault with its original ID and
    handle retained for joined teardown. No packet waits in a queue for a
    distant time. The control source frontier may already name that packet;
    the terminal halt prevents later observations from being misattributed.
@@ -238,8 +251,10 @@ maintainer's explicit approval before implementation.
    popping or settling anything. A halt published after the read can leave
    that already-started collection to finish; once the control half observes
    the halt, its later collections also stop.
-   Joined teardown reports sounding identities
-   and outstanding release places; no note keeps sounding through a halted
+   Joined teardown reads the stopped renderer registry for sounding identities,
+   including an accepted future key-up whose note-off has not published. A
+   registry snapshot failure is reported explicitly. It also reports
+   outstanding release places; no note keeps sounding through a halted
    stream. Packet service, including calls into the host's qualified queue
    implementation, allocates nothing, takes no lock, makes no system call and
    does not panic. The outstanding-command bound means a truthful, sufficiently
@@ -394,28 +409,30 @@ required feature-specific gate commands are:
 ```bash
 cargo test -p synth_engine_v2 --no-default-features --features mixed-transfer-rehearsal --test mixed_transfer_rehearsal
 cargo test -p synth_engine_v2 --no-default-features --features mixed-transfer-rehearsal --lib
+cargo test -p synth_engine_v2 --no-default-features --features mixed-transfer-rehearsal --doc
 cargo clippy -p synth_engine_v2 --all-targets --no-default-features --features mixed-transfer-rehearsal
 ```
 
-Implementation must add all three commands to `.github/workflows/quality.yml`
+Implementation must add all four commands to `.github/workflows/quality.yml`
 and `AGENTS.md`'s core gate (and thus its complete gate) before claiming CI
 proof. Ordinary workspace tests and Clippy do not exercise a default-off
 feature.
 
 ## Open work and consequence
 
-The user-selected stage-full bend sound split, two-source frontiers, pedal
-and lift, Panic, raw/recorder shared charge, combined outcomes, plan swap,
-loop behavior, ADR-0054's full six-share reselection, platform timing and
-Phase 9 exit remain open. The user-owned combined-host DRAFT is not accepted
-by this record. A later two-source decision must resolve any different
-stamp-order rule explicitly before enabling a production live adapter.
+[ADR-0081](ADR-0081-combined-host-software-boundary.md) extends the default-off
+software boundary to the two-source bridge, raw-first routing, scoped compiled
+transport and stopped-owner reset. It owns strict publication proofs and
+independent software callback cadence. The initial single-source transfer arm
+above remains narrower than that bridge. ADR-0079 owns raw-only interruption.
+The user-owned combined-host DRAFT remains unaccepted as a whole.
+ADR-0054's full six-share reselection, representative production workload,
+platform timing, shipping admission and Phase 9 exit remain open.
 
-If accepted, this record extends ADR-0072's audio-owned live identity and
+This record extends ADR-0072's audio-owned live identity and
 release-at-offer exception beyond an exclusive owner solely for this
 default-off, non-shipping initial one-shot rehearsal. It narrows ADR-0046
 clause 6, ADR-0047 clause 7, ADR-0050 clause 8 and ADR-0076 decision 3
-only to that extent. ADR-0075 remains deferred. Update the current host I/O
-specification before exposing the API. The maintainer must approve this
-public rehearsal boundary and new manifest feature; acceptance alone does
-not mark Phase 9 complete.
+only to that extent. ADR-0075 remains deferred. The current host I/O
+specification records the exposed scope. Acceptance does not mark Phase 9
+complete.

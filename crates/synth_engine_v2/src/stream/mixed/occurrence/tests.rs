@@ -295,7 +295,7 @@ fn release_request(occurrence: LiveOccurrenceId, at: u64) -> MixedIngressRequest
 
 /// Note edges still waiting in the registered ingress queue, in queue order.
 fn queued_edges(audio: &MixedOneShotAudio) -> Vec<(NoteIdentity, bool)> {
-    let mut queue = vec![None; audio.test_ingress.queue_capacity_for_test()];
+    let mut queue = vec![None; audio.test_ingress.queue_capacity()];
     let len = audio
         .test_ingress
         .copy_queue_for_test(&mut queue)
@@ -329,7 +329,7 @@ fn free_units(audio: &MixedOneShotAudio) -> usize {
     assert!(budget.queued <= budget.budget, "bend budget: {budget:?}");
     let ordinary = ingress.ring_len_for_test() - budget.queued;
     let used = ordinary + holds + budget.budget;
-    let capacity = ingress.queue_capacity_for_test();
+    let capacity = ingress.queue_capacity();
     assert!(used <= capacity, "{used} units exceed capacity {capacity}");
     capacity - used
 }

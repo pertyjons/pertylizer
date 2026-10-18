@@ -52,6 +52,8 @@ impl PreparedRenderer {
                 slot.seed();
             }
         }
+        #[cfg(feature = "mixed-transfer-rehearsal")]
+        self.observe_rehearsal_seeds();
     }
 
     /// Recheck a scoped event against this renderer's bound mixed partition.
@@ -288,6 +290,8 @@ impl PreparedRenderer {
                 continue;
             };
             self.adoption_gate_len = self.adoption_gate_len.saturating_add(1);
+            #[cfg(feature = "mixed-transfer-rehearsal")]
+            self.rehearsal_usage.adoption_gates(self.adoption_gate_len);
             if let Some(entry) = self.adoption_gate_slots.get_mut(self.adoption_gate_len - 1) {
                 *entry = row;
             }
@@ -318,6 +322,8 @@ impl PreparedRenderer {
                     continue;
                 };
                 self.adoption_gate_len = self.adoption_gate_len.saturating_add(1);
+                #[cfg(feature = "mixed-transfer-rehearsal")]
+                self.rehearsal_usage.adoption_gates(self.adoption_gate_len);
                 if let Some(entry) = self.adoption_gate_slots.get_mut(self.adoption_gate_len - 1) {
                     *entry = row;
                 }
@@ -334,6 +340,51 @@ impl PreparedRenderer {
     /// write would make that write step instead of ramp. This helper alone grants
     /// no activation path.
     pub(crate) fn release_mixed_compiled_boundary(
+        &mut self,
+        producer: crate::identity::ProducerId,
+        ended_notes: &mut [Option<crate::identity::EndedNote>],
+    ) -> Result<crate::quantities::HeldNoteCount, crate::render::MixedBoundaryReleaseError> {
+        let released = self.end_mixed_compiled_producer(producer, ended_notes)?;
+        // SOUND-INV-024: the boundary ends compiled controls without a ramp. On a
+        // bound mixed renderer this seeds only compiled rows, leaving live ramps intact.
+        self.seed_for_adoption();
+        Ok(released)
+    }
+
+    /// A compiled-scoped Stop at the current quantum boundary: the same preflighted
+    /// release, but it seeds only the gate and trigger rows its queued writes spend in
+    /// this quantum. No compiled row keeps a mark, so the Stop leaves no restoration
+    /// obligation and no later ordinary write steps instead of ramping. Live rows, the
+    /// anchor and both carries are untouched.
+    pub(crate) fn stop_mixed_compiled_boundary(
+        &mut self,
+        producer: crate::identity::ProducerId,
+        effective: SampleTime,
+        ended_notes: &mut [Option<crate::identity::EndedNote>],
+    ) -> Result<crate::quantities::HeldNoteCount, crate::render::MixedBoundaryReleaseError> {
+        if effective != self.clock {
+            return Err(crate::render::MixedBoundaryReleaseError::ClockMismatch {
+                clock: self.clock,
+                offered: effective,
+            });
+        }
+        let released = self.end_mixed_compiled_producer(producer, ended_notes)?;
+        for index in 0..self.adoption_gate_len {
+            let Some(row) = self.adoption_gate_slots.get(index).copied() else {
+                break;
+            };
+            if let Some(slot) = self.parameter_slots.get_mut(row) {
+                slot.seed();
+            }
+        }
+        #[cfg(feature = "mixed-transfer-rehearsal")]
+        self.observe_rehearsal_seeds();
+        Ok(released)
+    }
+
+    /// The preflight, registry release and queued gate and trigger writes shared by
+    /// adoption and Stop. It seeds nothing; each caller marks the scope it writes.
+    fn end_mixed_compiled_producer(
         &mut self,
         producer: crate::identity::ProducerId,
         ended_notes: &mut [Option<crate::identity::EndedNote>],
@@ -405,9 +456,6 @@ impl PreparedRenderer {
         if needed > available {
             return Err(Refused::GateStorage { needed, available });
         }
-        // SOUND-INV-024: the boundary ends compiled controls without a ramp. On a
-        // bound mixed renderer this seeds only compiled rows, leaving live ramps intact.
-        self.seed_for_adoption();
         let released = self.live_notes.release_all(
             crate::identity::ReleaseScope::Producer(producer),
             ended_notes,
@@ -614,6 +662,8 @@ impl PreparedRenderer {
                 payload: event.payload(),
             };
             self.scratch_len += 1;
+            #[cfg(feature = "mixed-transfer-rehearsal")]
+            self.rehearsal_usage.payloads(self.scratch_len);
         }
 
         // Ascending render position, ties by arrival order. An in-place sort over the live
@@ -796,6 +846,8 @@ impl PreparedRenderer {
     /// the other by index alone. It also removes any dependence on the order node slots
     /// appear in the schedule, which is an invariant of lowering rather than of the plan.
     fn collect_timed_controls(&mut self, cursor: &mut usize) {
+        #[cfg(feature = "mixed-transfer-rehearsal")]
+        self.rehearsal_usage.begin_controls();
         self.control_starts.fill(0);
         self.control_fill.fill(0);
 
@@ -806,6 +858,8 @@ impl PreparedRenderer {
             if let Some(node) = self.modulated_sample_row_node(row)
                 && let Some(count) = self.control_starts.get_mut(node + 1)
             {
+                #[cfg(feature = "mixed-transfer-rehearsal")]
+                self.rehearsal_usage.require_representable_add(*count, 1);
                 *count = count.saturating_add(1);
             }
         }
@@ -822,6 +876,8 @@ impl PreparedRenderer {
                 continue;
             };
             if let Some(count) = self.control_starts.get_mut(node + 1) {
+                #[cfg(feature = "mixed-transfer-rehearsal")]
+                self.rehearsal_usage.require_representable_add(*count, 1);
                 *count = count.saturating_add(1);
             }
         }
@@ -850,6 +906,8 @@ impl PreparedRenderer {
                     if let Some(node) = self.slot_node(row)
                         && let Some(count) = self.control_starts.get_mut(node + 1)
                     {
+                        #[cfg(feature = "mixed-transfer-rehearsal")]
+                        self.rehearsal_usage.require_representable_add(*count, 1);
                         *count = count.saturating_add(1);
                     }
                 }
@@ -863,6 +921,8 @@ impl PreparedRenderer {
                     && let Some(node) = self.slot_node(target.slot)
                     && let Some(count) = self.control_starts.get_mut(node + 1)
                 {
+                    #[cfg(feature = "mixed-transfer-rehearsal")]
+                    self.rehearsal_usage.require_representable_add(*count, 1);
                     *count = count.saturating_add(1);
                 }
                 for magnitude in self.plan.note_magnitudes_of(slot) {
@@ -872,6 +932,8 @@ impl PreparedRenderer {
                         && let Some(node) = self.slot_node(row)
                         && let Some(count) = self.control_starts.get_mut(node + 1)
                     {
+                        #[cfg(feature = "mixed-transfer-rehearsal")]
+                        self.rehearsal_usage.require_representable_add(*count, 1);
                         *count = count.saturating_add(1);
                     }
                 }
@@ -895,6 +957,8 @@ impl PreparedRenderer {
                             && let Some(node) = self.slot_node(row)
                             && let Some(count) = self.control_starts.get_mut(node + 1)
                         {
+                            #[cfg(feature = "mixed-transfer-rehearsal")]
+                            self.rehearsal_usage.require_representable_add(*count, 1);
                             *count = count.saturating_add(1);
                         }
                     }
@@ -908,6 +972,8 @@ impl PreparedRenderer {
                     for first in self.plan.sum_groups() {
                         let node = first.index().saturating_add(instance);
                         if let Some(count) = self.control_starts.get_mut(node + 1) {
+                            #[cfg(feature = "mixed-transfer-rehearsal")]
+                            self.rehearsal_usage.require_representable_add(*count, 1);
                             *count = count.saturating_add(1);
                         }
                     }
@@ -919,6 +985,8 @@ impl PreparedRenderer {
                     for first in self.plan.instance_groups() {
                         let node = first.index().saturating_add(instance);
                         if let Some(count) = self.control_starts.get_mut(node + 1) {
+                            #[cfg(feature = "mixed-transfer-rehearsal")]
+                            self.rehearsal_usage.require_representable_add(*count, 1);
                             *count = count.saturating_add(1);
                         }
                     }
@@ -943,6 +1011,8 @@ impl PreparedRenderer {
                             && let Some(node) = self.slot_node(row)
                             && let Some(count) = self.control_starts.get_mut(node + 1)
                         {
+                            #[cfg(feature = "mixed-transfer-rehearsal")]
+                            self.rehearsal_usage.require_representable_add(*count, 1);
                             *count = count.saturating_add(1);
                         }
                     }
@@ -960,6 +1030,8 @@ impl PreparedRenderer {
                             && let Some(node) = self.slot_node(row)
                             && let Some(count) = self.control_starts.get_mut(node + 1)
                         {
+                            #[cfg(feature = "mixed-transfer-rehearsal")]
+                            self.rehearsal_usage.require_representable_add(*count, 1);
                             *count = count.saturating_add(1);
                         }
                     }
@@ -971,9 +1043,15 @@ impl PreparedRenderer {
 
         let mut running = 0_u32;
         for start in &mut self.control_starts {
+            #[cfg(feature = "mixed-transfer-rehearsal")]
+            self.rehearsal_usage
+                .require_representable_add(running, *start);
             running = running.saturating_add(*start);
             *start = running;
         }
+
+        #[cfg(feature = "mixed-transfer-rehearsal")]
+        self.rehearsal_usage.require_total(running);
 
         // The modulated rows' values first, at offset zero, composed by the pre-pass: a
         // positioned write later in the quantum composes with the same sum and lands after.
@@ -1325,16 +1403,22 @@ impl PreparedRenderer {
         control: kernels::ControlIndex,
         value: crate::quantities::ParameterValue,
     ) {
+        #[cfg(feature = "mixed-transfer-rehearsal")]
+        self.rehearsal_usage.require_control();
         let (Some(base), Some(filled)) = (
             self.control_starts.get(node).copied(),
             self.control_fill.get(node).copied(),
         ) else {
+            #[cfg(feature = "mixed-transfer-rehearsal")]
+            self.rehearsal_usage.reject_control();
             return;
         };
         let Some(slot) = self
             .timed_controls
             .get_mut(base.saturating_add(filled) as usize)
         else {
+            #[cfg(feature = "mixed-transfer-rehearsal")]
+            self.rehearsal_usage.reject_control();
             return;
         };
         *slot = TimedControl {
@@ -1342,6 +1426,8 @@ impl PreparedRenderer {
             control,
             value,
         };
+        #[cfg(feature = "mixed-transfer-rehearsal")]
+        self.rehearsal_usage.wrote_control();
         if let Some(fill) = self.control_fill.get_mut(node) {
             *fill = fill.saturating_add(1);
         }
@@ -1668,18 +1754,9 @@ impl PreparedRenderer {
                         continue;
                     };
                     let ramps = self.ramp_buffers.get(ramp_start..ramp_end).unwrap_or(&[]);
-                    // The step's own slice of the history slab (`SOUND-INV-033`), resolved
-                    // as the ramps are: two more disjoint fields of one renderer.
-                    let (Some(history_start), Some(history_end)) = (
-                        self.history_starts.get(node).copied(),
-                        self.history_starts.get(node + 1).copied(),
-                    ) else {
+                    let Some(history) = self.history.get_mut(node) else {
                         continue;
                     };
-                    let history = self
-                        .history
-                        .get_mut(history_start..history_end)
-                        .unwrap_or(&mut []);
                     let Some(mut io) = kernels::bind(
                         &mut self.buffers,
                         self.plan.regions(),
@@ -1688,7 +1765,7 @@ impl PreparedRenderer {
                         gates,
                         ramps,
                         kernels::NodeResources {
-                            history,
+                            history: history.as_mut(),
                             samples: self.plan.prepared_samples(),
                             scripts: crate::script::ScriptResources {
                                 programs: self.plan.prepared_scripts(),
@@ -1701,14 +1778,10 @@ impl PreparedRenderer {
                     step.kernel().run(prepared, state, &mut io);
                 }
                 PlanOp::FeedbackWrite { node, source } => {
-                    let (Some(start), Some(end), Some(region)) = (
-                        self.history_starts.get(node.index()).copied(),
-                        self.history_starts.get(node.index() + 1).copied(),
+                    let (Some(history), Some(region)) = (
+                        self.history.get_mut(node.index()),
                         self.plan.regions().get(source.index()),
                     ) else {
-                        continue;
-                    };
-                    let Some(history) = self.history.get_mut(start..end) else {
                         continue;
                     };
                     let Some(input) = self
@@ -1797,6 +1870,17 @@ impl PreparedRenderer {
             .checked_add(FrameCount::new(delta.as_i64() as u64))
             .ok()
     }
+}
+
+/// Where one render call's quanta take their plan positions.
+#[derive(Clone, Copy)]
+enum TimelineSource<'a> {
+    /// Linear from the anchor.
+    Anchor,
+    /// The exclusive loop owner's map for exactly one new quantum.
+    Mapped(&'a [PlanPosition; QUANTUM_FRAMES as usize]),
+    /// A stopped transport's position, for every quantum the call renders.
+    Held(Option<PlanPosition>),
 }
 
 impl Renderer for PreparedRenderer {
@@ -1895,7 +1979,7 @@ impl PreparedRenderer {
         events: TimedEvents<'_>,
         observers: Option<&mut crate::observe::ObservationSubscriptions>,
     ) -> Result<(), RenderError> {
-        self.render_with_timeline(output, events, observers, None)
+        self.render_with_timeline(output, events, observers, TimelineSource::Anchor)
     }
 
     /// Only the exclusive loop owner supplies a map and its matching sealed events.
@@ -1906,7 +1990,25 @@ impl PreparedRenderer {
         events: TimedEvents<'_>,
         positions: &[PlanPosition; QUANTUM_FRAMES as usize],
     ) -> Result<(), RenderError> {
-        self.render_with_timeline(output, events, None, Some(positions))
+        self.render_with_timeline(output, events, None, TimelineSource::Mapped(positions))
+    }
+
+    /// Render with every new quantum held at `position`: the stopped mixed owner's
+    /// timeline, which stands still while live notes and tails keep rendering. The
+    /// anchor is untouched, so engine time keeps advancing under the held playhead.
+    pub(crate) fn render_held(
+        &mut self,
+        output: AudioBlockMut<'_>,
+        events: TimedEvents<'_>,
+        position: Option<PlanPosition>,
+    ) -> Result<(), RenderError> {
+        self.render_with_timeline(output, events, None, TimelineSource::Held(position))
+    }
+
+    /// The plan position the anchor maps the next unrendered sample to, which a
+    /// Stop applied at this boundary holds.
+    pub(crate) fn plan_position_at_clock(&self) -> Option<PlanPosition> {
+        self.plan_position_of(self.clock)
     }
 
     fn render_with_timeline(
@@ -1914,10 +2016,10 @@ impl PreparedRenderer {
         mut output: AudioBlockMut<'_>,
         events: TimedEvents<'_>,
         mut observers: Option<&mut crate::observe::ObservationSubscriptions>,
-        positions: Option<&[PlanPosition; QUANTUM_FRAMES as usize]>,
+        source: TimelineSource<'_>,
     ) -> Result<(), RenderError> {
         let quanta = self.validate_output(&mut output)?;
-        if positions.is_some() && (quanta != 1 || self.carry_frames != 0) {
+        if matches!(source, TimelineSource::Mapped(_)) && (quanta != 1 || self.carry_frames != 0) {
             return Err(RenderError::MappedTimelineSpan {
                 quanta,
                 carry: FrameCount::new(self.carry_frames as u64),
@@ -1950,9 +2052,14 @@ impl PreparedRenderer {
         let mut timed = 0;
         for _ in 0..quanta {
             let boundary = self.clock;
-            let timeline = match positions {
-                Some(positions) => crate::time::QuantumTimeline::mapped(positions),
-                None => crate::time::QuantumTimeline::linear(self.plan_position_of(boundary)),
+            let timeline = match source {
+                TimelineSource::Anchor => {
+                    crate::time::QuantumTimeline::linear(self.plan_position_of(boundary))
+                }
+                TimelineSource::Mapped(positions) => {
+                    crate::time::QuantumTimeline::mapped(positions)
+                }
+                TimelineSource::Held(position) => crate::time::QuantumTimeline::held(position),
             };
             cursor = self.apply_control_events(boundary, cursor);
             // `SOUND-INV-027`: the modulation sources and every composition run **before**
@@ -2003,6 +2110,21 @@ impl PreparedRenderer {
         self.live_notes.has_live()
     }
 
+    /// The stopped session may retire its compiled registry, never a mixed/live one.
+    pub(crate) fn has_readmission_obligations(&self) -> bool {
+        if self.mixed_partition.is_some() {
+            return true;
+        }
+        match self.plan.compiled_note_producer() {
+            Some(producer) => self.live_notes.has_live_outside(producer),
+            None => self.live_notes.has_live(),
+        }
+    }
+
+    pub(crate) fn readmission_retired_notes(&self) -> crate::quantities::HeldNoteCount {
+        self.live_notes.live_count()
+    }
+
     /// Seed a fresh renderer after the outgoing carry reached zero. This removes
     /// only the new pair's priming silence, never already rendered old samples.
     pub(crate) fn install_stopped_clock(&mut self, anchor: crate::time::StreamAnchor) {
@@ -2043,3 +2165,7 @@ impl crate::render::DueEvent {
         ))
     }
 }
+
+#[cfg(all(test, feature = "mixed-transfer-rehearsal"))]
+#[path = "rehearsal_tests.rs"]
+mod rehearsal_tests;

@@ -1,7 +1,9 @@
 //! Owning command handoff between a compiled session's control and audio halves.
 //! The host must retain both halves and queue backing until its backend is quiescent.
 
+pub(crate) mod continuation;
 mod hot;
+pub use continuation::ContinuationLimits;
 pub mod replacement;
 #[cfg(test)]
 mod tests;
@@ -118,6 +120,7 @@ pub struct SessionControl {
     bytes: PreparedBytes,
     replacement_credits: [Option<replacement::PlanPublicationId>; replacement::REPLACEMENT_CREDITS],
     publication_serial: u64,
+    active_timeline: Option<Box<continuation::AdoptedTimelineWitness>>,
 }
 
 /// Sole mutable owner of the scheduler, render state and retained command slots.
@@ -131,6 +134,8 @@ pub struct SessionAudio {
     fault: Option<crate::schedule::ScheduledRenderError>,
     publication_serial: u64,
     prepared_minter_obligations: bool,
+    /// Only the owning crossfade entry may render until this guard is cleared.
+    running_transition: bool,
 }
 
 impl SessionControl {
@@ -215,7 +220,8 @@ impl SessionControl {
             &profile,
             limits.session,
         )?;
-        let prepared_minter_obligations = control.has_replacement_obligations();
+        let prepared_minter_obligations =
+            control.has_replacement_obligations() || control.minter_mut().live() != 0;
         let owner = Self {
             control,
             stream,
@@ -235,6 +241,7 @@ impl SessionControl {
             bytes: required,
             replacement_credits: [None; replacement::REPLACEMENT_CREDITS],
             publication_serial: 0,
+            active_timeline: None,
         };
         Ok((
             owner,
@@ -243,6 +250,7 @@ impl SessionControl {
                 runtime,
                 origin,
                 fault: None,
+                running_transition: false,
                 publication_serial: 0,
                 prepared_minter_obligations,
             },
@@ -348,6 +356,7 @@ impl SessionControl {
             entry: Box::new(CommandEntry {
                 boundary,
                 activation,
+                timeline_witness: None,
                 outcome: None,
                 capture_outcome: None,
                 expected_position,
@@ -454,6 +463,11 @@ impl SessionControl {
         }
         self.credits[index] = None;
         self.held -= 1;
+        if matches!(outcome, SessionOutcome::Applied { .. })
+            && packet.entry.boundary.command == SessionCommand::Play
+        {
+            self.active_timeline = packet.entry.timeline_witness.take();
+        }
         if packet.entry.boundary.id.serial() > self.acknowledged_serial {
             self.acknowledged_serial = packet.entry.boundary.id.serial();
             self.acknowledged = packet.snapshot;

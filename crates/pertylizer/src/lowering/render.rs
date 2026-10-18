@@ -35,7 +35,7 @@ use synth_engine_v2::compile::{RenderConfig, compile};
 use synth_engine_v2::ir::NodeId;
 use synth_engine_v2::offline::render_offline;
 use synth_engine_v2::profile::HostProfile;
-use synth_engine_v2::quantities::EventCount;
+use synth_engine_v2::quantities::{ChannelLayout, EventCount};
 use synth_engine_v2::time::{FrameCount, PlanPosition};
 
 use synth_engine_v2::ir::{ExecutionScope, IrNodeKind, PortId, SignalDomain};
@@ -44,11 +44,11 @@ use synth_engine_v2::quantities::Amplitude;
 use super::buses::{bus_slots, instrument_sends, lower_buses, send_nodes, summation_order_marks};
 use super::diagnostics::{Fidelity, LoweringDiagnostic, LoweringReason, ProjectSubject, Severity};
 use super::graph::{
-    ChannelStrip, GraphAccumulator, InstrumentStages, Sink, lower_instrument_into,
-    plan_declarations, voice_tuning,
+    ChannelStrip, GraphAccumulator, InstrumentStages, LiveNoteRange, Sink, lower_instrument_into,
+    mixed_plan_declarations, plan_declarations, voice_tuning,
 };
 use super::identity::{
-    InstrumentSlot, MASTER_CLAMP, MASTER_METER, MASTER_MIX, MASTER_OUTPUT, MASTER_TRIM,
+    InstrumentSlot, MASTER_CLAMP, MASTER_METER, MASTER_MIX, MASTER_MONO, MASTER_OUTPUT, MASTER_TRIM,
 };
 use super::performance::{
     AutomationTargets, InstrumentPerformance, lower_project_performance, peak_concurrency,
@@ -600,16 +600,34 @@ impl LoweredProject {
 /// empty, while the counts and the admission report say how far the lowering reached.
 /// `policy` selects V1's saturation stages or declines them. [`smoke_render_project`]
 /// renders the result offline, and the experimental live path (ADR-0077) plays it.
-#[allow(
-    clippy::too_many_lines,
-    reason = "one pass over the project, stage by stage"
-)]
 pub fn lower_project(
     instruments: &[InstrumentState],
     song: &synth_sequencer::Song,
     global: &crate::project::GlobalProjectState,
     profile: HostProfile,
     policy: OutputPolicy,
+) -> LoweredProject {
+    lower_project_with(instruments, song, global, profile, policy, None, &mut None)
+}
+
+/// [`lower_project`], with `live` appended to the plan's declarations after the compiled
+/// producer when present, and the graph left in `built` once it is built.
+///
+/// The private mixed route EVD-0026 runs: its only intended difference from the ordinary
+/// lowering is the declared live range, so the graph `built` receives is otherwise the
+/// one [`lower_project`] compiles.
+#[allow(
+    clippy::too_many_lines,
+    reason = "one pass over the project, stage by stage"
+)]
+fn lower_project_with(
+    instruments: &[InstrumentState],
+    song: &synth_sequencer::Song,
+    global: &crate::project::GlobalProjectState,
+    profile: HostProfile,
+    policy: OutputPolicy,
+    live: Option<LiveNoteRange>,
+    built: &mut Option<synth_engine_v2::ir::GraphIr>,
 ) -> LoweredProject {
     let sample_rate = profile.capabilities().sample_rate();
     let mut diagnostics = project_diagnostics(global);
@@ -862,6 +880,15 @@ pub fn lower_project(
     let mut master_ir = master_nodes(policy, master_level);
     master_ir.splice(1..1, inserts);
     master_ir.push((MASTER_METER, IrNodeKind::StereoMonitor));
+    if profile.capabilities().channel_layout() == ChannelLayout::Mono {
+        // Layout conversion belongs to this explicit graph operation, never to
+        // edge validation. The stereo master tap deliberately remains pre-fold.
+        master_ir.push((MASTER_MONO, IrNodeKind::StereoToMono));
+        diagnostics.push(LoweringDiagnostic::unrepresented(
+            ProjectSubject::Project,
+            LoweringReason::MonoOutputFold,
+        ));
+    }
     master_ir.push((MASTER_OUTPUT, IrNodeKind::Output));
     let mut previous: Option<synth_engine_v2::ir::NodeId> = None;
     let mut builder_error = None;
@@ -898,8 +925,27 @@ pub fn lower_project(
             return LoweredProject::refused(diagnostics);
         }
     };
-    let ir = match graph.build(tuning, plan_declarations(notes, peak)) {
-        Ok(ir) => ir,
+    let declarations = match live {
+        None => plan_declarations(notes, peak),
+        Some(live) => {
+            let Some(declarations) = mixed_plan_declarations(notes, peak, live) else {
+                diagnostics.push(LoweringDiagnostic::refused(
+                    ProjectSubject::Project,
+                    LoweringReason::UnsupportedParameterValue {
+                        value: format!(
+                            "{} compiled and {} live held notes overflow",
+                            notes.get(),
+                            live.notes().get()
+                        ),
+                    },
+                ));
+                return LoweredProject::refused(diagnostics);
+            };
+            declarations
+        }
+    };
+    let ir = match graph.build(tuning, declarations) {
+        Ok(ir) => &*built.insert(ir),
         Err(error) => {
             diagnostics.push(LoweringDiagnostic::refused(
                 ProjectSubject::Project,
@@ -952,7 +998,7 @@ pub fn lower_project(
         }
     }
 
-    let outcome = compile(&ir, &RenderConfig::new(profile));
+    let outcome = compile(ir, &RenderConfig::new(profile));
     let report = Some(outcome.report().clone());
     let plan = match outcome.into_plan() {
         Ok(plan) => plan,
@@ -1143,3 +1189,7 @@ fn master_inserts(
     }
     Some(result)
 }
+
+#[cfg(test)]
+#[path = "tests/evd_0026.rs"]
+mod evd_0026;

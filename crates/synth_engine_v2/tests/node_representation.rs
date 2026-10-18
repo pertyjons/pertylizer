@@ -327,7 +327,7 @@ fn a_widened_signal_is_copied_by_a_scheduled_kernel() {
 fn a_declared_kind_appears_in_the_registry_only_by_deferring_to_its_declaration() {
     // The variant as it is spelled in a pattern — fieldless kinds have no `{ .. }` — and
     // the declaration constant it forwards to.
-    const DECLARED: [(&str, &str); 33] = [
+    const DECLARED: [(&str, &str); 34] = [
         ("Script { .. }", "SCRIPT"),
         ("AudioScript { .. }", "AUDIO_SCRIPT"),
         ("NoteScript { .. }", "NOTE_SCRIPT"),
@@ -357,6 +357,7 @@ fn a_declared_kind_appears_in_the_registry_only_by_deferring_to_its_declaration(
         ("VoiceAmplifier { .. }", "VOICE_AMPLIFIER"),
         ("VoiceOutput { .. }", "VOICE_OUTPUT"),
         ("StereoMonitor", "STEREO_MONITOR"),
+        ("StereoToMono", "STEREO_TO_MONO"),
         ("StereoVelocityScaler { .. }", "STEREO_VELOCITY_SCALER"),
         ("Monitor", "MONITOR"),
         ("Gain { .. }", "GAIN"),
@@ -598,6 +599,7 @@ fn discovery_and_validation_describe_the_same_ports() {
                 sensitivity: synth_engine_v2::quantities::NormalizedLevel::FULL,
             },
             NodeKindId::StereoMonitor => IrNodeKind::StereoMonitor,
+            NodeKindId::StereoToMono => IrNodeKind::StereoToMono,
             NodeKindId::Filter => IrNodeKind::Filter {
                 cutoff: CutoffFrequency::new(1_000.0).expect("positive"),
                 resonance: Resonance::BUTTERWORTH,
@@ -622,7 +624,7 @@ fn discovery_and_validation_describe_the_same_ports() {
     let entries = catalog();
     assert_eq!(
         entries.len(),
-        41,
+        42,
         "every kind but the output node is discoverable"
     );
     for entry in entries {

@@ -85,6 +85,21 @@ impl SessionAudio {
 
     /// All due commands use the same quantum boundary machinery as the serial host.
     pub fn render(&mut self, mut output: AudioBlockMut<'_>) -> Result<(), ScheduledRenderError> {
+        if self.running_transition {
+            let error = ScheduledRenderError::RunningReplacementState;
+            self.fault = Some(error);
+            self.runtime.closed = true;
+            output.silence();
+            return Err(error);
+        }
+        self.render_owned(output)
+    }
+
+    /// The ordinary entry enforces fade custody; the owning fade uses this body.
+    pub(super) fn render_owned(
+        &mut self,
+        mut output: AudioBlockMut<'_>,
+    ) -> Result<(), ScheduledRenderError> {
         if let Some(error) = self.fault {
             output.silence();
             return Err(error);

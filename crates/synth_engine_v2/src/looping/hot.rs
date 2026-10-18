@@ -14,7 +14,8 @@ use crate::{
 };
 
 impl LoopPassId {
-    fn next(self) -> Option<Self> {
+    /// The pass a wrap starts, or `None` once pass identities are exhausted.
+    pub(crate) fn next(self) -> Option<Self> {
         self.0.checked_add(1).map(Self)
     }
 }

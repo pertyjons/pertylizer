@@ -663,8 +663,8 @@ fn the_slots_the_renderer_holds_are_charged_to_the_mutable_state_row() {
     let history = renderer.history_bytes_held() as u64;
     assert_eq!(
         history,
-        (records + 1) * crate::node::history_table_bytes_per_record(),
-        "the history index is one entry per record plus a terminator, and no slab"
+        records * crate::node::history_table_bytes_per_record(),
+        "the history owner table is one entry per record, with empty payloads"
     );
     assert_eq!(
         reported,

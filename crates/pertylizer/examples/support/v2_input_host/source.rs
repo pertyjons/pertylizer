@@ -1,6 +1,7 @@
 //! Concrete nonblocking producer custody; the merger resolves every popped observation.
 use super::*;
 use synth_engine_v2::host::input::{InputTick, SimulatedInputClock};
+use synth_engine_v2::recording::notes::Midi1Event;
 
 #[path = "../../../../synth_engine_v2/tests/support/source_custody.rs"]
 mod source_custody;
@@ -11,9 +12,9 @@ mod source_queue;
     reason = "preserve the example host's source type paths"
 )]
 pub use source_custody::{
-    SOURCE_CELLS, SourceAccepted, SourceAttemptId, SourceHandoff, SourceHeadError, SourceInbox,
-    SourceOwnedSendError, SourceProducer, SourceQueueId, SourceQueueStamp, SourceRetiredAttempt,
-    SourceRetryToken, SourceSendError,
+    SOURCE_BACKING_CELLS, SOURCE_CELLS, SourceAccepted, SourceAttemptId, SourceHandoff,
+    SourceHeadError, SourceInbox, SourceOwnedSendError, SourceProducer, SourceQueueId,
+    SourceQueueStamp, SourceRetiredAttempt, SourceRetryToken, SourceSendError,
 };
 
 pub const SOURCE_OUTSTANDING: synth_engine_v2::quantities::EventCount =

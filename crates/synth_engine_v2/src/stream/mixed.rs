@@ -9,7 +9,16 @@
 
 use std::{marker::PhantomData, rc::Rc, sync::Arc};
 
-#[cfg(all(test, feature = "simulated-ingress"))]
+#[cfg(any(
+    all(test, feature = "simulated-ingress"),
+    feature = "mixed-transfer-rehearsal"
+))]
+use std::sync::atomic::AtomicU64;
+
+#[cfg(any(
+    all(test, feature = "simulated-ingress"),
+    feature = "mixed-transfer-rehearsal"
+))]
 use std::{
     collections::VecDeque,
     sync::atomic::{AtomicBool, Ordering},
@@ -24,17 +33,24 @@ use ringbuf::{
 use thiserror::Error;
 
 #[cfg(all(test, feature = "simulated-ingress"))]
-use crate::ingress::{IngressCounters, IngressPrepareError, IngressRefused, PerformanceIngress};
+use crate::ingress::IngressCounters;
+#[cfg(any(
+    all(test, feature = "simulated-ingress"),
+    feature = "mixed-transfer-rehearsal"
+))]
+use crate::ingress::{IngressPrepareError, IngressRefused, PerformanceIngress};
 use crate::{
+    admit::AdmissionError,
     diagnostics::CompileError,
     host::mixed_targets::{MixedInstancePartition, MixedTargetAdmission},
     identity::{
         CompiledRangeMinter, IdentityError, IdentityTable, LiveRangeMinter, NoteIdentity,
         ProducerId, Range, Resolution, TableId,
     },
+    looping::LoopPassId,
     plan::{CompiledPlan, NoteSlot, PlanId},
     profile::HostProfile,
-    publish::PublicationArbiter,
+    publish::{ProducerClass, PublicationArbiter},
     quantities::{
         Cents, EventCount, HeldNoteCount, KeyIdentity, NoteVelocity, ParameterValue, QuantumCount,
         VoiceCount,
@@ -51,22 +67,92 @@ use crate::{
         FrameCount, Located, PlanPosition, QuantumOffset, SampleTime, StreamAnchor, StreamEpoch,
         TimeSource, issue_epoch,
     },
-    transport::ActivationSequence,
+    transport::{ActivationSequence, LoopInterval},
 };
 
 mod hot;
-#[cfg(all(test, feature = "simulated-ingress"))]
+#[cfg(any(
+    all(test, feature = "simulated-ingress"),
+    feature = "mixed-transfer-rehearsal"
+))]
 mod occurrence;
+// Stage 7's whole-owner reset. Each owner carries its own endpoint: the private
+// rehearsal's own rings, or, through the transfer rehearsal's public wrapper, the audio
+// port each host-armed owner's own arm returned.
+#[cfg(any(
+    all(test, feature = "simulated-ingress"),
+    feature = "mixed-transfer-rehearsal"
+))]
+mod reset;
+#[cfg(feature = "mixed-transfer-rehearsal")]
+mod transfer;
+
+#[cfg(any(
+    all(test, feature = "simulated-ingress"),
+    feature = "mixed-transfer-rehearsal"
+))]
+use hot::MixedAudioQueues;
+#[cfg(feature = "mixed-transfer-rehearsal")]
+pub use reset::{
+    MixedBridgeResetAudio, MixedBridgeResetEnd, MixedBridgeResetForeignPort,
+    MixedBridgeResetLiveRefusal, MixedBridgeResetOwner, MixedBridgeResetReceipt,
+    MixedBridgeResetRefusal, MixedBridgeResetRefused, MixedBridgeResetRenderError,
+    MixedBridgeResetRetired, MixedBridgeResetState, MixedBridgeStopAccepted,
+    MixedBridgeStopRefusal,
+};
+#[cfg(feature = "mixed-transfer-rehearsal")]
+pub use transfer::{
+    MixedActivationAdopted, MixedActivationCollectError, MixedActivationCollectRefusal,
+    MixedActivationKind, MixedActivationLoop, MixedActivationOffer, MixedActivationOutcome,
+    MixedActivationPrepareError, MixedActivationReceipt, MixedActivationRefusal,
+    MixedActivationRetired, MixedActivationSlot, MixedBridgeAbandonRefusal, MixedBridgeArmed,
+    MixedBridgeCommitRefusal, MixedBridgeControl, MixedBridgeError, MixedBridgeFault,
+    MixedBridgeJoinError, MixedBridgeJoinParts, MixedBridgeJoinRefusal, MixedBridgeLifted,
+    MixedBridgeOutcome, MixedBridgePanicEnd, MixedBridgePanicRefusal, MixedBridgePanicked,
+    MixedBridgeReport, MixedBridgeResetPhase, MixedBridgeRetiredControl,
+    MixedBridgeRetiredJoinRefusal, MixedBridgeRetiredTeardown, MixedBridgeSealRefusal,
+    MixedBridgeSealRefused, MixedBridgeTeardown, MixedBridgeWait, MixedCommandPlace,
+    MixedKeyUpHandle, MixedKeyUpRetired, MixedOnsetRefusal, MixedPublication,
+    MixedPublicationFault, MixedPublicationGate, MixedPublicationPublishError,
+    MixedPublicationReceiver, MixedPublicationRefusal, MixedPublicationSender, MixedPumpStep,
+    MixedRetiredHandle, MixedSourceBend, MixedSourceCustody, MixedSourceFault, MixedSourceHandoff,
+    MixedSourceKeyUp, MixedSourceNoteOn, MixedSourcePacketId, MixedSourcePacketIdError, MixedSplit,
+    MixedStaged, MixedTransferArmError, MixedTransferArmRefusal, MixedTransferArmed,
+    MixedTransferAudio, MixedTransferAudioPort, MixedTransferBendApplied, MixedTransferBendRefused,
+    MixedTransferCollectError, MixedTransferCommand, MixedTransferCommandId, MixedTransferConsumer,
+    MixedTransferControl, MixedTransferControlPort, MixedTransferCustody, MixedTransferFault,
+    MixedTransferFence, MixedTransferHandleState, MixedTransferHeldCount, MixedTransferJoinError,
+    MixedTransferJoinParts, MixedTransferJoinRefusal, MixedTransferLifted, MixedTransferOutcome,
+    MixedTransferOwnerRefusal, MixedTransferPanicEnd, MixedTransferPanicRefused,
+    MixedTransferPanicState, MixedTransferPanicked, MixedTransferPedalDown,
+    MixedTransferPedalRefused, MixedTransferPlaces, MixedTransferProducer,
+    MixedTransferPublicationUsage, MixedTransferQueue, MixedTransferRefusal,
+    MixedTransferRenderError, MixedTransferReport, MixedTransferResourceUsage, MixedTransferResult,
+    MixedTransferScopeCount, MixedTransferSnapshotFault, MixedTransferSources,
+    MixedTransferSourcesError, MixedTransferStreamFault, MixedTransferSubmitError,
+    MixedTransferTeardown,
+};
+#[cfg(feature = "mixed-transfer-rehearsal")]
+use transfer::{MixedResetSeal, MixedTransferBinding};
 #[allow(dead_code, reason = "the production mixed host has not been activated")]
 mod source_set;
 
 #[cfg(all(test, feature = "simulated-ingress"))]
+use occurrence::MixedOccurrenceState;
+#[cfg(any(
+    all(test, feature = "simulated-ingress"),
+    feature = "mixed-transfer-rehearsal"
+))]
+use occurrence::MixedPanicSubmitError;
+#[cfg(any(
+    all(test, feature = "simulated-ingress"),
+    feature = "mixed-transfer-rehearsal"
+))]
 use occurrence::{
     LiveOccurrenceId, MixedBendCreditReturn, MixedBendResult, MixedBendSubmitError,
-    MixedLiftResult, MixedLiveScope, MixedOccurrenceLedger, MixedOccurrenceState,
-    MixedOccurrenceTable, MixedOnsetSubmitError, MixedPanicResult, MixedPanicSubmitError,
-    MixedPedalDown, MixedPedalEdge, MixedPedalLedger, MixedPedalRefused, MixedPedalSubmitError,
-    MixedReleaseSubmitError, MixedRetired,
+    MixedLiftResult, MixedLiveScope, MixedOccurrenceLedger, MixedOccurrenceTable,
+    MixedOnsetSubmitError, MixedPanicResult, MixedPedalDown, MixedPedalEdge, MixedPedalLedger,
+    MixedPedalRefused, MixedPedalSubmitError, MixedReleaseSubmitError, MixedRetired,
 };
 
 /// Why a bound mixed stream could not be prepared.
@@ -183,6 +269,355 @@ pub(crate) enum MixedCapsulePrepareError {
     SequenceExhausted,
 }
 
+/// Why an armed control refused to prepare a later Start or seek candidate.
+/// Every refusal leaves the control, and both audio-owned minters, unchanged.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
+#[allow(dead_code)] // Only private tests and the transfer rehearsal prepare a later candidate.
+pub(crate) enum MixedSubsequentPrepareError {
+    /// The caller's superseded sequence is not the one this control holds in force.
+    #[error("the candidate supersedes {supersedes}, but {in_force} is in force")]
+    Superseded {
+        supersedes: ActivationSequence,
+        in_force: ActivationSequence,
+    },
+    /// Defensive check: the in-force sequence has no successor to issue.
+    #[error("mixed activation sequence has no successor")]
+    SequenceExhausted,
+    /// The request would share or precede the boundary of the transition in force,
+    /// and one boundary carries at most one transport change.
+    #[error("candidate at {requested} does not follow the in-force boundary {boundary}")]
+    NotAfterInForce {
+        requested: SampleTime,
+        boundary: SampleTime,
+    },
+    /// A loop is entered inside `[start, end]`; entering exactly at the end starts the
+    /// first pass at the start, as the exclusive loop owner does. Other positions are
+    /// refused, never clamped.
+    #[error("loop entry {position} lies outside [{start}, {end}]")]
+    LoopEntry {
+        position: PlanPosition,
+        start: PlanPosition,
+        end: PlanPosition,
+    },
+    #[error(transparent)]
+    History(#[from] MixedHistoryPrepareError),
+    #[error(transparent)]
+    Suffix(#[from] MixedSuffixPrepareError),
+    #[error(transparent)]
+    Stamp(#[from] MixedStampPrepareError),
+}
+
+/// Why an armed control refused to seal a later candidate as an offer.
+/// Every refusal returns the candidate unchanged and leaves the control unchanged.
+#[derive(Debug, Clone, Copy, PartialEq, Error)]
+#[allow(dead_code)] // Only private tests and the transfer rehearsal seal an offer.
+pub(crate) enum MixedOfferPrepareError {
+    /// The candidate belongs to another bound plan, epoch or table.
+    #[error("mixed offer candidate belongs to another prepared owner")]
+    ForeignCandidate,
+    /// The candidate does not supersede the sequence this control holds in force.
+    #[error("the candidate supersedes {supersedes}, but {in_force} is in force")]
+    Superseded {
+        supersedes: ActivationSequence,
+        in_force: ActivationSequence,
+    },
+    /// The offer would share or precede the boundary of the transition in force.
+    #[error("offer boundary {effective} does not follow the in-force boundary {boundary}")]
+    NotAfterInForce {
+        effective: SampleTime,
+        boundary: SampleTime,
+    },
+    /// The candidate cannot be displaced to the requested boundary.
+    #[error(transparent)]
+    Timing(#[from] MixedEffectiveTimeError),
+    /// The candidate does not fit the arm profile at that boundary's displacement.
+    #[error(transparent)]
+    Admission(#[from] MixedOneShotAdmissionError),
+    /// Defensive check: the superseded sequence has no successor.
+    #[error(transparent)]
+    Capsule(#[from] MixedCapsulePrepareError),
+    /// The loop's entry junction or periodic steady state does not fit the arm profile.
+    #[error("mixed loop {class:?} admission failed: {source}")]
+    LoopAdmission {
+        class: ProducerClass,
+        source: AdmissionError,
+    },
+    /// The loop's template, entry junction or first wrap cannot be represented, or its
+    /// template does not match the candidate it was prepared with.
+    #[error("mixed loop shape is not representable")]
+    LoopShape,
+}
+
+/// Why the audio half refused a later candidate, at its offer or when its boundary
+/// opened. A refusal changes no program, minter, registry row or slot; the owned
+/// candidate goes back to the caller, and the renderer counts the refusal.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
+#[allow(dead_code)] // Only private tests and the transfer rehearsal offer a later candidate.
+pub(crate) enum MixedOfferRefused {
+    #[error("mixed audio owner is terminally faulted")]
+    Faulted,
+    #[error("mixed offer belongs to another plan, epoch or table")]
+    ForeignCandidate,
+    /// The single slot already holds a candidate waiting for its boundary.
+    #[error("a later mixed candidate is already pending")]
+    AlreadyPending,
+    /// The single slot still holds a retired candidate control has not taken.
+    #[error("a retired mixed candidate has not been collected")]
+    RetiredUncollected,
+    /// The candidate does not supersede the sequence in force at its boundary.
+    #[error("the offer supersedes {supersedes}, but {in_force} is in force at its boundary")]
+    Superseded {
+        supersedes: ActivationSequence,
+        in_force: ActivationSequence,
+    },
+    /// The offer would share or precede the boundary of the transition in force or
+    /// still pending from arm.
+    #[error("offer boundary {effective} does not follow the in-force boundary {boundary}")]
+    NotAfterInForce {
+        effective: SampleTime,
+        boundary: SampleTime,
+    },
+    /// The offer's boundary quantum has already opened.
+    #[error("offer boundary {effective} precedes the render clock {clock}")]
+    BoundaryPassed {
+        effective: SampleTime,
+        clock: SampleTime,
+    },
+    /// A compiled Stop is pending at or before the offer's boundary. At the same
+    /// boundary the two would be two transport changes; at a later one the Stop would
+    /// cancel the candidate before it could adopt.
+    #[error("offer boundary {effective} does not precede the pending Stop at {stop}")]
+    StopPending {
+        stop: SampleTime,
+        effective: SampleTime,
+    },
+    /// A Start needs a stopped compiled program at its boundary; a running one takes
+    /// a seek instead.
+    #[error("a Start needs a stopped compiled program")]
+    StartWhileRunning,
+}
+
+/// What an adopted later candidate does to the compiled transport at its boundary.
+/// Both kinds adopt the same way: boundary release, program and anchor swap, then
+/// scoped restoration, all compiled-scoped.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(dead_code)] // Only private tests and the transfer rehearsal offer a later candidate.
+pub(crate) enum MixedOfferKind {
+    /// Keep the transport as it stands at the boundary. A running program publishes
+    /// the new list; a stopped one publishes only its scoped restoration.
+    Seek,
+    /// Resume a stopped program: the new list publishes in full from the boundary.
+    Start,
+}
+
+/// Whether this private arm exposes a Panic command and therefore needs one
+/// compiled cut's release-share reservation per quantum.
+#[cfg(any(
+    all(test, feature = "simulated-ingress"),
+    feature = "mixed-transfer-rehearsal"
+))]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum MixedPanicCapability {
+    Available,
+    Absent,
+}
+
+/// One sealed later candidate on its way to the audio half's single offer slot.
+///
+/// Only [`MixedOneShotControl::seal_offer`] builds one, after admitting it at exactly
+/// its boundary's displacement, so audio never holds an unadmitted candidate. Its
+/// tokens name no identity, so dropping it off-thread changes no minter.
+#[derive(Debug)]
+#[must_use]
+#[allow(dead_code)] // Only private tests and the transfer rehearsal offer a later candidate.
+pub(crate) struct MixedCandidateOffer(Box<MixedOfferCell>);
+
+/// The same allocation coming back from the slot, with the bounded receipt that says
+/// whether it adopted. After an adoption its event list is the retired one.
+#[derive(Debug)]
+#[must_use]
+#[allow(dead_code)] // Only private tests and the transfer rehearsal collect an offer.
+pub(crate) struct MixedRetiredOffer {
+    cell: Box<MixedOfferCell>,
+    receipt: MixedOfferReceipt,
+}
+
+/// The boxed custody of one later candidate. Audio swaps its event list at adoption
+/// and releases the old compiled occurrences into its own ended-note storage, so the
+/// boundary allocates nothing and overwrites no earlier record.
+#[derive(Debug)]
+struct MixedOfferCell {
+    candidate: MixedAudioCandidate,
+    timing: MixedEffectiveTiming,
+    ended: Vec<Option<crate::identity::EndedNote>>,
+    /// The prefix of `ended` the renderer's boundary release filled, recorded before
+    /// custody ends so a fault after the release cannot hide it from teardown.
+    released: HeldNoteCount,
+    /// Whether the clock had passed the requested time when audio accepted the offer.
+    late: bool,
+    kind: MixedOfferKind,
+    /// The loop the candidate enters, if any. Adoption swaps it with the program in
+    /// force, so after an adoption this holds the retired loop, dropped off-thread.
+    loop_program: Option<Box<MixedLoopProgram>>,
+}
+
+/// What the audio half reports for one offered candidate. Fixed-size and `Copy`, so
+/// the boundary that writes it allocates nothing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[must_use]
+#[allow(dead_code)] // Only private tests and the transfer rehearsal read a receipt.
+pub(crate) struct MixedOfferReceipt {
+    pub(crate) supersedes: ActivationSequence,
+    pub(crate) sequence: ActivationSequence,
+    pub(crate) late: bool,
+    pub(crate) kind: MixedOfferKind,
+    pub(crate) outcome: MixedOfferOutcome,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(dead_code)] // Only private tests and the transfer rehearsal read a receipt.
+pub(crate) enum MixedOfferOutcome {
+    Adopted(MixedOfferAdopted),
+    /// Refused when its boundary opened; the program in force did not change.
+    Refused(MixedOfferRefused),
+    /// A compiled Stop applied at `stop`, at or before the candidate's boundary, took
+    /// it out of the slot unadopted. The program in force did not change.
+    Cancelled {
+        stop: SampleTime,
+    },
+}
+
+/// One confirmed later adoption.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(dead_code)] // Only private tests and the transfer rehearsal read a receipt.
+pub(crate) struct MixedOfferAdopted {
+    pub(crate) effective: SampleTime,
+    /// The mapping now in force.
+    pub(crate) anchor: StreamAnchor,
+    /// The mapping the retired list belonged to.
+    pub(crate) retired_anchor: StreamAnchor,
+    /// The first retired event that never published.
+    pub(crate) retired_unconsumed_from: usize,
+    pub(crate) retired_event_count: usize,
+    /// Sounding compiled occurrences the boundary release ended.
+    pub(crate) released: HeldNoteCount,
+    /// Whether the adopted program is stopped, so it published only its restoration.
+    pub(crate) stopped: bool,
+    /// The loop the adopted program plays, if any.
+    pub(crate) loop_interval: Option<LoopInterval>,
+    /// The pass the retired program was in, if it was a loop. Once that loop had
+    /// wrapped, `retired_unconsumed_from` is the entry list's length: the entry list
+    /// was spent, and the rest of the pass it was in never published.
+    pub(crate) retired_pass: Option<LoopPassId>,
+}
+
+/// One loop's repeating pass, prepared off-thread with its entry candidate.
+///
+/// The template is the bound stream's `[start, end)` reconstructed from `start` and
+/// stamped from engine time zero: scoped restoration first, then the pass's tokenized
+/// events, each before the loop's length. Every pass starts from an empty token table,
+/// because a wrap ends or frees every token, so the template's own pairing is the
+/// per-pass polyphony check. Notes still open at `end` are ended by the wrap with
+/// Session-charged `Off`s, as ADR-0065's exclusive loop does.
+#[derive(Debug)]
+pub(crate) struct MixedLoopProgram {
+    interval: LoopInterval,
+    events: Vec<MixedCompiledEvent>,
+    restoration_count: EventCount,
+    /// Tokens the template leaves open at `end`: the `Off`s each later wrap charges.
+    end_open: HeldNoteCount,
+    /// Crossing releases and expressions the template omits, per pass.
+    omitted_releases: EventCount,
+    omitted_expressions: EventCount,
+}
+
+/// A later candidate that enters a loop: an ordinary entry list cut at the loop's end,
+/// plus its repeating template. Only [`MixedOneShotControl::prepare_loop`] builds one,
+/// and only [`MixedOneShotControl::seal_loop_offer`] admits it, so the armed first
+/// transition can never carry a loop.
+#[derive(Debug)]
+#[must_use]
+#[allow(dead_code)] // Only private tests and the transfer rehearsal enter a loop.
+pub(crate) struct MixedLoopCandidate {
+    entry: MixedStampedCandidate,
+    program: Box<MixedLoopProgram>,
+}
+
+impl MixedLoopCandidate {
+    /// Crossing releases and expressions each repeating pass omits, as counted when
+    /// its template was reconstructed from the loop start.
+    #[allow(dead_code)] // Only private tests read the template's omissions so far.
+    pub(crate) const fn pass_omissions(&self) -> (EventCount, EventCount) {
+        (
+            self.program.omitted_releases,
+            self.program.omitted_expressions,
+        )
+    }
+}
+
+/// Where the loop in force stands on the audio half. `Copy`, so a wrap writes no heap.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct MixedLoopCursor {
+    pass: LoopPassId,
+    /// The sample at which the current pass ends and the next starts.
+    next_wrap: SampleTime,
+    /// Whether the list cursor reads the repeating template rather than the entry list.
+    repeating: bool,
+    /// The engine time the current repeating pass's template is shifted to.
+    pass_shift: FrameCount,
+}
+
+/// The single offer slot, used in both directions: a candidate waits in it for its
+/// boundary, and the same allocation waits in it, retired, until control takes it.
+#[derive(Debug, Default)]
+enum MixedOfferSlot {
+    #[default]
+    Empty,
+    Pending(MixedCandidateOffer),
+    Retired(MixedRetiredOffer),
+}
+
+/// What the offer slot holds, for a report.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(dead_code)] // Only private tests and the transfer rehearsal read the slot.
+pub(crate) enum MixedOfferSlotState {
+    Empty,
+    Pending {
+        supersedes: ActivationSequence,
+        effective: SampleTime,
+        kind: MixedOfferKind,
+    },
+    Retired(MixedOfferReceipt),
+}
+
+/// The offer slot's contents, moved out whole when a joined pair is collected, so no
+/// candidate and no boundary record is dropped without its owner seeing it.
+#[derive(Debug)]
+#[must_use]
+#[allow(dead_code)] // Only private tests collect a joined pair with an offer.
+pub(crate) enum MixedDrainedOffer {
+    Empty,
+    /// A candidate that never adopted. It minted nothing, so withdrawing it is free.
+    Withdrawn(MixedCandidateOffer),
+    /// A retired candidate and its receipt that control had not taken. An adoption is
+    /// already reflected in the sequence and anchor collection hands to control.
+    Retired(MixedRetiredOffer),
+}
+
+/// Why control refused to collect a retired offer. The offer comes back unchanged.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
+#[allow(dead_code)] // Only private tests and the transfer rehearsal collect an offer.
+pub(crate) enum MixedOfferCollectError {
+    #[error("retired mixed offer belongs to another prepared owner")]
+    ForeignCandidate,
+    /// Defensive check: an adoption must supersede what this control holds in force.
+    #[error("the adoption superseded {supersedes}, but {in_force} is in force")]
+    Superseded {
+        supersedes: ActivationSequence,
+        in_force: ActivationSequence,
+    },
+}
+
 /// Why the private one-shot audio owner could not be armed off-thread.
 #[derive(Debug, Clone, Copy, PartialEq, Error)]
 pub(crate) enum MixedOneShotArmError {
@@ -215,12 +650,18 @@ pub(crate) enum MixedOneShotArmError {
     #[error(transparent)]
     Admission(#[from] MixedOneShotAdmissionError),
     /// The private ingress queue could not be bound to this owner.
-    #[cfg(all(test, feature = "simulated-ingress"))]
+    #[cfg(any(
+        all(test, feature = "simulated-ingress"),
+        feature = "mixed-transfer-rehearsal"
+    ))]
     #[error(transparent)]
     Ingress(#[from] IngressPrepareError),
     /// The ingress queue cannot withhold a bend-credit budget for every live hold and
     /// still realize every declared hold with its release plus the final onset's entry.
-    #[cfg(all(test, feature = "simulated-ingress"))]
+    #[cfg(any(
+        all(test, feature = "simulated-ingress"),
+        feature = "mixed-transfer-rehearsal"
+    ))]
     #[error(
         "mixed ingress depth {capacity} cannot serve {holds} live holds; need {required}",
         capacity = .capacity.get(),
@@ -235,9 +676,41 @@ pub(crate) enum MixedOneShotArmError {
     /// A sustain lift ends its scope's sustained occurrences, and Panic every live
     /// occurrence, as one release group, so the live hold entitlement may not exceed
     /// one group's members.
-    #[cfg(all(test, feature = "simulated-ingress"))]
+    #[cfg(any(
+        all(test, feature = "simulated-ingress"),
+        feature = "mixed-transfer-rehearsal"
+    ))]
     #[error("{holds} live holds exceed the {group}-member sustain lift group")]
     SustainGroupCapacity { holds: EventCount, group: usize },
+    /// Defensive check: the prepared ingress store has no place, or its depth plus the
+    /// live hold entitlement cannot be represented as an occurrence-table width.
+    #[cfg(any(
+        all(test, feature = "simulated-ingress"),
+        feature = "mixed-transfer-rehearsal"
+    ))]
+    #[error("the prepared mixed ingress depth cannot size the occurrence tables")]
+    IngressWidth,
+    /// Panic ends every open compiled occurrence in `ceil(span / 8)` Release-charged
+    /// groups beside a full live release backlog in its quantum, so the release share
+    /// must cover the ingress depth plus that many groups.
+    #[cfg(any(
+        all(test, feature = "simulated-ingress"),
+        feature = "mixed-transfer-rehearsal"
+    ))]
+    #[error(
+        "release share {share} cannot cover ingress depth {capacity} plus a compiled Panic \
+         cut of {span} occurrences; need {required}",
+        share = .share.get(),
+        capacity = .capacity.get(),
+        span = .compiled_span.get(),
+        required = .required.get()
+    )]
+    CompiledPanicReleaseShare {
+        share: EventCount,
+        capacity: EventCount,
+        compiled_span: HeldNoteCount,
+        required: EventCount,
+    },
 }
 
 /// Off-thread admission for the closed private one-shot schedule.
@@ -285,15 +758,38 @@ pub(crate) enum MixedOneShotRenderError {
     #[cfg(all(test, feature = "simulated-ingress"))]
     #[error("private mixed ingress journal cannot hold the registered queue")]
     IngressJournal,
-    #[cfg(all(test, feature = "simulated-ingress"))]
+    #[cfg(any(
+        all(test, feature = "simulated-ingress"),
+        feature = "mixed-transfer-rehearsal"
+    ))]
     #[error("private mixed ingress command identity is out of order")]
     IngressCommandOrder,
-    #[cfg(all(test, feature = "simulated-ingress"))]
+    #[cfg(any(
+        all(test, feature = "simulated-ingress"),
+        feature = "mixed-transfer-rehearsal"
+    ))]
     #[error("private mixed ingress transfer halted by its peer")]
     IngressTransferHalt,
-    #[cfg(all(test, feature = "simulated-ingress"))]
+    #[cfg(any(
+        all(test, feature = "simulated-ingress"),
+        feature = "mixed-transfer-rehearsal"
+    ))]
     #[error("private mixed ingress result queue refused a prepared packet")]
     IngressResultPush,
+    #[error("mixed transfer endpoint belongs to another transfer")]
+    IngressForeignEndpoint,
+    #[cfg(any(
+        all(test, feature = "simulated-ingress"),
+        feature = "mixed-transfer-rehearsal"
+    ))]
+    #[error("mixed transfer command is stamped before the last served command")]
+    IngressBackwardTime,
+    #[cfg(any(
+        all(test, feature = "simulated-ingress"),
+        feature = "mixed-transfer-rehearsal"
+    ))]
+    #[error("mixed transfer command lies beyond the forward event horizon")]
+    IngressBeyondHorizon,
     #[cfg(all(test, feature = "simulated-ingress"))]
     #[error("injected private mixed fault after ingress charge")]
     InjectedAfterIngress,
@@ -304,8 +800,6 @@ pub(crate) enum MixedOneShotRenderError {
     },
     #[error(transparent)]
     Displacement(#[from] MixedEffectiveTimeError),
-    #[error("mixed one-shot candidate event {event_index} disappeared during a checked read")]
-    MissingCandidateEvent { event_index: usize },
     #[error("mixed one-shot validated output window cannot be borrowed")]
     InternalOutputWindow,
     #[error("mixed one-shot restoration count cannot be indexed")]
@@ -322,6 +816,44 @@ pub(crate) enum MixedOneShotRenderError {
     /// The boundary release and the audio-owned compiled minter disagree.
     #[error("{live} compiled occurrences remain minted after the boundary release")]
     CompiledCustody { live: HeldNoteCount },
+    /// A scheduled Stop reached its boundary before the one-shot activation adopted.
+    #[error("mixed compiled Stop reached its boundary before the activation adopted")]
+    StopBeforeAdoption,
+    /// A loop wrap found no pass identity left (ADR-0065's terminal exhaustion).
+    #[error("mixed loop pass identities are exhausted")]
+    LoopPassExhausted,
+    /// A loop's next wrap or plan position cannot be represented.
+    #[error("mixed loop timeline cannot be represented")]
+    LoopTimeline,
+    /// Defensive check: a pass event would publish at or after the wrap that ends it.
+    #[error("mixed loop event at {event} does not precede its wrap at {wrap}")]
+    LoopEventPastWrap { event: SampleTime, wrap: SampleTime },
+    /// Defensive check: a repeating cursor without the loop program it reads.
+    #[error("mixed loop cursor has no loop program")]
+    LoopProgram,
+    /// A Panic's compiled cut would overrun the release share arm proved sufficient.
+    #[cfg(any(
+        all(test, feature = "simulated-ingress"),
+        feature = "mixed-transfer-rehearsal"
+    ))]
+    #[error(
+        "compiled Panic cut needs {groups} release charges after {spent} of share {share}",
+        groups = .groups.get(),
+        spent = .spent.get(),
+        share = .share.get()
+    )]
+    CompiledPanicShare {
+        spent: EventCount,
+        groups: EventCount,
+        share: EventCount,
+    },
+    /// Defensive check: the compiled cut's members could not form one release group.
+    #[cfg(any(
+        all(test, feature = "simulated-ingress"),
+        feature = "mixed-transfer-rehearsal"
+    ))]
+    #[error("compiled Panic cut members do not form one release group")]
+    CompiledPanicGroup,
     #[error(transparent)]
     Boundary(#[from] crate::render::MixedBoundaryReleaseError),
     #[error(transparent)]
@@ -342,13 +874,100 @@ pub(crate) struct MixedOneShotRenderReport {
     pub(crate) adopted: bool,
     pub(crate) faulted: bool,
     pub(crate) fault: Option<MixedOneShotRenderError>,
-    pub(crate) release_charged: bool,
+    /// Boundary releases charged, one Session operation per adoption, armed or later.
+    pub(crate) releases_charged: EventCount,
+    /// Compiled occurrences the armed adoption's boundary release ended. A later
+    /// adoption reports its own in its receipt.
     pub(crate) released_compiled: HeldNoteCount,
     pub(crate) restoration_charged: EventCount,
     pub(crate) suffix_charged: EventCount,
     pub(crate) completed_quanta: QuantumCount,
     /// Whether the quantum that selected the compiled release completed rendering.
     pub(crate) boundary_quantum_completed: bool,
+    pub(crate) transport: MixedCompiledTransport,
+    /// A scheduled Stop that has not applied yet.
+    pub(crate) stop_pending: Option<SampleTime>,
+    /// Applied Stops whose release reached its Session charge, one per Stop that ended
+    /// a running program. A Stop applied while stopped charges nothing.
+    pub(crate) stops_charged: EventCount,
+    /// What the single later-candidate slot holds.
+    pub(crate) offer: MixedOfferSlotState,
+    /// Compiled occurrences every applied Panic ended at its execution sample.
+    pub(crate) compiled_panic_ended: HeldNoteCount,
+    /// Release-charged groups those compiled cuts published.
+    pub(crate) compiled_panic_groups: EventCount,
+    /// Compiled tokens a Panic ended whose own `Off` has not published yet.
+    pub(crate) compiled_panic_tombstones: HeldNoteCount,
+    /// Compiled `Off` edges a Panic tombstone consumed instead of publishing, including
+    /// the `Off` a loop wrap owes a token a Panic ended before the wrap.
+    pub(crate) compiled_released_after_panic: EventCount,
+    /// Compiled expression and bend edges a Panic tombstone consumed.
+    pub(crate) compiled_controls_after_panic: EventCount,
+    /// The nominal stamp of a Panic audio holds unserved until its execution quantum
+    /// opens. Nothing of it has applied.
+    pub(crate) panic_parked: Option<SampleTime>,
+    /// The loop of the program in force, if any; it wraps only while running.
+    pub(crate) loop_interval: Option<LoopInterval>,
+    /// The pass that loop is in.
+    pub(crate) loop_pass: Option<LoopPassId>,
+    /// Applied wraps, cumulative over every loop this owner played.
+    pub(crate) loop_wraps: EventCount,
+    /// Open compiled occurrences those wraps ended with Session-charged `Off`s.
+    pub(crate) loop_wrap_releases: HeldNoteCount,
+}
+
+/// Where the private owner's compiled program stands, in force. A scheduled Stop is
+/// separate state until its boundary applies it. Live notes, rows and release tails
+/// are outside this state; no transport change ends them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum MixedCompiledTransport {
+    Running,
+    /// Stop applied at `at`, ending `released` sounding compiled occurrences. No
+    /// compiled note edge publishes until a Start adopts; a seek while stopped
+    /// publishes only its scoped restoration.
+    ///
+    /// Every quantum renders held at `position`: the plan position the Stop found at
+    /// `at`, or the latest stopped seek's destination. It is `None` only where the
+    /// anchor did not reach `at`, so the running quantum there had no position either.
+    Stopped {
+        at: SampleTime,
+        released: HeldNoteCount,
+        position: Option<PlanPosition>,
+    },
+}
+
+/// Why the private owner refused to schedule a compiled-scoped Stop. A refusal
+/// changes no state.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
+#[allow(dead_code)] // Only the private mixed callback tests schedule a Stop so far.
+pub(crate) enum MixedStopRefused {
+    #[error("mixed one-shot audio owner is terminally faulted")]
+    Faulted,
+    #[error("compiled Stop at {at} is not a quantum boundary")]
+    NotBoundary { at: SampleTime },
+    #[error("compiled Stop at {at} precedes the first unrendered boundary {clock}")]
+    Past { at: SampleTime, clock: SampleTime },
+    /// Stop at or before the armed activation's boundary. The armed transition has no
+    /// slot to retire into, so a Stop cannot cancel it.
+    #[error("compiled Stop at {at} does not follow the pending activation at {effective}")]
+    ActivationPending {
+        at: SampleTime,
+        effective: SampleTime,
+    },
+    #[error("a compiled Stop at {pending} is already scheduled")]
+    Pending { pending: SampleTime },
+}
+
+/// How a compiled-scoped Stop request was taken.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(dead_code)] // Only the private mixed callback tests schedule a Stop so far.
+pub(crate) enum MixedStopAccepted {
+    /// Applies at its boundary: it cancels a candidate pending at or after that
+    /// boundary, then ends a running program's compiled custody.
+    Scheduled,
+    /// Stop while stopped, with no candidate to cancel and no Start before it, is
+    /// acknowledged and changes nothing.
+    AlreadyStopped,
 }
 
 #[cfg(test)]
@@ -703,7 +1322,8 @@ pub struct MixedSuffixCandidate {
     omitted_expressions: EventCount,
 }
 
-/// One private requested-time mixed schedule for the first activation rehearsal.
+/// One private requested-time mixed schedule: the first activation rehearsal's, or a
+/// later Start or seek prepared by the armed control.
 ///
 /// Its ordered events contain scoped restoration before any equal-time suffix edge.
 /// The restoration batch moves out of the retained suffix history into that list,
@@ -882,57 +1502,137 @@ pub(crate) struct MixedOneShotArmRefusal {
 #[allow(dead_code)] // The one-shot retirement path is the next slice.
 pub(crate) struct MixedOneShotControl {
     control: MixedStreamControl,
-    #[cfg(all(test, feature = "simulated-ingress"))]
+    /// The sequence the armed transition puts in force at its boundary, until a later
+    /// adoption's receipt is collected; every later candidate must supersede it. For the
+    /// armed transition this does not wait for collection: under S1 collection promotes
+    /// no minter state, and one boundary takes one transport change, so a later
+    /// candidate can only follow the armed adoption. A later candidate advances it only
+    /// on a receipt confirming adoption. Audio's own in-force sequence stays the
+    /// authority at any offer.
+    in_force: ActivationSequence,
+    /// The quantum boundary of the transition `in_force` names: fixed at arm, then
+    /// moved by each confirmed later adoption.
+    in_force_effective: SampleTime,
+    /// The profile the audio arbiter was prepared from. Every later offer is admitted
+    /// against it, so audio never runs a candidate its arbiter was not proven to fit.
+    profile: HostProfile,
+    #[cfg(any(
+        all(test, feature = "simulated-ingress"),
+        feature = "mixed-transfer-rehearsal"
+    ))]
     ingress_owner: MixedIngressOwner,
     #[cfg(all(test, feature = "simulated-ingress"))]
     ingress_commands: OpaqueQueue<HeapProd<MixedIngressCommand>>,
     #[cfg(all(test, feature = "simulated-ingress"))]
     ingress_results: OpaqueQueue<HeapCons<MixedIngressResult>>,
-    #[cfg(all(test, feature = "simulated-ingress"))]
+    #[cfg(any(
+        all(test, feature = "simulated-ingress"),
+        feature = "mixed-transfer-rehearsal"
+    ))]
     ingress_journal: VecDeque<MixedIngressJournalEntry>,
     /// A minted command returned by a failed physical push. The terminal owner
     /// retains it until joined off-thread teardown.
-    #[cfg(all(test, feature = "simulated-ingress"))]
+    #[cfg(any(
+        all(test, feature = "simulated-ingress"),
+        feature = "mixed-transfer-rehearsal"
+    ))]
     ingress_command_pending: Option<MixedIngressCommand>,
-    #[cfg(all(test, feature = "simulated-ingress"))]
+    #[cfg(any(
+        all(test, feature = "simulated-ingress"),
+        feature = "mixed-transfer-rehearsal"
+    ))]
     terminal_identity_fault: Option<MixedIngressIdentityFault>,
-    #[cfg(all(test, feature = "simulated-ingress"))]
+    #[cfg(any(
+        all(test, feature = "simulated-ingress"),
+        feature = "mixed-transfer-rehearsal"
+    ))]
     invalid_ingress_result: Option<MixedIngressResult>,
-    #[cfg(all(test, feature = "simulated-ingress"))]
+    #[cfg(any(
+        all(test, feature = "simulated-ingress"),
+        feature = "mixed-transfer-rehearsal"
+    ))]
     ingress_halt: Arc<AtomicBool>,
-    #[cfg(all(test, feature = "simulated-ingress"))]
+    #[cfg(any(
+        all(test, feature = "simulated-ingress"),
+        feature = "mixed-transfer-rehearsal"
+    ))]
     ingress_capacity: MixedIngressQueueCount,
-    #[cfg(all(test, feature = "simulated-ingress"))]
+    #[cfg(any(
+        all(test, feature = "simulated-ingress"),
+        feature = "mixed-transfer-rehearsal"
+    ))]
     ingress_outstanding: MixedIngressQueueCount,
     /// Ring places reserved for the releases of open handles.
-    #[cfg(all(test, feature = "simulated-ingress"))]
+    #[cfg(any(
+        all(test, feature = "simulated-ingress"),
+        feature = "mixed-transfer-rehearsal"
+    ))]
     release_reserved: MixedIngressQueueCount,
-    #[cfg(all(test, feature = "simulated-ingress"))]
+    #[cfg(any(
+        all(test, feature = "simulated-ingress"),
+        feature = "mixed-transfer-rehearsal"
+    ))]
     last_ingress_id: Option<MixedIngressCommandId>,
-    #[cfg(all(test, feature = "simulated-ingress"))]
+    #[cfg(any(
+        all(test, feature = "simulated-ingress"),
+        feature = "mixed-transfer-rehearsal"
+    ))]
     occurrence_ledger: MixedOccurrenceLedger,
     /// Effective pedal state per scope and the ring places reserved for lifts.
-    #[cfg(all(test, feature = "simulated-ingress"))]
+    #[cfg(any(
+        all(test, feature = "simulated-ingress"),
+        feature = "mixed-transfer-rehearsal"
+    ))]
     pedal_ledger: MixedPedalLedger,
     /// Scopes entitled to audio's bounded bend table. Results track the last
     /// accepted value so a refused latest bend releases a never-bent scope.
-    #[cfg(all(test, feature = "simulated-ingress"))]
+    #[cfg(any(
+        all(test, feature = "simulated-ingress"),
+        feature = "mixed-transfer-rehearsal"
+    ))]
     bend_scopes: Vec<Option<MixedBendScopeCell>>,
     /// Credits one bend reserves: the live hold entitlement `H`, which bounds the
     /// sounding and sustained members audio can find at service.
-    #[cfg(all(test, feature = "simulated-ingress"))]
+    #[cfg(any(
+        all(test, feature = "simulated-ingress"),
+        feature = "mixed-transfer-rehearsal"
+    ))]
     bend_credits_per_bend: MixedIngressQueueCount,
     /// Bend credits held by the merger: the budget `B` less those carried by unserved
     /// commands, held by undrained entries, or returned by audio and not yet taken.
-    #[cfg(all(test, feature = "simulated-ingress"))]
+    #[cfg(any(
+        all(test, feature = "simulated-ingress"),
+        feature = "mixed-transfer-rehearsal"
+    ))]
     bend_credits_free: MixedIngressQueueCount,
     /// Audio's lock-free return of unused and drained bend credits.
-    #[cfg(all(test, feature = "simulated-ingress"))]
+    #[cfg(any(
+        all(test, feature = "simulated-ingress"),
+        feature = "mixed-transfer-rehearsal"
+    ))]
     bend_credit_return: MixedBendCreditReturn,
     /// The Panic holding the protected ring place, until its result is collected. That
     /// place lies outside `ingress_capacity`, so ordinary traffic can never take it.
-    #[cfg(all(test, feature = "simulated-ingress"))]
+    #[cfg(any(
+        all(test, feature = "simulated-ingress"),
+        feature = "mixed-transfer-rehearsal"
+    ))]
     panic_inflight: Option<MixedIngressCommandId>,
+    #[cfg(any(test, feature = "mixed-transfer-rehearsal"))]
+    panic_pending_at: Option<SampleTime>,
+    #[cfg(any(test, feature = "mixed-transfer-rehearsal"))]
+    last_panic_applied_at: Option<SampleTime>,
+    /// The last applied Panic's actual sample. A collected result frees the merger
+    /// cell, but cannot grant another compiled cut in the same quantum.
+    #[cfg(any(test, feature = "mixed-transfer-rehearsal"))]
+    last_panic_executed_at: Option<SampleTime>,
+    /// Audio's most recently opened command-service quantum. A collected Panic
+    /// cannot reopen its protected place until this advances.
+    #[cfg(any(
+        all(test, feature = "simulated-ingress"),
+        feature = "mixed-transfer-rehearsal"
+    ))]
+    panic_current_service_at: Arc<AtomicU64>,
     off_thread: PhantomData<Rc<()>>,
 }
 
@@ -946,12 +1646,76 @@ impl<T> std::fmt::Debug for OpaqueQueue<T> {
     }
 }
 
+/// How one control call reaches its command producer and result consumer: the
+/// private rehearsal's own rings, or a host's lent transfer endpoint. The control
+/// half is passed in so the embedded rings can stay fields of the half itself.
+#[cfg(any(
+    all(test, feature = "simulated-ingress"),
+    feature = "mixed-transfer-rehearsal"
+))]
+trait MixedControlQueues {
+    fn push_command(
+        &mut self,
+        control: &mut MixedOneShotControl,
+        command: MixedIngressCommand,
+    ) -> Result<(), MixedIngressCommand>;
+
+    fn pop_result(&mut self, control: &mut MixedOneShotControl) -> Option<MixedIngressResult>;
+}
+
+/// The private rehearsal's rings, owned by the two halves since arm.
 #[cfg(all(test, feature = "simulated-ingress"))]
+#[derive(Debug)]
+struct EmbeddedQueues;
+
+#[cfg(all(test, feature = "simulated-ingress"))]
+impl MixedControlQueues for EmbeddedQueues {
+    fn push_command(
+        &mut self,
+        control: &mut MixedOneShotControl,
+        command: MixedIngressCommand,
+    ) -> Result<(), MixedIngressCommand> {
+        control.ingress_commands.0.try_push(command)
+    }
+
+    fn pop_result(&mut self, control: &mut MixedOneShotControl) -> Option<MixedIngressResult> {
+        control.ingress_results.0.try_pop()
+    }
+}
+
+#[cfg(all(test, feature = "simulated-ingress"))]
+impl MixedAudioQueues for EmbeddedQueues {
+    const TRANSFER_RULES: bool = false;
+
+    fn bound(&self, _audio: &MixedOneShotAudio) -> bool {
+        true
+    }
+
+    fn pop_command(&mut self, audio: &mut MixedOneShotAudio) -> Option<MixedIngressCommand> {
+        audio.ingress_commands.0.try_pop()
+    }
+
+    fn push_result(
+        &mut self,
+        audio: &mut MixedOneShotAudio,
+        result: MixedIngressResult,
+    ) -> Option<MixedIngressResult> {
+        audio.ingress_results.0.try_push(result).err()
+    }
+}
+
+#[cfg(any(
+    all(test, feature = "simulated-ingress"),
+    feature = "mixed-transfer-rehearsal"
+))]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[must_use]
 struct MixedIngressCommandId(u64);
 
-#[cfg(all(test, feature = "simulated-ingress"))]
+#[cfg(any(
+    all(test, feature = "simulated-ingress"),
+    feature = "mixed-transfer-rehearsal"
+))]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum MixedIngressIdentityFault {
     CommandId,
@@ -959,7 +1723,10 @@ enum MixedIngressIdentityFault {
 }
 
 /// The prepared plan, stream and note table that own one private transfer.
-#[cfg(all(test, feature = "simulated-ingress"))]
+#[cfg(any(
+    all(test, feature = "simulated-ingress"),
+    feature = "mixed-transfer-rehearsal"
+))]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[must_use]
 struct MixedIngressOwner {
@@ -968,7 +1735,10 @@ struct MixedIngressOwner {
     table: TableId,
 }
 
-#[cfg(all(test, feature = "simulated-ingress"))]
+#[cfg(any(
+    all(test, feature = "simulated-ingress"),
+    feature = "mixed-transfer-rehearsal"
+))]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[must_use]
 struct MixedIngressOriginId(u64);
@@ -980,7 +1750,10 @@ const TEST_SCOPE: MixedLiveScope = MixedLiveScope::new(
     synth_core::MidiChannel::CH1,
 );
 
-#[cfg(all(test, feature = "simulated-ingress"))]
+#[cfg(any(
+    all(test, feature = "simulated-ingress"),
+    feature = "mixed-transfer-rehearsal"
+))]
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd)]
 #[must_use]
 struct MixedIngressQueueCount(usize);
@@ -988,12 +1761,18 @@ struct MixedIngressQueueCount(usize);
 /// Prepared bend cells modeled on the private bridge's two MIDI1 sources.
 /// The owner does not itself bind source IDs; ingress depth remains a floor
 /// so direct private callers keep their existing table capacity.
-#[cfg(all(test, feature = "simulated-ingress"))]
+#[cfg(any(
+    all(test, feature = "simulated-ingress"),
+    feature = "mixed-transfer-rehearsal"
+))]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[must_use]
 struct MixedBendScopeCapacity(usize);
 
-#[cfg(all(test, feature = "simulated-ingress"))]
+#[cfg(any(
+    all(test, feature = "simulated-ingress"),
+    feature = "mixed-transfer-rehearsal"
+))]
 impl MixedBendScopeCapacity {
     const TWO_SOURCE_MIDI1_FLOOR: usize = source_set::MixedSourceSet::MAX_SCOPES;
 
@@ -1006,8 +1785,57 @@ impl MixedBendScopeCapacity {
     }
 }
 
+/// The merger's scope-reservation table and audio's bend table, which arm sizes
+/// separately so a rehearsal can prove each covers its source's channel scopes.
+#[cfg(any(
+    all(test, feature = "simulated-ingress"),
+    feature = "mixed-transfer-rehearsal"
+))]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct MixedBendTables {
+    control: MixedBendScopeCapacity,
+    audio: MixedBendScopeCapacity,
+}
+
+#[cfg(any(
+    all(test, feature = "simulated-ingress"),
+    feature = "mixed-transfer-rehearsal"
+))]
+impl MixedBendTables {
+    fn for_capacity(ingress: MixedIngressQueueCount) -> Self {
+        let width = MixedBendScopeCapacity::for_two_source_midi1(ingress);
+        Self {
+            control: width,
+            audio: width,
+        }
+    }
+}
+
+/// Why the audio half refused to serve the command queue. Each one is terminal: it
+/// is published through the shared halt before audio changes any ledger or entry.
+#[cfg(any(
+    all(test, feature = "simulated-ingress"),
+    feature = "mixed-transfer-rehearsal"
+))]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum MixedIngressCommandFault {
+    /// The lent endpoint belongs to another transfer; no queue was touched.
+    ForeignEndpoint,
+    /// The packet names another owner.
+    ForeignCommand,
+    /// The packet's ID is not the successor of the last served one.
+    Sequence,
+    /// The packet's nominal stamp precedes the last served packet's.
+    BackwardTime,
+    /// The packet lies beyond the profile's forward horizon; counted once.
+    BeyondHorizon,
+}
+
 /// One merger reservation for a scope that is bent or has an uncollected bend.
-#[cfg(all(test, feature = "simulated-ingress"))]
+#[cfg(any(
+    all(test, feature = "simulated-ingress"),
+    feature = "mixed-transfer-rehearsal"
+))]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct MixedBendScopeCell {
     scope: MixedLiveScope,
@@ -1015,13 +1843,16 @@ struct MixedBendScopeCell {
     accepted_nonzero: bool,
 }
 
-#[cfg(all(test, feature = "simulated-ingress"))]
+#[cfg(any(
+    all(test, feature = "simulated-ingress"),
+    feature = "mixed-transfer-rehearsal"
+))]
 impl MixedIngressQueueCount {
     const NONE: Self = Self(0);
 
-    fn capacity(value: usize) -> Self {
-        assert!(value > 0, "prepared ingress capacity must be nonzero");
-        Self(value)
+    /// A prepared ring or table width, which must hold at least one place.
+    fn capacity(value: usize) -> Option<Self> {
+        (value > 0).then_some(Self(value))
     }
 
     const fn as_usize(self) -> usize {
@@ -1029,7 +1860,10 @@ impl MixedIngressQueueCount {
     }
 }
 
-#[cfg(all(test, feature = "simulated-ingress"))]
+#[cfg(any(
+    all(test, feature = "simulated-ingress"),
+    feature = "mixed-transfer-rehearsal"
+))]
 #[derive(Clone, Copy, Debug, PartialEq)]
 #[must_use]
 enum MixedIngressRequest {
@@ -1073,10 +1907,13 @@ enum MixedIngressRequest {
     },
 }
 
-#[cfg(all(test, feature = "simulated-ingress"))]
+#[cfg(any(
+    all(test, feature = "simulated-ingress"),
+    feature = "mixed-transfer-rehearsal"
+))]
 #[derive(Debug)]
 #[must_use]
-struct MixedIngressCommand {
+pub(crate) struct MixedIngressCommand {
     owner: MixedIngressOwner,
     id: MixedIngressCommandId,
     request: MixedIngressRequest,
@@ -1086,7 +1923,10 @@ struct MixedIngressCommand {
 }
 
 /// Copyable expectations for one outstanding command, without packet custody.
-#[cfg(all(test, feature = "simulated-ingress"))]
+#[cfg(any(
+    all(test, feature = "simulated-ingress"),
+    feature = "mixed-transfer-rehearsal"
+))]
 #[derive(Clone, Copy, Debug)]
 struct MixedIngressJournalEntry {
     owner: MixedIngressOwner,
@@ -1095,7 +1935,10 @@ struct MixedIngressJournalEntry {
     bend_credits: MixedIngressQueueCount,
 }
 
-#[cfg(all(test, feature = "simulated-ingress"))]
+#[cfg(any(
+    all(test, feature = "simulated-ingress"),
+    feature = "mixed-transfer-rehearsal"
+))]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum MixedIngressOutcome {
     /// The onset's identity, or the refusal its handle's tombstone now carries.
@@ -1120,7 +1963,10 @@ enum MixedIngressOutcome {
 }
 
 /// What the merger did with one pedal edge.
-#[cfg(all(test, feature = "simulated-ingress"))]
+#[cfg(any(
+    all(test, feature = "simulated-ingress"),
+    feature = "mixed-transfer-rehearsal"
+))]
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum MixedPedalSubmitted {
     /// The effective edge was pushed as this command.
@@ -1129,18 +1975,25 @@ enum MixedPedalSubmitted {
     Redundant,
 }
 
-#[cfg(all(test, feature = "simulated-ingress"))]
+#[cfg(any(
+    all(test, feature = "simulated-ingress"),
+    feature = "mixed-transfer-rehearsal"
+))]
 #[derive(Debug, PartialEq)]
 #[must_use]
-struct MixedIngressResult {
+pub(crate) struct MixedIngressResult {
     owner: MixedIngressOwner,
     id: MixedIngressCommandId,
     request: MixedIngressRequest,
     outcome: MixedIngressOutcome,
 }
 
-#[cfg(all(test, feature = "simulated-ingress"))]
+#[cfg(any(
+    all(test, feature = "simulated-ingress"),
+    feature = "mixed-transfer-rehearsal"
+))]
 impl MixedIngressResult {
+    #[cfg(all(test, feature = "simulated-ingress"))]
     fn fields(
         &self,
     ) -> (
@@ -1180,7 +2033,10 @@ impl MixedIngressResult {
     }
 }
 
-#[cfg(all(test, feature = "simulated-ingress"))]
+#[cfg(any(
+    all(test, feature = "simulated-ingress"),
+    feature = "mixed-transfer-rehearsal"
+))]
 #[derive(Clone, Copy, Debug, PartialEq, Error)]
 enum MixedIngressResultCollectError {
     #[error("mixed ingress transfer is halted")]
@@ -1192,13 +2048,22 @@ enum MixedIngressResultCollectError {
     },
 }
 
-#[cfg(all(test, feature = "simulated-ingress"))]
+#[cfg(any(
+    all(test, feature = "simulated-ingress"),
+    feature = "mixed-transfer-rehearsal"
+))]
 #[derive(Debug, Error, PartialEq)]
 enum MixedIngressSubmitError {
     #[error("mixed ingress transfer is halted")]
     Halted(MixedIngressRequest),
     #[error("mixed ingress command or result capacity is full")]
     Full(MixedIngressRequest),
+    #[cfg(any(test, feature = "mixed-transfer-rehearsal"))]
+    #[error("command precedes a queued Panic at {panic_at:?}")]
+    BehindPanic {
+        request: MixedIngressRequest,
+        panic_at: SampleTime,
+    },
     #[error("mixed ingress command identity is exhausted")]
     IdentityExhausted(MixedIngressRequest),
     #[error("mixed ingress command queue refused a minted packet")]
@@ -1210,7 +2075,10 @@ enum MixedIngressSubmitError {
 
 /// A physical push can fail only after minting; logical capacity is checked by
 /// the ordinary submit path before it calls this layer.
-#[cfg(all(test, feature = "simulated-ingress"))]
+#[cfg(any(
+    all(test, feature = "simulated-ingress"),
+    feature = "mixed-transfer-rehearsal"
+))]
 #[derive(Debug)]
 enum MixedIngressPushError {
     Halted(MixedIngressRequest),
@@ -1221,7 +2089,10 @@ enum MixedIngressPushError {
     },
 }
 
-#[cfg(all(test, feature = "simulated-ingress"))]
+#[cfg(any(
+    all(test, feature = "simulated-ingress"),
+    feature = "mixed-transfer-rehearsal"
+))]
 impl MixedOneShotControl {
     fn command_id_exhausted(&self) -> bool {
         self.last_ingress_id == Some(MixedIngressCommandId(u64::MAX))
@@ -1244,21 +2115,29 @@ impl MixedOneShotControl {
 
     /// Push one command carrying no bend credit. Callers other than the typed submits
     /// below forge requests.
+    #[cfg(all(test, feature = "simulated-ingress"))]
     fn submit_ingress(
         &mut self,
         request: MixedIngressRequest,
     ) -> Result<MixedIngressCommandId, MixedIngressSubmitError> {
-        self.submit_ingress_with(request, MixedIngressQueueCount::NONE)
+        self.submit_ingress_with(&mut EmbeddedQueues, request, MixedIngressQueueCount::NONE)
     }
 
     /// Push one command carrying `bend_credits` the caller has already reserved.
-    fn submit_ingress_with(
+    fn submit_ingress_with<Q: MixedControlQueues>(
         &mut self,
+        queues: &mut Q,
         request: MixedIngressRequest,
         bend_credits: MixedIngressQueueCount,
     ) -> Result<MixedIngressCommandId, MixedIngressSubmitError> {
         if self.ingress_halt.load(Ordering::Acquire) {
             return Err(MixedIngressSubmitError::Halted(request));
+        }
+        #[cfg(any(test, feature = "mixed-transfer-rehearsal"))]
+        if let Some(panic_at) = self.panic_pending_at.or(self.last_panic_applied_at)
+            && request.nominal() < panic_at
+        {
+            return Err(MixedIngressSubmitError::BehindPanic { request, panic_at });
         }
         if self.command_id_exhausted() {
             self.terminal_identity_refusal(MixedIngressIdentityFault::CommandId);
@@ -1267,7 +2146,7 @@ impl MixedOneShotControl {
         if self.ingress_room() == 0 {
             return Err(MixedIngressSubmitError::Full(request));
         }
-        match self.push_ingress(request, bend_credits) {
+        match self.push_ingress(queues, request, bend_credits) {
             Ok(id) => {
                 self.ingress_outstanding.0 += 1;
                 Ok(id)
@@ -1286,8 +2165,9 @@ impl MixedOneShotControl {
     }
 
     /// Mint the next command identity and push the command. Room is the caller's check.
-    fn push_ingress(
+    fn push_ingress<Q: MixedControlQueues>(
         &mut self,
+        queues: &mut Q,
         request: MixedIngressRequest,
         bend_credits: MixedIngressQueueCount,
     ) -> Result<MixedIngressCommandId, MixedIngressPushError> {
@@ -1314,7 +2194,7 @@ impl MixedOneShotControl {
             request,
             bend_credits,
         };
-        let pushed = self.ingress_commands.0.try_push(packet);
+        let pushed = queues.push_command(self, packet);
         self.ingress_journal.push_back(journal);
         self.last_ingress_id = Some(id);
         match pushed {
@@ -1359,9 +2239,21 @@ impl MixedOneShotControl {
     /// beyond `ingress_capacity` for it, so a ring full of ordinary commands and
     /// uncollected results never refuses it. While an earlier Panic is uncollected the
     /// place is taken and this one is refused here, before acceptance, rather than
-    /// dropped later.
+    /// dropped later. Of ADR-0078's host-owned transfers only the two-source bridge's
+    /// carries Panic, and its arm requires host queues with the protected place.
+    #[cfg(all(test, feature = "simulated-ingress"))]
     fn submit_panic(
         &mut self,
+        origin: MixedIngressOriginId,
+        at: SampleTime,
+    ) -> Result<(MixedIngressCommandId, MixedIngressRequest), MixedPanicSubmitError> {
+        self.submit_panic_via(&mut EmbeddedQueues, origin, at)
+    }
+
+    /// [`Self::submit_panic`] through the queues `queues` reaches.
+    fn submit_panic_via<Q: MixedControlQueues>(
+        &mut self,
+        queues: &mut Q,
         origin: MixedIngressOriginId,
         at: SampleTime,
     ) -> Result<(MixedIngressCommandId, MixedIngressRequest), MixedPanicSubmitError> {
@@ -1375,12 +2267,28 @@ impl MixedOneShotControl {
         if let Some(pending) = self.panic_inflight {
             return Err(MixedPanicSubmitError::Pending(pending));
         }
+        if let Some(previous) = self.last_panic_applied_at
+            && at < previous
+        {
+            return Err(MixedPanicSubmitError::BehindPanic(previous));
+        }
+        if let Some(previous) = self.last_panic_executed_at {
+            // The audio side publishes its opened quantum before serving commands.
+            // Collection frees the cell but does not permit a second Panic before
+            // another quantum opens, regardless of the new command's future stamp.
+            let current_service =
+                SampleTime::new(self.panic_current_service_at.load(Ordering::Acquire));
+            if current_service.quantum_index() == previous.quantum_index() {
+                return Err(MixedPanicSubmitError::SameServiceQuantum { previous, at });
+            }
+        }
         let request = MixedIngressRequest::Panic { origin, at };
         // Panic carries no bend credit, so an exhausted budget never refuses it.
-        let command = match self.push_ingress(request, MixedIngressQueueCount::NONE) {
+        let command = match self.push_ingress(queues, request, MixedIngressQueueCount::NONE) {
             Ok(command) => command,
             Err(MixedIngressPushError::PhysicalPush { id, .. }) => {
                 self.panic_inflight = Some(id);
+                self.panic_pending_at = Some(at);
                 return Err(MixedPanicSubmitError::PhysicalPush);
             }
             Err(MixedIngressPushError::Halted(_)) => return Err(MixedPanicSubmitError::Halted),
@@ -1389,6 +2297,7 @@ impl MixedOneShotControl {
             }
         };
         self.panic_inflight = Some(command);
+        self.panic_pending_at = Some(at);
         Ok((command, request))
     }
 
@@ -1396,8 +2305,22 @@ impl MixedOneShotControl {
     /// the release can follow at once, before the onset's result is collected. An onset
     /// on a scope that may be bent also reserves one bend credit for its inherited
     /// entry before its command identity is minted; an unbent scope needs none.
+    #[cfg(all(test, feature = "simulated-ingress"))]
     fn submit_onset(
         &mut self,
+        origin: MixedIngressOriginId,
+        scope: MixedLiveScope,
+        at: SampleTime,
+        key: crate::quantities::KeyIdentity,
+        velocity: crate::quantities::NoteVelocity,
+    ) -> Result<(MixedIngressCommandId, MixedIngressRequest), MixedOnsetSubmitError> {
+        self.submit_onset_via(&mut EmbeddedQueues, origin, scope, at, key, velocity)
+    }
+
+    /// [`Self::submit_onset`] through the queues `queues` reaches.
+    fn submit_onset_via<Q: MixedControlQueues>(
+        &mut self,
+        queues: &mut Q,
         origin: MixedIngressOriginId,
         scope: MixedLiveScope,
         at: SampleTime,
@@ -1438,24 +2361,34 @@ impl MixedOneShotControl {
             key,
             velocity,
         };
-        let (command, physical_push_fault) = match self.submit_ingress_with(request, credits) {
-            Ok(command) => (command, false),
-            Err(MixedIngressSubmitError::PhysicalPush { id, .. }) => (id, true),
-            Err(MixedIngressSubmitError::Halted(_)) => {
-                self.unreserve_bend_credits(credits);
-                return Err(MixedOnsetSubmitError::Halted);
-            }
-            Err(MixedIngressSubmitError::Full(_)) => {
-                self.unreserve_bend_credits(credits);
-                return Err(MixedOnsetSubmitError::Full);
-            }
-            Err(MixedIngressSubmitError::IdentityExhausted(_)) => {
-                self.unreserve_bend_credits(credits);
-                return Err(MixedOnsetSubmitError::IdentityExhausted);
-            }
-        };
-        let opened = self.occurrence_ledger.open(occurrence, scope, command);
-        debug_assert!(opened, "the vacant handle stays vacant until opened");
+        let (command, physical_push_fault) =
+            match self.submit_ingress_with(queues, request, credits) {
+                Ok(command) => (command, false),
+                Err(MixedIngressSubmitError::PhysicalPush { id, .. }) => (id, true),
+                Err(MixedIngressSubmitError::Halted(_)) => {
+                    self.unreserve_bend_credits(credits);
+                    return Err(MixedOnsetSubmitError::Halted);
+                }
+                Err(MixedIngressSubmitError::Full(_)) => {
+                    self.unreserve_bend_credits(credits);
+                    return Err(MixedOnsetSubmitError::Full);
+                }
+                #[cfg(any(test, feature = "mixed-transfer-rehearsal"))]
+                Err(MixedIngressSubmitError::BehindPanic { panic_at, .. }) => {
+                    self.unreserve_bend_credits(credits);
+                    return Err(MixedOnsetSubmitError::BehindPanic(panic_at));
+                }
+                Err(MixedIngressSubmitError::IdentityExhausted(_)) => {
+                    self.unreserve_bend_credits(credits);
+                    return Err(MixedOnsetSubmitError::IdentityExhausted);
+                }
+            };
+        if !self.occurrence_ledger.open(occurrence, scope, command) {
+            // Defensive: `vacant` named this free cell and nothing has run since. The
+            // minted command keeps its custody for joined teardown.
+            self.ingress_halt.store(true, Ordering::Release);
+            return Err(MixedOnsetSubmitError::LedgerDefect(command));
+        }
         self.release_reserved.0 += 1;
         if physical_push_fault {
             return Err(MixedOnsetSubmitError::PhysicalPush);
@@ -1466,8 +2399,20 @@ impl MixedOneShotControl {
     /// Submit the release of an open handle into the place its onset reserved.
     /// A preflight refusal leaves the handle open. A physical push failure
     /// retains the command and moves the handle to releasing before halting.
+    #[cfg(all(test, feature = "simulated-ingress"))]
     fn submit_release(
         &mut self,
+        origin: MixedIngressOriginId,
+        occurrence: LiveOccurrenceId,
+        at: SampleTime,
+    ) -> Result<(MixedIngressCommandId, MixedIngressRequest), MixedReleaseSubmitError> {
+        self.submit_release_via(&mut EmbeddedQueues, origin, occurrence, at)
+    }
+
+    /// [`Self::submit_release`] through the queues `queues` reaches.
+    fn submit_release_via<Q: MixedControlQueues>(
+        &mut self,
+        queues: &mut Q,
         origin: MixedIngressOriginId,
         occurrence: LiveOccurrenceId,
         at: SampleTime,
@@ -1487,27 +2432,43 @@ impl MixedOneShotControl {
             occurrence,
             at,
         };
-        self.release_reserved.0 -= 1;
-        let (command, physical_push_fault) = match self.submit_ingress(request) {
-            Ok(command) => (command, false),
-            Err(MixedIngressSubmitError::PhysicalPush { id, .. }) => (id, true),
-            Err(MixedIngressSubmitError::Halted(_)) => {
-                self.release_reserved.0 += 1;
-                return Err(MixedReleaseSubmitError::Halted);
-            }
-            Err(MixedIngressSubmitError::Full(_)) => {
-                self.release_reserved.0 += 1;
-                return Err(MixedReleaseSubmitError::ReservedPlaceUnavailable(
-                    occurrence,
-                ));
-            }
-            Err(MixedIngressSubmitError::IdentityExhausted(_)) => {
-                self.release_reserved.0 += 1;
-                return Err(MixedReleaseSubmitError::IdentityExhausted(occurrence));
-            }
+        // Every open handle holds one reserved place; a ledger that disagrees halts
+        // rather than spending a place it does not have.
+        let Some(reserved) = self.release_reserved.as_usize().checked_sub(1) else {
+            self.ingress_halt.store(true, Ordering::Release);
+            return Err(MixedReleaseSubmitError::ReservationDefect(occurrence));
         };
-        let releasing = self.occurrence_ledger.begin_release(occurrence, command);
-        debug_assert!(releasing, "an open handle accepts its release");
+        self.release_reserved.0 = reserved;
+        let (command, physical_push_fault) =
+            match self.submit_ingress_with(queues, request, MixedIngressQueueCount::NONE) {
+                Ok(command) => (command, false),
+                Err(MixedIngressSubmitError::PhysicalPush { id, .. }) => (id, true),
+                Err(MixedIngressSubmitError::Halted(_)) => {
+                    self.release_reserved.0 += 1;
+                    return Err(MixedReleaseSubmitError::Halted);
+                }
+                Err(MixedIngressSubmitError::Full(_)) => {
+                    self.release_reserved.0 += 1;
+                    return Err(MixedReleaseSubmitError::ReservedPlaceUnavailable(
+                        occurrence,
+                    ));
+                }
+                #[cfg(any(test, feature = "mixed-transfer-rehearsal"))]
+                Err(MixedIngressSubmitError::BehindPanic { panic_at, .. }) => {
+                    self.release_reserved.0 += 1;
+                    return Err(MixedReleaseSubmitError::BehindPanic(panic_at));
+                }
+                Err(MixedIngressSubmitError::IdentityExhausted(_)) => {
+                    self.release_reserved.0 += 1;
+                    return Err(MixedReleaseSubmitError::IdentityExhausted(occurrence));
+                }
+            };
+        if !self.occurrence_ledger.begin_release(occurrence, command) {
+            // Defensive: `is_open` held above and nothing has run since. The minted
+            // command keeps its custody for joined teardown.
+            self.ingress_halt.store(true, Ordering::Release);
+            return Err(MixedReleaseSubmitError::LedgerDefect(command));
+        }
         if physical_push_fault {
             return Err(MixedReleaseSubmitError::PhysicalPush);
         }
@@ -1519,8 +2480,21 @@ impl MixedOneShotControl {
     /// bend credits, before its command identity is minted. Bends are not coalesced: a
     /// full logical ring, scope table or credit budget refuses before minting.
     /// A failed physical push retains the minted bend and halts the stream.
+    #[cfg(all(test, feature = "simulated-ingress"))]
     fn submit_bend(
         &mut self,
+        origin: MixedIngressOriginId,
+        scope: MixedLiveScope,
+        at: SampleTime,
+        cents: Cents,
+    ) -> Result<(MixedIngressCommandId, MixedIngressRequest), MixedBendSubmitError> {
+        self.submit_bend_via(&mut EmbeddedQueues, origin, scope, at, cents)
+    }
+
+    /// [`Self::submit_bend`] through the queues `queues` reaches.
+    fn submit_bend_via<Q: MixedControlQueues>(
+        &mut self,
+        queues: &mut Q,
         origin: MixedIngressOriginId,
         scope: MixedLiveScope,
         at: SampleTime,
@@ -1559,7 +2533,8 @@ impl MixedOneShotControl {
             at,
             cents,
         };
-        let (command, physical_push_fault) = match self.submit_ingress_with(request, needed) {
+        let (command, physical_push_fault) = match self.submit_ingress_with(queues, request, needed)
+        {
             Ok(command) => (command, false),
             Err(MixedIngressSubmitError::PhysicalPush { id, .. }) => (id, true),
             Err(MixedIngressSubmitError::Halted(_)) => {
@@ -1569,6 +2544,11 @@ impl MixedOneShotControl {
             Err(MixedIngressSubmitError::Full(_)) => {
                 self.unreserve_bend_credits(needed);
                 return Err(MixedBendSubmitError::Full);
+            }
+            #[cfg(any(test, feature = "mixed-transfer-rehearsal"))]
+            Err(MixedIngressSubmitError::BehindPanic { panic_at, .. }) => {
+                self.unreserve_bend_credits(needed);
+                return Err(MixedBendSubmitError::BehindPanic(panic_at));
             }
             Err(MixedIngressSubmitError::IdentityExhausted(_)) => {
                 self.unreserve_bend_credits(needed);
@@ -1594,9 +2574,23 @@ impl MixedOneShotControl {
     /// pedal state is pushed. An effective pedal-down needs its own place and one more
     /// that it reserves for the scope's lift. Preflight refusals leave the pedal
     /// state unchanged. A failed physical push retains the command and its
-    /// corresponding pedal state before halting.
+    /// corresponding pedal state before halting. ADR-0078's single-source transfer
+    /// exposes no pedal; only the two-source bridge reaches [`Self::submit_pedal_via`].
+    #[cfg(all(test, feature = "simulated-ingress"))]
     fn submit_pedal(
         &mut self,
+        origin: MixedIngressOriginId,
+        scope: MixedLiveScope,
+        at: SampleTime,
+        down: bool,
+    ) -> Result<MixedPedalSubmitted, MixedPedalSubmitError> {
+        self.submit_pedal_via(&mut EmbeddedQueues, origin, scope, at, down)
+    }
+
+    /// [`Self::submit_pedal`] through the queues `queues` reaches.
+    fn submit_pedal_via<Q: MixedControlQueues>(
+        &mut self,
+        queues: &mut Q,
         origin: MixedIngressOriginId,
         scope: MixedLiveScope,
         at: SampleTime,
@@ -1618,23 +2612,29 @@ impl MixedOneShotControl {
             at,
             down,
         };
+        let none = MixedIngressQueueCount::NONE;
         if down {
             if self.ingress_room() < 2 || !self.pedal_ledger.can_press(scope) {
                 return Err(MixedPedalSubmitError::Full);
             }
-            let (command, physical_push_fault) = match self.submit_ingress(request) {
-                Ok(command) => (command, false),
-                Err(MixedIngressSubmitError::PhysicalPush { id, .. }) => (id, true),
-                Err(MixedIngressSubmitError::Halted(_)) => {
-                    return Err(MixedPedalSubmitError::Halted);
-                }
-                Err(MixedIngressSubmitError::Full(_)) => {
-                    return Err(MixedPedalSubmitError::Full);
-                }
-                Err(MixedIngressSubmitError::IdentityExhausted(_)) => {
-                    return Err(MixedPedalSubmitError::IdentityExhausted);
-                }
-            };
+            let (command, physical_push_fault) =
+                match self.submit_ingress_with(queues, request, none) {
+                    Ok(command) => (command, false),
+                    Err(MixedIngressSubmitError::PhysicalPush { id, .. }) => (id, true),
+                    Err(MixedIngressSubmitError::Halted(_)) => {
+                        return Err(MixedPedalSubmitError::Halted);
+                    }
+                    Err(MixedIngressSubmitError::Full(_)) => {
+                        return Err(MixedPedalSubmitError::Full);
+                    }
+                    #[cfg(any(test, feature = "mixed-transfer-rehearsal"))]
+                    Err(MixedIngressSubmitError::BehindPanic { panic_at, .. }) => {
+                        return Err(MixedPedalSubmitError::BehindPanic(panic_at));
+                    }
+                    Err(MixedIngressSubmitError::IdentityExhausted(_)) => {
+                        return Err(MixedPedalSubmitError::IdentityExhausted);
+                    }
+                };
             self.pedal_ledger.press(scope, command);
             if physical_push_fault {
                 return Err(MixedPedalSubmitError::PhysicalPush);
@@ -1643,7 +2643,7 @@ impl MixedOneShotControl {
         }
         // The scope's reserved place becomes room for the lift itself.
         self.pedal_ledger.take_reservation();
-        match self.submit_ingress(request) {
+        match self.submit_ingress_with(queues, request, none) {
             Ok(command) => {
                 self.pedal_ledger.lift(scope, command);
                 Ok(MixedPedalSubmitted::Command(command, request))
@@ -1659,6 +2659,11 @@ impl MixedOneShotControl {
             Err(MixedIngressSubmitError::Full(_)) => {
                 self.pedal_ledger.return_reservation();
                 Err(MixedPedalSubmitError::ReservedPlaceUnavailable)
+            }
+            #[cfg(any(test, feature = "mixed-transfer-rehearsal"))]
+            Err(MixedIngressSubmitError::BehindPanic { panic_at, .. }) => {
+                self.pedal_ledger.return_reservation();
+                Err(MixedPedalSubmitError::BehindPanic(panic_at))
             }
             Err(MixedIngressSubmitError::IdentityExhausted(_)) => {
                 self.pedal_ledger.return_reservation();
@@ -1676,6 +2681,7 @@ impl MixedOneShotControl {
     /// result frees every sustained cell it retired and the protected place; the cells
     /// it tombstoned stay open for their key-ups. The latest bend result releases
     /// its scope cell when the last accepted value is zero.
+    #[cfg(all(test, feature = "simulated-ingress"))]
     fn collect_ingress_result(&mut self) -> Option<MixedIngressResult> {
         match self.collect_ingress_result_checked() {
             Ok(result) => result,
@@ -1754,8 +2760,17 @@ impl MixedOneShotControl {
     /// Validate identity, request and outcome kind before changing any ledger or
     /// reservation. The test-only wrapper above fails loudly for existing fixtures;
     /// a host-facing collector will return this typed fault to its caller.
+    #[cfg(all(test, feature = "simulated-ingress"))]
     fn collect_ingress_result_checked(
         &mut self,
+    ) -> Result<Option<MixedIngressResult>, MixedIngressResultCollectError> {
+        self.collect_ingress_result_via(&mut EmbeddedQueues)
+    }
+
+    /// [`Self::collect_ingress_result_checked`] through the queues `queues` reaches.
+    fn collect_ingress_result_via<Q: MixedControlQueues>(
+        &mut self,
+        queues: &mut Q,
     ) -> Result<Option<MixedIngressResult>, MixedIngressResultCollectError> {
         let halted = self.ingress_halt.load(Ordering::Acquire);
         if let Some(received) = self.invalid_ingress_result.as_ref() {
@@ -1767,7 +2782,7 @@ impl MixedOneShotControl {
         if halted {
             return Err(MixedIngressResultCollectError::Halted);
         }
-        let Some(result) = self.ingress_results.0.try_pop() else {
+        let Some(result) = queues.pop_result(self) else {
             return Ok(None);
         };
         let expected = self.ingress_journal.front().copied();
@@ -1803,7 +2818,16 @@ impl MixedOneShotControl {
         };
         if let MixedIngressRequest::Panic { .. } = result.request {
             self.panic_inflight = None;
+            #[cfg(any(test, feature = "mixed-transfer-rehearsal"))]
+            {
+                self.panic_pending_at = None;
+            }
             if let MixedIngressOutcome::Panic(Ok(panicked)) = result.outcome {
+                #[cfg(any(test, feature = "mixed-transfer-rehearsal"))]
+                {
+                    self.last_panic_applied_at = Some(result.request.nominal());
+                    self.last_panic_executed_at = Some(panicked.executed_at());
+                }
                 for ended in panicked.ended() {
                     let settled = match ended {
                         occurrence::MixedPanicEnd::Retired(retired) => {
@@ -1929,9 +2953,16 @@ pub(crate) enum MixedCollectionEnd {
 
 /// Final stopped-state classification. Boundary-ended and still-sounding notes
 /// remain separate, as do uncharged and charged test-live reservations that
-/// never entered the renderer registry. `compiled_minted` lists the compiled
-/// occurrences the audio minter still holds; a note-on charged in a callback that
-/// then faulted appears there but not in `sounding`.
+/// never entered the renderer registry. `boundary_ended` is the armed adoption's
+/// record; `offer_boundary_ended` is the record of a later adoption whose offer cell
+/// was still in audio's slot, so each ended note appears once, under the boundary
+/// that ended it. `stop_boundary_ended` is the latest applied Stop's record, filled
+/// before custody ends, so a fault inside the Stop still shows what it released; an
+/// earlier Stop's notes are no longer in any custody. `offer` owns whatever the slot
+/// held, including a cancelled or refused candidate's receipt.
+/// `compiled_minted` lists the compiled occurrences the audio minter
+/// still holds; a note-on charged in a callback that then faulted appears there but
+/// not in `sounding`.
 #[derive(Debug)]
 #[must_use]
 #[allow(dead_code)]
@@ -1940,6 +2971,9 @@ pub(crate) struct MixedOneShotTeardown {
     report: MixedOneShotRenderReport,
     sounding: MixedSoundingSnapshot,
     boundary_ended: Vec<crate::identity::EndedNote>,
+    offer_boundary_ended: Vec<crate::identity::EndedNote>,
+    stop_boundary_ended: Vec<crate::identity::EndedNote>,
+    offer: MixedDrainedOffer,
     unpublished_live: Option<NoteIdentity>,
     charged_unregistered_live: Option<NoteIdentity>,
     compiled_minted: Vec<NoteIdentity>,
@@ -1967,6 +3001,8 @@ struct MixedIngressTeardown {
     last_served_id: Option<MixedIngressCommandId>,
     unserved_commands: Vec<MixedIngressCommand>,
     pending_command: Option<MixedIngressCommand>,
+    /// A Panic audio held unserved: nothing of it applied, so it ends cancelled.
+    parked_panic: Option<MixedIngressCommand>,
     uncollected_results: Vec<MixedIngressResult>,
     pending_result: Option<MixedIngressResult>,
     terminal_control: Option<MixedTerminalControlCustody>,
@@ -1997,7 +3033,9 @@ pub(crate) enum MixedCollection {
     Resumed {
         control: MixedResumedControl,
         audio: Box<MixedOneShotAudio>,
-        retired: MixedRetiredList,
+        retired: Box<MixedRetiredList>,
+        /// The offer slot's contents, owned; the resumed audio half's slot is empty.
+        offer: Box<MixedDrainedOffer>,
     },
     Ended(Box<MixedOneShotTeardown>),
 }
@@ -2016,7 +3054,10 @@ pub(crate) enum MixedCollectionError {
     #[cfg(all(test, feature = "simulated-ingress"))]
     #[error("private mixed ingress journal lost the registered queue")]
     IngressJournal,
-    #[cfg(all(test, feature = "simulated-ingress"))]
+    #[cfg(any(
+        all(test, feature = "simulated-ingress"),
+        feature = "mixed-transfer-rehearsal"
+    ))]
     #[error("private mixed ingress command or result remains uncollected")]
     IngressResultPending,
 }
@@ -2048,37 +3089,134 @@ pub(crate) struct MixedOneShotAudio {
     in_force: ActivationSequence,
     adopted: bool,
     fault: Option<MixedOneShotRenderError>,
-    release_charged: bool,
+    releases_charged: EventCount,
     released_compiled: HeldNoteCount,
     restoration_charged: EventCount,
     suffix_charged: EventCount,
     completed_quanta: QuantumCount,
     adoption_after_quanta: Option<QuantumCount>,
     render_started: bool,
-    #[cfg(all(test, feature = "simulated-ingress"))]
+    transport: MixedCompiledTransport,
+    /// At most one scheduled Stop, applied when its quantum boundary opens.
+    stop_pending: Option<SampleTime>,
+    /// A Stop's own ended-note storage, sized like `compiled_ended`, so it never
+    /// overwrites the adoption's boundary-ended record that teardown reads. Each
+    /// applied Stop reuses it; `stop_released` names the latest Stop's prefix.
+    stop_ended: Vec<Option<crate::identity::EndedNote>>,
+    /// Recorded from the renderer's release before custody ends.
+    stop_released: HeldNoteCount,
+    /// An applied Stop's release still owes its one Session operation.
+    stop_due: bool,
+    stops_charged: EventCount,
+    /// Scoped restoration events at the front of the list in force; zero before the
+    /// armed adoption, whose initial list has none.
+    in_force_restoration: EventCount,
+    /// An adoption's boundary release still owes its one Session operation.
+    release_due: bool,
+    /// The single later-candidate slot.
+    offer_slot: MixedOfferSlot,
+    /// The loop of the program in force; only a later adoption installs or retires one.
+    loop_program: Option<Box<MixedLoopProgram>>,
+    /// Set with `loop_program` at adoption and moved by every wrap.
+    loop_cursor: Option<MixedLoopCursor>,
+    loop_wraps: EventCount,
+    loop_wrap_releases: HeldNoteCount,
+    compiled_panic_ended: HeldNoteCount,
+    compiled_panic_groups: EventCount,
+    compiled_released_after_panic: EventCount,
+    compiled_controls_after_panic: EventCount,
+    /// The sample at which a Panic served at this boundary ends the compiled producer's
+    /// open occurrences. The quantum's compiled loop takes it; at most one per quantum.
+    #[cfg(any(
+        all(test, feature = "simulated-ingress"),
+        feature = "mixed-transfer-rehearsal"
+    ))]
+    panic_cut: Option<SampleTime>,
+    #[cfg(any(
+        all(test, feature = "simulated-ingress"),
+        feature = "mixed-transfer-rehearsal"
+    ))]
+    panic_current_service_at: Arc<AtomicU64>,
+    /// A popped Panic whose execution stamp lies in a later quantum, or behind a cut
+    /// already owed in this one. Service pops nothing more until it is served, so
+    /// results keep command order; teardown returns it unapplied.
+    #[cfg(any(
+        all(test, feature = "simulated-ingress"),
+        feature = "mixed-transfer-rehearsal"
+    ))]
+    parked_panic: Option<MixedIngressCommand>,
+    #[cfg(any(
+        all(test, feature = "simulated-ingress"),
+        feature = "mixed-transfer-rehearsal"
+    ))]
     test_ingress: PerformanceIngress,
-    #[cfg(all(test, feature = "simulated-ingress"))]
+    #[cfg(feature = "mixed-transfer-rehearsal")]
+    ingress_queue_peak: usize,
+    #[cfg(feature = "mixed-transfer-rehearsal")]
+    ingress_holds_peak: EventCount,
+    #[cfg(any(
+        all(test, feature = "simulated-ingress"),
+        feature = "mixed-transfer-rehearsal"
+    ))]
     ingress_owner: MixedIngressOwner,
     /// What each live handle names; the merger's ledger has the same width.
-    #[cfg(all(test, feature = "simulated-ingress"))]
+    #[cfg(any(
+        all(test, feature = "simulated-ingress"),
+        feature = "mixed-transfer-rehearsal"
+    ))]
     occurrences: MixedOccurrenceTable,
     #[cfg(all(test, feature = "simulated-ingress"))]
     ingress_commands: OpaqueQueue<HeapCons<MixedIngressCommand>>,
     #[cfg(all(test, feature = "simulated-ingress"))]
     ingress_results: OpaqueQueue<HeapProd<MixedIngressResult>>,
-    #[cfg(all(test, feature = "simulated-ingress"))]
+    #[cfg(any(
+        all(test, feature = "simulated-ingress"),
+        feature = "mixed-transfer-rehearsal"
+    ))]
     ingress_result_pending: Option<MixedIngressResult>,
-    #[cfg(all(test, feature = "simulated-ingress"))]
+    #[cfg(any(
+        all(test, feature = "simulated-ingress"),
+        feature = "mixed-transfer-rehearsal"
+    ))]
     ingress_halt: Arc<AtomicBool>,
     /// The last served command ID; a gap, duplicate or wrap faults before the
     /// offending command changes audio state. Its packet remains owned for teardown.
-    #[cfg(all(test, feature = "simulated-ingress"))]
+    #[cfg(any(
+        all(test, feature = "simulated-ingress"),
+        feature = "mixed-transfer-rehearsal"
+    ))]
     last_served_ingress_id: Option<MixedIngressCommandId>,
-    #[cfg(all(test, feature = "simulated-ingress"))]
+    /// The nominal stamp of the last served command. Only a host-owned transfer
+    /// faults a packet stamped before it (ADR-0078 clause 3).
+    #[cfg(any(
+        all(test, feature = "simulated-ingress"),
+        feature = "mixed-transfer-rehearsal"
+    ))]
+    last_served_ingress_at: Option<SampleTime>,
+    #[cfg(any(
+        all(test, feature = "simulated-ingress"),
+        feature = "mixed-transfer-rehearsal"
+    ))]
     invalid_ingress_command: Option<MixedIngressCommand>,
+    /// Why audio refused command service; the packet, when there is one, is
+    /// retained in `invalid_ingress_command`.
+    #[cfg(any(
+        all(test, feature = "simulated-ingress"),
+        feature = "mixed-transfer-rehearsal"
+    ))]
+    ingress_command_fault: Option<MixedIngressCommandFault>,
+    /// The host-owned transfer this half was armed into; `None` for embedded rings.
+    #[cfg(feature = "mixed-transfer-rehearsal")]
+    transfer_binding: Option<MixedTransferBinding>,
+    /// Present only when the two-source bridge owns this transfer.
+    #[cfg(feature = "mixed-transfer-rehearsal")]
+    reset_seal: Option<Arc<MixedResetSeal>>,
     /// Returns each command's unused bend credits after service, and each written one
     /// after its entry drains.
-    #[cfg(all(test, feature = "simulated-ingress"))]
+    #[cfg(any(
+        all(test, feature = "simulated-ingress"),
+        feature = "mixed-transfer-rehearsal"
+    ))]
     bend_credit_return: MixedBendCreditReturn,
     #[cfg(all(test, feature = "simulated-ingress"))]
     test_ingress_inflight: Vec<Option<(TimedEvent, bool)>>,
@@ -2144,11 +3282,29 @@ pub struct MixedStreamAudio {
     renderer: PreparedRenderer,
     live_minter: LiveRangeMinter,
     compiled_minter: CompiledRangeMinter,
-    /// The occurrence each open compiled token names; `None` for a free token.
-    compiled_tokens: Vec<Option<NoteIdentity>>,
+    /// What each compiled token of the list in force names.
+    compiled_tokens: Vec<MixedCompiledTokenState>,
     note: NoteSlot,
     partition: Arc<MixedInstancePartition>,
     compiled_ended: Vec<Option<crate::identity::EndedNote>>,
+}
+
+/// What one compiled token names on the audio half.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum MixedCompiledTokenState {
+    Free,
+    Open(NoteIdentity),
+    /// A Panic ended the occurrence at its execution sample and freed its identity. The
+    /// list's own `Off` frees the token; its expression and bend edges until then are
+    /// consumed and counted rather than faulted.
+    #[cfg_attr(
+        not(any(
+            all(test, feature = "simulated-ingress"),
+            feature = "mixed-transfer-rehearsal"
+        )),
+        allow(dead_code, reason = "only a served Panic ends a compiled token")
+    )]
+    PanicEnded,
 }
 
 fn mixed_collection_pair(control: &MixedStreamControl, audio: &MixedOneShotAudio) -> bool {
@@ -2170,6 +3326,8 @@ fn mixed_collection_pair(control: &MixedStreamControl, audio: &MixedOneShotAudio
 struct MixedTeardownParts {
     sounding: MixedSoundingSnapshot,
     boundary_ended: Vec<crate::identity::EndedNote>,
+    offer_boundary_ended: Vec<crate::identity::EndedNote>,
+    stop_boundary_ended: Vec<crate::identity::EndedNote>,
     unpublished_live: Option<NoteIdentity>,
     charged_unregistered_live: Option<NoteIdentity>,
     compiled_minted: Vec<NoteIdentity>,
@@ -2195,6 +3353,18 @@ fn mixed_teardown_parts(
         .copied()
         .collect::<Option<Vec<_>>>()
         .ok_or(MixedCollectionError::EndedPrefix)?;
+    // A later adoption's release lives in its own offer cell until control collects
+    // it; a pending cell holds one only if custody faulted after the release.
+    let offer_cell = match &audio.offer_slot {
+        MixedOfferSlot::Empty => None,
+        MixedOfferSlot::Pending(offer) => Some(&*offer.0),
+        MixedOfferSlot::Retired(retired) => Some(&*retired.cell),
+    };
+    let offer_boundary_ended = match offer_cell {
+        None => Vec::new(),
+        Some(cell) => ended_prefix(&cell.ended, cell.released)?,
+    };
+    let stop_boundary_ended = ended_prefix(&audio.stop_ended, audio.stop_released)?;
     #[cfg(test)]
     let unregistered_live = audio.test_live.and_then(|event| match event.payload() {
         EventPayload::Note { identity, .. }
@@ -2214,7 +3384,7 @@ fn mixed_teardown_parts(
     let (unpublished_live, charged_unregistered_live) = (None, None);
     #[cfg(all(test, feature = "simulated-ingress"))]
     let ingress = {
-        let mut queue = vec![None; audio.test_ingress.queue_capacity_for_test()];
+        let mut queue = vec![None; audio.test_ingress.queue_capacity()];
         let len = audio
             .test_ingress
             .copy_queue_for_test(&mut queue)
@@ -2240,6 +3410,7 @@ fn mixed_teardown_parts(
             last_served_id: audio.last_served_ingress_id,
             unserved_commands: Vec::new(),
             pending_command: None,
+            parked_panic: None,
             uncollected_results: Vec::new(),
             pending_result: None,
             terminal_control: None,
@@ -2248,6 +3419,8 @@ fn mixed_teardown_parts(
     Ok(MixedTeardownParts {
         sounding,
         boundary_ended,
+        offer_boundary_ended,
+        stop_boundary_ended,
         unpublished_live,
         charged_unregistered_live,
         compiled_minted: audio.audio.compiled_minter.live_identities(),
@@ -2256,12 +3429,46 @@ fn mixed_teardown_parts(
     })
 }
 
+/// The recorded `released` prefix of one boundary's ended-note storage.
+fn ended_prefix(
+    ended: &[Option<crate::identity::EndedNote>],
+    released: HeldNoteCount,
+) -> Result<Vec<crate::identity::EndedNote>, MixedCollectionError> {
+    released
+        .as_usize()
+        .and_then(|released| ended.get(..released))
+        .ok_or(MixedCollectionError::EndedPrefix)?
+        .iter()
+        .copied()
+        .collect::<Option<Vec<_>>>()
+        .ok_or(MixedCollectionError::EndedPrefix)
+}
+
+/// Move the offer slot's contents out whole, off-thread, leaving it empty.
+fn drain_offer_slot(audio: &mut MixedOneShotAudio) -> MixedDrainedOffer {
+    match std::mem::take(&mut audio.offer_slot) {
+        MixedOfferSlot::Empty => MixedDrainedOffer::Empty,
+        MixedOfferSlot::Pending(offer) => MixedDrainedOffer::Withdrawn(offer),
+        MixedOfferSlot::Retired(retired) => MixedDrainedOffer::Retired(retired),
+    }
+}
+
 fn mixed_finish_teardown(
-    audio: MixedOneShotAudio,
+    mut audio: MixedOneShotAudio,
     end: MixedCollectionEnd,
     parts: MixedTeardownParts,
 ) -> MixedOneShotTeardown {
     let report = audio.report();
+    // After the report, which names its stamp: a Panic audio held unserved leaves with
+    // the teardown, unapplied. Collection refuses a live pair while its result is owed,
+    // so only a terminal pair can hold one.
+    #[cfg(all(test, feature = "simulated-ingress"))]
+    let mut parts = parts;
+    #[cfg(all(test, feature = "simulated-ingress"))]
+    {
+        parts.ingress.parked_panic = audio.parked_panic.take();
+    }
+    let offer = drain_offer_slot(&mut audio);
     // Both event lists, the capsule and renderer are finally dropped here, off-thread.
     drop(audio);
     MixedOneShotTeardown {
@@ -2269,6 +3476,9 @@ fn mixed_finish_teardown(
         report,
         sounding: parts.sounding,
         boundary_ended: parts.boundary_ended,
+        offer_boundary_ended: parts.offer_boundary_ended,
+        stop_boundary_ended: parts.stop_boundary_ended,
+        offer,
         unpublished_live: parts.unpublished_live,
         charged_unregistered_live: parts.charged_unregistered_live,
         compiled_minted: parts.compiled_minted,
@@ -2279,6 +3489,363 @@ fn mixed_finish_teardown(
 
 #[allow(dead_code)] // Private off-thread collection has no production host caller.
 impl MixedOneShotControl {
+    /// Prepare a later Start or seek candidate from the bound plan, off-thread.
+    ///
+    /// It runs the first activation's history, suffix and stamping builders against
+    /// this control's bound stream and seals the list as superseding `supersedes`. That
+    /// must be the sequence this control holds in force, and `requested` must follow the
+    /// in-force transition's boundary. Control holds no minter, so preparing mints, frees
+    /// and reserves nothing, and changes no control state: two candidates prepared in
+    /// turn supersede the same sequence, and at most one of them can ever adopt.
+    #[allow(dead_code)] // Only private tests and the transfer rehearsal prepare a later candidate.
+    pub(crate) fn prepare_subsequent(
+        &self,
+        requested: SampleTime,
+        position: PlanPosition,
+        supersedes: ActivationSequence,
+    ) -> Result<MixedStampedCandidate, MixedSubsequentPrepareError> {
+        self.check_subsequent(requested, supersedes)?;
+        self.stamp_subsequent(requested, position, None, supersedes)
+    }
+
+    /// Prepare a later candidate that enters `interval` at `position`, off-thread.
+    ///
+    /// The entry list is [`Self::prepare_subsequent`]'s, cut before the loop's end, so
+    /// its first pass plays from `position` and nothing at or after `end`. The repeating
+    /// template is the same builders' reconstruction from `start`, cut the same way and
+    /// stamped from engine time zero; a wrap shifts it to its own sample. Like every
+    /// later candidate it mints, frees and reserves nothing and changes no control state.
+    #[allow(dead_code)] // Only private tests and the transfer rehearsal enter a loop.
+    pub(crate) fn prepare_loop(
+        &self,
+        requested: SampleTime,
+        position: PlanPosition,
+        interval: LoopInterval,
+        supersedes: ActivationSequence,
+    ) -> Result<MixedLoopCandidate, MixedSubsequentPrepareError> {
+        self.check_subsequent(requested, supersedes)?;
+        if position < interval.start() || position > interval.end() {
+            return Err(MixedSubsequentPrepareError::LoopEntry {
+                position,
+                start: interval.start(),
+                end: interval.end(),
+            });
+        }
+        let entry_at = if position == interval.end() {
+            interval.start()
+        } else {
+            position
+        };
+        let entry = self.stamp_subsequent(requested, entry_at, Some(interval.end()), supersedes)?;
+        let history = self
+            .control
+            .prepare_history(SampleTime::ZERO, interval.start())?;
+        let suffix = self
+            .control
+            .prepare_suffix_until(history, Some(interval.end()))
+            .map_err(|refusal| refusal.0)?;
+        let template = self.control.stamp_events(&suffix)?;
+        let program = MixedLoopProgram {
+            interval,
+            events: template.events,
+            restoration_count: suffix.history.restoration_count,
+            end_open: template.outstanding_count,
+            omitted_releases: suffix.omitted_releases,
+            omitted_expressions: suffix.omitted_expressions,
+        };
+        Ok(MixedLoopCandidate {
+            entry,
+            program: Box::new(program),
+        })
+    }
+
+    /// The sequence and boundary checks every later candidate passes before building.
+    fn check_subsequent(
+        &self,
+        requested: SampleTime,
+        supersedes: ActivationSequence,
+    ) -> Result<(), MixedSubsequentPrepareError> {
+        if supersedes != self.in_force {
+            return Err(MixedSubsequentPrepareError::Superseded {
+                supersedes,
+                in_force: self.in_force,
+            });
+        }
+        if supersedes.next().is_none() {
+            return Err(MixedSubsequentPrepareError::SequenceExhausted);
+        }
+        if requested <= self.in_force_effective {
+            return Err(MixedSubsequentPrepareError::NotAfterInForce {
+                requested,
+                boundary: self.in_force_effective,
+            });
+        }
+        Ok(())
+    }
+
+    /// History, suffix and stamping for one later candidate; `end` cuts the suffix.
+    fn stamp_subsequent(
+        &self,
+        requested: SampleTime,
+        position: PlanPosition,
+        end: Option<PlanPosition>,
+        supersedes: ActivationSequence,
+    ) -> Result<MixedStampedCandidate, MixedSubsequentPrepareError> {
+        let history = self.control.prepare_history(requested, position)?;
+        let suffix = self
+            .control
+            .prepare_suffix_until(history, end)
+            .map_err(|refusal| refusal.0)?;
+        self.control
+            .stamp_suffix(suffix, supersedes)
+            .map_err(|refusal| MixedSubsequentPrepareError::Stamp(refusal.0))
+    }
+
+    /// Seal one later candidate as an offer that takes effect at `effective`, off-thread.
+    ///
+    /// The candidate must supersede the sequence this control holds in force, and
+    /// `effective` must be a quantum boundary at or after its requested time and after
+    /// the in-force transition's boundary. It is admitted against the arm profile at
+    /// exactly that boundary's displacement, by the check that admitted the armed
+    /// transition, so audio never holds an unadmitted candidate. The offer carries its
+    /// own ended-note storage for the boundary release. `kind` says whether it resumes
+    /// a stopped program; audio checks it against the transport at the boundary, which
+    /// control does not track. Sealing changes no control state and no minter; every
+    /// refusal returns the candidate unchanged.
+    #[allow(dead_code)] // Only private tests and the transfer rehearsal seal an offer.
+    pub(crate) fn seal_offer(
+        &self,
+        candidate: MixedStampedCandidate,
+        effective: SampleTime,
+        kind: MixedOfferKind,
+    ) -> Result<MixedCandidateOffer, Box<(MixedOfferPrepareError, MixedStampedCandidate)>> {
+        let control = &self.control;
+        let history = &candidate.suffix.history;
+        if history.plan != control.plan.id()
+            || history.epoch != control.epoch
+            || history.table != control.table
+        {
+            return Err(Box::new((
+                MixedOfferPrepareError::ForeignCandidate,
+                candidate,
+            )));
+        }
+        if candidate.supersedes != self.in_force {
+            return Err(Box::new((
+                MixedOfferPrepareError::Superseded {
+                    supersedes: candidate.supersedes,
+                    in_force: self.in_force,
+                },
+                candidate,
+            )));
+        }
+        if effective <= self.in_force_effective {
+            return Err(Box::new((
+                MixedOfferPrepareError::NotAfterInForce {
+                    effective,
+                    boundary: self.in_force_effective,
+                },
+                candidate,
+            )));
+        }
+        let timing = match candidate.effective_timing(effective) {
+            Ok(timing) => timing,
+            Err(error) => return Err(Box::new((error.into(), candidate))),
+        };
+        if let Err(error) = admit_one_shot_candidate(
+            &control.plan,
+            &control.partition,
+            &candidate,
+            timing,
+            &self.profile,
+        ) {
+            return Err(Box::new((error.into(), candidate)));
+        }
+        let ended = vec![None; control.compiled_span.indices().len()];
+        let candidate = match candidate.into_audio_parts() {
+            Ok(candidate) => candidate,
+            Err(boxed) => {
+                let (error, candidate) = *boxed;
+                return Err(Box::new((error.into(), candidate)));
+            }
+        };
+        Ok(MixedCandidateOffer(Box::new(MixedOfferCell {
+            candidate,
+            timing,
+            ended,
+            released: HeldNoteCount::NONE,
+            late: false,
+            kind,
+            loop_program: None,
+        })))
+    }
+
+    /// Seal a loop entry as an offer that takes effect at `effective`, off-thread.
+    ///
+    /// The loop is admitted first, from the entry boundary: Session carries the boundary
+    /// release and restoration at entry, and at every wrap one `Off` per note the pass
+    /// leaves open, one operation and restoration again; Compiled carries the entry list
+    /// and every later pass. The entry-to-first-wrap junction and the periodic steady
+    /// state are both checked over sliding windows, so the result holds for every quantum
+    /// alignment a wrap can take. The entry list then passes [`Self::seal_offer`]
+    /// unchanged. Wraps charge nothing to Release or Live. Every refusal returns the
+    /// candidate whole and changes no control state.
+    ///
+    /// A loop sealed as a `Seek` that adopts while the program is stopped stays inert:
+    /// a stopped program never wraps, and the Start that resumes it brings its own loop
+    /// or none.
+    #[allow(dead_code)] // Only private tests and the transfer rehearsal enter a loop.
+    pub(crate) fn seal_loop_offer(
+        &self,
+        candidate: MixedLoopCandidate,
+        effective: SampleTime,
+        kind: MixedOfferKind,
+    ) -> Result<MixedCandidateOffer, Box<(MixedOfferPrepareError, MixedLoopCandidate)>> {
+        if let Err(error) = self.admit_loop(&candidate, effective) {
+            return Err(Box::new((error, candidate)));
+        }
+        let MixedLoopCandidate { entry, program } = candidate;
+        match self.seal_offer(entry, effective, kind) {
+            Ok(mut offer) => {
+                offer.0.loop_program = Some(program);
+                Ok(offer)
+            }
+            Err(boxed) => {
+                let (error, entry) = *boxed;
+                Err(Box::new((error, MixedLoopCandidate { entry, program })))
+            }
+        }
+    }
+
+    /// The loop half of [`Self::seal_loop_offer`]: shape checks the hot path relies on,
+    /// then Session and Compiled admission against the arm profile.
+    fn admit_loop(
+        &self,
+        candidate: &MixedLoopCandidate,
+        effective: SampleTime,
+    ) -> Result<(), MixedOfferPrepareError> {
+        use MixedOfferPrepareError::LoopShape;
+
+        let entry = &candidate.entry;
+        let program = &candidate.program;
+        let groups = self.control.partition.restoration_groups().len();
+        let restoration = program.restoration_count.as_usize().ok_or(LoopShape)?;
+        if restoration != groups
+            || entry.restoration_count.as_usize() != Some(groups)
+            || restoration > program.events.len()
+            || groups > entry.events.len()
+        {
+            return Err(LoopShape);
+        }
+        let start = program.interval.start().as_u64();
+        let length = program.interval.end().as_u64() - start;
+        let position = entry.anchor.position().as_u64();
+        let first_wrap = position
+            .checked_sub(start)
+            .filter(|into| *into < length)
+            .map(|into| length - into)
+            .ok_or(LoopShape)?;
+        if effective.checked_add(FrameCount::new(first_wrap)).is_err() {
+            return Err(LoopShape);
+        }
+        // The hot path ends each pass at its wrap, so every pass event must precede it.
+        let requested = entry.anchor.time().as_u64();
+        let entry_compiled = entry
+            .events
+            .get(groups..)
+            .ok_or(LoopShape)?
+            .iter()
+            .map(|event| {
+                event
+                    .envelope()
+                    .time()
+                    .as_u64()
+                    .checked_sub(requested)
+                    .filter(|offset| *offset < first_wrap)
+            })
+            .collect::<Option<Vec<_>>>()
+            .ok_or(LoopShape)?;
+        let (template_restoration, template) = program.events.split_at(restoration);
+        if template_restoration.iter().any(|event| {
+            event.envelope().time() != SampleTime::ZERO
+                || !matches!(event.payload(), MixedCompiledPayload::Restore(_))
+        }) {
+            return Err(LoopShape);
+        }
+        let repeating_compiled = template
+            .iter()
+            .map(|event| {
+                let offset = event.envelope().time().as_u64();
+                (offset < length && !matches!(event.payload(), MixedCompiledPayload::Restore(_)))
+                    .then_some(offset)
+            })
+            .collect::<Option<Vec<_>>>()
+            .ok_or(LoopShape)?;
+        let wrap_session = |open: HeldNoteCount| {
+            open.as_usize()
+                .and_then(|open| open.checked_add(1))
+                .and_then(|cost| cost.checked_add(groups))
+                .ok_or(LoopShape)
+        };
+        crate::looping::admit_loop_shape(
+            &crate::looping::LoopAdmissionShape {
+                length,
+                first_wrap,
+                entry_session: groups.checked_add(1).ok_or(LoopShape)?,
+                entry_compiled: &entry_compiled,
+                first_wrap_session: wrap_session(entry.outstanding_count)?,
+                wrap_session: wrap_session(program.end_open)?,
+                repeating_compiled: &repeating_compiled,
+            },
+            &self.profile,
+        )
+        .map_err(|error| match error {
+            crate::looping::LoopPrepareError::Admission { class, source } => {
+                MixedOfferPrepareError::LoopAdmission { class, source }
+            }
+            _ => LoopShape,
+        })
+    }
+
+    /// Take back one retired offer and its receipt, off-thread.
+    ///
+    /// Only a receipt confirming adoption advances this control's in-force sequence,
+    /// boundary and anchor; a refused or cancelled one changes nothing. The retired list
+    /// and the offer's storage are dropped here.
+    #[allow(dead_code)] // Only private tests and the transfer rehearsal collect an offer.
+    pub(crate) fn collect_offer(
+        &mut self,
+        retired: MixedRetiredOffer,
+    ) -> Result<MixedOfferReceipt, Box<(MixedOfferCollectError, MixedRetiredOffer)>> {
+        let candidate = &retired.cell.candidate;
+        if candidate.plan != self.control.plan.id()
+            || candidate.epoch != self.control.epoch
+            || candidate.table != self.control.table
+        {
+            return Err(Box::new((
+                MixedOfferCollectError::ForeignCandidate,
+                retired,
+            )));
+        }
+        let receipt = retired.receipt;
+        if let MixedOfferOutcome::Adopted(adopted) = receipt.outcome {
+            if receipt.supersedes != self.in_force {
+                return Err(Box::new((
+                    MixedOfferCollectError::Superseded {
+                        supersedes: receipt.supersedes,
+                        in_force: self.in_force,
+                    },
+                    retired,
+                )));
+            }
+            self.in_force = receipt.sequence;
+            self.in_force_effective = adopted.effective;
+            self.control.anchor = adopted.anchor;
+        }
+        drop(retired);
+        Ok(receipt)
+    }
+
     /// Rejoin a stopped adopted pair or tear down a pending or terminal pair.
     /// A crossed pair and a classification refusal return both halves untouched.
     pub(crate) fn collect(
@@ -2292,16 +3859,25 @@ impl MixedOneShotControl {
                 audio,
             }));
         }
-        #[cfg(all(test, feature = "simulated-ingress"))]
+        #[cfg(any(
+            all(test, feature = "simulated-ingress"),
+            feature = "mixed-transfer-rehearsal"
+        ))]
         let ingress_faulted = audio.invalid_ingress_command.is_some()
             || self.invalid_ingress_result.is_some()
             || self.ingress_halt.load(Ordering::Acquire);
-        #[cfg(not(all(test, feature = "simulated-ingress")))]
+        #[cfg(not(any(
+            all(test, feature = "simulated-ingress"),
+            feature = "mixed-transfer-rehearsal"
+        )))]
         let ingress_faulted = false;
         let terminal = ingress_faulted
             || audio.fault.is_some()
             || audio.audio.renderer.diagnostics().needs_reprepare();
-        #[cfg(all(test, feature = "simulated-ingress"))]
+        #[cfg(any(
+            all(test, feature = "simulated-ingress"),
+            feature = "mixed-transfer-rehearsal"
+        ))]
         if !terminal
             && (self.ingress_outstanding > MixedIngressQueueCount::NONE
                 || self.panic_inflight.is_some())
@@ -2360,12 +3936,13 @@ impl MixedOneShotControl {
             ))));
         }
         // Both minters stayed with audio, so collection moves only plain values to
-        // control: the effective anchor and the in-force activation sequence.
+        // control: the effective anchor and the in-force activation sequence. A later
+        // adoption moves audio's sequence past the armed one, never below it.
         let capsule = &audio.capsule;
         let consistent = capsule.plan == self.control.plan.id()
             && capsule.epoch == self.control.epoch
             && capsule.table == self.control.table
-            && audio.in_force == capsule.sequence
+            && audio.in_force >= capsule.sequence
             && capsule.supersedes == ActivationSequence::INITIAL
             && audio.audio.renderer.mixed_anchor() == audio.effective_anchor;
         let retired = match (capsule.retired_anchor, capsule.retired_next) {
@@ -2393,13 +3970,16 @@ impl MixedOneShotControl {
             ))));
         };
         self.control.anchor = audio.effective_anchor;
-        let retired = MixedRetiredList {
+        let retired = Box::new(MixedRetiredList {
             anchor: retired_anchor,
             unconsumed_from: retired_next,
             event_count: audio.capsule.events.len(),
-        };
+        });
         audio.capsule.retired_next = None;
         drop(std::mem::take(&mut audio.capsule.events));
+        // The slot moves to the caller whole: a pending candidate minted nothing, so it
+        // is withdrawn, and a retired one keeps its receipt and boundary record.
+        let offer = Box::new(drain_offer_slot(&mut audio));
         Ok(MixedCollection::Resumed {
             control: MixedResumedControl {
                 control: self.control,
@@ -2408,6 +3988,7 @@ impl MixedOneShotControl {
             },
             audio: Box::new(audio),
             retired,
+            offer,
         })
     }
 }
@@ -2534,7 +4115,7 @@ impl MixedStreamControl {
         let parts = binding.into_parts();
         let audio_partition = Arc::clone(&parts.partition);
         let compiled_ended = vec![None; compiled_span.indices().len()];
-        let compiled_tokens = vec![None; compiled_span.indices().len()];
+        let compiled_tokens = vec![MixedCompiledTokenState::Free; compiled_span.indices().len()];
         Ok((
             Self {
                 epoch,
@@ -2696,6 +4277,40 @@ impl MixedJoinedPrepared {
         candidate: MixedStampedCandidate,
         profile: &HostProfile,
     ) -> Result<(MixedOneShotControl, MixedOneShotAudio), Box<MixedOneShotArmRefusal>> {
+        self.arm_one_shot_with(
+            candidate,
+            profile,
+            #[cfg(any(
+                all(test, feature = "simulated-ingress"),
+                feature = "mixed-transfer-rehearsal"
+            ))]
+            None,
+            #[cfg(any(
+                all(test, feature = "simulated-ingress"),
+                feature = "mixed-transfer-rehearsal"
+            ))]
+            MixedPanicCapability::Available,
+        )
+    }
+
+    /// [`Self::arm_one_shot`] with explicit bend-table widths; `None` keeps the
+    /// two-source MIDI1 floor.
+    #[allow(dead_code)] // The private arm has no production host caller.
+    fn arm_one_shot_with(
+        self,
+        candidate: MixedStampedCandidate,
+        profile: &HostProfile,
+        #[cfg(any(
+            all(test, feature = "simulated-ingress"),
+            feature = "mixed-transfer-rehearsal"
+        ))]
+        bend_tables: Option<MixedBendTables>,
+        #[cfg(any(
+            all(test, feature = "simulated-ingress"),
+            feature = "mixed-transfer-rehearsal"
+        ))]
+        panic_capability: MixedPanicCapability,
+    ) -> Result<(MixedOneShotControl, MixedOneShotAudio), Box<MixedOneShotArmRefusal>> {
         let control = &self.owner.control;
         let audio = &self.owner.audio;
         let history = &candidate.suffix.history;
@@ -2718,7 +4333,10 @@ impl MixedJoinedPrepared {
             || audio.compiled_minter.span() != control.compiled_span
             || audio.compiled_minter.live() != 0
             || audio.compiled_tokens.len() != control.compiled_span.indices().len()
-            || audio.compiled_tokens.iter().any(Option::is_some)
+            || audio
+                .compiled_tokens
+                .iter()
+                .any(|token| *token != MixedCompiledTokenState::Free)
         {
             return Err(Box::new(MixedOneShotArmRefusal {
                 reason: MixedOneShotArmError::ForeignAudio,
@@ -2793,8 +4411,11 @@ impl MixedJoinedPrepared {
         // covers the widest payload's timed writes, compiled boundary queue and seed
         // rows. The ingress constructor below additionally requires a full queued
         // Release backlog to fit its share, then allocates the sole registered queue.
-        #[cfg(all(test, feature = "simulated-ingress"))]
-        let test_ingress = match PerformanceIngress::prepare_mixed_test(
+        #[cfg(any(
+            all(test, feature = "simulated-ingress"),
+            feature = "mixed-transfer-rehearsal"
+        ))]
+        let test_ingress = match PerformanceIngress::prepare_mixed_rehearsal(
             profile,
             &control.plan,
             &audio.live_minter,
@@ -2809,39 +4430,67 @@ impl MixedJoinedPrepared {
                 }));
             }
         };
-        #[cfg(all(test, feature = "simulated-ingress"))]
-        let ingress_capacity =
-            MixedIngressQueueCount::capacity(test_ingress.queue_capacity_for_test());
+        #[cfg(any(
+            all(test, feature = "simulated-ingress"),
+            feature = "mixed-transfer-rehearsal"
+        ))]
+        let Some(ingress_capacity) =
+            MixedIngressQueueCount::capacity(test_ingress.queue_capacity())
+        else {
+            return Err(Box::new(MixedOneShotArmRefusal {
+                reason: MixedOneShotArmError::IngressWidth,
+                owner: self,
+                candidate,
+            }));
+        };
         // A sustained occurrence owns a release hold instead of a ring place, so the
         // occurrence tables cover the ring plus the live hold entitlement. A lift ends
         // its scope's sustained occurrences, and Panic every live occurrence, as one
         // group, which bounds that entitlement.
         // The ingress preparation above already refused a producer the plan lacks.
-        #[cfg(all(test, feature = "simulated-ingress"))]
+        #[cfg(any(
+            all(test, feature = "simulated-ingress"),
+            feature = "mixed-transfer-rehearsal"
+        ))]
         let live_holds = control
             .plan
             .note_producer_holds()
             .get(usize::from(audio.live_minter.producer().as_u16()))
             .copied()
             .unwrap_or(EventCount::NONE);
-        #[cfg(all(test, feature = "simulated-ingress"))]
+        #[cfg(any(
+            all(test, feature = "simulated-ingress"),
+            feature = "mixed-transfer-rehearsal"
+        ))]
         let sustain_group = crate::ingress::RELEASE_GROUP_CAPACITY;
-        #[cfg(all(test, feature = "simulated-ingress"))]
-        let Some((holds, occurrence_width)) = live_holds
+        #[cfg(any(
+            all(test, feature = "simulated-ingress"),
+            feature = "mixed-transfer-rehearsal"
+        ))]
+        let Some(holds) = live_holds
             .as_usize()
             .filter(|holds| *holds <= sustain_group)
-            .map(|holds| {
-                (
-                    holds,
-                    MixedIngressQueueCount::capacity(ingress_capacity.as_usize() + holds),
-                )
-            })
         else {
             return Err(Box::new(MixedOneShotArmRefusal {
                 reason: MixedOneShotArmError::SustainGroupCapacity {
                     holds: live_holds,
                     group: sustain_group,
                 },
+                owner: self,
+                candidate,
+            }));
+        };
+        #[cfg(any(
+            all(test, feature = "simulated-ingress"),
+            feature = "mixed-transfer-rehearsal"
+        ))]
+        let Some(occurrence_width) = ingress_capacity
+            .as_usize()
+            .checked_add(holds)
+            .and_then(MixedIngressQueueCount::capacity)
+        else {
+            return Err(Box::new(MixedOneShotArmRefusal {
+                reason: MixedOneShotArmError::IngressWidth,
                 owner: self,
                 candidate,
             }));
@@ -2853,9 +4502,15 @@ impl MixedJoinedPrepared {
         // C - H >= H + 1, so 2H + 1 is the smallest ingress depth that can realize every
         // declared live hold. H is at most one group here, so the arithmetic is bounded
         // by 17.
-        #[cfg(all(test, feature = "simulated-ingress"))]
+        #[cfg(any(
+            all(test, feature = "simulated-ingress"),
+            feature = "mixed-transfer-rehearsal"
+        ))]
         let required = EventCount::measured(live_holds.get() * 2 + 1);
-        #[cfg(all(test, feature = "simulated-ingress"))]
+        #[cfg(any(
+            all(test, feature = "simulated-ingress"),
+            feature = "mixed-transfer-rehearsal"
+        ))]
         if ingress_capacity.as_usize() < required.as_usize().unwrap_or(usize::MAX) {
             return Err(Box::new(MixedOneShotArmRefusal {
                 reason: MixedOneShotArmError::BendCreditCapacity {
@@ -2871,9 +4526,50 @@ impl MixedJoinedPrepared {
                 candidate,
             }));
         }
+        // Panic ends every open compiled occurrence too. None of them reserved a live
+        // release place, so the cut spends the release share beside the full queued
+        // live backlog the ingress preparation already proved: at most one cut per
+        // quantum, of at most the compiled span, in groups of eight.
+        #[cfg(any(
+            all(test, feature = "simulated-ingress"),
+            feature = "mixed-transfer-rehearsal"
+        ))]
+        if panic_capability == MixedPanicCapability::Available {
+            let span = control.compiled_span.indices().len();
+            let groups = span.div_ceil(crate::ingress::RELEASE_GROUP_CAPACITY);
+            let capacity = profile
+                .limits()
+                .events()
+                .queues()
+                .performance_ingress_capacity();
+            let share = profile.limits().events().shares().release_event_share();
+            let required = u32::try_from(groups)
+                .ok()
+                .and_then(|groups| capacity.get().checked_add(groups));
+            if required.is_none_or(|required| share.get() < required) {
+                return Err(Box::new(MixedOneShotArmRefusal {
+                    reason: MixedOneShotArmError::CompiledPanicReleaseShare {
+                        share,
+                        capacity,
+                        compiled_span: HeldNoteCount::measured(
+                            u32::try_from(span).unwrap_or(u32::MAX),
+                        ),
+                        required: EventCount::measured(required.unwrap_or(u32::MAX)),
+                    },
+                    owner: self,
+                    candidate,
+                }));
+            }
+        }
         // Both rings carry one protected place beyond the ordinary capacity: the merger
         // keeps it for one Panic, which ordinary commands and results cannot take.
-        #[cfg(all(test, feature = "simulated-ingress"))]
+        // A host-owned transfer's arm requires host queues with the same protected place
+        // when it carries Panic, as the two-source bridge's does; the single-source
+        // rehearsal carries none. The journal is sized for the protected place either way.
+        #[cfg(any(
+            all(test, feature = "simulated-ingress"),
+            feature = "mixed-transfer-rehearsal"
+        ))]
         let ring_places = ingress_capacity.as_usize() + 1;
         #[cfg(all(test, feature = "simulated-ingress"))]
         let (ingress_command_writer, ingress_command_reader) =
@@ -2882,14 +4578,45 @@ impl MixedJoinedPrepared {
         let (ingress_result_writer, ingress_result_reader) =
             HeapRb::<MixedIngressResult>::new(ring_places).split();
         // Every bend credit starts with the merger; audio returns them through this.
-        #[cfg(all(test, feature = "simulated-ingress"))]
+        #[cfg(any(
+            all(test, feature = "simulated-ingress"),
+            feature = "mixed-transfer-rehearsal"
+        ))]
         let bend_credit_return = MixedBendCreditReturn::new();
-        #[cfg(all(test, feature = "simulated-ingress"))]
+        #[cfg(any(
+            all(test, feature = "simulated-ingress"),
+            feature = "mixed-transfer-rehearsal"
+        ))]
         let ingress_halt = Arc::new(AtomicBool::new(false));
-        #[cfg(all(test, feature = "simulated-ingress"))]
+        #[cfg(any(
+            all(test, feature = "simulated-ingress"),
+            feature = "mixed-transfer-rehearsal"
+        ))]
+        let panic_current_service_at = Arc::new(AtomicU64::new(0));
+        #[cfg(any(
+            all(test, feature = "simulated-ingress"),
+            feature = "mixed-transfer-rehearsal"
+        ))]
         let bend_credit_budget = MixedIngressQueueCount(test_ingress.mixed_bend_budget());
+        #[cfg(any(
+            all(test, feature = "simulated-ingress"),
+            feature = "mixed-transfer-rehearsal"
+        ))]
+        let bend_tables =
+            bend_tables.unwrap_or_else(|| MixedBendTables::for_capacity(ingress_capacity));
+        // Each quantum drains at most one full queue. A Panic parked until a later
+        // quantum of one callback lets the commands behind it drain in that same
+        // callback, so the faulted-callback journal covers one queue per quantum.
         #[cfg(all(test, feature = "simulated-ingress"))]
-        let bend_scope_capacity = MixedBendScopeCapacity::for_two_source_midi1(ingress_capacity);
+        let inflight_journal = test_ingress.queue_capacity().saturating_mul(
+            profile
+                .capabilities()
+                .max_quanta_per_callback()
+                .ok()
+                .and_then(|quanta| usize::try_from(quanta.get()).ok())
+                .unwrap_or(usize::MAX)
+                .saturating_add(1),
+        );
         let late_at_arm = candidate.anchor.time() < arm_clock;
         let effective_anchor = StreamAnchor::new(effective, candidate.anchor.position());
         let capsule = match candidate.into_audio_capsule() {
@@ -2916,7 +4643,12 @@ impl MixedJoinedPrepared {
         // The initial list's open tokens are pairing state only; audio publishes
         // that list and mints its occurrences itself.
         drop(outstanding);
-        #[cfg(all(test, feature = "simulated-ingress"))]
+        // Arm's storage preflight already proved this width for the boundary release.
+        let stop_ended = vec![None; audio.compiled_ended.len()];
+        #[cfg(any(
+            all(test, feature = "simulated-ingress"),
+            feature = "mixed-transfer-rehearsal"
+        ))]
         let ingress_owner = MixedIngressOwner {
             plan: control.plan.id(),
             epoch: control.epoch,
@@ -2925,44 +4657,109 @@ impl MixedJoinedPrepared {
         Ok((
             MixedOneShotControl {
                 control,
-                #[cfg(all(test, feature = "simulated-ingress"))]
+                in_force: capsule.sequence,
+                in_force_effective: effective,
+                profile: *profile,
+                #[cfg(any(
+                    all(test, feature = "simulated-ingress"),
+                    feature = "mixed-transfer-rehearsal"
+                ))]
                 ingress_owner,
                 #[cfg(all(test, feature = "simulated-ingress"))]
                 ingress_commands: OpaqueQueue(ingress_command_writer),
                 #[cfg(all(test, feature = "simulated-ingress"))]
                 ingress_results: OpaqueQueue(ingress_result_reader),
-                #[cfg(all(test, feature = "simulated-ingress"))]
+                #[cfg(any(
+                    all(test, feature = "simulated-ingress"),
+                    feature = "mixed-transfer-rehearsal"
+                ))]
                 ingress_journal: VecDeque::with_capacity(ring_places),
-                #[cfg(all(test, feature = "simulated-ingress"))]
+                #[cfg(any(
+                    all(test, feature = "simulated-ingress"),
+                    feature = "mixed-transfer-rehearsal"
+                ))]
                 ingress_command_pending: None,
-                #[cfg(all(test, feature = "simulated-ingress"))]
+                #[cfg(any(
+                    all(test, feature = "simulated-ingress"),
+                    feature = "mixed-transfer-rehearsal"
+                ))]
                 terminal_identity_fault: None,
-                #[cfg(all(test, feature = "simulated-ingress"))]
+                #[cfg(any(
+                    all(test, feature = "simulated-ingress"),
+                    feature = "mixed-transfer-rehearsal"
+                ))]
                 invalid_ingress_result: None,
-                #[cfg(all(test, feature = "simulated-ingress"))]
+                #[cfg(any(
+                    all(test, feature = "simulated-ingress"),
+                    feature = "mixed-transfer-rehearsal"
+                ))]
                 ingress_halt: ingress_halt.clone(),
-                #[cfg(all(test, feature = "simulated-ingress"))]
+                #[cfg(any(
+                    all(test, feature = "simulated-ingress"),
+                    feature = "mixed-transfer-rehearsal"
+                ))]
                 ingress_capacity,
-                #[cfg(all(test, feature = "simulated-ingress"))]
+                #[cfg(any(
+                    all(test, feature = "simulated-ingress"),
+                    feature = "mixed-transfer-rehearsal"
+                ))]
                 ingress_outstanding: MixedIngressQueueCount::NONE,
-                #[cfg(all(test, feature = "simulated-ingress"))]
+                #[cfg(any(
+                    all(test, feature = "simulated-ingress"),
+                    feature = "mixed-transfer-rehearsal"
+                ))]
                 release_reserved: MixedIngressQueueCount::NONE,
-                #[cfg(all(test, feature = "simulated-ingress"))]
+                #[cfg(any(
+                    all(test, feature = "simulated-ingress"),
+                    feature = "mixed-transfer-rehearsal"
+                ))]
                 last_ingress_id: None,
-                #[cfg(all(test, feature = "simulated-ingress"))]
+                #[cfg(any(
+                    all(test, feature = "simulated-ingress"),
+                    feature = "mixed-transfer-rehearsal"
+                ))]
                 occurrence_ledger: MixedOccurrenceLedger::prepare(occurrence_width),
-                #[cfg(all(test, feature = "simulated-ingress"))]
+                #[cfg(any(
+                    all(test, feature = "simulated-ingress"),
+                    feature = "mixed-transfer-rehearsal"
+                ))]
                 pedal_ledger: MixedPedalLedger::prepare(ingress_capacity),
-                #[cfg(all(test, feature = "simulated-ingress"))]
-                bend_scopes: vec![None; bend_scope_capacity.as_usize()],
-                #[cfg(all(test, feature = "simulated-ingress"))]
+                #[cfg(any(
+                    all(test, feature = "simulated-ingress"),
+                    feature = "mixed-transfer-rehearsal"
+                ))]
+                bend_scopes: vec![None; bend_tables.control.as_usize()],
+                #[cfg(any(
+                    all(test, feature = "simulated-ingress"),
+                    feature = "mixed-transfer-rehearsal"
+                ))]
                 bend_credits_per_bend: MixedIngressQueueCount(holds),
-                #[cfg(all(test, feature = "simulated-ingress"))]
+                #[cfg(any(
+                    all(test, feature = "simulated-ingress"),
+                    feature = "mixed-transfer-rehearsal"
+                ))]
                 bend_credits_free: bend_credit_budget,
-                #[cfg(all(test, feature = "simulated-ingress"))]
+                #[cfg(any(
+                    all(test, feature = "simulated-ingress"),
+                    feature = "mixed-transfer-rehearsal"
+                ))]
                 bend_credit_return: bend_credit_return.clone(),
-                #[cfg(all(test, feature = "simulated-ingress"))]
+                #[cfg(any(
+                    all(test, feature = "simulated-ingress"),
+                    feature = "mixed-transfer-rehearsal"
+                ))]
                 panic_inflight: None,
+                #[cfg(any(test, feature = "mixed-transfer-rehearsal"))]
+                panic_pending_at: None,
+                #[cfg(any(test, feature = "mixed-transfer-rehearsal"))]
+                last_panic_applied_at: None,
+                #[cfg(any(test, feature = "mixed-transfer-rehearsal"))]
+                last_panic_executed_at: None,
+                #[cfg(any(
+                    all(test, feature = "simulated-ingress"),
+                    feature = "mixed-transfer-rehearsal"
+                ))]
+                panic_current_service_at: panic_current_service_at.clone(),
                 off_thread: PhantomData,
             },
             MixedOneShotAudio {
@@ -2977,42 +4774,116 @@ impl MixedJoinedPrepared {
                 in_force: ActivationSequence::INITIAL,
                 adopted: false,
                 fault: None,
-                release_charged: false,
+                releases_charged: EventCount::NONE,
                 released_compiled: HeldNoteCount::NONE,
                 restoration_charged: EventCount::NONE,
                 suffix_charged: EventCount::NONE,
                 completed_quanta: QuantumCount::NONE,
                 adoption_after_quanta: None,
                 render_started: false,
+                transport: MixedCompiledTransport::Running,
+                stop_pending: None,
+                stop_ended,
+                stop_released: HeldNoteCount::NONE,
+                stop_due: false,
+                stops_charged: EventCount::NONE,
+                in_force_restoration: EventCount::NONE,
+                release_due: false,
+                offer_slot: MixedOfferSlot::Empty,
+                compiled_panic_ended: HeldNoteCount::NONE,
+                compiled_panic_groups: EventCount::NONE,
+                compiled_released_after_panic: EventCount::NONE,
+                compiled_controls_after_panic: EventCount::NONE,
+                loop_program: None,
+                loop_cursor: None,
+                loop_wraps: EventCount::NONE,
+                loop_wrap_releases: HeldNoteCount::NONE,
+                #[cfg(any(
+                    all(test, feature = "simulated-ingress"),
+                    feature = "mixed-transfer-rehearsal"
+                ))]
+                panic_cut: None,
+                #[cfg(any(
+                    all(test, feature = "simulated-ingress"),
+                    feature = "mixed-transfer-rehearsal"
+                ))]
+                panic_current_service_at,
+                #[cfg(any(
+                    all(test, feature = "simulated-ingress"),
+                    feature = "mixed-transfer-rehearsal"
+                ))]
+                parked_panic: None,
                 #[cfg(all(test, feature = "simulated-ingress"))]
-                test_ingress_inflight: vec![None; test_ingress.queue_capacity_for_test()],
+                test_ingress_inflight: vec![None; inflight_journal],
                 #[cfg(all(test, feature = "simulated-ingress"))]
                 test_ingress_inflight_len: 0,
                 #[cfg(all(test, feature = "simulated-ingress"))]
                 test_fail_after_ingress_at: None,
-                #[cfg(all(test, feature = "simulated-ingress"))]
+                #[cfg(any(
+                    all(test, feature = "simulated-ingress"),
+                    feature = "mixed-transfer-rehearsal"
+                ))]
                 test_ingress,
-                #[cfg(all(test, feature = "simulated-ingress"))]
+                #[cfg(feature = "mixed-transfer-rehearsal")]
+                ingress_queue_peak: 0,
+                #[cfg(feature = "mixed-transfer-rehearsal")]
+                ingress_holds_peak: EventCount::NONE,
+                #[cfg(any(
+                    all(test, feature = "simulated-ingress"),
+                    feature = "mixed-transfer-rehearsal"
+                ))]
                 ingress_owner,
-                #[cfg(all(test, feature = "simulated-ingress"))]
+                #[cfg(any(
+                    all(test, feature = "simulated-ingress"),
+                    feature = "mixed-transfer-rehearsal"
+                ))]
                 occurrences: MixedOccurrenceTable::prepare(
                     occurrence_width,
                     ingress_capacity,
-                    bend_scope_capacity,
+                    bend_tables.audio,
                 ),
                 #[cfg(all(test, feature = "simulated-ingress"))]
                 ingress_commands: OpaqueQueue(ingress_command_reader),
                 #[cfg(all(test, feature = "simulated-ingress"))]
                 ingress_results: OpaqueQueue(ingress_result_writer),
-                #[cfg(all(test, feature = "simulated-ingress"))]
+                #[cfg(any(
+                    all(test, feature = "simulated-ingress"),
+                    feature = "mixed-transfer-rehearsal"
+                ))]
                 ingress_result_pending: None,
-                #[cfg(all(test, feature = "simulated-ingress"))]
+                #[cfg(any(
+                    all(test, feature = "simulated-ingress"),
+                    feature = "mixed-transfer-rehearsal"
+                ))]
                 ingress_halt,
-                #[cfg(all(test, feature = "simulated-ingress"))]
+                #[cfg(any(
+                    all(test, feature = "simulated-ingress"),
+                    feature = "mixed-transfer-rehearsal"
+                ))]
                 last_served_ingress_id: None,
-                #[cfg(all(test, feature = "simulated-ingress"))]
+                #[cfg(any(
+                    all(test, feature = "simulated-ingress"),
+                    feature = "mixed-transfer-rehearsal"
+                ))]
+                last_served_ingress_at: None,
+                #[cfg(any(
+                    all(test, feature = "simulated-ingress"),
+                    feature = "mixed-transfer-rehearsal"
+                ))]
                 invalid_ingress_command: None,
-                #[cfg(all(test, feature = "simulated-ingress"))]
+                #[cfg(any(
+                    all(test, feature = "simulated-ingress"),
+                    feature = "mixed-transfer-rehearsal"
+                ))]
+                ingress_command_fault: None,
+                #[cfg(feature = "mixed-transfer-rehearsal")]
+                transfer_binding: None,
+                #[cfg(feature = "mixed-transfer-rehearsal")]
+                reset_seal: None,
+                #[cfg(any(
+                    all(test, feature = "simulated-ingress"),
+                    feature = "mixed-transfer-rehearsal"
+                ))]
                 bend_credit_return,
                 #[cfg(test)]
                 test_live: None,
@@ -3053,14 +4924,57 @@ impl MixedJoinedPrepared {
         requested: SampleTime,
         position: PlanPosition,
     ) -> Result<MixedHistoryCandidate, MixedHistoryPrepareError> {
+        self.owner.control.prepare_history(requested, position)
+    }
+
+    /// Classify only the bound suffix's note contracts against a consumed prefix candidate.
+    ///
+    /// A release paired to the saved prefix is counted and omitted entirely. It is never
+    /// converted into the exclusive builder's whole-group `SetParameter` gate write.
+    /// On refusal the private candidate is discarded and this owner stays unchanged.
+    pub fn prepare_suffix(
+        &self,
+        candidate: MixedHistoryCandidate,
+    ) -> Result<MixedSuffixCandidate, MixedSuffixPrepareError> {
+        self.owner
+            .control
+            .prepare_suffix(candidate)
+            .map_err(|refusal| refusal.0)
+    }
+
+    /// Place a private first-activation suffix and pair its note edges by token.
+    ///
+    /// Pairing runs against a scratch occupancy of the compiled span and refuses
+    /// over-emission there; nothing is minted. The returned list orders requested-time
+    /// restoration before suffix events at the destination. There is still no offer path.
+    pub fn stamp_suffix(
+        &self,
+        suffix: MixedSuffixCandidate,
+    ) -> Result<MixedStampedCandidate, MixedStampPrepareError> {
+        self.owner
+            .control
+            .stamp_suffix(suffix, ActivationSequence::INITIAL)
+            .map_err(|refusal| refusal.0)
+    }
+}
+
+impl MixedStreamControl {
+    /// Reconstruct a bound compiled prefix at `requested` and `position`, minting nothing.
+    ///
+    /// The one history builder for every candidate this control prepares, the first
+    /// activation's and any later one's alike.
+    fn prepare_history(
+        &self,
+        requested: SampleTime,
+        position: PlanPosition,
+    ) -> Result<MixedHistoryCandidate, MixedHistoryPrepareError> {
         if super::next_boundary(requested).is_none() {
             return Err(MixedHistoryPrepareError::BoundaryUnrepresentable { at: requested });
         }
-        let control = &self.owner.control;
-        let plan = &control.plan;
-        let stream = control.stream.events();
+        let plan = &self.plan;
+        let stream = self.stream.events();
         let prefix_end = stream.partition_point(|event| event.position() < position);
-        let capacity = control.compiled_span.len;
+        let capacity = self.compiled_span.len;
         let mut book = OpenNotes::new(capacity, crate::ir::StealingPolicy::None);
         let mut values = vec![None; plan.parameter_targets().len()];
         let gates = super::gate_rows(plan);
@@ -3105,7 +5019,7 @@ impl MixedJoinedPrepared {
         for open in &open_at_destination {
             super::write_gate(&mut values, &gates, open.slot, ParameterValue::ZERO);
         }
-        let groups = control.partition.restoration_groups();
+        let groups = self.partition.restoration_groups();
         let mut restoration = Vec::with_capacity(groups.len());
         for group in groups {
             let slot = group.parameter();
@@ -3134,7 +5048,7 @@ impl MixedJoinedPrepared {
                 ScopedParameterRestore::override_for(*group, value)
             };
             restoration.push(TimedEvent::new(
-                EventEnvelope::new(control.epoch, requested, TimeSource::Compiled),
+                EventEnvelope::new(self.epoch, requested, TimeSource::Compiled),
                 EventPayload::ScopedRestore(scoped),
             ));
         }
@@ -3144,8 +5058,8 @@ impl MixedJoinedPrepared {
         );
         Ok(MixedHistoryCandidate {
             plan: plan.id(),
-            epoch: control.epoch,
-            table: control.table,
+            epoch: self.epoch,
+            table: self.table,
             requested,
             position,
             prefix_end,
@@ -3158,29 +5072,45 @@ impl MixedJoinedPrepared {
         })
     }
 
-    /// Classify only the bound suffix's note contracts against a consumed prefix candidate.
+    /// Classify the bound suffix against one consumed history candidate.
     ///
-    /// A release paired to the saved prefix is counted and omitted entirely. It is never
-    /// converted into the exclusive builder's whole-group `SetParameter` gate write.
-    /// On refusal the private candidate is discarded and this owner stays unchanged.
-    pub fn prepare_suffix(
+    /// Classification closes crossing releases in a copy of the history's book, so a
+    /// refusal returns the candidate exactly as it was given.
+    fn prepare_suffix(
         &self,
-        mut candidate: MixedHistoryCandidate,
-    ) -> Result<MixedSuffixCandidate, MixedSuffixPrepareError> {
-        let control = &self.owner.control;
-        if candidate.plan != control.plan.id()
-            || candidate.epoch != control.epoch
-            || candidate.table != control.table
+        candidate: MixedHistoryCandidate,
+    ) -> Result<MixedSuffixCandidate, Box<(MixedSuffixPrepareError, MixedHistoryCandidate)>> {
+        self.prepare_suffix_until(candidate, None)
+    }
+
+    /// [`Self::prepare_suffix`] over source positions before `end` only. A loop's lists
+    /// stop there: its suffix after `end` can never play, so it is neither classified
+    /// nor counted, and a note still open at `end` leaves its token open.
+    fn prepare_suffix_until(
+        &self,
+        candidate: MixedHistoryCandidate,
+        end: Option<PlanPosition>,
+    ) -> Result<MixedSuffixCandidate, Box<(MixedSuffixPrepareError, MixedHistoryCandidate)>> {
+        if candidate.plan != self.plan.id()
+            || candidate.epoch != self.epoch
+            || candidate.table != self.table
         {
-            return Err(MixedSuffixPrepareError::ForeignCandidate);
+            return Err(Box::new((
+                MixedSuffixPrepareError::ForeignCandidate,
+                candidate,
+            )));
         }
-        let stream = control.stream.events();
+        let stream = self.stream.events();
         if candidate.prefix_end
             != stream.partition_point(|event| event.position() < candidate.position)
         {
-            return Err(MixedSuffixPrepareError::PrefixMismatch);
+            return Err(Box::new((
+                MixedSuffixPrepareError::PrefixMismatch,
+                candidate,
+            )));
         }
-        let mut suffix = OpenNotes::new(control.compiled_span.len, crate::ir::StealingPolicy::None);
+        let mut book = candidate.book.clone();
+        let mut suffix = OpenNotes::new(self.compiled_span.len, crate::ir::StealingPolicy::None);
         let mut included = Vec::with_capacity(stream.len() - candidate.prefix_end);
         let mut omitted_releases = 0_usize;
         let mut omitted_expressions = 0_usize;
@@ -3189,36 +5119,44 @@ impl MixedJoinedPrepared {
             .copied()
             .enumerate()
             .skip(candidate.prefix_end)
+            .take_while(|(_, event)| end.is_none_or(|end| event.position() < end))
         {
             let now = event.position().as_u64();
-            match event.payload() {
+            let refused = match event.payload() {
                 CompiledPayload::NoteOn { slot, key, .. } => {
-                    if !matches!(suffix.open(now, slot, key, ()), Opened::Admitted) {
-                        return Err(MixedSuffixPrepareError::ProducerCapacity { event_index });
+                    if matches!(suffix.open(now, slot, key, ()), Opened::Admitted) {
+                        None
+                    } else {
+                        Some(MixedSuffixPrepareError::ProducerCapacity { event_index })
                     }
                 }
                 CompiledPayload::NoteOff { slot, key } => {
-                    if !matches!(suffix.close(now, slot, key), Closed::Paired(_)) {
-                        if matches!(candidate.book.close(now, slot, key), Closed::Paired(_)) {
-                            omitted_releases += 1;
-                            continue;
-                        }
-                        return Err(MixedSuffixPrepareError::UnmatchedRelease { event_index });
+                    if matches!(suffix.close(now, slot, key), Closed::Paired(_)) {
+                        None
+                    } else if matches!(book.close(now, slot, key), Closed::Paired(_)) {
+                        omitted_releases += 1;
+                        continue;
+                    } else {
+                        Some(MixedSuffixPrepareError::UnmatchedRelease { event_index })
                     }
                 }
                 CompiledPayload::Expression { slot, key, .. }
                 | CompiledPayload::Bend { slot, key, .. } => {
-                    if suffix.find(now, slot, key).is_none() {
-                        if candidate.book.find(now, slot, key).is_some() {
-                            omitted_expressions += 1;
-                            continue;
-                        }
-                        return Err(MixedSuffixPrepareError::UnmatchedExpression { event_index });
+                    if suffix.find(now, slot, key).is_some() {
+                        None
+                    } else if book.find(now, slot, key).is_some() {
+                        omitted_expressions += 1;
+                        continue;
+                    } else {
+                        Some(MixedSuffixPrepareError::UnmatchedExpression { event_index })
                     }
                 }
                 CompiledPayload::Controller(_) | CompiledPayload::SetParameter { .. } => {
-                    return Err(MixedSuffixPrepareError::UnexpectedWriter { event_index });
+                    Some(MixedSuffixPrepareError::UnexpectedWriter { event_index })
                 }
+            };
+            if let Some(error) = refused {
+                return Err(Box::new((error, candidate)));
             }
             included.push(event_index);
         }
@@ -3228,10 +5166,15 @@ impl MixedJoinedPrepared {
             u32::try_from(omitted_expressions),
         );
         let (Ok(included_count), Ok(omitted_releases), Ok(omitted_expressions)) = counts else {
-            return Err(MixedSuffixPrepareError::CountUnrepresentable);
+            return Err(Box::new((
+                MixedSuffixPrepareError::CountUnrepresentable,
+                candidate,
+            )));
         };
+        let mut history = candidate;
+        history.book = book;
         Ok(MixedSuffixCandidate {
-            history: candidate,
+            history,
             included,
             included_count: EventCount::measured(included_count),
             omitted_releases: EventCount::measured(omitted_releases),
@@ -3239,24 +5182,35 @@ impl MixedJoinedPrepared {
         })
     }
 
-    /// Place a private first-activation suffix and pair its note edges by token.
+    /// Place a classified suffix, pair it by token and seal it as superseding `supersedes`.
     ///
-    /// Pairing runs against a scratch occupancy of the compiled span and refuses
-    /// over-emission there; nothing is minted. The returned list orders requested-time
-    /// restoration before suffix events at the destination. There is still no offer path.
-    pub fn stamp_suffix(
+    /// Nothing is minted or freed: control holds no generation state. Every check runs
+    /// before the restoration batch moves out of the suffix's history, so a refusal
+    /// returns the suffix exactly as it was given.
+    fn stamp_suffix(
         &self,
-        mut suffix: MixedSuffixCandidate,
-    ) -> Result<MixedStampedCandidate, MixedStampPrepareError> {
-        let control = &self.owner.control;
+        suffix: MixedSuffixCandidate,
+        supersedes: ActivationSequence,
+    ) -> Result<MixedStampedCandidate, Box<(MixedStampPrepareError, MixedSuffixCandidate)>> {
+        match self.stamp_events(&suffix) {
+            Ok(stamped) => Ok(stamped.seal(suffix, supersedes)),
+            Err(error) => Err(Box::new((error, suffix))),
+        }
+    }
+
+    /// Every fallible part of [`Self::stamp_suffix`], reading the suffix only.
+    fn stamp_events(
+        &self,
+        suffix: &MixedSuffixCandidate,
+    ) -> Result<MixedStampedEvents, MixedStampPrepareError> {
         let history = &suffix.history;
-        if history.plan != control.plan.id()
-            || history.epoch != control.epoch
-            || history.table != control.table
+        if history.plan != self.plan.id()
+            || history.epoch != self.epoch
+            || history.table != self.table
         {
             return Err(MixedStampPrepareError::ForeignCandidate);
         }
-        let stream = control.stream.events();
+        let stream = self.stream.events();
         if suffix.included_count.as_usize() != Some(suffix.included.len()) {
             return Err(MixedStampPrepareError::CountUnrepresentable);
         }
@@ -3294,8 +5248,8 @@ impl MixedJoinedPrepared {
             };
             placed.push(CompiledEvent::new(time, event.payload()));
         }
-        if suffix.history.restoration_count.as_usize() != Some(suffix.history.restoration.len())
-            || suffix.history.restoration.iter().any(|event| {
+        if history.restoration_count.as_usize() != Some(history.restoration.len())
+            || history.restoration.iter().any(|event| {
                 event.envelope().time() != history.requested
                     || event.envelope().epoch() != history.epoch
                     || !matches!(event.payload(), EventPayload::ScopedRestore(_))
@@ -3308,10 +5262,10 @@ impl MixedJoinedPrepared {
         // this list publishes, so pairing starts from an empty scratch occupancy.
         // No old reservation, copy or generation is consulted or changed.
         let tokenized = tokenize_compiled(
-            &control.plan,
-            control.compiled_producer,
-            control.compiled_span,
-            control.epoch,
+            &self.plan,
+            self.compiled_producer,
+            self.compiled_span,
+            self.epoch,
             &placed,
         )
         .map_err(|error| match error {
@@ -3332,11 +5286,8 @@ impl MixedJoinedPrepared {
             u32::try_from(tokenized.open.len())
                 .map_err(|_| MixedStampPrepareError::CountUnrepresentable)?,
         );
-        let restoration_count = suffix.history.restoration_count;
-        let restoration = std::mem::take(&mut suffix.history.restoration);
-        suffix.history.restoration_count = EventCount::NONE;
-        let mut events = Vec::with_capacity(restoration.len() + tokenized.events.len());
-        for event in restoration {
+        let mut events = Vec::with_capacity(history.restoration.len() + tokenized.events.len());
+        for event in &history.restoration {
             let EventPayload::ScopedRestore(scoped) = event.payload() else {
                 return Err(MixedStampPrepareError::InvalidRestoration);
             };
@@ -3351,16 +5302,49 @@ impl MixedJoinedPrepared {
             u32::try_from(events.len())
                 .map_err(|_| MixedStampPrepareError::CountUnrepresentable)?,
         );
-        Ok(MixedStampedCandidate {
-            suffix,
+        Ok(MixedStampedEvents {
             anchor,
-            supersedes: ActivationSequence::INITIAL,
             events,
             event_count,
-            restoration_count,
             outstanding: tokenized.open,
             outstanding_count,
         })
+    }
+}
+
+/// A placed, token-paired list that has passed every stamping check but not yet taken
+/// its suffix's restoration batch.
+struct MixedStampedEvents {
+    anchor: StreamAnchor,
+    events: Vec<MixedCompiledEvent>,
+    event_count: EventCount,
+    outstanding: Vec<MixedNoteToken>,
+    outstanding_count: HeldNoteCount,
+}
+
+impl MixedStampedEvents {
+    /// Infallibly move the restoration batch out of the suffix's history, whose
+    /// restoration count drops to zero, and seal the candidate.
+    fn seal(
+        self,
+        mut suffix: MixedSuffixCandidate,
+        supersedes: ActivationSequence,
+    ) -> MixedStampedCandidate {
+        let restoration_count = suffix.history.restoration_count;
+        // The batch is already copied into `events`; its source vector is dropped here,
+        // off-thread.
+        drop(std::mem::take(&mut suffix.history.restoration));
+        suffix.history.restoration_count = EventCount::NONE;
+        MixedStampedCandidate {
+            suffix,
+            anchor: self.anchor,
+            supersedes,
+            events: self.events,
+            event_count: self.event_count,
+            restoration_count,
+            outstanding: self.outstanding,
+            outstanding_count: self.outstanding_count,
+        }
     }
 }
 
@@ -3386,6 +5370,23 @@ fn prepare_one_shot_arbiter(
     timing: MixedEffectiveTiming,
     profile: &HostProfile,
 ) -> Result<PublicationArbiter, MixedOneShotAdmissionError> {
+    admit_one_shot_candidate(plan, partition, candidate, timing, profile)?;
+    // Session and Compiled each fit their own share; their sum fits the quantum
+    // cap by HostProfile construction. The renderer's storage preflight covers
+    // that cap times its widest event, the compiled release and modulation.
+    PublicationArbiter::prepare_one_quantum(profile).map_err(MixedOneShotAdmissionError::Arbiter)
+}
+
+/// Admit one stamped candidate at one effective boundary against `profile`: the armed
+/// transition at arm, and every later one when control seals its offer. One check for
+/// both is what leaves no admission gap between them.
+fn admit_one_shot_candidate(
+    plan: &CompiledPlan,
+    partition: &MixedInstancePartition,
+    candidate: &MixedStampedCandidate,
+    timing: MixedEffectiveTiming,
+    profile: &HostProfile,
+) -> Result<(), MixedOneShotAdmissionError> {
     use MixedOneShotAdmissionError as Refused;
 
     let caps = profile.capabilities();
@@ -3497,11 +5498,7 @@ fn prepare_one_shot_arbiter(
             available: session_share,
         });
     }
-
-    // Session and Compiled each fit their own share; their sum fits the quantum
-    // cap by HostProfile construction. The renderer's storage preflight covers
-    // that cap times its widest event, the compiled release and modulation.
-    PublicationArbiter::prepare_one_quantum(profile).map_err(Refused::Arbiter)
+    Ok(())
 }
 
 impl MixedHistoryCandidate {
@@ -3576,6 +5573,13 @@ impl MixedStampedCandidate {
     pub(crate) fn into_audio_capsule(
         self,
     ) -> Result<Box<MixedAudioCandidate>, Box<(MixedCapsulePrepareError, Self)>> {
+        self.into_audio_parts().map(Box::new)
+    }
+
+    /// [`Self::into_audio_capsule`] before boxing, for a later offer's own cell.
+    fn into_audio_parts(
+        self,
+    ) -> Result<MixedAudioCandidate, Box<(MixedCapsulePrepareError, Self)>> {
         let Some(sequence) = self.supersedes.next() else {
             return Err(Box::new((
                 MixedCapsulePrepareError::SequenceExhausted,
@@ -3602,7 +5606,7 @@ impl MixedStampedCandidate {
         // the sendable capsule can reach audio.
         drop(suffix);
         drop(outstanding);
-        Ok(Box::new(MixedAudioCandidate {
+        Ok(MixedAudioCandidate {
             plan,
             epoch,
             table,
@@ -3617,7 +5621,7 @@ impl MixedStampedCandidate {
             event_count,
             restoration_count,
             outstanding_count,
-        }))
+        })
     }
 
     /// Check the uniform displacement for a possible adoption boundary.
@@ -3685,7 +5689,7 @@ impl MixedStampedCandidate {
         self.anchor
     }
 
-    /// The initial sequence this first-activation rehearsal would supersede.
+    /// The sequence this candidate would supersede: `INITIAL` for the first activation.
     /// Any later offer must compare it with the audio owner's in-force sequence.
     pub const fn supersedes(&self) -> ActivationSequence {
         self.supersedes
@@ -3742,5 +5746,26 @@ mod history_tests;
 #[path = "mixed/ledger_tests.rs"]
 mod ledger_tests;
 #[cfg(all(test, feature = "simulated-ingress"))]
+#[path = "mixed/loop_tests.rs"]
+mod loop_tests;
+#[cfg(test)]
+#[path = "mixed/offer_tests.rs"]
+mod offer_tests;
+#[cfg(all(test, feature = "simulated-ingress"))]
+#[path = "mixed/panic_tests.rs"]
+mod panic_tests;
+#[cfg(all(test, feature = "simulated-ingress"))]
 #[path = "mixed/stage_tests.rs"]
 mod stage_tests;
+#[cfg(test)]
+#[path = "mixed/stop_tests.rs"]
+mod stop_tests;
+#[cfg(test)]
+#[path = "mixed/subsequent_tests.rs"]
+mod subsequent_tests;
+#[cfg(all(test, feature = "simulated-ingress"))]
+#[path = "mixed/timeline_tests.rs"]
+mod timeline_tests;
+#[cfg(test)]
+#[path = "mixed/transport_tests.rs"]
+mod transport_tests;

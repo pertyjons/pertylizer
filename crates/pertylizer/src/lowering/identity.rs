@@ -28,7 +28,12 @@
 //! number, which is exactly what a [`ModuleId`] is. Nothing about the patch's contents
 //! enters, so adding, removing or reordering modules — or instruments — leaves every other
 //! address where it was. The assigned number is an address inside one plan; it is never
-//! persisted and never compared across two lowerings.
+//! persisted. The paused-edit consumer may compare it across lowerings only within
+//! an unchanged authoritative module/effect lineage attached by the GUI. Within that
+//! authority, a destructive operation fences
+//! even a coalesced delete-and-recreate under the same ModuleId. This is session-local
+//! continuity, not durable entity identity or Phase 10A's canonical revision. Positional
+//! send addresses never authorize state or parameter migration.
 //!
 //! # The address space, since a plan holds a whole project (`P08-S002`)
 //!
@@ -315,8 +320,10 @@ pub const MASTER_TRIM: NodeId = InstrumentSlot::MASTER.inserted(1);
 pub const MASTER_CLAMP: NodeId = InstrumentSlot::MASTER.inserted(2);
 /// The plan's one output (`P08-S002`).
 pub const MASTER_OUTPUT: NodeId = InstrumentSlot::MASTER.inserted(3);
-/// Master observation after the output policy stages.
+/// Stereo master observation after limiting, before any explicit mono fold.
 pub const MASTER_METER: NodeId = InstrumentSlot::MASTER.inserted(4);
+/// Explicit terminal mono fold, emitted only for a mono lowering profile.
+pub const MASTER_MONO: NodeId = InstrumentSlot::MASTER.inserted(5);
 
 /// The two-way mapping between a patch's saved module identities and one plan's node
 /// identities.

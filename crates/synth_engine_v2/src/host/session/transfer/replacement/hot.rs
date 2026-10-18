@@ -36,6 +36,9 @@ impl SessionAudio {
         if self.runtime.state != PlaybackState::Stopped(candidate.expected_position) {
             return Some(PlanReplacementRefusal::PositionChanged);
         }
+        if candidate.migration.is_some() && candidate.prepared_from_table != self.origin.table {
+            return Some(PlanReplacementRefusal::MigrationOrigin);
+        }
         if self.renderer.carry_frames() != 0 {
             return Some(PlanReplacementRefusal::Carry);
         }
@@ -44,7 +47,7 @@ impl SessionAudio {
         // commands would change the checked watermark. Its fresh minter snapshot
         // is therefore still valid, even before its new control is collected.
         if (candidate.prepared_from_table != self.origin.table && self.prepared_minter_obligations)
-            || self.renderer.has_replacement_obligations()
+            || self.renderer.has_readmission_obligations()
         {
             return Some(PlanReplacementRefusal::NoteObligations);
         }
@@ -66,7 +69,9 @@ impl SessionAudio {
         mut candidate: Box<PreparedPlanReplacement>,
     ) -> Result<Box<PreparedPlanReplacement>, (Box<PreparedPlanReplacement>, PlanReplacementError)>
     {
-        if candidate.outcome.is_some() {
+        if candidate.outcome.is_some()
+            || (candidate.running.is_some() || candidate.continuation.is_some())
+        {
             return Err((candidate, PlanReplacementError::State));
         }
         if let Some(reason) = self.replacement_refusal(&candidate) {
@@ -76,6 +81,18 @@ impl SessionAudio {
             candidate.outcome = Some(PlanReplacementOutcome::Refused(reason));
             return Ok(candidate);
         }
+        let retired_compiled_notes = self.renderer.readmission_retired_notes();
+        if let Some(migration) = &candidate.migration
+            && let Err(error) =
+                migration.transfer_into(&mut self.renderer, &mut candidate.audio.renderer)
+        {
+            self.publication_serial = self.publication_serial.max(candidate.id.serial);
+            candidate.outcome = Some(PlanReplacementOutcome::Refused(
+                PlanReplacementRefusal::Migration(error),
+            ));
+            return Ok(candidate);
+        }
+        candidate.retired_compiled_notes = retired_compiled_notes;
         let snapshot = SessionSnapshot {
             clock: self.renderer.clock(),
             playback: self.runtime.state,
@@ -95,5 +112,45 @@ impl SessionAudio {
         core::mem::swap(self, &mut candidate.audio);
         candidate.outcome = Some(PlanReplacementOutcome::Installed(snapshot));
         Ok(candidate)
+    }
+}
+
+impl PreparedPlanReplacement {
+    pub const fn kind(&self) -> super::PlanReplacementKind {
+        if self.continuation.is_some() {
+            super::PlanReplacementKind::RunningCompatible
+        } else if self.running.is_some() {
+            super::PlanReplacementKind::RunningReset
+        } else if self.migration.is_some() {
+            super::PlanReplacementKind::StoppedCompatible
+        } else {
+            super::PlanReplacementKind::StoppedReset
+        }
+    }
+    pub fn running_boundary(&self) -> Option<crate::time::SampleTime> {
+        if let Some(running) = &self.running {
+            return Some(running.anchor.time());
+        }
+        self.continuation
+            .as_ref()
+            .map(|continuation| continuation.boundary)
+    }
+    pub fn is_rendering_transition(&self) -> bool {
+        self.continuation.as_ref().is_some_and(|continuation| {
+            continuation.stage == super::continuation::ContinuationStage::Rendering
+        }) || self
+            .running
+            .as_ref()
+            .is_some_and(|running| running.stage == super::running::RunningStage::Fading)
+    }
+    pub fn transition_bytes(&self) -> crate::quantities::PreparedBytes {
+        if let Some(continuation) = &self.continuation {
+            return continuation.bytes;
+        }
+        self.running
+            .as_ref()
+            .map_or(crate::quantities::PreparedBytes::NONE, |running| {
+                running.bytes
+            })
     }
 }

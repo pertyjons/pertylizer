@@ -62,6 +62,10 @@ impl SourceQueue {
     pub(crate) fn capacity(&self) -> usize {
         self.slots.len()
     }
+    #[cfg(feature = "mixed-transfer-rehearsal")]
+    pub(crate) fn occupied(&self) -> usize {
+        self.held
+    }
     pub(crate) fn has_held(&self) -> bool {
         self.held != 0
     }

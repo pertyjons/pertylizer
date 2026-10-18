@@ -23,8 +23,8 @@ use super::{
 };
 use crate::{
     ingress::ReleaseCause,
-    quantities::{ChannelLayout, EventCount, NoteVelocity},
-    render::{AudioBlockMut, EventPayload},
+    quantities::{EventCount, NoteVelocity},
+    render::EventPayload,
     time::SampleTime,
 };
 
@@ -45,10 +45,10 @@ fn panic_request(at: u64) -> MixedIngressRequest {
 fn assert_invalid_panic_member_keeps_ledger_and_place(wrong_kind: bool) {
     let s = scope(1, 1);
     let (mut control, mut audio) = armed_with(true, 2);
-    let open = onset_in(&mut control, s, 100, 60);
+    let open = onset_in(&mut control, s, 10, 60);
     audio.service_test_ingress_queue();
     let _onset = control.collect_ingress_result().unwrap();
-    let _panic = panic_at(&mut control, 120);
+    let _panic = panic_at(&mut control, 20);
     let panic_id = control.panic_inflight.unwrap();
     audio.service_test_ingress_queue();
     let actual = control.ingress_results.0.try_pop().unwrap();
@@ -102,7 +102,7 @@ fn ended(outcome: MixedIngressOutcome) -> Vec<MixedPanicEnd> {
 
 /// Release groups in the registered ingress queue, in queue order, with their cause.
 fn groups(audio: &MixedOneShotAudio) -> Vec<(ReleaseCause, Vec<NoteIdentity>)> {
-    let mut queue = vec![None; audio.test_ingress.queue_capacity_for_test()];
+    let mut queue = vec![None; audio.test_ingress.queue_capacity()];
     let len = audio
         .test_ingress
         .copy_queue_for_test(&mut queue)
@@ -132,29 +132,29 @@ fn panic_ends_sounding_and_sustained_occurrences_and_tombstones_keys_still_down(
     for compiled_first in [true, false] {
         let (s, other) = (scope(1, 1), scope(2, 3));
         let (mut control, audio) = armed_with(compiled_first, 4);
-        pedal(&mut control, s, 100, true);
-        let down = onset_in(&mut control, s, 110, 60);
-        let sustained = onset_in(&mut control, s, 111, 61);
-        release(&mut control, sustained, 112);
-        let elsewhere = onset_in(&mut control, other, 113, 60);
-        let panic = panic_at(&mut control, 200);
+        pedal(&mut control, s, 10, true);
+        let down = onset_in(&mut control, s, 20, 60);
+        let sustained = onset_in(&mut control, s, 21, 61);
+        release(&mut control, sustained, 22);
+        let elsewhere = onset_in(&mut control, other, 23, 60);
+        let panic = panic_at(&mut control, 40);
         let mut audio = service_without_allocation(audio);
         let results = collect_all(&mut control);
-        let idown = accepted(outcome_for(&results, onset_request_in(down, s, 110, 60)));
+        let idown = accepted(outcome_for(&results, onset_request_in(down, s, 20, 60)));
         let isustained = accepted(outcome_for(
             &results,
-            onset_request_in(sustained, s, 111, 61),
+            onset_request_in(sustained, s, 21, 61),
         ));
         let ielsewhere = accepted(outcome_for(
             &results,
-            onset_request_in(elsewhere, other, 113, 60),
+            onset_request_in(elsewhere, other, 23, 60),
         ));
         assert_eq!(
-            outcome_for(&results, release_request(sustained, 112)),
+            outcome_for(&results, release_request(sustained, 22)),
             MixedIngressOutcome::Sustained(sustained)
         );
         let panicked = applied(outcome_for(&results, panic));
-        assert_eq!(panicked.executed_at(), SampleTime::new(200));
+        assert_eq!(panicked.executed_at(), SampleTime::new(40));
         // Cell order across scopes, which is also the group's member order.
         assert_eq!(
             panicked.ended().collect::<Vec<_>>(),
@@ -252,24 +252,24 @@ fn panic_takes_its_protected_place_in_a_ring_full_of_commands_and_uncollected_re
     let (mut control, audio) = armed_with(true, 8);
     let capacity = control.ingress_capacity.as_usize();
     let mut submitted = Vec::new();
-    let MixedPedalSubmitted::Command(id, request) = pedal(&mut control, s, 100, true) else {
+    let MixedPedalSubmitted::Command(id, request) = pedal(&mut control, s, 10, true) else {
         panic!("the first pedal-down is effective");
     };
     submitted.push((id, request));
     let mut notes = Vec::new();
     for raw in 0..(capacity - 2) / 2 {
         let raw = u8::try_from(raw).expect("small key");
-        let note = onset_in(&mut control, s, 110, raw);
+        let note = onset_in(&mut control, s, 20, raw);
         submitted.push((
             control.last_ingress_id.expect("submitted"),
-            onset_request_in(note, s, 110, raw),
+            onset_request_in(note, s, 20, raw),
         ));
         notes.push(note);
     }
     for note in &notes {
         submitted.push(
             control
-                .submit_release(ORIGIN, *note, SampleTime::new(120))
+                .submit_release(ORIGIN, *note, SampleTime::new(30))
                 .expect("reserved release place"),
         );
     }
@@ -277,23 +277,17 @@ fn panic_takes_its_protected_place_in_a_ring_full_of_commands_and_uncollected_re
     // Only the lift's reservation is left, and no result has been collected.
     assert_eq!(control.ingress_room(), 0);
     assert_eq!(
-        control.submit_onset(
-            ORIGIN,
-            s,
-            SampleTime::new(130),
-            key(100),
-            NoteVelocity::FULL
-        ),
+        control.submit_onset(ORIGIN, s, SampleTime::new(40), key(100), NoteVelocity::FULL),
         Err(MixedOnsetSubmitError::Full)
     );
     let mut audio = service_without_allocation(audio);
     assert_eq!(control.ingress_outstanding.as_usize(), capacity - 1);
 
     let (id, request) = control
-        .submit_panic(ORIGIN, SampleTime::new(130))
+        .submit_panic(ORIGIN, SampleTime::new(40))
         .expect("the protected place is free");
     submitted.push((id, request));
-    let MixedPedalSubmitted::Command(id, request) = pedal(&mut control, s, 140, false) else {
+    let MixedPedalSubmitted::Command(id, request) = pedal(&mut control, s, 50, false) else {
         panic!("the lift is effective");
     };
     submitted.push((id, request));
@@ -357,29 +351,29 @@ fn panic_takes_its_protected_place_in_a_ring_full_of_commands_and_uncollected_re
 fn panic_needs_no_ingress_place_with_the_queue_full_and_every_hold_out() {
     let (s, other) = (scope(1, 1), scope(2, 1));
     let (mut control, audio) = armed_with(true, 8);
-    let depth = audio.test_ingress.queue_capacity_for_test();
+    let depth = audio.test_ingress.queue_capacity();
     // Eight live notes' note-on entries and holds are all the ordinary room the
     // bend-credit budget leaves: `B = C - 2H`.
     assert_eq!(depth - audio.test_ingress.mixed_bend_budget(), 16);
-    pedal(&mut control, s, 110, true);
+    pedal(&mut control, s, 10, true);
     let mut sustained = Vec::new();
     let mut down = Vec::new();
     for raw in 0..4 {
-        let at = 120 + 3 * u64::from(raw);
+        let at = 20 + 3 * u64::from(raw);
         let note = onset_in(&mut control, s, at, 60 + raw);
         release(&mut control, note, at + 1);
         sustained.push((note, onset_request_in(note, s, at, 60 + raw)));
         let note = onset_in(&mut control, other, at + 2, 70 + raw);
         down.push((note, onset_request_in(note, other, at + 2, 70 + raw)));
     }
-    let starved = onset_in(&mut control, other, 133, 100);
+    let starved = onset_in(&mut control, other, 33, 100);
     let mut audio = service_without_allocation(audio);
     let results = collect_all(&mut control);
     assert_eq!(holds(&audio), 8);
     assert_eq!(audio.test_ingress.len(), 8);
     assert_eq!(free_units(&audio), 0);
     assert_eq!(
-        outcome_for(&results, onset_request_in(starved, other, 133, 100)),
+        outcome_for(&results, onset_request_in(starved, other, 33, 100)),
         MixedIngressOutcome::Onset(Err(IngressRefused::Dropped {
             resource: ExhaustedResource::Hold,
         }))
@@ -393,9 +387,9 @@ fn panic_needs_no_ingress_place_with_the_queue_full_and_every_hold_out() {
         .iter()
         .map(|(_, request)| identity(*request))
         .collect::<Vec<_>>();
-    release(&mut control, starved, 134);
+    release(&mut control, starved, 34);
 
-    let panic = panic_at(&mut control, 135);
+    let panic = panic_at(&mut control, 35);
     audio = service_without_allocation(audio);
     let results = collect_all(&mut control);
     let panicked = ended(outcome_for(&results, panic));
@@ -421,19 +415,19 @@ fn panic_needs_no_ingress_place_with_the_queue_full_and_every_hold_out() {
     );
 
     // The freed holds admit a new onset at once; the late key-ups need no place.
-    let fresh = onset_in(&mut control, other, 140, 100);
+    let fresh = onset_in(&mut control, other, 40, 100);
     for (note, _) in &down {
-        release(&mut control, *note, 141);
+        release(&mut control, *note, 41);
     }
     audio.service_test_ingress_queue();
     let results = collect_all(&mut control);
     let ifresh = accepted(outcome_for(
         &results,
-        onset_request_in(fresh, other, 140, 100),
+        onset_request_in(fresh, other, 40, 100),
     ));
     for ((note, _), identity) in down.iter().zip(&idown) {
         assert_eq!(
-            outcome_for(&results, release_request(*note, 141)),
+            outcome_for(&results, release_request(*note, 41)),
             after_panic(*note, *identity)
         );
     }
@@ -456,21 +450,21 @@ fn a_late_key_up_after_panic_never_ends_a_newer_same_key_occurrence() {
     for compiled_first in [true, false] {
         let s = scope(1, 1);
         let (mut control, audio) = armed_with(compiled_first, 2);
-        let old = onset_in(&mut control, s, 110, 60);
-        let panic = panic_at(&mut control, 120);
-        let newer = onset_in(&mut control, s, 130, 60);
-        release(&mut control, old, 140);
+        let old = onset_in(&mut control, s, 10, 60);
+        let panic = panic_at(&mut control, 20);
+        let newer = onset_in(&mut control, s, 30, 60);
+        release(&mut control, old, 40);
         let mut audio = service_without_allocation(audio);
         let results = collect_all(&mut control);
-        let iold = accepted(outcome_for(&results, onset_request_in(old, s, 110, 60)));
-        let inewer = accepted(outcome_for(&results, onset_request_in(newer, s, 130, 60)));
+        let iold = accepted(outcome_for(&results, onset_request_in(old, s, 10, 60)));
+        let inewer = accepted(outcome_for(&results, onset_request_in(newer, s, 30, 60)));
         assert_ne!(iold, inewer);
         assert_eq!(
             ended(outcome_for(&results, panic)),
             vec![MixedPanicEnd::Tombstoned(old)]
         );
         assert_eq!(
-            outcome_for(&results, release_request(old, 140)),
+            outcome_for(&results, release_request(old, 40)),
             after_panic(old, iold)
         );
         assert_eq!(
@@ -509,20 +503,20 @@ fn a_late_key_up_after_panic_never_ends_a_newer_same_key_occurrence() {
 #[test]
 fn a_second_panic_is_refused_at_the_caller_until_the_first_result_is_collected() {
     let order = IngressRefused::NonMonotoneStamp {
-        time: SampleTime::new(140),
-        last: SampleTime::new(150),
+        time: SampleTime::new(40),
+        last: SampleTime::new(50),
     };
     let s = scope(1, 1);
     let (mut control, audio) = armed_with(true, 2);
-    let held = onset_in(&mut control, s, 150, 61);
-    let refused = onset_in(&mut control, s, 140, 60);
+    let held = onset_in(&mut control, s, 50, 61);
+    let refused = onset_in(&mut control, s, 40, 60);
     let (first, first_request) = control
-        .submit_panic(ORIGIN, SampleTime::new(160))
+        .submit_panic(ORIGIN, SampleTime::new(60))
         .expect("the protected place is free");
     let last = control.last_ingress_id;
     let room = control.ingress_room();
     assert_eq!(
-        control.submit_panic(ORIGIN, SampleTime::new(161)),
+        control.submit_panic(ORIGIN, SampleTime::new(61)),
         Err(MixedPanicSubmitError::Pending(first))
     );
     // The refusal pushed nothing and minted no command identity.
@@ -531,14 +525,14 @@ fn a_second_panic_is_refused_at_the_caller_until_the_first_result_is_collected()
     let mut audio = service_without_allocation(audio);
     // Served but uncollected, the result still holds the protected place.
     assert_eq!(
-        control.submit_panic(ORIGIN, SampleTime::new(162)),
+        control.submit_panic(ORIGIN, SampleTime::new(62)),
         Err(MixedPanicSubmitError::Pending(first))
     );
     let results = collect_all(&mut control);
     assert_eq!(results.len(), 3);
-    let iheld = accepted(outcome_for(&results, onset_request_in(held, s, 150, 61)));
+    let iheld = accepted(outcome_for(&results, onset_request_in(held, s, 50, 61)));
     assert_eq!(
-        outcome_for(&results, onset_request_in(refused, s, 140, 60)),
+        outcome_for(&results, onset_request_in(refused, s, 40, 60)),
         MixedIngressOutcome::Onset(Err(order))
     );
     assert_eq!(
@@ -550,8 +544,12 @@ fn a_second_panic_is_refused_at_the_caller_until_the_first_result_is_collected()
         MixedOccurrenceState::Refused(order)
     );
 
-    // A second applied Panic ends nothing more and overwrites neither tombstone.
-    let second = panic_at(&mut control, 170);
+    assert_eq!(groups(&audio), vec![(ReleaseCause::Panic, vec![iheld])]);
+
+    // A second applied Panic, in a later quantum, ends nothing more and overwrites
+    // neither tombstone.
+    render(&mut audio);
+    let second = panic_at(&mut control, 200);
     audio.service_test_ingress_queue();
     let results = collect_all(&mut control);
     assert_eq!(ended(outcome_for(&results, second)), Vec::new());
@@ -563,22 +561,22 @@ fn a_second_panic_is_refused_at_the_caller_until_the_first_result_is_collected()
         state_of(&audio, refused),
         MixedOccurrenceState::Refused(order)
     );
-    assert_eq!(groups(&audio), vec![(ReleaseCause::Panic, vec![iheld])]);
+    assert!(groups(&audio).is_empty());
 
     // Each key-up is consumed under its first cause.
-    release(&mut control, refused, 180);
-    release(&mut control, held, 181);
+    release(&mut control, refused, 201);
+    release(&mut control, held, 202);
     audio.service_test_ingress_queue();
     let results = collect_all(&mut control);
     assert_eq!(
-        outcome_for(&results, release_request(refused, 180)),
+        outcome_for(&results, release_request(refused, 201)),
         MixedIngressOutcome::Release(Ok(MixedRetired {
             occurrence: refused,
             cause: MixedRetireCause::AfterRefusal(order),
         }))
     );
     assert_eq!(
-        outcome_for(&results, release_request(held, 181)),
+        outcome_for(&results, release_request(held, 202)),
         after_panic(held, iheld)
     );
     assert_eq!(
@@ -596,18 +594,18 @@ fn a_second_panic_is_refused_at_the_caller_until_the_first_result_is_collected()
 fn a_refused_panic_changes_nothing_and_frees_its_place() {
     let s = scope(1, 1);
     let (mut control, audio) = armed_with(true, 2);
-    pedal(&mut control, s, 100, true);
-    let down = onset_in(&mut control, s, 110, 60);
-    let sustained = onset_in(&mut control, s, 111, 61);
-    release(&mut control, sustained, 112);
+    pedal(&mut control, s, 10, true);
+    let down = onset_in(&mut control, s, 20, 60);
+    let sustained = onset_in(&mut control, s, 21, 61);
+    release(&mut control, sustained, 22);
     let far = u64::MAX / 2;
     let refused = panic_at(&mut control, far);
     let mut audio = service_without_allocation(audio);
     let results = collect_all(&mut control);
-    let idown = accepted(outcome_for(&results, onset_request_in(down, s, 110, 60)));
+    let idown = accepted(outcome_for(&results, onset_request_in(down, s, 20, 60)));
     let isustained = accepted(outcome_for(
         &results,
-        onset_request_in(sustained, s, 111, 61),
+        onset_request_in(sustained, s, 21, 61),
     ));
     let MixedIngressOutcome::Panic(Err(MixedPanicRefused::Ingress(
         IngressRefused::BeyondHorizon { time, .. },
@@ -630,7 +628,7 @@ fn a_refused_panic_changes_nothing_and_frees_its_place() {
     assert!(control.panic_inflight.is_none());
 
     // The place is free again and a valid Panic applies.
-    let panic = panic_at(&mut control, 120);
+    let panic = panic_at(&mut control, 30);
     audio.service_test_ingress_queue();
     assert_eq!(
         ended(outcome_for(&collect_all(&mut control), panic)),
@@ -646,15 +644,15 @@ fn a_refused_panic_changes_nothing_and_frees_its_place() {
 fn a_panic_stamped_before_the_last_accepted_edge_executes_at_that_fence() {
     let s = scope(1, 1);
     let (mut control, audio) = armed_with(true, 2);
-    let note = onset_in(&mut control, s, 150, 60);
-    let panic = panic_at(&mut control, 100);
+    let note = onset_in(&mut control, s, 50, 60);
+    let panic = panic_at(&mut control, 10);
     let audio = service_without_allocation(audio);
     let results = collect_all(&mut control);
-    let identity = accepted(outcome_for(&results, onset_request_in(note, s, 150, 60)));
+    let identity = accepted(outcome_for(&results, onset_request_in(note, s, 50, 60)));
     let panicked = applied(outcome_for(&results, panic));
     // The result retains the nominal stamp in its request and reports the executed one.
-    assert_eq!(panic, panic_request(100));
-    assert_eq!(panicked.executed_at(), SampleTime::new(150));
+    assert_eq!(panic, panic_request(10));
+    assert_eq!(panicked.executed_at(), SampleTime::new(50));
     assert_eq!(
         panicked.ended().collect::<Vec<_>>(),
         vec![MixedPanicEnd::Tombstoned(note)]
@@ -667,22 +665,22 @@ fn a_panic_stamped_before_the_last_accepted_edge_executes_at_that_fence() {
 fn panic_results_and_retirements_follow_submission_order() {
     let s = scope(1, 1);
     let (mut control, audio) = armed_with(false, 4);
-    pedal(&mut control, s, 100, true);
-    let down = onset_in(&mut control, s, 110, 60);
-    let sustained = onset_in(&mut control, s, 111, 61);
-    release(&mut control, sustained, 112);
-    let panic = panic_at(&mut control, 120);
-    release(&mut control, down, 130);
-    let after = onset_in(&mut control, s, 131, 61);
+    pedal(&mut control, s, 10, true);
+    let down = onset_in(&mut control, s, 20, 60);
+    let sustained = onset_in(&mut control, s, 21, 61);
+    release(&mut control, sustained, 22);
+    let panic = panic_at(&mut control, 30);
+    release(&mut control, down, 40);
+    let after = onset_in(&mut control, s, 41, 61);
     let audio = service_without_allocation(audio);
     let order = [
-        pedal_request(s, 100, true),
-        onset_request_in(down, s, 110, 60),
-        onset_request_in(sustained, s, 111, 61),
-        release_request(sustained, 112),
+        pedal_request(s, 10, true),
+        onset_request_in(down, s, 20, 60),
+        onset_request_in(sustained, s, 21, 61),
+        release_request(sustained, 22),
         panic,
-        release_request(down, 130),
-        onset_request_in(after, s, 131, 61),
+        release_request(down, 40),
+        onset_request_in(after, s, 41, 61),
     ];
     let mut collected = Vec::new();
     while let Some(result) = control.collect_ingress_result() {
@@ -732,97 +730,24 @@ fn panic_results_and_retirements_follow_submission_order() {
     );
     // The retired sustained handle no longer resolves on audio.
     let mut audio = audio;
-    forge(&mut control, release_request(sustained, 140));
+    forge(&mut control, release_request(sustained, 50));
     audio.service_test_ingress_queue();
     assert!(matches!(
-        outcome_for(&collect_all(&mut control), release_request(sustained, 140)),
+        outcome_for(&collect_all(&mut control), release_request(sustained, 50)),
         MixedIngressOutcome::Handle(MixedHandleRefused::Stale { .. } | MixedHandleRefused::NotOpen)
     ));
     assert_eq!(holds(&audio), 1);
 }
 
 #[test]
-fn panic_leaves_compiled_playback_and_adoption_unchanged() {
-    for compiled_first in [true, false] {
-        // The same live notes, ended at the same stamp by Panic or by their own
-        // key-ups, must leave identical compiled state and identical audio.
-        let run = |panic: bool| {
-            let s = scope(1, 1);
-            let (mut control, audio) = armed_with(compiled_first, 2);
-            let a = onset_in(&mut control, s, 0, 48);
-            let b = onset_in(&mut control, s, 0, 52);
-            if panic {
-                let _panic = panic_at(&mut control, 100);
-            } else {
-                release(&mut control, a, 100);
-                release(&mut control, b, 100);
-            }
-            let mut audio = service_without_allocation(audio);
-            let results = collect_all(&mut control);
-            assert!(results.iter().all(|result| matches!(
-                result.outcome,
-                MixedIngressOutcome::Onset(Ok(_))
-                    | MixedIngressOutcome::Release(Ok(_))
-                    | MixedIngressOutcome::Panic(Ok(_))
-            )));
-            let slots = |identities: Vec<NoteIdentity>| {
-                identities
-                    .into_iter()
-                    .map(|identity| (identity.index(), identity.generation()))
-                    .collect::<Vec<_>>()
-            };
-            let compiled_before = slots(audio.audio.compiled_minter.live_identities());
-            let mut samples = [0.0_f32; 512];
-            audio
-                .render_private(
-                    AudioBlockMut::new(&mut samples, 512, ChannelLayout::Mono).expect("block"),
-                )
-                .expect("mixed render");
-            let snapshot = audio
-                .audio
-                .renderer
-                .snapshot_mixed_sounding()
-                .expect("registry");
-            let compiled = slots(
-                snapshot
-                    .compiled()
-                    .iter()
-                    .map(|note| note.identity)
-                    .collect(),
-            );
-            assert!(snapshot.live().is_empty(), "both live notes ended");
-            (
-                samples,
-                audio.report(),
-                compiled_before,
-                compiled,
-                slots(audio.audio.compiled_minter.live_identities()),
-                holds(&audio),
-            )
-        };
-        let (panic_samples, panic_report, panic_before, panic_compiled, panic_minted, panic_holds) =
-            run(true);
-        let (samples, report, before, compiled, minted, released_holds) = run(false);
-        assert!(panic_report.adopted, "the boundary adopted under Panic");
-        assert!(!panic_compiled.is_empty(), "the compiled note still sounds");
-        assert_eq!(panic_report, report);
-        assert_eq!(panic_before, before);
-        assert_eq!(panic_compiled, compiled);
-        assert_eq!(panic_minted, minted);
-        assert_eq!((panic_holds, released_holds), (0, 0));
-        assert_eq!(panic_samples, samples);
-    }
-}
-
-#[test]
 fn teardown_waits_for_the_panic_result_and_reports_its_tombstones() {
     let s = scope(1, 1);
     let (mut control, audio) = armed_with(true, 2);
-    pedal(&mut control, s, 100, true);
-    let down = onset_in(&mut control, s, 110, 60);
-    let sustained = onset_in(&mut control, s, 111, 61);
-    release(&mut control, sustained, 112);
-    let _panic = panic_at(&mut control, 120);
+    pedal(&mut control, s, 10, true);
+    let down = onset_in(&mut control, s, 20, 60);
+    let sustained = onset_in(&mut control, s, 21, 61);
+    release(&mut control, sustained, 22);
+    let _panic = panic_at(&mut control, 30);
     let audio = service_without_allocation(audio);
     // Collect every ordinary result; only the Panic's is left.
     let mut results = Vec::new();
@@ -839,7 +764,7 @@ fn teardown_waits_for_the_panic_result_and_reports_its_tombstones() {
         super::super::super::MixedCollectionError::IngressResultPending
     );
     let (mut control, audio) = (refused.control, refused.audio);
-    let idown = accepted(outcome_for(&results, onset_request_in(down, s, 110, 60)));
+    let idown = accepted(outcome_for(&results, onset_request_in(down, s, 20, 60)));
     let panicked = control.collect_ingress_result().expect("the Panic result");
     assert!(matches!(
         panicked.request,

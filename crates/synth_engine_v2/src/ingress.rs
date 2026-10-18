@@ -74,7 +74,10 @@
 
 use thiserror::Error;
 
-#[cfg(all(test, feature = "simulated-ingress"))]
+#[cfg(any(
+    all(test, feature = "simulated-ingress"),
+    feature = "mixed-transfer-rehearsal"
+))]
 use crate::identity::LiveRangeMinter;
 use crate::identity::{NoteIdentity, ProducerId};
 #[cfg(feature = "simulated-ingress")]
@@ -184,7 +187,10 @@ impl std::fmt::Display for ExhaustedResource {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
 pub enum IngressRefused {
     /// The private mixed owner has faulted and cannot service another callback.
-    #[cfg(all(test, feature = "simulated-ingress"))]
+    #[cfg(any(
+        all(test, feature = "simulated-ingress"),
+        feature = "mixed-transfer-rehearsal"
+    ))]
     #[error("private mixed audio owner is terminally faulted")]
     TerminalOwner,
     /// The separate private live probe already owns this audio half.
@@ -192,13 +198,19 @@ pub enum IngressRefused {
     #[error("private test live and mixed ingress cannot share one audio half")]
     MixedTestConflict,
     /// A private mixed channel bend named more members than one group, or one twice.
-    #[cfg(all(test, feature = "simulated-ingress"))]
+    #[cfg(any(
+        all(test, feature = "simulated-ingress"),
+        feature = "mixed-transfer-rehearsal"
+    ))]
     #[error("mixed channel bend is not a distinct set of at most eight live notes")]
     MixedBendFanout,
     /// Private mixed bend entries would exceed the bend-credit budget. The merger
     /// reserves a credit for every entry before it mints the command, so this is an
     /// accounting defect, reported rather than dropped. Nothing was written.
-    #[cfg(all(test, feature = "simulated-ingress"))]
+    #[cfg(any(
+        all(test, feature = "simulated-ingress"),
+        feature = "mixed-transfer-rehearsal"
+    ))]
     #[error("mixed bend entries would exceed the bend-credit budget")]
     MixedBendCredit,
     /// Invalid, oversized or deferred group; no obligation is changed.
@@ -337,12 +349,18 @@ struct IngressEntry {
     event: TimedEvent,
     redeems_hold: bool,
     /// A private mixed bend an onset inherited at its own stamp.
-    #[cfg(all(test, feature = "simulated-ingress"))]
+    #[cfg(any(
+        all(test, feature = "simulated-ingress"),
+        feature = "mixed-transfer-rehearsal"
+    ))]
     inherited_bend: bool,
     /// The entry is a private mixed bend charged to the bend-credit budget rather than
     /// to ordinary room. Draining it returns its credit, whether or not its note has
     /// since retired.
-    #[cfg(all(test, feature = "simulated-ingress"))]
+    #[cfg(any(
+        all(test, feature = "simulated-ingress"),
+        feature = "mixed-transfer-rehearsal"
+    ))]
     bend_credit: bool,
 }
 
@@ -543,10 +561,16 @@ pub struct PerformanceIngress {
     /// `(len - mixed_bend_queued) + holds_outstanding + B <= capacity` and
     /// `mixed_bend_queued <= B`, so ordinary entries and holds share `C - B` places and
     /// each bend entry occupies one of the `B` withheld places.
-    #[cfg(all(test, feature = "simulated-ingress"))]
+    #[cfg(any(
+        all(test, feature = "simulated-ingress"),
+        feature = "mixed-transfer-rehearsal"
+    ))]
     mixed_bend_budget: usize,
     /// Undrained entries charged to the bend-credit budget.
-    #[cfg(all(test, feature = "simulated-ingress"))]
+    #[cfg(any(
+        all(test, feature = "simulated-ingress"),
+        feature = "mixed-transfer-rehearsal"
+    ))]
     mixed_bend_queued: usize,
 }
 
@@ -629,7 +653,10 @@ pub enum IngressPrepareError {
         renderer: crate::plan::PlanId,
     },
     /// The private mixed store must use the renderer's own live range.
-    #[cfg(all(test, feature = "simulated-ingress"))]
+    #[cfg(any(
+        all(test, feature = "simulated-ingress"),
+        feature = "mixed-transfer-rehearsal"
+    ))]
     #[error("the private mixed ingress minter is not the renderer's live producer range")]
     ForeignLiveRange,
     /// A whole queued release backlog can converge on one quantum.
@@ -711,8 +738,11 @@ impl PerformanceIngress {
 
     /// The same registered queue, bound to the private mixed audio owner only.
     /// No production path can lift `MixedProducerPlan` through this constructor.
-    #[cfg(all(test, feature = "simulated-ingress"))]
-    pub(crate) fn prepare_mixed_test(
+    #[cfg(any(
+        all(test, feature = "simulated-ingress"),
+        feature = "mixed-transfer-rehearsal"
+    ))]
+    pub(crate) fn prepare_mixed_rehearsal(
         profile: &HostProfile,
         plan: &CompiledPlan,
         minter: &LiveRangeMinter,
@@ -833,13 +863,19 @@ impl PerformanceIngress {
             stolen_with_hold: vec![None; hold_entitlement.get() as usize],
             stolen_transferred: vec![None; partition.saturating_mul(4)],
             stolen_next: 0,
-            #[cfg(all(test, feature = "simulated-ingress"))]
+            #[cfg(any(
+                all(test, feature = "simulated-ingress"),
+                feature = "mixed-transfer-rehearsal"
+            ))]
             mixed_bend_budget: if mixed_rehearsal {
                 Self::mixed_bend_budget_for(depth, hold_entitlement)
             } else {
                 0
             },
-            #[cfg(all(test, feature = "simulated-ingress"))]
+            #[cfg(any(
+                all(test, feature = "simulated-ingress"),
+                feature = "mixed-transfer-rehearsal"
+            ))]
             mixed_bend_queued: 0,
             producer,
             hold_entitlement,
@@ -856,7 +892,10 @@ impl PerformanceIngress {
     /// `B = max(H, C - 2H)` for depth `C` and `H > 0` holds, zero for none. The private
     /// arm separately requires `C >= 2H + 1`; a shallower store gets `B = H` and is
     /// refused there.
-    #[cfg(all(test, feature = "simulated-ingress"))]
+    #[cfg(any(
+        all(test, feature = "simulated-ingress"),
+        feature = "mixed-transfer-rehearsal"
+    ))]
     fn mixed_bend_budget_for(depth: usize, holds: EventCount) -> usize {
         let holds = holds.get() as usize;
         if holds == 0 {
@@ -921,8 +960,11 @@ impl PerformanceIngress {
     }
 
     /// The storage length used by the private journal.
-    #[cfg(all(test, feature = "simulated-ingress"))]
-    pub(crate) fn queue_capacity_for_test(&self) -> usize {
+    #[cfg(any(
+        all(test, feature = "simulated-ingress"),
+        feature = "mixed-transfer-rehearsal"
+    ))]
+    pub(crate) fn queue_capacity(&self) -> usize {
         self.entries.len()
     }
 

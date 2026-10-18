@@ -65,6 +65,12 @@ pub type InputTransferCollection = Result<
 >;
 
 impl InputCaptureControl {
+    /// Whether this capture split has requested interruption. Read only after
+    /// collecting available outcomes when classifying a mixed host's fault scope.
+    pub fn is_halted(&self) -> bool {
+        self.halt.is_requested()
+    }
+
     pub const fn bytes(&self) -> PreparedBytes {
         self.bytes
     }
@@ -124,7 +130,8 @@ impl InputCaptureControl {
 
     /// Validate and retain a producer's terminal refusal whose original never
     /// entered the source ring. Reunion attributes accepted late or uncertain claims;
-    /// source order, a retired full ring, and source-serial exhaustion are attestations
+    /// source order, a retired full ring, protected-capacity overrun, and
+    /// source-serial exhaustion are attestations
     /// when the queued prefix has not reached raw input. The pre-ring slot separates
     /// source exhaustion from raw input-ID exhaustion, but not the source attempt
     /// serial from the source queue serial.
@@ -154,8 +161,9 @@ impl InputCaptureControl {
                 matches!((mapping, arrival), (Ok(nominal), Some(at)) if at < nominal)
             }
             InputError::Order => mapping.is_ok(),
-            InputError::SourceQueueFull | InputError::IdentityExhausted => match (mapping, arrival)
-            {
+            InputError::SourceQueueFull
+            | InputError::ProtectedCapacity
+            | InputError::IdentityExhausted => match (mapping, arrival) {
                 (Ok(nominal), Some(at)) => at >= nominal,
                 (Ok(_), None) => true,
                 _ => false,
@@ -292,6 +300,23 @@ impl InputCaptureControl {
     pub fn packet_input_id(&self, packet: &LoopTransferPacket) -> Option<InputEventId> {
         let (port, slot) = self.target(packet.id())?;
         Some(self.inputs.get(port)?.slots.get(slot)?.as_ref()?.id)
+    }
+
+    /// Retained observation and clock for an outstanding source packet. Commands
+    /// and packets not retained by this control owner return `None`. Queueing is
+    /// still the host's responsibility; preparation alone grants no frontier credit.
+    pub fn packet_observation(
+        &self,
+        packet: &LoopTransferPacket,
+    ) -> Option<(
+        InputEventId,
+        InputObservation,
+        super::super::SimulatedInputClock,
+    )> {
+        let (port, slot) = self.target(packet.id())?;
+        let input = self.inputs.get(port)?;
+        let entry = input.slots.get(slot)?.as_ref()?;
+        Some((entry.id, entry.observation, input.clock()?))
     }
 
     fn target(&self, id: LoopTransferId) -> Option<(usize, usize)> {

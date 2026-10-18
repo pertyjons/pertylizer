@@ -6,7 +6,7 @@
 | Status        | Deferred                                                     |
 | Phase         | 0A/9, deferred to the Phase 9 exit gate                       |
 | Created       | 2026-08-13                                                   |
-| Last reviewed | 2026-09-27                                                   |
+| Last reviewed | 2026-10-17                                                   |
 | Related       | ADR-0001, ADR-0032, ADR-0021, ADR-0036, ADR-0023, EVD-0016, P00A-T006 |
 | Supersedes    | —                                                            |
 | Superseded by | —                                                            |
@@ -142,11 +142,128 @@ is tied to a clean source revision and remains `Not supported` under F4. A secon
 [retained Linux fixed-buffer diagnostic](../evidence/phase-03/EVD-0016-host-time-mapping.md#retained-linux-fixed-buffer-diagnostic-2026-09-26)
 on a different ALC256 device configuration fires F7 for the input callback clock
 moving backwards; the retained audit separately counts output backward steps and xruns.
-It provides no F4 estimate or replacement mapping. macOS and Windows callback artifacts
-remain missing, as does the paired-reference arrival measurement for every initial untimestamped V2 adapter. The Active-record self-audit also made
+It provides no F4 estimate or replacement mapping. The
+[retained 2026-10-17 fixed-256 diagnostic](../evidence/phase-03/EVD-0016-host-time-mapping.md#retained-linux-fixed-256-diagnostic-2026-10-17)
+on sof-hda-dsp at a fixed 256-frame buffer records over 10,000 callbacks and 2,579
+bridges per direction without backwards callback clocks, backend errors or lost
+records. It still fails F4: the independently bridged uncertainty sums to 642
+frames against `Q = 64`. This is uncertainty, not measured round-trip latency;
+zero xruns does not qualify the direct mapping. No replacement was introduced.
+macOS and Windows callback artifacts remain missing, as does the paired-reference arrival measurement for every initial untimestamped V2 adapter. The Active-record self-audit also made
 explicit that every hardware-timestamped adapter needs its own connection-clock bridge; a midir timestamp and a CPAL
 `StreamInstant` do not share a raw origin. No replacement is yet characterized, and the diagnostic observation is not
 a basis for accepting this decision.
+
+## Replacement candidate frame — 2026-10-17
+
+**Scope: source-access audit and a proposed observation-only Linux experiment.**
+This frame defines no estimator and accepts no hardware mapping. The completed
+source audit below finds the required safe access unavailable in the resolved
+stack. No new physical observations were collected for this frame.
+
+### Completed access audit
+
+At `7aa92d1a`, the stack resolves CPAL 0.18.2 and alsa 0.11.0. In CPAL's
+`src/host/alsa/mod.rs`, `build_stream_inner` selects a private `TimestampMode`
+from the prepare-time timestamp and advertised `LinkSynchronized` capability.
+`callback_instant` can instead use `get_htstamp()` before `Running` or with an
+invalid trigger origin. `htstamp_elapsed` clamps negative differences to zero.
+`StreamTrait::now` can fall back to `Instant` elapsed time since stream
+creation after a status-query failure. Exposing the selected enum alone would not expose these fallbacks.
+These are wrapper code paths, not proof of the kernel timestamp's physical age.
+
+The [kernel documentation](https://www.kernel.org/doc/html/latest/sound/designs/timestamping.html)
+distinguishes DMA, link and analog positions and describes requested timestamp
+types falling back. The [ALSA report](https://www.alsa-project.org/alsa-doc/alsa-lib/structsnd__pcm__audio__tstamp__report__t.html)
+contains actual type, validity and accuracy availability, with accuracy in
+nanoseconds. Capability bits do not attest the source of an individual value.
+
+CPAL exposes neither its PCM handle nor that report. The resolved alsa wrapper
+exposes state, system/trigger/audio timestamps and avail/delay, but no typed
+public accessor for the audio timestamp report or driver timestamp. Its
+`StatusBuilder::audio_htstamp_config` sets a requested type and delay policy;
+it does not expose the returned report. The resolved
+alsa-sys 0.4.0 declares `snd_pcm_status_get_audio_htstamp_report` and
+`snd_pcm_status_get_driver_htstamp`, but as raw FFI; `Status` storage and its
+pointer accessor are private. Opening a second handle cannot attest the source
+used by the CPAL stream under test.
+
+**Audit result: access unavailable through the resolved safe interfaces.** This
+is a static interface result, not `Not supported` for the physical candidate.
+It is falsified by identifying a public safe interface in those versions that
+returns the required per-observation report for CPAL's own handle. No hardware
+uncertainty threshold is needed to test this access question.
+
+### Candidate and implementation boundary
+
+The preferred investigation is diagnostic instrumentation at CPAL's existing
+ALSA status-query points, on the handle CPAL actually drives. It would extract
+the report and driver timestamp from the **already acquired status**, together
+with the actual fallback branch. It must not add a concurrent status-querying
+observer, change the requested type, or silently replace CPAL with a bespoke
+ALSA stream. A native ALSA collector would be a different backend candidate and
+would need its own frame covering start thresholds, parameters and recovery.
+
+There is a concrete observer-effect reason: in
+[Linux v6.18's `snd_pcm_status64`](https://github.com/torvalds/linux/blob/v6.18/sound/core/pcm_native.c),
+a status request writes the runtime audio timestamp configuration and can
+update the hardware pointer; `Compat` clears report validity. This pinned
+upstream example is not an audit of the running Fedora 7.2.11 kernel. Before
+collection, audit the actual kernel/library path and prove that extraction
+adds no query or configuration interleaving. Missing reports in `Compat` mode
+remain missing metadata; they must not acquire inferred validity.
+
+The minimum proposed dependency work is two safe, owned-value getters on the
+alsa status wrapper, plus diagnostic extraction at CPAL's existing query and
+fallback sites. Raw PCM/status pointers must stay private. Any fork must be
+pinned and isolated to a standalone development probe, outside the workspace's
+shipping dependency graph; the application dependency and old probe stay
+unchanged. This is a proposal, not authorization to add that fork or its FFI.
+The project maintainer must explicitly approve new `unsafe` getter
+implementations before code is written, under the repository's unsafe rule.
+No such implementation or approval is claimed here.
+
+Next, build synthetic observability controls for the required metadata using
+owned fixtures, independently of backend access. Then present the exact getter
+and instrumentation scope for the maintainer's implementation decision. The
+interface audit is complete; do not repeat it as a hardware feasibility spike.
+
+### Later measurement requirements and falsifiers
+
+Metadata access alone cannot solve the timing problem. In the retained
+2026-10-17 result, removing each direction's 256-frame freshness contribution
+would still leave 63 input plus 67 output frames: 130 against strict `Q = 64`.
+That arithmetic is not a valid revised bound or a new measurement. A new
+estimator must independently justify the frame correspondence, observer bridge,
+fit residual, bracket duration, clock age and rounding. A common kernel clock
+might permit a different bridge, but equality of clock domains and uncertainty
+must be demonstrated, not assumed from similar timestamp values.
+
+A future collection method must be independently reviewed before collection,
+with predeclared counts, cadence, retention, estimator and uncertainty terms.
+Retain both directions, requested/actual clock and type, state, trigger origin,
+system/audio/driver timestamps, report and accuracy validity/value, sequence,
+loss/backend counters and frame position with its derivation. Specify capture
+and playback delay semantics separately. Keep observer brackets and independent
+stream origins explicit; software callback counts are not hardware counters.
+No startup prefix may be discarded; restart/recovery have separate arms and
+new identities/anchors.
+
+The synthetic controls must cover type fallback, missing reports (including
+`Compat`), unknown accuracy, stale/repeated values, status failure, non-running
+states, invalid trigger origin, zero-clamped negative differences, backward
+clocks, missing frame correspondence, losses and source changes. A nominal
+complete fixture must remain observable. Unknown metadata is `Inconclusive`;
+invalid clocks or broken streams stop the candidate. Observable means only that
+required inputs exist, with no precision claim. Silent acceptance of a fallback
+blocks physical collection.
+
+A later **valid physical** estimate whose conservative input/output sum is
+`>= 64` frames is `Not supported` under F4; one below 64 only passes that
+criterion, subject to every other EVD-0016/platform/adapter gate. Missing terms
+are `Inconclusive`, never zero. Accuracy is not clock age or frame alignment.
+No new result is established here. Old CSVs and the frozen analyzer stay intact;
+loopback, adapter references, other platforms and capacity/endurance remain owed.
 
 ## Decision
 
@@ -203,6 +320,7 @@ Three constraints hold in the meantime, so that the deferral cannot be used as p
 | Measure per-callback host timestamps on Linux, macOS, and Windows            | 9     | Revision-bound Linux direct-PCM data retained; F4 and F7 Not supported in separate runs. macOS/Windows missing |
 | Bridge each hardware-timestamped adapter's connection clock                  | 9     | Not started; requires a physical MIDI endpoint on a selected qualification host |
 | Measure each untimestamped adapter's arrival-time uncertainty                | 9     | Not started |
+| Build synthetic clock-report controls; decide isolated backend instrumentation | 9 | Access audit complete; new FFI requires maintainer approval before implementation |
 | Write and accept this record against that evidence                           | 9     | Required before Phase 9 exit |
 
 ## Revisit conditions

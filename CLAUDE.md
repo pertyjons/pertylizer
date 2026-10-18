@@ -111,6 +111,11 @@ cargo clippy --workspace --all-targets
 cargo clippy -p pertylizer --all-targets --features v2-lowering
 cargo test --workspace
 cargo test -p pertylizer --features v2-lowering --lib gui::egui_backend::v2_flow::
+cargo test -p synth_engine_v2 --no-default-features --features mixed-transfer-rehearsal --test mixed_transfer_rehearsal
+cargo test -p synth_engine_v2 --no-default-features --features mixed-transfer-rehearsal --test mixed_source_bridge
+cargo test -p synth_engine_v2 --no-default-features --features mixed-transfer-rehearsal --lib
+cargo test -p synth_engine_v2 --no-default-features --features mixed-transfer-rehearsal --doc
+cargo clippy -p synth_engine_v2 --all-targets --no-default-features --features mixed-transfer-rehearsal
 cargo test -p synth_engine --release resource_limit_probe_oversized_callback_exposes_build_mode_failure
 cargo doc --workspace --no-deps
 ```
@@ -132,7 +137,10 @@ is also required because its `#[cfg(not(debug_assertions))]` branch is not
 compiled by the ordinary development-profile test run. The feature-specific
 Clippy and test commands cover V2's GUI flow, which the default workspace
 commands do not compile or execute; V2's switch tests already run under
-`cargo test --workspace`.
+`cargo test --workspace`. The mixed-transfer feature also needs the explicit
+integration, library, documentation, and Clippy commands above because the
+default workspace build does not enable it. Changes to its admission, identity,
+concurrency, or real-time path use the core Rust gate.
 
 The complete gate mirrors `.github/workflows/quality.yml`: the core gate plus
 the four configuration/MSRV commands above. The V2-only check covers the

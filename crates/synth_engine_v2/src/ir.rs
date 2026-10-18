@@ -326,6 +326,8 @@ pub enum IrNodeKind {
     },
     /// Stereo pass-through with one declared audio observation tap.
     StereoMonitor,
+    /// Explicit stereo-to-mono half-sum; no narrowing is inserted implicitly.
+    StereoToMono,
     /// ADR-0059's velocity law on a stereo voice output, with frame-positioned controls.
     StereoVelocityScaler {
         /// Independent voice-output sensitivity.
@@ -1926,10 +1928,10 @@ impl GraphIr {
         });
         // The per-node run table of `SOUND-INV-024`'s buffers: one entry per state record
         // and a terminator, sized exactly as preparation sizes it.
-        let table = records.saturating_add(1).saturating_mul(
-            crate::node::ramp_table_bytes_per_record()
-                .saturating_add(crate::node::history_table_bytes_per_record()),
-        );
+        let table = records
+            .saturating_add(1)
+            .saturating_mul(crate::node::ramp_table_bytes_per_record())
+            .saturating_add(records.saturating_mul(crate::node::history_table_bytes_per_record()));
         // The history a kind declares (`SOUND-INV-033`): the frames of signal it keeps between
         // quanta, which the renderer allocates once per scheduled step of it — per instance
         // where the node is in the voice scope — at its output port's width. A function of

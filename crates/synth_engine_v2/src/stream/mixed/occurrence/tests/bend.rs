@@ -571,7 +571,7 @@ pub(super) enum Entry {
 
 /// Every entry still waiting in the registered ingress queue, in queue order.
 pub(super) fn entries(audio: &MixedOneShotAudio) -> Vec<Entry> {
-    let mut queue = vec![None; audio.test_ingress.queue_capacity_for_test()];
+    let mut queue = vec![None; audio.test_ingress.queue_capacity()];
     let len = audio
         .test_ingress
         .copy_queue_for_test(&mut queue)
@@ -605,7 +605,7 @@ pub(super) fn entries(audio: &MixedOneShotAudio) -> Vec<Entry> {
 pub(super) fn bend_origins(
     audio: &MixedOneShotAudio,
 ) -> Vec<(crate::render::TimedEvent, MixedBendOrigin)> {
-    let mut copied = vec![None; audio.test_ingress.queue_capacity_for_test()];
+    let mut copied = vec![None; audio.test_ingress.queue_capacity()];
     let len = audio
         .test_ingress
         .copy_mixed_bend_entries_for_test(&mut copied)
@@ -763,7 +763,7 @@ fn an_onset_inherits_its_scopes_bend_and_a_zero_bend_appends_and_frees_the_scope
     for compiled_first in [true, false] {
         let (s, other) = (scope(1, 1), scope(1, 2));
         let (mut control, audio) = armed_with(compiled_first, 4);
-        let depth = audio.test_ingress.queue_capacity_for_test();
+        let depth = audio.test_ingress.queue_capacity();
         let budget = audio.test_ingress.mixed_bend_budget();
         // No member yet: the bend sets the value and the order fence only. Its scope
         // reservation makes the next onset on it reserve a credit; the other scope's
@@ -1749,7 +1749,7 @@ fn panic_applies_with_the_ordinary_room_and_the_credit_budget_full() {
     let (mut control, audio) = armed_with(true, 8);
     let budget = audio.test_ingress.mixed_bend_budget();
     let notes: Vec<_> = (0..8)
-        .map(|raw| onset_in(&mut control, s, 100, 60 + raw))
+        .map(|raw| onset_in(&mut control, s, 10, 60 + raw))
         .collect();
     let mut audio = service_without_allocation(audio);
     let identities: Vec<_> = collect_all(&mut control)
@@ -1757,8 +1757,8 @@ fn panic_applies_with_the_ordinary_room_and_the_credit_budget_full() {
         .map(|result| accepted(result.outcome))
         .collect();
     let wheel = [
-        bend_at(&mut control, s, 110, 20.0),
-        bend_at(&mut control, s, 115, 40.0),
+        bend_at(&mut control, s, 20, 20.0),
+        bend_at(&mut control, s, 25, 40.0),
     ];
     audio = service_without_allocation(audio);
     let results = collect_all(&mut control);
@@ -1771,7 +1771,7 @@ fn panic_applies_with_the_ordinary_room_and_the_credit_budget_full() {
     assert_eq!(free_units(&audio), 0);
     let last = control.last_ingress_id;
     assert_eq!(
-        control.submit_bend(ORIGIN, s, SampleTime::new(120), cents(60.0)),
+        control.submit_bend(ORIGIN, s, SampleTime::new(30), cents(60.0)),
         Err(MixedBendSubmitError::Credits {
             needed: credits(8),
             available: credits(0),
@@ -1783,21 +1783,21 @@ fn panic_applies_with_the_ordinary_room_and_the_credit_budget_full() {
         let _note = onset_in(
             &mut control,
             other,
-            120,
+            30,
             u8::try_from(raw).expect("small key"),
         );
     }
     assert_eq!(control.ingress_room(), 0);
 
     let (_, panic) = control
-        .submit_panic(ORIGIN, SampleTime::new(130))
+        .submit_panic(ORIGIN, SampleTime::new(40))
         .expect("the protected place is free");
     audio = service_without_allocation(audio);
     let results = collect_all(&mut control);
     let MixedIngressOutcome::Panic(Ok(panicked)) = outcome_for(&results, panic) else {
         panic!("Panic must apply");
     };
-    assert_eq!(panicked.executed_at(), SampleTime::new(130));
+    assert_eq!(panicked.executed_at(), SampleTime::new(40));
     assert_eq!(panicked.ended().count(), 8);
     for result in &results {
         if let MixedIngressOutcome::Onset(outcome) = result.outcome {

@@ -455,6 +455,67 @@ pub(super) fn plan_declarations(
     }
 }
 
+/// A live note producer's declared range for the prospective private mixed lowering in
+/// EVD-0026's two-source rehearsal host.
+///
+/// A saved project says nothing about how many notes a live keyboard holds, so the range is
+/// the caller's rather than the project's. Mixed-target admission requires a nonempty live
+/// range, and plan validation requires no more release holds than notes; this constructor
+/// enforces both before building the plan.
+#[cfg_attr(
+    not(test),
+    allow(
+        dead_code,
+        reason = "only the EVD-0026 mixed lowering control declares one"
+    )
+)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[must_use]
+pub(crate) struct LiveNoteRange {
+    notes: HeldNoteCount,
+    holds: EventCount,
+}
+
+#[cfg_attr(
+    not(test),
+    allow(
+        dead_code,
+        reason = "only the EVD-0026 mixed lowering control declares one"
+    )
+)]
+impl LiveNoteRange {
+    /// A live range of `notes` simultaneous notes owing `holds` release holds, or `None`
+    /// for an empty range or more holds than notes.
+    pub(crate) fn new(notes: HeldNoteCount, holds: EventCount) -> Option<Self> {
+        (notes.get() > 0 && holds.get() <= notes.get()).then_some(Self { notes, holds })
+    }
+
+    /// The live producer's simultaneous notes.
+    pub(crate) fn notes(self) -> HeldNoteCount {
+        self.notes
+    }
+}
+
+/// [`plan_declarations`] with `live` appended after the compiled producer, so the compiled
+/// producer keeps its identity range and the plan holds both producers' notes.
+///
+/// `None` when the summed held notes do not fit.
+pub(super) fn mixed_plan_declarations(
+    notes: HeldNoteCount,
+    events_per_quantum: EventCount,
+    live: LiveNoteRange,
+) -> Option<PlanDeclarations> {
+    let held = notes.get().checked_add(live.notes.get())?;
+    let mut declarations = plan_declarations(notes, events_per_quantum);
+    declarations.note_producers.push(NoteProducerDeclaration {
+        compiled: false,
+        simultaneous_notes: live.notes,
+        simultaneous_holds: live.holds,
+    });
+    declarations.held_notes = HeldNoteCount::measured(held);
+    Some(declarations)
+}
+
 /// The tuning the voice scope's keys resolve through.
 ///
 /// `SOUND-INV-021`: a scope holding a pitch destination states the tuning its keys resolve

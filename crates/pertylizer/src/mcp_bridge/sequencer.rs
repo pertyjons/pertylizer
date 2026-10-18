@@ -1595,6 +1595,11 @@ impl synth_mcp::bridge::SequencerBridge for AppSynthBridge {
 
         // Replace the entire song
         *song = synth_sequencer::Song::new(name).with_tempo(synth_core::Bpm::new(tempo));
+        // Bus IDs may be reissued by the new song, independently of engine sends.
+        self.session
+            .state()
+            .shared_graph
+            .invalidate_identity_lineage();
 
         let mut errors = Vec::new();
         let mut total_notes = 0usize;
@@ -1734,5 +1739,62 @@ impl synth_mcp::bridge::SequencerBridge for AppSynthBridge {
         } else {
             Err(McpBridgeError::CommandSendFailed { command: "seek" })
         }
+    }
+}
+
+#[cfg(test)]
+mod lineage_tests {
+    use super::*;
+    use synth_mcp::bridge::SequencerBridge;
+
+    fn fixture(capacity: usize) -> (synth_engine::SynthEngine, AppSynthBridge) {
+        let (engine, handle) = synth_engine::SynthEngine::with_command_capacity(
+            synth_engine::CommandCapacity::new(capacity).unwrap(),
+        );
+        let bridge = AppSynthBridge {
+            session: Arc::new(SynthSession::new(
+                handle.command_sender(),
+                Arc::clone(&handle.state),
+            )),
+            shared: Arc::new(McpSharedState::new()),
+            sample_library: Arc::new(std::sync::RwLock::new(
+                synth_sampler::SampleLibrary::default(),
+            )),
+            return_effect_hw: parking_lot::Mutex::new(HashMap::new()),
+            master_effect_hw: parking_lot::Mutex::new(HashMap::new()),
+            rollback_snapshot: parking_lot::Mutex::new(None),
+            audio_input: Arc::new(parking_lot::Mutex::new(
+                crate::audio::input::AudioInputManager::new(),
+            )),
+            audio_input_host: parking_lot::Mutex::new(None),
+            selected_input_device: parking_lot::Mutex::new(None),
+        };
+        (engine, bridge)
+    }
+
+    #[test]
+    fn song_replacement_fences_lineage_even_when_its_tempo_command_is_refused() {
+        let (_engine, bridge) = fixture(1);
+        assert!(
+            bridge
+                .session
+                .command_sender()
+                .send(EngineCommand::SetMasterVolume(Gain::UNITY))
+        );
+        let id = bridge.shared.song.write().create_return_bus("old");
+        let lineage = bridge.session.state().shared_graph.identity_lineage();
+        assert!(matches!(
+            bridge.set_song("new", 120.0, &[], &[], &[]),
+            Err(McpBridgeError::CommandSendFailed {
+                command: "SetTempo"
+            })
+        ));
+        assert_eq!(bridge.shared.song.read().name, "new");
+        assert!(bridge.shared.song.read().return_busses().is_empty());
+        assert_ne!(
+            bridge.session.state().shared_graph.identity_lineage(),
+            lineage
+        );
+        assert_eq!(bridge.shared.song.write().create_return_bus("new bus"), id);
     }
 }

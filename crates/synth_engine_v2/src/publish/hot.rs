@@ -26,6 +26,21 @@ use crate::render::{TimedEvent, TimedEvents};
 use crate::time::SampleTime;
 
 impl PublicationArbiter {
+    /// The mixed rehearsal opens exactly one destination quantum at a time. An
+    /// empty/carry-only window is absent, so its old ledger cannot look like a new
+    /// observation. Read the actual ledger rather than differences of lifetime peaks.
+    #[cfg(feature = "mixed-transfer-rehearsal")]
+    pub(crate) fn rehearsal_quantum(&self) -> Option<(SampleTime, [EventCount; 6])> {
+        if self.open_quanta == 1 {
+            Some((
+                self.start,
+                ProducerClass::ALL.map(|class| self.spent_in(WindowRow::new(0), class)),
+            ))
+        } else {
+            None
+        }
+    }
+
     /// Open a window of `quanta` quanta whose first row is `start`'s quantum.
     ///
     /// Clearing is bounded work over the prepared ledger and touches no allocation. The
@@ -341,6 +356,20 @@ impl<'a> Publication<'a> {
     /// [`SealedBatch::len`] reports.
     pub fn spent(&self, quantum: WindowRow, class: ProducerClass) -> EventCount {
         self.arbiter.spent_in(quantum, class)
+    }
+
+    /// One class's per-quantum share, so a producer can preflight a multi-event
+    /// operation before it changes its own custody.
+    #[cfg(any(
+        all(test, feature = "simulated-ingress"),
+        feature = "mixed-transfer-rehearsal"
+    ))]
+    pub(crate) fn share(&self, class: ProducerClass) -> EventCount {
+        self.arbiter
+            .shares
+            .get(class.index())
+            .copied()
+            .unwrap_or(EventCount::NONE)
     }
 
     /// Seal the window. The batch is immutable from here.

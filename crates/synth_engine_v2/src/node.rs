@@ -1197,6 +1197,8 @@ pub enum NodeKindId {
     Envelope,
     /// A low-frequency oscillator, the first native modulation source (`SOUND-INV-027`).
     Lfo,
+    /// Explicit stereo-to-mono half-sum. Appended to preserve existing kind identities.
+    StereoToMono,
 }
 
 /// The stable identity of a node's kind, or `None` for the output node, which has none.
@@ -2155,7 +2157,7 @@ fn prepare_script_program(
 /// the declarations are `static` rather than `const`: a `const` is materialised at each
 /// use and has no single address to compare — so a kind declared but left out here cannot
 /// be discovered, and one listed here but not resolvable cannot compile.
-static DECLARED: [&NodeDeclaration; 41] = [
+static DECLARED: [&NodeDeclaration; 42] = [
     &SCRIPT,
     &AUDIO_SCRIPT,
     &NOTE_SCRIPT,
@@ -2170,6 +2172,7 @@ static DECLARED: [&NodeDeclaration; 41] = [
     &ENVELOPE,
     &MONITOR,
     &STEREO_MONITOR,
+    &STEREO_TO_MONO,
     &STEREO_VELOCITY_SCALER,
     &VOICE_AMPLIFIER,
     &VOICE_OUTPUT,
@@ -3018,6 +3021,7 @@ pub(crate) fn declaration(kind: IrNodeKind) -> Option<&'static NodeDeclaration> 
         IrNodeKind::Amplifier => Some(&AMPLIFIER),
         IrNodeKind::Monitor => Some(&MONITOR),
         IrNodeKind::StereoMonitor => Some(&STEREO_MONITOR),
+        IrNodeKind::StereoToMono => Some(&STEREO_TO_MONO),
         IrNodeKind::StereoVelocityScaler { .. } => Some(&STEREO_VELOCITY_SCALER),
         IrNodeKind::VoiceAmplifier { .. } => Some(&VOICE_AMPLIFIER),
         IrNodeKind::VoiceOutput { .. } => Some(&VOICE_OUTPUT),
@@ -3094,6 +3098,7 @@ pub(crate) fn descriptor(kind: IrNodeKind) -> Option<NodeDescriptor> {
         IrNodeKind::VoiceAmplifier { .. } => declared.map(NodeDeclaration::descriptor),
         IrNodeKind::Monitor => declared.map(NodeDeclaration::descriptor),
         IrNodeKind::StereoMonitor => declared.map(NodeDeclaration::descriptor),
+        IrNodeKind::StereoToMono => declared.map(NodeDeclaration::descriptor),
         IrNodeKind::Filter { .. } => declared.map(NodeDeclaration::descriptor),
         IrNodeKind::Gain { .. } => declared.map(NodeDeclaration::descriptor),
         IrNodeKind::VelocityScaler { .. } => declared.map(NodeDeclaration::descriptor),
@@ -3353,6 +3358,7 @@ pub fn prepared_payload_bytes(kind: IrNodeKind) -> u64 {
         IrNodeKind::VoiceAmplifier { .. } => return declared.map_or(0, |d| d.prepared_bytes),
         IrNodeKind::Monitor => return declared.map_or(0, |d| d.prepared_bytes),
         IrNodeKind::StereoMonitor => return declared.map_or(0, |d| d.prepared_bytes),
+        IrNodeKind::StereoToMono => return declared.map_or(0, |d| d.prepared_bytes),
         IrNodeKind::Gain { .. } => return declared.map_or(0, |d| d.prepared_bytes),
         IrNodeKind::VelocityScaler { .. } => return declared.map_or(0, |d| d.prepared_bytes),
         IrNodeKind::StereoVelocityScaler { .. } => return declared.map_or(0, |d| d.prepared_bytes),
@@ -3434,11 +3440,11 @@ pub const fn ramp_table_bytes_per_record() -> u64 {
     size_of::<usize>() as u64
 }
 
-/// The bytes of the renderer's per-record history index — one start per scheduled record
-/// and a terminator, as the ramp table's (`SOUND-INV-033`).
+/// The history owner cell for one scheduled state record (`SOUND-INV-033`).
+/// Its payload is charged separately; this table has no terminator.
 #[must_use]
 pub const fn history_table_bytes_per_record() -> u64 {
-    size_of::<usize>() as u64
+    size_of::<Box<[f32]>>() as u64
 }
 
 /// The mutable payload one kind carries, for the same attribution and by the same rule.
@@ -3457,6 +3463,7 @@ pub fn state_payload_bytes(kind: IrNodeKind) -> u64 {
         IrNodeKind::VoiceAmplifier { .. } => return declared.map_or(0, |d| d.state_bytes),
         IrNodeKind::Monitor => return declared.map_or(0, |d| d.state_bytes),
         IrNodeKind::StereoMonitor => return declared.map_or(0, |d| d.state_bytes),
+        IrNodeKind::StereoToMono => return declared.map_or(0, |d| d.state_bytes),
         IrNodeKind::Gain { .. } => return declared.map_or(0, |d| d.state_bytes),
         IrNodeKind::VelocityScaler { .. } => return declared.map_or(0, |d| d.state_bytes),
         IrNodeKind::StereoVelocityScaler { .. } => return declared.map_or(0, |d| d.state_bytes),
@@ -3606,6 +3613,33 @@ pub(crate) static STEREO_MONITOR: NodeDeclaration = NodeDeclaration {
     prepared_bytes: 0,
     state_bytes: 0,
 };
+
+/// An explicit layout-changing operation; differing layouts forbid in-place reuse.
+pub(crate) static STEREO_TO_MONO: NodeDeclaration = NodeDeclaration {
+    id: NodeKindId::StereoToMono,
+    name: "stereo_to_mono",
+    kernel: kernels::STEREO_TO_MONO,
+    ports: &[STEREO_AUDIO_IN, AUDIO_OUT],
+    controls: &[],
+    in_place_safe: false,
+    note_control: None,
+    taps: &[],
+    prepare: prepare_stereotomono,
+    timing: stateless_timing,
+    prepared_bytes: 0,
+    state_bytes: 0,
+};
+
+fn prepare_stereotomono(
+    node: NodeId,
+    kind: IrNodeKind,
+    _: &PrepareContext<'_>,
+) -> Result<PreparedNode, CompileError> {
+    if !matches!(kind, IrNodeKind::StereoToMono) {
+        return Err(declared_for_another_kind(node));
+    }
+    Ok(PreparedNode::Copy)
+}
 
 /// The velocity destination after a stereo terminating node.
 pub(crate) static STEREO_VELOCITY_SCALER: NodeDeclaration = NodeDeclaration {
@@ -3940,6 +3974,7 @@ mod tests {
                 sensitivity: crate::quantities::NormalizedLevel::FULL,
             },
             IrNodeKind::StereoMonitor,
+            IrNodeKind::StereoToMono,
             IrNodeKind::Envelope {
                 attack: crate::quantities::Seconds::ZERO,
                 decay: crate::quantities::Seconds::ZERO,
@@ -4245,7 +4280,7 @@ mod tests {
                     | (IrNodeKind::FeedbackDelay, PreparedNode::FeedbackDelay)
                     | (IrNodeKind::Amplifier, PreparedNode::Amplifier)
                     | (
-                        IrNodeKind::Monitor | IrNodeKind::StereoMonitor,
+                        IrNodeKind::Monitor | IrNodeKind::StereoMonitor | IrNodeKind::StereoToMono,
                         PreparedNode::Copy
                     )
                     | (
@@ -4318,6 +4353,7 @@ mod tests {
                 | IrNodeKind::HardClamp
                 | IrNodeKind::FeedbackDelay
                 | IrNodeKind::StereoMonitor
+                | IrNodeKind::StereoToMono
                 | IrNodeKind::Monitor => (false, false),
                 other => panic!("{other:?} is declared but this test does not know its shape"),
             };

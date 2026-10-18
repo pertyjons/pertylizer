@@ -157,6 +157,8 @@ pub const VELOCITY_SCALER: Kernel = Kernel(velocity_scaler);
 pub const SAMPLER: Kernel = Kernel(sampler);
 /// The monitor's kernel: its input, unchanged.
 pub const MONITOR: Kernel = Kernel(monitor);
+/// The explicit stereo-to-mono half-sum.
+pub const STEREO_TO_MONO: Kernel = Kernel(stereo_to_mono);
 /// The mix channel's kernel (`SOUND-INV-031`).
 pub const CHANNEL: Kernel = Kernel(channel);
 /// The explicit sum's kernel: the summed region, unchanged (`SOUND-INV-031`).
@@ -1447,6 +1449,11 @@ pub fn impulse(prepared: &PreparedNode, _state: &mut NodeState, io: &mut NodeIo<
         return;
     };
     io.out.fill(0.0);
+    // A stopped transport stands at its position without visiting it: the frame that
+    // visits it is the first one after the transport resumes there.
+    if io.timeline.is_held() {
+        return;
+    }
     if let Some(positions) = io.timeline.mapped_positions() {
         for (frame, sample) in io.out.iter_mut().enumerate() {
             if positions.get(frame) == Some(position) {
@@ -2254,6 +2261,31 @@ pub fn monitor(_prepared: &PreparedNode, _state: &mut NodeState, io: &mut NodeIo
         }
         InputBuffer::InPlace => {}
         InputBuffer::Unpatched => io.out.fill(0.0),
+    }
+}
+
+/// Fold each interleaved stereo frame as a half-sum, with f64 intermediates.
+/// The wider sum preserves both finite extreme values and subnormal dual-mono
+/// inputs. Round to f32 once; do not clamp, compensate gain or retain state.
+/// The declaration requires Stereo input, Mono output and separate arena regions.
+pub fn stereo_to_mono(_prepared: &PreparedNode, _state: &mut NodeState, io: &mut NodeIo<'_>) {
+    let InputBuffer::Patched(source) = io.inputs[0] else {
+        // Unpatched means silence. In-place cannot be admitted across these layouts.
+        io.out.fill(0.0);
+        return;
+    };
+    for (frame, sample) in io.out.iter_mut().enumerate() {
+        let offset = frame.saturating_mul(2);
+        let left = source.get(offset).copied().unwrap_or(0.0);
+        let right = source.get(offset.saturating_add(1)).copied().unwrap_or(0.0);
+        // A mean of finite f32 values is bounded by their extrema, so this
+        // narrowing cannot overflow. Wider intermediates preserve subnormal ties.
+        #[allow(
+            clippy::cast_possible_truncation,
+            reason = "a finite f32 mean fits f32; round once"
+        )]
+        let mono = ((f64::from(left) + f64::from(right)) * 0.5) as f32;
+        *sample = mono;
     }
 }
 

@@ -523,6 +523,7 @@ catalog! {
     IrNodeKind::VoiceOutput { master: synth_engine_v2::quantities::NormalizedLevel::FULL, pan: synth_engine_v2::controller::BipolarLevel::ZERO, muted: false, limiting: synth_engine_v2::output::OutputLimiting::SoftKnee } => IrNodeKind::VoiceOutput { .. },
     IrNodeKind::StereoVelocityScaler { sensitivity: synth_engine_v2::quantities::NormalizedLevel::FULL } => IrNodeKind::StereoVelocityScaler { .. },
     IrNodeKind::StereoMonitor => IrNodeKind::StereoMonitor,
+    IrNodeKind::StereoToMono => IrNodeKind::StereoToMono,
     IrNodeKind::Output => IrNodeKind::Output,
 }
 
@@ -543,6 +544,22 @@ fn every_kernel_admits_exactly_one_channel_on_every_port() {
         // than a kernel that would have to step frames. Clause 12 is an obligation on
         // kernels, so this is the one kind it does not reach.
         if matches!(kind, IrNodeKind::Output) {
+            continue;
+        }
+        if kind == IrNodeKind::StereoToMono {
+            for layout in [ChannelLayout::Mono, ChannelLayout::Stereo] {
+                let ports = synth_engine_v2::node::ports(kind, layout);
+                assert_eq!(ports.len(), 2);
+                for port in ports {
+                    assert_eq!(
+                        port.layout(),
+                        match port.direction() {
+                            PortDirection::Input => ChannelLayout::Stereo,
+                            PortDirection::Output => ChannelLayout::Mono,
+                        }
+                    );
+                }
+            }
             continue;
         }
         let admitted = if matches!(

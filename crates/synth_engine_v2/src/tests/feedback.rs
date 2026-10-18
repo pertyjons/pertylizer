@@ -294,7 +294,7 @@ fn feedback_history_is_charged_exactly_as_allocated() {
     assert_eq!(
         renderer.history_bytes_held(),
         128 * size_of::<f32>()
-            + (renderer.prepared_record_count().get() as usize + 1) * size_of::<usize>()
+            + renderer.prepared_record_count().get() as usize * size_of::<Box<[f32]>>()
     );
 }
 

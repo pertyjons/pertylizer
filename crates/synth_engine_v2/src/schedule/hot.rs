@@ -408,6 +408,48 @@ impl CompiledEventScheduler {
         self.exchange = crate::transport::Exchange::Retired(activation);
     }
 
+    /// Complete an exclusively owned fresh session's initial activation off-thread.
+    /// No quantum is rendered: restoration and its charge remain owed at `at`.
+    #[cfg(feature = "simulated-ingress")]
+    pub(crate) fn adopt_initial_at(
+        &mut self,
+        renderer: &mut PreparedRenderer,
+        at: SampleTime,
+    ) -> bool {
+        if renderer.clock() != at
+            || renderer.carry_frames() != 0
+            || self.pending_boundary(renderer) != Some((at, false))
+        {
+            return false;
+        }
+        self.adopt_pending(renderer, at, false);
+        matches!(self.exchange, crate::transport::Exchange::Retired(_))
+    }
+
+    /// A private reset payload must remain unrendered until its exact boundary.
+    #[cfg(feature = "simulated-ingress")]
+    pub(crate) fn initial_reset_ready(&self, playing: bool) -> bool {
+        self.next == 0
+            && self.shift == FrameCount::new(0)
+            && self.arbiter.is_none()
+            && matches!(self.exchange, crate::transport::Exchange::Empty)
+            && self.session_operations == crate::quantities::EventCount::NONE
+            && if playing {
+                Some(self.in_force) == crate::transport::ActivationSequence::INITIAL.next()
+                    && self.owed_release_charge
+                    && self.catch_up_len == self.catch_up.len()
+            } else {
+                self.in_force == crate::transport::ActivationSequence::INITIAL
+                    && !self.owed_release_charge
+                    && self.catch_up_len == 0
+            }
+    }
+
+    #[cfg(feature = "simulated-ingress")]
+    pub(crate) fn activation_exchange_empty(&self) -> bool {
+        matches!(self.exchange, crate::transport::Exchange::Empty)
+    }
+
     /// One renderer call: publish the due span and render it.
     fn render_one(
         &mut self,
@@ -713,5 +755,37 @@ impl CompiledEventScheduler {
                 None
             }
         }
+    }
+}
+
+#[cfg(feature = "simulated-ingress")]
+impl CompiledEventScheduler {
+    pub(crate) fn continuation_ready(
+        &self,
+        epoch: crate::time::StreamEpoch,
+        table: crate::identity::TableId,
+        sequence: crate::transport::ActivationSequence,
+        events: usize,
+    ) -> bool {
+        self.epoch == epoch
+            && self.table == table
+            && self.in_force == sequence
+            && self.events.len() == events
+            && self.next <= events
+            && self.shift == FrameCount::new(0)
+            && matches!(self.exchange, crate::transport::Exchange::Empty)
+            && !self.owed_release_charge
+            && self.catch_up_len == 0
+            && self.session_operations == crate::quantities::EventCount::NONE
+    }
+
+    /// Keep the actual cursor/sequence; both replacement owners were prepared cold.
+    pub(crate) fn continue_event_owners(
+        &mut self,
+        events: &mut Vec<crate::render::TimedEvent>,
+        catch_up: &mut Vec<crate::render::TimedEvent>,
+    ) {
+        core::mem::swap(&mut self.events, events);
+        core::mem::swap(&mut self.catch_up, catch_up);
     }
 }

@@ -63,7 +63,7 @@ impl SessionRuntime {
         }
     }
 
-    fn boundary(
+    pub(super) fn boundary(
         &mut self,
         renderer: &mut PreparedRenderer,
         mut capture: Option<&mut SimulatedNoteRecorder>,
@@ -224,7 +224,7 @@ impl SessionRuntime {
         Ok(())
     }
 
-    fn retain_adopted(&mut self) {
+    pub(super) fn retain_adopted(&mut self) {
         let Some(index) = self.adopted_slot else {
             return;
         };

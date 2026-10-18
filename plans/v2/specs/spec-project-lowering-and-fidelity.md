@@ -5,8 +5,8 @@
 | Status           | Current                      |
 | Phase            | 4                            |
 | Created          | 2026-09-02                   |
-| Last reviewed    | 2026-09-04                   |
-| Based on         | ADR-0057, ADR-0056, ADR-0025 |
+| Last reviewed    | 2026-10-17                   |
+| Based on         | ADR-0057, ADR-0056, ADR-0025, ADR-0080 |
 | Invariant prefix | LOWER                        |
 | Supersedes       | —                            |
 | Superseded by    | —                            |
@@ -462,6 +462,17 @@ caller could compare them without asking for the verdict; what prevents that tod
 no such caller exists and ADR-0057 clause 5 refuses building one. The first consumer that
 needs a parity verdict brings the encapsulation with it. `P04-R001`, which it once had to
 inherit first, is closed by ADR-0059.
+
+### Explicit mono output
+
+Under ADR-0080, a requested Mono profile retains the saved stereo processing
+and stereo master tap, then inserts `MASTER_MONO` (`StereoToMono`) before the
+final output. The tap observes the pre-fold stereo signal. The node and its
+resource costs remain explicit. Lowering emits `MonoOutputFold` with
+`Severity::Unrepresented` on `ProjectSubject::Project`; the plan can render,
+but `Fidelity::UnsupportedScope` refuses a stereo V1 parity verdict under
+`LOWER-INV-003`. `OutputPolicy` still selects limiting only. Stereo lowering
+and the application's stereo-only V2 device admission remain unchanged.
 
 ## Real-time and resource constraints
 

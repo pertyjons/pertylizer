@@ -49,6 +49,17 @@ impl InputCaptureHalt {
 }
 
 impl InputCaptureAudio {
+    /// Passive occupancy of the underlying raw session's two actual queues.
+    #[cfg(feature = "mixed-transfer-rehearsal")]
+    pub fn rehearsal_queue_occupancy(
+        &self,
+    ) -> Result<
+        (crate::quantities::EventCount, crate::quantities::EventCount),
+        crate::render::RehearsalUsageError,
+    > {
+        self.core.rehearsal_queue_occupancy()
+    }
+
     /// Reconcile mutable raw metadata before returning a live outcome credit.
     pub fn resolve_audition(
         &mut self,

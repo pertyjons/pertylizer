@@ -3,6 +3,7 @@
 mod hot;
 pub mod journal;
 mod prepare;
+pub(crate) use prepare::{LoopAdmissionShape, admit_loop_shape};
 #[cfg(test)]
 mod tests;
 
@@ -24,6 +25,9 @@ use thiserror::Error;
 #[must_use]
 pub struct LoopPassId(u64);
 impl LoopPassId {
+    /// The pass an entry plays before its first wrap.
+    pub(crate) const FIRST: Self = Self(1);
+
     pub const fn as_u64(self) -> u64 {
         self.0
     }

@@ -9,7 +9,7 @@
 | Last reviewed | 2026-09-29 |
 | Related | ADR-0022, ADR-0048, ADR-0050, ADR-0051, ADR-0054, ADR-0055, ADR-0065, ADR-0072, ADR-0073, ADR-0075, EVD-0016, EVD-0024 |
 | Supersedes | — |
-| Superseded by | — |
+| Superseded by | [ADR-0078](ADR-0078-host-owned-mixed-transfer-rehearsal.md) permits only a default-off, non-shipping mixed transfer rehearsal; final Phase 9 exit remains required |
 
 ## Durable boundary
 

@@ -11,6 +11,11 @@
 //! capacity reaching the audio thread without having passed admission is a defect
 //! rather than a fallback.
 
+#[cfg(feature = "simulated-ingress")]
+pub(crate) mod continuation;
+#[cfg(feature = "simulated-ingress")]
+pub use continuation::ContinuationError;
+
 use crate::ir::{NodeId, ParameterId};
 use crate::node::NoteMagnitude;
 use crate::node::kernels::{ControlIndex, Kernel, MAX_INPUTS, PreparedNode};
@@ -1180,6 +1185,10 @@ pub struct CompiledPlan {
     /// ascending node identity (`SOUND-INV-033`) — the diagnostics reader of the
     /// declaration's timing fields.
     node_timings: Vec<(crate::ir::NodeId, crate::node::NodeTiming)>,
+    /// Stable authored non-voice identity and exact scope to runtime state.
+    non_voice_state_nodes: Vec<(NodeId, crate::ir::ExecutionScope, NodeSlot)>,
+    /// Exact authored identity/scope/layout, including voices, for a continuation proof.
+    authored_state_nodes: Vec<(NodeId, crate::ir::ExecutionScope, NodeSlot)>,
     parameter_targets: Vec<ParameterTarget>,
     parameter_addresses: Vec<ParameterAddress>,
     /// `SOUND-INV-022`'s taps, derived from the nodes' declarations; indexed by [`TapSlot`].
@@ -1323,6 +1332,22 @@ impl CompiledPlan {
                 self.node_timings
                     .capacity()
                     .checked_mul(size_of::<(crate::ir::NodeId, crate::node::NodeTiming)>())?,
+            )
+            .ok()?,
+        )?;
+        bytes = bytes.checked_add(
+            u64::try_from(
+                self.non_voice_state_nodes
+                    .capacity()
+                    .checked_mul(size_of::<(NodeId, crate::ir::ExecutionScope, NodeSlot)>())?,
+            )
+            .ok()?,
+        )?;
+        bytes = bytes.checked_add(
+            u64::try_from(
+                self.authored_state_nodes
+                    .capacity()
+                    .checked_mul(size_of::<(NodeId, crate::ir::ExecutionScope, NodeSlot)>())?,
             )
             .ok()?,
         )?;
@@ -1479,6 +1504,8 @@ impl CompiledPlan {
         regions: Vec<BufferRegion>,
         prepared_nodes: Vec<PreparedNode>,
         node_timings: Vec<(crate::ir::NodeId, crate::node::NodeTiming)>,
+        non_voice_state_nodes: Vec<(NodeId, crate::ir::ExecutionScope, NodeSlot)>,
+        authored_state_nodes: Vec<(NodeId, crate::ir::ExecutionScope, NodeSlot)>,
         parameter_targets: Vec<ParameterTarget>,
         parameter_addresses: Vec<ParameterAddress>,
         taps: Vec<TapTarget>,
@@ -1514,6 +1541,8 @@ impl CompiledPlan {
             prepared_scripts: Vec::new(),
             prepared_nodes,
             node_timings,
+            non_voice_state_nodes,
+            authored_state_nodes,
             parameter_targets,
             parameter_addresses,
             taps,
@@ -1602,6 +1631,11 @@ impl CompiledPlan {
     /// This plan's identity, which every slot it hands out carries.
     pub const fn id(&self) -> PlanId {
         self.id
+    }
+
+    #[cfg(feature = "simulated-ingress")]
+    pub(crate) fn non_voice_state_nodes(&self) -> &[(NodeId, crate::ir::ExecutionScope, NodeSlot)] {
+        &self.non_voice_state_nodes
     }
 
     /// The operations, in execution order.

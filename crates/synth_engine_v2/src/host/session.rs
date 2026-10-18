@@ -28,6 +28,7 @@ use crate::transport::TransportActivation;
 struct CommandEntry {
     boundary: SessionBoundary,
     activation: Option<Box<TransportActivation>>,
+    timeline_witness: Option<Box<transfer::continuation::AdoptedTimelineWitness>>,
     outcome: Option<SessionOutcome>,
     capture_outcome: Option<SessionCaptureOutcome>,
     expected_position: Option<crate::time::PlanPosition>,
@@ -229,6 +230,7 @@ impl SessionRuntime {
                 capture,
             },
             activation,
+            timeline_witness: None,
             outcome: None,
             capture_outcome: None,
             expected_position: None,

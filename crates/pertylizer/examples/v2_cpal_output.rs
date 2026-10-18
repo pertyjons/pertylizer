@@ -18,6 +18,10 @@ mod input_host;
 mod input_driver;
 
 #[cfg(target_os = "linux")]
+#[path = "support/v2_device_inspect.rs"]
+mod device_inspect;
+
+#[cfg(target_os = "linux")]
 #[path = "support/v2_duplex.rs"]
 mod duplex;
 #[cfg(target_os = "linux")]
@@ -74,7 +78,7 @@ mod linux {
     #[derive(Debug, Error)]
     enum HarnessError {
         #[error(
-            "usage: v2_cpal_output list | run|transport|plans|loops|capture <ALSA device ID> <callback count> | duplex <ALSA input ID> <ALSA output ID> <seconds per attempt>"
+            "usage: v2_cpal_output list | inspect <ALSA input ID> <ALSA output ID> | run|transport|plans|loops|capture <ALSA device ID> <callback count> | duplex <ALSA input ID> <ALSA output ID> <seconds per attempt> [--format f32|i32|i16] [--repeat-default]"
         )]
         Usage,
         #[error("endpoint not found: {0}")]
@@ -1093,8 +1097,17 @@ mod linux {
                     println!("input {} {:?}", device.id()?, device.default_input_config());
                 }
             }
-            [command, input, output, seconds] if command == "duplex" => {
-                return crate::duplex::run(&host, input, output, seconds);
+            [command, input, output] if command == "inspect" => {
+                return crate::device_inspect::run(&host, input, output);
+            }
+            [command, input, output, seconds, options @ ..] if command == "duplex" => {
+                return crate::duplex::run(
+                    &host,
+                    input,
+                    output,
+                    seconds,
+                    crate::duplex::DuplexOptions::parse(options)?,
+                );
             }
             [command, id, count]
                 if matches!(

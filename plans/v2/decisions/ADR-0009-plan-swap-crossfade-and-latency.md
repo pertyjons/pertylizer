@@ -7,7 +7,7 @@
 | Phase | 9 |
 | Created | 2026-09-21 |
 | Last reviewed | 2026-09-21 |
-| Related | ADR-0050, ADR-0064, ADR-0072, ADR-0073, P06-R002 |
+| Related | ADR-0050, ADR-0064, ADR-0072, ADR-0073, ADR-0082, P06-R002 |
 | Supersedes | ADR-0072's no-activation restriction solely for the separately owned reset consumer below; no identity migration or minter snapshot promotion |
 | Superseded by | ADR-0074 for concurrent transport and capture coupling |
 

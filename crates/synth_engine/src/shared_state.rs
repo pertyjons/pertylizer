@@ -14,7 +14,8 @@ use super::connectivity::ModuleConnectivityStatus;
 use super::instrument::InstrumentId;
 use super::recording::RecordingState;
 use synth_core::{
-    Amplitude, BipolarValue, BypassState, CpuUsage, Gain, MuteState, PortName, SoloState,
+    Amplitude, BipolarValue, BypassState, ContentRevision, CpuUsage, Gain, MuteState, PortName,
+    SoloState,
 };
 use synth_core::{ModuleParam, ModuleType, Param};
 use synth_sequencer::ReturnBusId;
@@ -420,6 +421,8 @@ pub struct SharedGraphState {
     live_modules: RwLock<HashSet<ModuleId>>,
     /// Version counter - incremented on any topology change.
     version: AtomicU64,
+    /// Destructive identity operations, independent of whether a GUI observes intermediate snapshots.
+    identity_lineage: AtomicU64,
 }
 
 impl SharedGraphState {
@@ -431,7 +434,27 @@ impl SharedGraphState {
             processing_order: RwLock::new(Vec::new()),
             live_modules: RwLock::new(HashSet::new()),
             version: AtomicU64::new(0),
+            identity_lineage: AtomicU64::new(0),
         }
+    }
+
+    /// A session-local lineage fence, not a persisted or canonical project revision.
+    /// Saturation permanently disables equality-based migration instead of wrapping.
+    pub fn identity_lineage(&self) -> Option<ContentRevision> {
+        let value = self.identity_lineage.load(Ordering::Acquire);
+        (value != u64::MAX).then_some(ContentRevision::new(value))
+    }
+
+    /// Call while holding the write guard for data whose IDs can be reissued,
+    /// after mutation and before releasing the guard. Readers bracket their snapshot.
+    pub fn invalidate_identity_lineage(&self) {
+        // Failure means the counter is already saturated; None remains the safe fence.
+        let _previous = self
+            .identity_lineage
+            .try_update(Ordering::AcqRel, Ordering::Acquire, |value| {
+                value.checked_add(1)
+            })
+            .unwrap_or(u64::MAX);
     }
 
     /// Get the current version number.
@@ -547,6 +570,7 @@ impl SharedGraphState {
     pub fn remove_modules_for_instrument(&self, id: InstrumentId) {
         let mut modules = self.modules.write();
         modules.retain(|&(inst_id, _), _| inst_id != id);
+        self.invalidate_identity_lineage();
         self.bump_version();
         drop(modules);
     }
@@ -570,7 +594,9 @@ impl SharedGraphState {
     pub fn set_module(&self, snapshot: ModuleStateSnapshot) {
         let key = (snapshot.instrument_id, snapshot.id);
         let mut modules = self.modules.write();
-        modules.insert(key, snapshot);
+        if modules.insert(key, snapshot).is_some() {
+            self.invalidate_identity_lineage();
+        }
         self.bump_version();
         drop(modules);
     }
@@ -595,6 +621,7 @@ impl SharedGraphState {
     pub fn remove_module(&self, instrument_id: InstrumentId, id: ModuleId) {
         let mut modules = self.modules.write();
         modules.remove(&(instrument_id, id));
+        self.invalidate_identity_lineage();
         self.bump_version();
         drop(modules);
     }
@@ -742,7 +769,11 @@ impl SharedGraphState {
 
     /// Clear all topology snapshots.
     pub fn clear(&self) {
-        self.modules.write().clear();
+        {
+            let mut modules = self.modules.write();
+            modules.clear();
+            self.invalidate_identity_lineage();
+        }
         self.connections.write().clear();
         self.processing_order.write().clear();
         self.live_modules.write().clear();
@@ -1013,5 +1044,56 @@ mod tests {
 
         let v2 = graph.version();
         assert!(v2 > v1);
+    }
+}
+
+#[cfg(test)]
+mod lineage_tests {
+    use super::*;
+
+    #[test]
+    fn destructive_operations_fence_coalesced_reuse_of_the_same_module_id() {
+        let graph = SharedGraphState::new();
+        let id = ModuleId::new(ModuleType::Oscillator, 1);
+        let module = ModuleStateSnapshot::new(
+            id,
+            InstrumentId::FIRST,
+            ModuleType::Oscillator,
+            "osc".to_owned(),
+        );
+        graph.set_module(module.clone());
+        let first = graph.identity_lineage();
+        assert!(graph.set_module_description(InstrumentId::FIRST, id, "cosmetic".to_owned()));
+        assert_eq!(graph.identity_lineage(), first);
+        graph.remove_module(InstrumentId::FIRST, id);
+        graph.set_module(module.clone());
+        assert_ne!(graph.identity_lineage(), first);
+        let second = graph.identity_lineage();
+        graph.clear();
+        graph.set_module(module.clone());
+        assert_ne!(graph.identity_lineage(), second);
+        let third = graph.identity_lineage();
+        graph.set_module(module);
+        assert_ne!(
+            graph.identity_lineage(),
+            third,
+            "overwriting an existing object is fenced too"
+        );
+        let fourth = graph.identity_lineage();
+        graph.remove_modules_for_instrument(InstrumentId::FIRST);
+        assert_ne!(graph.identity_lineage(), fourth);
+    }
+
+    #[test]
+    fn lineage_exhaustion_never_wraps_back_into_an_eligible_revision() {
+        let graph = SharedGraphState::new();
+        graph
+            .identity_lineage
+            .store(u64::MAX - 1, Ordering::Release);
+        assert!(graph.identity_lineage().is_some());
+        graph.invalidate_identity_lineage();
+        assert_eq!(graph.identity_lineage(), None);
+        graph.invalidate_identity_lineage();
+        assert_eq!(graph.identity_lineage(), None);
     }
 }

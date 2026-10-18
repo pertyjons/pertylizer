@@ -191,7 +191,7 @@ fn failed_preparation_preserves_the_last_valid_candidate_and_available_credits()
 }
 
 #[test]
-fn mid_note_stop_refuses_without_stranding_credit_then_release_allows_replacement() {
+fn stopped_compiled_notes_retire_with_the_old_owner_and_are_reported() {
     let (mut control, mut audio) = setup_notes();
     audio
         .enqueue(control.prepare_play(SampleTime::ZERO).unwrap())
@@ -201,38 +201,29 @@ fn mid_note_stop_refuses_without_stranding_credit_then_release_allows_replacemen
         .unwrap();
     render(&mut audio, 192);
     collect_commands(&mut control, &mut audio);
-    assert!(!control.control.has_replacement_obligations()); // Closed compiled list.
-    assert!(audio.renderer.has_replacement_obligations()); // Runtime stopped mid-note.
+    assert!(!control.control.has_replacement_obligations());
+    assert!(audio.renderer.has_replacement_obligations());
+    assert!(!audio.renderer.has_readmission_obligations());
     let old = audio.plan_id();
-    let packet = candidate(&mut control);
-    let returned = install(&mut audio, packet);
-    assert_eq!(
-        returned.outcome(),
-        Some(PlanReplacementOutcome::Refused(
-            PlanReplacementRefusal::NoteObligations
-        ))
-    );
-    assert_eq!(audio.plan_id(), old);
-    collect_replacement(&mut control, returned);
-    let at = audio.clock();
-    audio.enqueue(control.prepare_play(at).unwrap()).unwrap();
-    audio
-        .enqueue(
-            control
-                .prepare_stop(SampleTime::new(at.as_u64() + 256))
-                .unwrap(),
-        )
-        .unwrap();
-    render(&mut audio, 320);
-    collect_commands(&mut control, &mut audio);
-    assert!(!audio.renderer.has_replacement_obligations());
     let packet = candidate(&mut control);
     let returned = install(&mut audio, packet);
     assert!(matches!(
         returned.outcome(),
         Some(PlanReplacementOutcome::Installed(_))
     ));
-    collect_replacement(&mut control, returned);
+    assert_ne!(audio.plan_id(), old);
+    assert!(
+        !audio.renderer.has_replacement_obligations(),
+        "no old voice identity enters the fresh renderer"
+    );
+    let receipt = control.collect_replacement(returned).unwrap();
+    assert_eq!(
+        receipt.retired_compiled_notes,
+        crate::quantities::HeldNoteCount::measured(1)
+    );
+    let at = audio.clock();
+    audio.enqueue(control.prepare_play(at).unwrap()).unwrap();
+    assert_eq!(render(&mut audio, 64), vec![0.25; 64]);
 }
 
 #[test]
@@ -665,10 +656,10 @@ fn an_uncollected_incoming_minter_cannot_be_skipped_by_a_later_candidate() {
             )],
         )
         .unwrap();
-        let first = control
+        let mut first = control
             .prepare_replacement(plan, stream, profile(), limits())
             .unwrap();
-        assert!(first.control.control.has_replacement_obligations());
+        assert!(first.control.control.minter_mut().live() != 0);
         let second = candidate(&mut control); // Original minter is still authoritative here.
         let mut retired_prefix = Vec::new();
         for packet in preceding {
@@ -697,4 +688,272 @@ fn an_uncollected_incoming_minter_cannot_be_skipped_by_a_later_candidate() {
         collect_replacement(&mut control, first);
         collect_replacement(&mut control, second);
     }
+}
+
+#[test]
+fn declared_external_producer_prevents_readmission_before_its_first_note() {
+    use crate::ir::{NoteProducerDeclaration, PlanDeclarations};
+    use crate::quantities::{EventCount, HeldNoteCount};
+    let graph = crate::ir::GraphIr::builder()
+        .node(
+            crate::ir::NodeId::new(1),
+            crate::ir::IrNodeKind::Constant {
+                level: crate::quantities::Amplitude::new(0.25).unwrap(),
+            },
+            crate::ir::ExecutionScope::Global,
+        )
+        .node(
+            crate::ir::NodeId::new(2),
+            crate::ir::IrNodeKind::Output,
+            crate::ir::ExecutionScope::Global,
+        )
+        .connect(
+            (crate::ir::NodeId::new(1), crate::ir::PortId::FIRST),
+            (crate::ir::NodeId::new(2), crate::ir::PortId::FIRST),
+            crate::ir::SignalDomain::Audio,
+        )
+        .declaring(PlanDeclarations {
+            note_producers: vec![NoteProducerDeclaration {
+                compiled: false,
+                simultaneous_notes: HeldNoteCount::measured(2),
+                simultaneous_holds: EventCount::measured(2),
+            }],
+            ..PlanDeclarations::default()
+        })
+        .build()
+        .unwrap();
+    let plan = compile(&graph, &RenderConfig::new(profile()))
+        .into_plan()
+        .unwrap();
+    let stream = AdmittedCompiledStream::admit(&plan, &[]).unwrap();
+    let (mut control, _) = SessionControl::prepare(plan, stream, profile(), limits()).unwrap();
+    let incoming = compile(&super::super::tests::graph(), &RenderConfig::new(profile()))
+        .into_plan()
+        .unwrap();
+    let stream = AdmittedCompiledStream::admit(&incoming, &[]).unwrap();
+    assert!(matches!(
+        control.prepare_replacement(incoming, stream, profile(), limits()),
+        Err(PlanReplacementError::NoteObligations)
+    ));
+    assert!(!control.has_replacements());
+}
+
+#[test]
+fn deleting_an_automation_lane_restores_the_new_base_on_resume() {
+    use crate::{
+        ir::{ExecutionScope, GraphIr, IrNodeKind, NodeId, PortId, SignalDomain, parameters},
+        quantities::{Amplitude, Frequency, ParameterValue},
+        schedule::{CompiledPayload, PlanEvent},
+    };
+    let source = NodeId::new(1);
+    let graph = GraphIr::builder()
+        .node(
+            source,
+            IrNodeKind::Sine {
+                frequency: Frequency::new(317.0).unwrap(),
+                amplitude: Amplitude::new(0.25).unwrap(),
+            },
+            ExecutionScope::Global,
+        )
+        .node(NodeId::new(2), IrNodeKind::Output, ExecutionScope::Global)
+        .connect(
+            (source, PortId::FIRST),
+            (NodeId::new(2), PortId::FIRST),
+            SignalDomain::Audio,
+        )
+        .build()
+        .unwrap();
+    let old = compile(&graph, &RenderConfig::new(profile()))
+        .into_plan()
+        .unwrap();
+    let parameter = old
+        .resolve_parameter(source, parameters::SINE_AMPLITUDE)
+        .unwrap();
+    let stream = AdmittedCompiledStream::admit(
+        &old,
+        &[PlanEvent::new(
+            PlanPosition::ZERO,
+            CompiledPayload::SetParameter {
+                slot: parameter,
+                value: ParameterValue::new(0.05).unwrap(),
+            },
+        )],
+    )
+    .unwrap();
+    let (mut control, mut audio) =
+        SessionControl::prepare(old, stream, profile(), limits()).unwrap();
+    audio
+        .enqueue(control.prepare_play(SampleTime::ZERO).unwrap())
+        .unwrap();
+    let before = render(&mut audio, 256);
+    assert!(before.iter().any(|sample| sample.abs() > 0.049));
+    assert!(before.iter().all(|sample| sample.abs() < 0.051));
+    collect_commands(&mut control, &mut audio);
+    audio
+        .enqueue(control.prepare_stop(audio.clock()).unwrap())
+        .unwrap();
+    render(&mut audio, 64);
+    collect_commands(&mut control, &mut audio);
+    let new = compile(&graph, &RenderConfig::new(profile()))
+        .into_plan()
+        .unwrap();
+    let stream = AdmittedCompiledStream::admit(&new, &[]).unwrap();
+    let packet = control
+        .prepare_compatible_replacement(new, stream, profile(), limits())
+        .unwrap();
+    assert!(packet.compatible_records().get() > 0);
+    let returned = install(&mut audio, packet);
+    assert!(matches!(
+        returned.outcome(),
+        Some(PlanReplacementOutcome::Installed(_))
+    ));
+    let receipt = control.collect_replacement(returned).unwrap();
+    assert!(matches!(
+        receipt.outcome,
+        PlanReplacementOutcome::Installed(_)
+    ));
+    audio
+        .enqueue(control.prepare_play(audio.clock()).unwrap())
+        .unwrap();
+    let resumed = render(&mut audio, 256);
+    assert!(
+        resumed.iter().any(|sample| sample.abs() > 0.249),
+        "removed automation must not keep its old override"
+    );
+    assert!(resumed.iter().all(|sample| sample.abs() <= 0.25));
+    collect_commands(&mut control, &mut audio);
+}
+
+#[test]
+fn retired_notes_do_not_leave_a_non_voice_envelope_or_magnitude_destination_held() {
+    use crate::{
+        ir::{
+            ExecutionScope, GraphIr, IrNodeKind, NodeId, NoteProducerDeclaration, PlanDeclarations,
+            PortId, SignalDomain,
+        },
+        quantities::{
+            Amplitude, EventCount, Frequency, HeldNoteCount, KeyIdentity, NormalizedLevel,
+            NoteVelocity, Seconds,
+        },
+        schedule::{CompiledPayload, PlanEvent},
+    };
+    let source = NodeId::new(1);
+    let gate = NodeId::new(2);
+    let amplifier = NodeId::new(3);
+    let output = NodeId::new(4);
+    let graph = GraphIr::builder()
+        .node(
+            source,
+            IrNodeKind::Sine {
+                frequency: Frequency::new(317.0).unwrap(),
+                amplitude: Amplitude::new(0.25).unwrap(),
+            },
+            ExecutionScope::Global,
+        )
+        .node(
+            gate,
+            IrNodeKind::Envelope {
+                attack: Seconds::new(0.0).unwrap(),
+                decay: Seconds::new(0.0).unwrap(),
+                sustain: NormalizedLevel::FULL,
+                release: Seconds::new(0.0).unwrap(),
+                velocity_sensitivity: NormalizedLevel::FULL,
+            },
+            ExecutionScope::Global,
+        )
+        .node(amplifier, IrNodeKind::Amplifier, ExecutionScope::Global)
+        .node(output, IrNodeKind::Output, ExecutionScope::Global)
+        .connect(
+            (source, PortId::FIRST),
+            (amplifier, PortId::FIRST),
+            SignalDomain::Audio,
+        )
+        .connect(
+            (gate, PortId::FIRST),
+            (amplifier, crate::node::AMPLIFIER_CONTROL),
+            SignalDomain::Control,
+        )
+        .connect(
+            (amplifier, PortId::FIRST),
+            (output, PortId::FIRST),
+            SignalDomain::Audio,
+        )
+        .tuning(
+            ExecutionScope::Global,
+            crate::tuning::PreparedTuning::equal_temperament().unwrap(),
+        )
+        .declaring(PlanDeclarations {
+            note_producers: vec![NoteProducerDeclaration {
+                compiled: true,
+                simultaneous_notes: HeldNoteCount::measured(2),
+                simultaneous_holds: EventCount::NONE,
+            }],
+            ..PlanDeclarations::default()
+        })
+        .build()
+        .unwrap();
+    let make = || {
+        let plan = compile(&graph, &RenderConfig::new(profile()))
+            .into_plan()
+            .unwrap();
+        let slot = plan.resolve_note(gate).unwrap();
+        let key = KeyIdentity::new(60).unwrap();
+        let events = [
+            PlanEvent::new(
+                PlanPosition::ZERO,
+                CompiledPayload::NoteOn {
+                    slot,
+                    key,
+                    velocity: NoteVelocity::FULL,
+                },
+            ),
+            PlanEvent::new(
+                PlanPosition::new(4096),
+                CompiledPayload::NoteOff { slot, key },
+            ),
+        ];
+        let stream = AdmittedCompiledStream::admit(&plan, &events).unwrap();
+        (plan, stream)
+    };
+    let (old, stream) = make();
+    assert!(
+        !old.note_magnitudes().is_empty(),
+        "exercise the pitch/velocity destinations too"
+    );
+    let (mut control, mut audio) =
+        SessionControl::prepare(old, stream, profile(), limits()).unwrap();
+    audio
+        .enqueue(control.prepare_play(SampleTime::ZERO).unwrap())
+        .unwrap();
+    assert!(render(&mut audio, 256).iter().any(|sample| *sample != 0.0));
+    collect_commands(&mut control, &mut audio);
+    audio
+        .enqueue(control.prepare_stop(audio.clock()).unwrap())
+        .unwrap();
+    render(&mut audio, 64);
+    collect_commands(&mut control, &mut audio);
+    let (new, stream) = make();
+    let packet = control
+        .prepare_compatible_replacement(new, stream, profile(), limits())
+        .unwrap();
+    assert_eq!(
+        packet.compatible_records().get(),
+        1,
+        "only the unplayed amplifier may migrate"
+    );
+    let returned = install(&mut audio, packet);
+    let receipt = control.collect_replacement(returned).unwrap();
+    assert!(matches!(
+        receipt.outcome,
+        PlanReplacementOutcome::Installed(_)
+    ));
+    assert_eq!(receipt.retired_compiled_notes.get(), 1);
+    audio
+        .enqueue(control.prepare_play(audio.clock()).unwrap())
+        .unwrap();
+    assert!(
+        render(&mut audio, 256).iter().all(|sample| *sample == 0.0),
+        "the crossing occurrence was cut; no orphan gate may sound"
+    );
+    collect_commands(&mut control, &mut audio);
 }

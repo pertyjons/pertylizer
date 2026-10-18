@@ -510,6 +510,265 @@ fn only_the_lowering_feature_activates_the_optional_dependency() {
     );
 }
 
+/// ADR-0078's non-shipping rehearsal feature.
+const REHEARSAL_FEATURE: &str = "mixed-transfer-rehearsal";
+
+/// The one feature the rehearsal may switch on beside itself.
+const REHEARSAL_PREREQUISITE: &str = "simulated-ingress";
+
+/// Ask Cargo which features it resolves for `synth_engine_v2` when `package` is built
+/// with `flags`, over every target and every edge kind. One entry per node Cargo
+/// printed for the crate, each a sorted feature list; empty when `package` does not
+/// reach the crate.
+///
+/// Cargo, not the manifest text, answers: `default`, every forward through another
+/// feature, a renamed or inherited dependency, and a `dep/feature` activation are
+/// already resolved by the time it prints `{f}`, so no spelling is left to miss.
+fn resolved_experimental_features(package: Option<&str>, flags: &[&str]) -> Vec<Vec<String>> {
+    let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".to_owned());
+    let mut command = std::process::Command::new(cargo);
+    command.arg("tree");
+    match package {
+        Some(package) => command.args(["--package", package]),
+        None => command.arg("--workspace"),
+    };
+    let output = command
+        .args([
+            "--edges",
+            "normal,build,dev",
+            "--target",
+            "all",
+            "--prefix",
+            "none",
+            "--format",
+            "{p}|{f}",
+            "--color",
+            "never",
+        ])
+        .args(flags.iter().copied())
+        .current_dir(repo_root())
+        .output()
+        .expect("cargo tree runs");
+    assert!(
+        output.status.success(),
+        "cargo tree {package:?} {flags:?} failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let mut resolved: Vec<Vec<String>> = String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .filter_map(|line| line.split_once('|'))
+        .filter(|(node, _)| node.split_whitespace().next() == Some("synth_engine_v2"))
+        .map(|(_, features)| {
+            // A repeated node is suffixed ` (*)`; the feature list precedes it.
+            let mut features: Vec<String> = features
+                .trim()
+                .trim_end_matches("(*)")
+                .split(',')
+                .map(str::trim)
+                .filter(|feature| !feature.is_empty())
+                .map(str::to_owned)
+                .collect();
+            features.sort();
+            features
+        })
+        .collect();
+    resolved.sort();
+    resolved.dedup();
+    resolved
+}
+
+/// Every workspace member, as Cargo lists them.
+fn workspace_members() -> Vec<String> {
+    let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".to_owned());
+    let output = std::process::Command::new(cargo)
+        .args([
+            "tree",
+            "--workspace",
+            "--depth",
+            "0",
+            "--edges",
+            "normal",
+            "--prefix",
+            "none",
+            "--format",
+            "{p}",
+            "--color",
+            "never",
+        ])
+        .current_dir(repo_root())
+        .output()
+        .expect("cargo tree runs");
+    assert!(
+        output.status.success(),
+        "cargo tree --workspace --depth 0 failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let mut members: Vec<String> = String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .filter_map(|line| line.split_whitespace().next())
+        .map(str::to_owned)
+        .collect();
+    members.sort();
+    members.dedup();
+    members
+}
+
+/// Every feature `package` declares, as Cargo resolves them under `--all-features`.
+fn declared_features(package: &str) -> Vec<String> {
+    let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".to_owned());
+    let output = std::process::Command::new(cargo)
+        .args([
+            "tree",
+            "--package",
+            package,
+            "--all-features",
+            "--depth",
+            "0",
+            "--edges",
+            "normal",
+            "--prefix",
+            "none",
+            "--format",
+            "{f}",
+            "--color",
+            "never",
+        ])
+        .current_dir(repo_root())
+        .output()
+        .expect("cargo tree runs");
+    assert!(
+        output.status.success(),
+        "cargo tree --package {package} --all-features failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let mut features: Vec<String> = String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .flat_map(|line| line.split(','))
+        .map(str::trim)
+        .filter(|feature| !feature.is_empty())
+        .map(str::to_owned)
+        .collect();
+    features.sort();
+    features.dedup();
+    features
+}
+
+/// The feature sets a build of `package` can select: its default set, none, each declared
+/// feature alone with and without the defaults, and all of them at once.
+fn feature_sets(package: &str) -> Vec<Vec<String>> {
+    let mut sets = vec![Vec::new(), vec!["--no-default-features".to_owned()]];
+    for feature in declared_features(package) {
+        if feature == "default" {
+            continue;
+        }
+        sets.push(vec!["--features".to_owned(), feature.clone()]);
+        sets.push(vec![
+            "--no-default-features".to_owned(),
+            "--features".to_owned(),
+            feature,
+        ]);
+    }
+    // Last, so a failure names the single feature that forwards before the union does.
+    sets.push(vec!["--all-features".to_owned()]);
+    sets
+}
+
+/// The mixed transfer rehearsal stays opt-in: Cargo's own feature resolution shows it is
+/// not a default, forwards only to its prerequisite, is forwarded by no other feature of
+/// the crate, and is enabled by no feature set of any other workspace member.
+///
+/// # Why this asks Cargo instead of reading the manifests
+///
+/// An earlier form searched the manifests for the feature's name. That proves only a
+/// spelling: it cannot see `default` reaching the feature through another feature, a
+/// renamed dependency's `alias/feature` activation, or a `[workspace.dependencies]` entry
+/// a member inherits, and a comment naming the feature fails it for nothing. `cargo tree
+/// --format {f}` prints the features Cargo resolved, after all of those are applied.
+///
+/// # What it covers
+///
+/// For the crate itself, each feature set selects exactly what the declared graph says.
+/// For every other member, each selectable feature set is resolved over normal, build
+/// and dev edges on every target. Cargo features are additive, so `--all-features`
+/// already dominates every combination; the per-feature sets keep a failure naming the
+/// feature that forwards. `cargo test --workspace` unifies features across members, so
+/// the workspace default build is checked too.
+#[test]
+fn no_shipping_feature_forwards_the_mixed_transfer_rehearsal() {
+    let crate_features = |flags: &[&str]| {
+        let resolved = resolved_experimental_features(Some("synth_engine_v2"), flags);
+        assert_eq!(
+            resolved.len(),
+            1,
+            "the crate resolves as one node under {flags:?}: {resolved:?}"
+        );
+        resolved.into_iter().next().unwrap_or_default()
+    };
+    let owned = |features: &[&str]| -> Vec<String> {
+        features
+            .iter()
+            .map(|feature| (*feature).to_owned())
+            .collect()
+    };
+
+    assert_eq!(
+        crate_features(&[]),
+        owned(&["default", REHEARSAL_PREREQUISITE]),
+        "the default build must not carry the rehearsal"
+    );
+    assert_eq!(
+        crate_features(&["--no-default-features", "--features", REHEARSAL_FEATURE]),
+        owned(&[REHEARSAL_FEATURE, REHEARSAL_PREREQUISITE]),
+        "the rehearsal must switch on its prerequisite and nothing else"
+    );
+    for feature in declared_features("synth_engine_v2") {
+        if feature == REHEARSAL_FEATURE {
+            continue;
+        }
+        let resolved = crate_features(&["--no-default-features", "--features", &feature]);
+        assert!(
+            !resolved.iter().any(|enabled| enabled == REHEARSAL_FEATURE),
+            "feature `{feature}` of the crate forwards the rehearsal: {resolved:?}"
+        );
+    }
+
+    let workspace = resolved_experimental_features(None, &[]);
+    assert!(
+        !workspace.is_empty(),
+        "the workspace build must resolve the crate for this check to mean anything"
+    );
+    assert!(
+        workspace
+            .iter()
+            .all(|features| !features.iter().any(|enabled| enabled == REHEARSAL_FEATURE)),
+        "the unified workspace build carries the rehearsal: {workspace:?}"
+    );
+
+    let members = workspace_members();
+    assert!(
+        members.iter().any(|member| member == MEASUREMENT_CONSUMER),
+        "the workspace member list must include `{MEASUREMENT_CONSUMER}`: {members:?}"
+    );
+    let mut reached = false;
+    for member in members.iter().filter(|member| *member != "synth_engine_v2") {
+        for set in feature_sets(member) {
+            let flags: Vec<&str> = set.iter().map(String::as_str).collect();
+            let resolved = resolved_experimental_features(Some(member), &flags);
+            reached |= !resolved.is_empty();
+            assert!(
+                resolved
+                    .iter()
+                    .all(|features| !features.iter().any(|enabled| enabled == REHEARSAL_FEATURE)),
+                "`{member}` with {flags:?} enables the non-shipping rehearsal: {resolved:?}"
+            );
+        }
+    }
+    assert!(
+        reached,
+        "no member reached the crate under any feature set, so the member check is vacuous"
+    );
+}
+
 /// Every `.rs` file under a crate directory.
 fn rust_sources(root: &Path) -> Vec<PathBuf> {
     let mut out = Vec::new();

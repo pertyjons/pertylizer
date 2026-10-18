@@ -10,7 +10,7 @@
 | Related | ADR-0001, ADR-0046, ADR-0047, ADR-0050, `SPEC` sound-core render contract, `SPEC` host profile and render limits |
 | Supersedes | — |
 | Amends | ADR-0050 clauses 5, 7 and 8 |
-| Superseded by | — |
+| Superseded by | [ADR-0081](ADR-0081-combined-host-software-boundary.md) selects target-sharing refusal and compiled-only restoration for the bound default-off combined host; other shared-gate cases remain refused |
 
 ## Durable boundary
 
@@ -156,6 +156,11 @@ named as such, rather than silently losing its gate-down. The refusal is where t
 first point that can name the offending event.
 
 ### 6. A gate reached by more than one producer has no ownership law
+
+[ADR-0081](ADR-0081-combined-host-software-boundary.md) selects the first option
+below for its bound default-off combined host: refuse shared playable instances,
+partition per-note rows and omit live/global/shared rows from compiled restoration
+and reseeding. It adds no aggregation law or production adapter permission.
 
 ADR-0050 clause 8's obligations become three. A compiled note and a surviving live note can address one scalar gate;
 ending the compiled one writes `ZERO` to the gate they share and cuts the live note with it — audibly, and for the

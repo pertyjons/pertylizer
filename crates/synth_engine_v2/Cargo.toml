@@ -26,6 +26,9 @@ test = true
 [features]
 default = ["simulated-ingress"]
 simulated-ingress = []
+# ADR-0078's opt-in, non-shipping host transfer rehearsal. Production mixed
+# ingress remains refused until the full Phase 9 combined-host contract passes.
+mixed-transfer-rehearsal = ["simulated-ingress"]
 
 [lints]
 workspace = true
@@ -45,6 +48,8 @@ thiserror = { workspace = true }
 # baseline check does not widen it. (That test asks Cargo, not the manifest text, which
 # crates reach *this* one — the two questions are separate.)
 [dev-dependencies]
+# Test-only callback/preparation observations; no shipping allocator change.
+allocation-counter = { workspace = true }
 sha2 = { workspace = true }
 
 # Concrete bounded SPSC queues for the finite loop-transfer thread tests (ADR-0068).

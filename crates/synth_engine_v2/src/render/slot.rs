@@ -168,6 +168,12 @@ impl SlotState {
         self.seed_next = true;
     }
 
+    /// Whether a mark still waits for this slot's next write.
+    #[cfg(any(test, feature = "mixed-transfer-rehearsal"))]
+    pub(crate) const fn is_seeded(&self) -> bool {
+        self.seed_next
+    }
+
     /// Advance the segment through one quantum, writing the value each frame reads.
     ///
     /// **Before the kernel reads**: frame `k` of a segment of `N` reads

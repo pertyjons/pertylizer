@@ -6,11 +6,11 @@
 | Status | Deferred |
 | Phase | 9 |
 | Created | 2026-09-26 |
-| Last reviewed | 2026-09-29 |
+| Last reviewed | 2026-10-17 |
 | Related | ADR-0009, ADR-0022, ADR-0023, ADR-0046, ADR-0047, ADR-0048, ADR-0050, ADR-0051, ADR-0055, ADR-0058, ADR-0065, ADR-0072, ADR-0073, ADR-0074, EVD-0024 |
 | Amends | None while proposed. Acceptance requires explicit amendments to affected ownership, release and host-profile contracts. |
 | Supersedes | — |
-| Superseded by | — |
+| Superseded by | [ADR-0081](ADR-0081-combined-host-software-boundary.md) accepts the bound default-off software law; complete production qualification remains deferred |
 
 ## The deferral
 
@@ -20,10 +20,14 @@
 | Owner | Project maintainer |
 | Evidence required | Everything listed under *Unresolved acceptance work* and *Falsifiers and order of work* below, unchanged |
 | Why not now | The user chose on 2026-09-29 to finish the simulated live engine first; this frame's acceptance needs amendments to about a dozen accepted records |
-| What makes it safe | `PerformanceIngress::prepare` refuses a mixed plan, `LiveInputStream` has no activation, and the private mixed owner and bridge exist only in tests. The Phase 9A gate requires the mixed case to refuse with a named diagnostic |
+| What makes it safe | `PerformanceIngress::prepare` refuses a mixed plan, `LiveInputStream` has no activation, and the mixed owner and bridge require the default-off rehearsal feature. The Phase 9A gate requires the mixed case to refuse with a named diagnostic |
 
-The existing rehearsal code and tests stay as they are. The text below is the
-frame as it stood when deferred; it records no decision.
+[ADR-0081](ADR-0081-combined-host-software-boundary.md) now accepts the software
+law for the bound default-off combined owner: sole audio minting, scoped compiled
+transport, source-handle custody, raw-first routing and stopped reset. Complete
+capacity, physical and shipping qualification remain deferred. The frame below
+retains the alternatives considered before that bounded decision; it is not an
+authority to change the accepted implementation.
 
 ## Problem and current boundary
 

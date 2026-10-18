@@ -13,6 +13,29 @@ enum ReadyReceipt {
 }
 
 impl LoopRecordingAudio {
+    /// Actual retained command/source slots, including completed slots not yet taken.
+    #[cfg(feature = "mixed-transfer-rehearsal")]
+    pub(crate) fn rehearsal_queue_occupancy(
+        &self,
+    ) -> Result<
+        (crate::quantities::EventCount, crate::quantities::EventCount),
+        crate::render::RehearsalUsageError,
+    > {
+        use crate::{quantities::EventCount, render::RehearsalUsageError};
+        let count = |value, field| {
+            u32::try_from(value)
+                .map(EventCount::measured)
+                .map_err(|_| RehearsalUsageError::Counter(field))
+        };
+        Ok((
+            count(self.session.commands.held, "raw session commands")?,
+            count(
+                self.session.sources.occupied(),
+                "raw session source actions",
+            )?,
+        ))
+    }
+
     /// Reconcile mutable raw metadata before returning a live outcome credit.
     pub fn resolve_audition(
         &mut self,

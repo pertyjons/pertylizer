@@ -9,7 +9,7 @@
 | Last reviewed | 2026-09-29 |
 | Related | ADR-0022, ADR-0028, ADR-0032, ADR-0054, ADR-0057, ADR-0076, EVD-0024, P04-R004 |
 | Supersedes | — |
-| Superseded by | — |
+| Superseded by | ADR-0082 for running compiled edits |
 
 ## Durable boundary
 
@@ -80,9 +80,24 @@ The user chose:
    loading and saving are unchanged; V2 mode never writes project state.
 4. **Edits.** An edit while stopped re-lowers the project off the audio thread and replaces
    the plan through the stopped-only replacement. An edit while playing is applied at the
-   next pause or stop, and the notice says so. Because V2 mode cannot seek, applying it
-   restarts the song from its start rather than resuming at the paused position, and a
-   notice says so.
+   next acknowledged pause or stop, and the notice says so. The maintainer approved
+   compatible paused-position preservation on 2026-10-17. After position has advanced,
+   an eligible edit uses the bounded
+   [global-state experiment](../specs/spec-host-io-lifecycle.md#experimental-compatible-global-state-readmission).
+   It preserves position and transfers eligible unchanged authored non-voice records
+   at installation, including exact instrument-instance, channel and bus scopes;
+   it does not preserve sounding voices. Unsupported routing or unidentified state uses
+   an explicit restart notice and the fresh-session path. At position zero and for
+   explicit Stop, the application still prepares a fresh session at the song start.
+   Failures returned during preparation, including migration-map budget, allocation or
+   storage failure, silence V2 and request leaving V2 mode through the V1-reset path.
+   They do not discard an edit and resume the old project. Transient transport or
+   credit pressure keeps the edit pending; ineligible producer declarations request
+   fresh restart instead of indefinite retries. An installation refusal is collected and triggers a
+   fresh restart rather than losing the edit, including migration storage failures
+   discovered at installation. Module/effect lineage changes force a fresh pair,
+   including coalesced deletion/recreation under the same saved ID. A pending explicit Stop retains fresh-start intent
+   through switch-ring pressure. This does not add seek or loop.
 5. **Input.** MIDI input is disconnected before V2 mode is entered, with a visible notice,
    and reconnects only once the audio callback has released V2. No timestamp-capable input
    reaches V2.

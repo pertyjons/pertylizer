@@ -6,9 +6,9 @@
 //! locks nor waits. The control half schedules each command a margin past the clock the
 //! audio half last published, on a quantum boundary as the session requires.
 //!
-//! Only play, pause and resume exist here. Stop-to-start and edits are a fresh
-//! [`prepare_song`] installed while stopped by the caller; seek and loop refuse at the
-//! application (ADR-0077 decision 2).
+//! One owning lane handles compatible paused edits and running changes. Exact native
+//! running continuation retains voices; other running edits reset with a Q-frame fade.
+//! Explicit Stop prepares a fresh session; seek and loop refuse at the application.
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
@@ -20,16 +20,20 @@ use synth_engine_v2::{
     host::session::{
         PlaybackState, SessionCommandCapacity, SessionLimits, SessionOutcome,
         transfer::{
-            CompletedSessionCommand, PreparedSessionCommand, SessionAudio, SessionControl,
-            SessionTransferLimits,
+            CompletedSessionCommand, ContinuationLimits, PreparedSessionCommand, SessionAudio,
+            SessionControl, SessionTransferLimits,
+            replacement::{
+                PlanReplacementError, PlanReplacementKind, PlanReplacementOutcome,
+                PreparedPlanReplacement, RunningEditMode, RunningReplacementRequest,
+            },
         },
     },
     plan::PlanId,
     profile::HostProfile,
-    quantities::PreparedBytes,
+    quantities::{EventCount, PreparedBytes},
     render::AudioBlockMut,
     schedule::{AdmittedCompiledStream, PlanEvent},
-    time::{PlanPosition, QUANTUM_FRAMES, SampleTime},
+    time::{FrameCount, PlanPosition, QUANTUM_FRAMES, SampleTime},
 };
 use thiserror::Error;
 
@@ -45,6 +49,15 @@ const COMMAND_SLOTS: usize = 8;
 pub const QUALIFIED_COMPILED_SHARE: u32 = 96;
 pub const QUALIFIED_SESSION_SHARE: u32 = 128;
 pub const QUALIFIED_EVENTS_PER_QUANTUM: u32 = 360;
+
+/// Provisional cold copies of one adopted program, never a callback event quota.
+fn continuation_limits() -> ContinuationLimits {
+    ContinuationLimits {
+        maximum_stamped_events: EventCount::measured(16_384),
+        witness_bytes: PreparedBytes::measured(4 * 1024 * 1024),
+        transition_bytes: PreparedBytes::measured(4 * 1024 * 1024),
+    }
+}
 
 /// Whether `profile` carries exactly the partition EVD-0025 qualified.
 #[must_use]
@@ -74,10 +87,28 @@ pub enum SongPlaybackError {
     Faulted,
 }
 
+/// Internal edit policy distinguishes transient, unsupported and fatal preparation.
+#[derive(Debug, Error)]
+pub(crate) enum SongEditError {
+    #[error("the V2 session is waiting for acknowledged transport or edit collection")]
+    Busy,
+    #[error("the V2 edit path is unavailable: {0}")]
+    Unsupported(String),
+    #[error("V2 edit preparation failed: {0}")]
+    Preparation(String),
+}
+
 /// Control half, owned by the application thread.
 #[must_use]
 pub struct SongPlayback {
     control: SessionControl,
+    limits: SessionTransferLimits,
+    edits: HeapProd<SongEdit>,
+    edited: HeapCons<SongEdit>,
+    edit_pending: Option<PlanPosition>,
+    edit_completion: Option<(super::app::InstallSequence, bool)>,
+    unresolved_edit: Option<SongEdit>,
+    edit_failed: bool,
     commands: HeapProd<PreparedSessionCommand>,
     completed: HeapCons<CompletedSessionCommand>,
     clock: Arc<AtomicU64>,
@@ -109,6 +140,12 @@ pub struct SongPlayback {
 #[must_use]
 pub struct SongAudio {
     audio: SessionAudio,
+    edits: HeapCons<SongEdit>,
+    edited: HeapProd<SongEdit>,
+    pending_edit: Option<SongEdit>,
+    install: super::app::InstallSequence,
+    maximum_frames: FrameCount,
+    layout: synth_engine_v2::quantities::ChannelLayout,
     commands: HeapCons<PreparedSessionCommand>,
     completed: HeapProd<CompletedSessionCommand>,
     pending: Option<CompletedSessionCommand>,
@@ -117,6 +154,12 @@ pub struct SongAudio {
     returns: HeapProd<PreparedSessionCommand>,
     clock: Arc<AtomicU64>,
     faulted: Arc<AtomicBool>,
+}
+
+/// One candidate at a time: its return cell is reserved until control collects it.
+struct SongEdit {
+    packet: Box<PreparedPlanReplacement>,
+    install: super::app::InstallSequence,
 }
 
 /// Prepare a lowered project for live playback on `profile`, stopped at the song start.
@@ -171,7 +214,9 @@ pub(crate) fn prepare_unqualified(
             .map_err(|error| preparation(&error))?,
             command_bytes: PreparedBytes::limit(16_384).map_err(|error| preparation(&error))?,
         },
-        control_bytes: PreparedBytes::limit(16_384).map_err(|error| preparation(&error))?,
+        // Five core credits reserve whole-pair envelopes before assigning map bytes.
+        // This cold metadata allowance changes no event share or callback capacity.
+        control_bytes: PreparedBytes::limit(65_536).map_err(|error| preparation(&error))?,
     };
     let maximum = profile.capabilities().maximum_block_size().as_u64();
     let end = PlanPosition::new(lowered.lowered_frames.as_u64());
@@ -180,11 +225,20 @@ pub(crate) fn prepare_unqualified(
     let (commands, command_reader) = HeapRb::new(COMMAND_SLOTS).split();
     let (completion_writer, completed) = HeapRb::new(COMMAND_SLOTS).split();
     let (returns, returned) = HeapRb::new(COMMAND_SLOTS).split();
+    let (edits, edit_reader) = HeapRb::new(1).split();
+    let (edit_writer, edited) = HeapRb::new(1).split();
     let clock = Arc::new(AtomicU64::new(0));
     let faulted = Arc::new(AtomicBool::new(false));
     Ok((
         SongPlayback {
             control,
+            limits,
+            edits,
+            edited,
+            edit_pending: None,
+            edit_completion: None,
+            unresolved_edit: None,
+            edit_failed: false,
             commands,
             completed,
             clock: Arc::clone(&clock),
@@ -207,6 +261,12 @@ pub(crate) fn prepare_unqualified(
         },
         SongAudio {
             audio,
+            edits: edit_reader,
+            edited: edit_writer,
+            pending_edit: None,
+            install: super::app::InstallSequence::NONE,
+            maximum_frames: profile.capabilities().maximum_block_size(),
+            layout: profile.capabilities().channel_layout(),
             commands: command_reader,
             completed: completion_writer,
             pending: None,
@@ -219,6 +279,228 @@ pub(crate) fn prepare_unqualified(
 }
 
 impl SongPlayback {
+    /// A pause request is insufficient: every ordinary command must be collected.
+    pub(crate) fn edit_ready(&mut self) -> bool {
+        self.collect();
+        !self.is_faulted()
+            && self.outstanding == 0
+            && self.edit_pending.is_none()
+            && self.unresolved_edit.is_none()
+            && !self.edit_failed
+            && matches!(self.control.snapshot().playback, PlaybackState::Stopped(_))
+    }
+
+    pub(crate) const fn is_editing(&self) -> bool {
+        self.edit_pending.is_some() || self.unresolved_edit.is_some()
+    }
+
+    pub(crate) const fn edit_failed(&self) -> bool {
+        self.edit_failed
+    }
+
+    #[cfg(test)]
+    pub(crate) fn replace_compatible(
+        &mut self,
+        lowered: LoweredProject,
+        profile: HostProfile,
+        install: super::app::InstallSequence,
+    ) -> Result<PlanId, SongEditError> {
+        self.replace_compatible_guarded(lowered, profile, install, || true)
+    }
+
+    /// Preparation finishes before the host rechecks its input's identity lineage.
+    pub(crate) fn replace_compatible_guarded(
+        &mut self,
+        lowered: LoweredProject,
+        profile: HostProfile,
+        install: super::app::InstallSequence,
+        publish_allowed: impl FnOnce() -> bool,
+    ) -> Result<PlanId, SongEditError> {
+        if !self.edit_ready() {
+            return Err(SongEditError::Busy);
+        }
+        if !partition_is_qualified(&profile) {
+            return Err(SongEditError::Preparation(
+                SongPlaybackError::CapacityUnqualified.to_string(),
+            ));
+        }
+        if let Some(refusal) = lowered
+            .diagnostics
+            .iter()
+            .find(|diagnostic| diagnostic.severity() == Severity::Refused)
+        {
+            return Err(SongEditError::Preparation(format!(
+                "{:?}: {:?}",
+                refusal.subject(),
+                refusal.reason()
+            )));
+        }
+        let plan = lowered
+            .plan
+            .ok_or_else(|| SongEditError::Preparation("no edited plan".to_owned()))?;
+        let events: Vec<_> = lowered
+            .events
+            .iter()
+            .map(|event| PlanEvent::new(PlanPosition::new(event.time().as_u64()), event.payload()))
+            .collect();
+        let stream = AdmittedCompiledStream::admit(&plan, &events)
+            .map_err(|error| SongEditError::Preparation(error.to_string()))?;
+        let packet = self
+            .control
+            .prepare_compatible_replacement(plan, stream, profile, self.limits)
+            .map_err(|error| match error {
+                PlanReplacementError::Transport | PlanReplacementError::Full => SongEditError::Busy,
+                PlanReplacementError::NoteObligations => {
+                    SongEditError::Unsupported(error.to_string())
+                }
+                PlanReplacementError::Migration(
+                    synth_engine_v2::render::GlobalMigrationError::Routing
+                    | synth_engine_v2::render::GlobalMigrationError::UnidentifiedState { .. },
+                ) => SongEditError::Unsupported(error.to_string()),
+                _ => SongEditError::Preparation(error.to_string()),
+            })?;
+        if !publish_allowed() {
+            if let Err((packet, error)) = self.control.cancel_replacement(packet) {
+                self.unresolved_edit = Some(SongEdit { packet, install });
+                self.edit_failed = true;
+                return Err(SongEditError::Preparation(error.to_string()));
+            }
+            return Err(SongEditError::Busy);
+        }
+        let plan = packet.plan_id();
+        if let Err(edit) = self.edits.try_push(SongEdit { packet, install }) {
+            match self.control.cancel_replacement(edit.packet) {
+                Ok(_) => return Err(SongEditError::Busy),
+                Err((packet, error)) => {
+                    self.unresolved_edit = Some(SongEdit { packet, install });
+                    return Err(SongEditError::Preparation(error.to_string()));
+                }
+            }
+        }
+        self.edit_pending = Some(PlanPosition::new(lowered.lowered_frames.as_u64()));
+        Ok(plan)
+    }
+
+    /// Acknowledged playing, with no transport or edit receipt still in flight.
+    pub(crate) fn running_edit_ready(&mut self) -> bool {
+        self.collect();
+        !self.is_faulted()
+            && !self.edit_failed
+            && self.outstanding == 0
+            && !self.is_editing()
+            && self.ending.is_none()
+            && matches!(self.control.snapshot().playback, PlaybackState::Playing(_))
+    }
+
+    pub(crate) fn take_edit_completion(&mut self) -> Option<(super::app::InstallSequence, bool)> {
+        self.edit_completion.take()
+    }
+
+    /// Prepare a bounded running edit; failure leaves the playing owner untouched.
+    pub(crate) fn replace_running_guarded(
+        &mut self,
+        lowered: LoweredProject,
+        profile: HostProfile,
+        install: super::app::InstallSequence,
+        preserve_graph_identity: bool,
+        publish_allowed: impl FnOnce() -> bool,
+    ) -> Result<(PlanId, PlanReplacementKind), SongEditError> {
+        let preserve_graph_identity =
+            preserve_graph_identity && lowered.lowered_frames.as_u64() == self.end.as_u64();
+        if !self.running_edit_ready() {
+            return Err(SongEditError::Busy);
+        }
+        if !partition_is_qualified(&profile) {
+            return Err(SongEditError::Preparation(
+                SongPlaybackError::CapacityUnqualified.to_string(),
+            ));
+        }
+        if let Some(refusal) = lowered
+            .diagnostics
+            .iter()
+            .find(|d| d.severity() == Severity::Refused)
+        {
+            return Err(SongEditError::Preparation(format!(
+                "{:?}: {:?}",
+                refusal.subject(),
+                refusal.reason()
+            )));
+        }
+        let plan = lowered
+            .plan
+            .ok_or_else(|| SongEditError::Preparation("no edited plan".to_owned()))?;
+        let events: Vec<_> = lowered
+            .events
+            .iter()
+            .map(|event| PlanEvent::new(PlanPosition::new(event.time().as_u64()), event.payload()))
+            .collect();
+        let stream = AdmittedCompiledStream::admit(&plan, &events)
+            .map_err(|error| SongEditError::Preparation(error.to_string()))?;
+        let clock = Arc::clone(&self.clock);
+        let margin = self.margin;
+        let end = self.end;
+        let packet = self
+            .control
+            .prepare_running_replacement(
+                plan,
+                stream,
+                RunningReplacementRequest {
+                    profile,
+                    transfer: self.limits,
+                    song_end: Some(PlanPosition::new(lowered.lowered_frames.as_u64())),
+                    maximum_timeline_events: EventCount::measured(16_384),
+                    mode: if preserve_graph_identity {
+                        RunningEditMode::ContinueOrReset(continuation_limits())
+                    } else {
+                        RunningEditMode::ResetWithWitness(continuation_limits())
+                    },
+                },
+                move |anchor| {
+                    let quantum = u64::from(QUANTUM_FRAMES);
+                    let earliest = clock.load(Ordering::Acquire).checked_add(margin)?;
+                    let at = earliest.checked_add(quantum - 1)? / quantum * quantum;
+                    let position = anchor
+                        .position()
+                        .as_u64()
+                        .checked_add(at.checked_sub(anchor.time().as_u64())?)?;
+                    // Leave the ordinary end-stop lookahead free of a frozen edit credit.
+                    let stop_window = margin.checked_mul(4)?;
+                    (position.checked_add(stop_window)? < end.as_u64())
+                        .then_some(SampleTime::new(at))
+                },
+            )
+            .map_err(|error| SongEditError::Unsupported(error.to_string()))?;
+        let kind = packet.kind();
+        let continuation_unavailable = packet.continuation_unavailable();
+        if kind == PlanReplacementKind::RunningCompatible && !publish_allowed() {
+            if let Err((packet, error)) = self.control.cancel_replacement(packet) {
+                self.unresolved_edit = Some(SongEdit { packet, install });
+                self.edit_failed = true;
+                return Err(SongEditError::Preparation(error.to_string()));
+            }
+            self.refusals.push(
+                "graph identity changed during running preparation; the candidate was cancelled and the edit remains pending".to_owned(),
+            );
+            return Err(SongEditError::Busy);
+        }
+        let plan = packet.plan_id();
+        if let Err(edit) = self.edits.try_push(SongEdit { packet, install }) {
+            if let Err((packet, error)) = self.control.cancel_replacement(edit.packet) {
+                self.unresolved_edit = Some(SongEdit { packet, install });
+                self.edit_failed = true;
+                return Err(SongEditError::Preparation(error.to_string()));
+            }
+            return Err(SongEditError::Busy);
+        }
+        if let Some(error) = continuation_unavailable {
+            self.refusals.push(format!(
+                "reset queued without a voice-continuation witness: {error}"
+            ));
+        }
+        self.edit_pending = Some(PlanPosition::new(lowered.lowered_frames.as_u64()));
+        Ok((plan, kind))
+    }
+
     /// The immutable plan this control half and its paired audio half own.
     pub const fn plan_id(&self) -> PlanId {
         self.control.plan_id()
@@ -240,6 +522,9 @@ impl SongPlayback {
     /// Start or resume from the stopped position; returns the boundary it applies at.
     pub fn play(&mut self) -> Result<SampleTime, SongPlaybackError> {
         self.collect();
+        if self.edit_failed {
+            return Err(SongPlaybackError::Faulted);
+        }
         if self.is_faulted() {
             return Err(SongPlaybackError::Faulted);
         }
@@ -247,11 +532,19 @@ impl SongPlayback {
             return Err(SongPlaybackError::Ending);
         }
         let at = self.next_boundary();
-        let packet = self
+        let mut packet = self
             .control
             .prepare_play(at)
             .map_err(|error| SongPlaybackError::Command(error.to_string()))?;
+        let witness_error = packet
+            .prepare_continuation_witness(continuation_limits())
+            .err();
         self.submit(packet)?;
+        if let Some(error) = witness_error {
+            self.refusals.push(format!(
+                "Play queued without a voice-continuation witness: {error}"
+            ));
+        }
         self.playing = true;
         Ok(at)
     }
@@ -260,6 +553,9 @@ impl SongPlayback {
     /// boundary it applies at.
     pub fn pause(&mut self) -> Result<SampleTime, SongPlaybackError> {
         self.collect();
+        if self.edit_failed {
+            return Err(SongPlaybackError::Faulted);
+        }
         if self.is_faulted() {
             return Err(SongPlaybackError::Faulted);
         }
@@ -285,6 +581,40 @@ impl SongPlayback {
     /// faulted session is stopped.
     pub fn collect(&mut self) -> usize {
         let mut applied = 0;
+        if let Some(edit) = self.edited.try_pop() {
+            let running = edit.packet.running_boundary().is_some();
+            match self.control.collect_replacement(edit.packet) {
+                Ok(receipt) => {
+                    if let PlanReplacementOutcome::Installed(snapshot) = receipt.outcome {
+                        if let Some(end) = self.edit_pending.take() {
+                            self.end = end;
+                        }
+                        self.applied = match snapshot.playback {
+                            PlaybackState::Stopped(position) => Some(position),
+                            PlaybackState::Playing(anchor) => Some(anchor.position()),
+                            PlaybackState::Unavailable => None,
+                        };
+                        self.edit_completion = Some((edit.install, true));
+                    } else {
+                        self.edit_pending = None;
+                        self.edit_completion = Some((edit.install, false));
+                        self.edit_failed = !running
+                            || matches!(receipt.outcome, PlanReplacementOutcome::Interrupted(_));
+                        self.refusals
+                            .push(format!("V2 edit refused: {:?}", receipt.outcome));
+                    }
+                }
+                Err((packet, error)) => {
+                    self.unresolved_edit = Some(SongEdit {
+                        packet,
+                        install: edit.install,
+                    });
+                    self.edit_failed = true;
+                    self.refusals
+                        .push(format!("V2 paused edit collection failed: {error}"));
+                }
+            }
+        }
         while let Some(packet) = self.returned.try_pop() {
             let boundary = packet.boundary();
             match self.control.cancel(packet) {
@@ -301,6 +631,7 @@ impl SongPlayback {
                         "a returned V2 command could not be cancelled: {error}"
                     ));
                     self.unresolved_commands.push(packet);
+                    self.edit_failed = true;
                 }
             }
         }
@@ -326,6 +657,7 @@ impl SongPlayback {
                     self.refusals
                         .push(format!("a V2 receipt could not be collected: {error}"));
                     self.unresolved_completions.push(packet);
+                    self.edit_failed = true;
                 }
             }
         }
@@ -356,7 +688,12 @@ impl SongPlayback {
     /// earliest boundary still ahead, if the end has already passed).
     pub fn poll(&mut self) -> Result<(), SongPlaybackError> {
         self.collect();
-        if self.is_faulted() || self.ending.is_some() || self.outstanding != 0 {
+        if self.is_faulted()
+            || self.is_editing()
+            || self.edit_failed
+            || self.ending.is_some()
+            || self.outstanding != 0
+        {
             return Ok(());
         }
         let PlaybackState::Playing(anchor) = self.control.snapshot().playback else {
@@ -399,6 +736,7 @@ impl SongPlayback {
             if let Err((packet, error)) = self.control.cancel(packet) {
                 // Kept with its credit rather than dropped, as in `collect`.
                 self.unresolved_commands.push(packet);
+                self.edit_failed = true;
                 return Err(SongPlaybackError::Command(error.to_string()));
             }
             return Err(SongPlaybackError::Full);
@@ -409,6 +747,76 @@ impl SongPlayback {
 }
 
 impl SongAudio {
+    pub(crate) const fn install_sequence(&self) -> super::app::InstallSequence {
+        self.install
+    }
+
+    pub(crate) fn set_install_sequence(&mut self, install: super::app::InstallSequence) {
+        self.install = install;
+    }
+
+    /// Inject an early attempt to exercise the app's refused-receipt recovery.
+    #[cfg(test)]
+    pub(crate) fn attempt_edit_before_boundary(&mut self) {
+        self.pending_edit = self.edits.try_pop();
+        self.install_edit();
+    }
+
+    #[cfg(test)]
+    pub(crate) fn edit_is_fading(&self) -> bool {
+        self.pending_edit
+            .as_ref()
+            .is_some_and(|edit| edit.packet.is_rendering_transition())
+    }
+
+    #[cfg(test)]
+    pub(crate) fn defer_edit_past_boundary(&mut self) {
+        self.pending_edit = self.edits.try_pop();
+        for _ in 0..40 {
+            let mut output = [0.0; 512];
+            assert!(
+                self.render_session(
+                    AudioBlockMut::new(
+                        &mut output,
+                        256,
+                        synth_engine_v2::quantities::ChannelLayout::Stereo
+                    )
+                    .expect("block")
+                )
+            );
+        }
+    }
+
+    fn install_edit(&mut self) {
+        let Some(edit) = self.pending_edit.take() else {
+            return;
+        };
+        let result = if edit.packet.running_boundary().is_some() {
+            self.audio.begin_running_replacement(edit.packet)
+        } else {
+            self.audio.install_replacement(edit.packet)
+        };
+        let packet = match result {
+            Ok(packet) | Err((packet, _)) => packet,
+        };
+        if packet.outcome().is_none() {
+            self.pending_edit = Some(SongEdit {
+                packet,
+                install: edit.install,
+            });
+            return;
+        }
+        if matches!(packet.outcome(), Some(PlanReplacementOutcome::Installed(_))) {
+            self.install = edit.install;
+        }
+        if let Err(edit) = self.edited.try_push(SongEdit {
+            packet,
+            install: edit.install,
+        }) {
+            self.pending_edit = Some(edit);
+        }
+    }
+
     /// The session's high water for one producer class (EVD-0025's instrument).
     #[cfg(test)]
     pub(crate) const fn high_water(
@@ -435,6 +843,103 @@ impl SongAudio {
     /// Render one callback. Admits queued commands first, returns completions after, and
     /// publishes the clock. A failure silences the block; the session stays faulted.
     pub fn render(&mut self, mut output: AudioBlockMut<'_>) -> bool {
+        // Validate the original callback before any split. Splitting cannot make an
+        // oversized callback admissible or conceal a terminal session fault.
+        if u64::try_from(output.frames()).unwrap_or(u64::MAX) > self.maximum_frames.as_u64()
+            || output.frames() == 0
+            || output.layout() != self.layout
+        {
+            return self.render_edit(output);
+        }
+        if self.pending_edit.is_none() {
+            self.pending_edit = self.edits.try_pop();
+        }
+        if self
+            .pending_edit
+            .as_ref()
+            .is_some_and(|edit| edit.packet.outcome().is_some())
+        {
+            // A retained return is never attempted a second time.
+            if let Some(edit) = self.pending_edit.take()
+                && let Err(edit) = self.edited.try_push(edit)
+            {
+                self.pending_edit = Some(edit);
+            }
+        } else if self
+            .pending_edit
+            .as_ref()
+            .is_some_and(|edit| edit.packet.is_rendering_transition())
+        {
+            return self.render_edit(output);
+        } else if self.pending_edit.is_some() {
+            let distance = self
+                .pending_edit
+                .as_ref()
+                .filter(|edit| edit.packet.running_boundary().is_some())
+                .map_or_else(
+                    || self.audio.frames_until_plan_boundary(),
+                    |edit| {
+                        self.audio
+                            .frames_until_running_boundary(&edit.packet)
+                            .unwrap_or(FrameCount::new(0))
+                    },
+                );
+            let carry = usize::try_from(distance.as_u64()).unwrap_or(usize::MAX);
+            if carry == 0 {
+                self.install_edit();
+            } else if carry < output.frames()
+                && let Ok((head, tail)) = output.reborrow().split_at_frame(carry)
+            {
+                let first = self.render_session(head);
+                if first {
+                    self.install_edit();
+                }
+                let second = self.render_edit(tail);
+                if !first || !second {
+                    output.silence();
+                }
+                return first && second;
+            }
+        }
+        self.render_edit(output)
+    }
+
+    fn render_edit(&mut self, mut output: AudioBlockMut<'_>) -> bool {
+        if !self
+            .pending_edit
+            .as_ref()
+            .is_some_and(|edit| edit.packet.is_rendering_transition())
+        {
+            return self.render_session(output);
+        }
+        let Some(edit) = self.pending_edit.as_mut() else {
+            return false;
+        };
+        let rendered = self
+            .audio
+            .render_running_replacement(&mut edit.packet, output.reborrow())
+            .is_ok();
+        if !rendered {
+            output.silence();
+            self.faulted.store(true, Ordering::Release);
+        } else if matches!(
+            edit.packet.outcome(),
+            Some(PlanReplacementOutcome::Installed(_))
+        ) {
+            self.install = edit.install;
+        }
+        self.clock
+            .store(self.audio.clock().as_u64(), Ordering::Release);
+        if edit.packet.outcome().is_some()
+            && let Some(edit) = self.pending_edit.take()
+            && let Err(edit) = self.edited.try_push(edit)
+        {
+            self.pending_edit = Some(edit);
+        }
+        rendered
+    }
+
+    fn render_session(&mut self, mut output: AudioBlockMut<'_>) -> bool {
         // A refused command, and every command queued behind it, goes back to the control
         // half for cancellation: once the session refuses one, order forbids the rest.
         if let Some(packet) = self.refused.take()
@@ -671,3 +1176,7 @@ mod tests {
         assert!(matches!(control.pause(), Err(SongPlaybackError::Faulted)));
     }
 }
+
+#[cfg(test)]
+#[path = "tests/paused_edit.rs"]
+mod paused_edit;

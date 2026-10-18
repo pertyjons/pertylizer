@@ -1428,6 +1428,8 @@ struct Lowered {
     fault: Option<CompileError>,
     prepared_nodes: Vec<PreparedNode>,
     node_timings: Vec<(NodeId, crate::node::NodeTiming)>,
+    non_voice_state_nodes: Vec<(NodeId, crate::ir::ExecutionScope, NodeSlot)>,
+    authored_state_nodes: Vec<(NodeId, crate::ir::ExecutionScope, NodeSlot)>,
     parameter_targets: Vec<ParameterTarget>,
     parameter_addresses: Vec<ParameterAddress>,
     taps: Vec<crate::plan::TapTarget>,
@@ -1496,6 +1498,8 @@ impl Lowered {
             self.regions,
             self.prepared_nodes,
             self.node_timings,
+            self.non_voice_state_nodes,
+            self.authored_state_nodes,
             self.parameter_targets,
             self.parameter_addresses,
             self.taps,
@@ -2477,6 +2481,17 @@ fn lower(
         }
     }
 
+    let mut authored_state_nodes: Vec<_> = node_slots
+        .into_iter()
+        .filter_map(|(id, slot)| Some((id, *scopes.get(&id)?, slot)))
+        .collect();
+    authored_state_nodes.sort_by_key(|(id, _, _)| *id);
+    let non_voice_state_nodes = authored_state_nodes
+        .iter()
+        .copied()
+        .filter(|(_, scope, _)| *scope != crate::ir::ExecutionScope::Voice)
+        .collect();
+
     Lowered {
         id: plan_id,
         ops: state.ops,
@@ -2486,6 +2501,8 @@ fn lower(
         fault,
         prepared_nodes: state.prepared_nodes,
         node_timings: state.node_timings,
+        non_voice_state_nodes,
+        authored_state_nodes,
         instance_groups,
         sum_groups,
         parameter_targets,

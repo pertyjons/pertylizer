@@ -30,6 +30,7 @@ pub(crate) fn publish(command: &EngineCommand, state: &Arc<EngineState>) {
             {
                 let mut instruments = state.instrument_snapshots.write();
                 instruments.retain(|snapshot| snapshot.id != *instrument_id);
+                state.shared_graph.invalidate_identity_lineage();
                 state.mark_instrument_snapshot_changed();
             }
             state
@@ -136,9 +137,15 @@ pub(crate) fn publish(command: &EngineCommand, state: &Arc<EngineState>) {
             }
         }
         EngineCommand::RemoveReturnBus { id } => {
-            state.return_bus_effects.write().retain(|bus| bus.id != *id);
+            let mut buses = state.return_bus_effects.write();
+            buses.retain(|bus| bus.id != *id);
+            state.shared_graph.invalidate_identity_lineage();
         }
-        EngineCommand::ClearReturnBusses => state.return_bus_effects.write().clear(),
+        EngineCommand::ClearReturnBusses => {
+            let mut buses = state.return_bus_effects.write();
+            buses.clear();
+            state.shared_graph.invalidate_identity_lineage();
+        }
         EngineCommand::AddReturnEffect {
             return_id,
             id,
@@ -151,6 +158,7 @@ pub(crate) fn publish(command: &EngineCommand, state: &Arc<EngineState>) {
                 .find(|bus| bus.id == *return_id)
             {
                 bus.effects.push(effect_snapshot(*id, effect.as_ref()));
+                state.shared_graph.invalidate_identity_lineage();
             }
         }
         EngineCommand::RemoveReturnEffect { return_id, id } => {
@@ -161,6 +169,7 @@ pub(crate) fn publish(command: &EngineCommand, state: &Arc<EngineState>) {
                 .find(|bus| bus.id == *return_id)
             {
                 bus.effects.retain(|effect| effect.module_id != *id);
+                state.shared_graph.invalidate_identity_lineage();
             }
         }
         EngineCommand::SetReturnEffectParameter {
@@ -198,7 +207,11 @@ pub(crate) fn publish(command: &EngineCommand, state: &Arc<EngineState>) {
                 });
             }
         }
-        EngineCommand::ClearMasterEffects => state.master_effects.write().clear(),
+        EngineCommand::ClearMasterEffects => {
+            let mut effects = state.master_effects.write();
+            effects.clear();
+            state.shared_graph.invalidate_identity_lineage();
+        }
         EngineCommand::SetVoiceParameter {
             instrument_id,
             target,
@@ -228,7 +241,11 @@ pub(crate) fn publish(command: &EngineCommand, state: &Arc<EngineState>) {
         ),
         EngineCommand::ClearAllModules => {
             state.shared_graph.clear();
-            state.master_effects.write().clear();
+            {
+                let mut effects = state.master_effects.write();
+                effects.clear();
+                state.shared_graph.invalidate_identity_lineage();
+            }
             let mut instruments = state.instrument_snapshots.write();
             for snapshot in instruments.iter_mut() {
                 snapshot.enabled = false;
@@ -564,10 +581,9 @@ fn publish_added_effect(
             snapshot.effect_chain_order.push(id);
         });
     } else {
-        state
-            .master_effects
-            .write()
-            .push(effect_snapshot(id, effect));
+        let mut effects = state.master_effects.write();
+        effects.push(effect_snapshot(id, effect));
+        state.shared_graph.invalidate_identity_lineage();
     }
 }
 
@@ -581,10 +597,9 @@ fn publish_removed_effect(state: &EngineState, instrument_id: Option<InstrumentI
                 .retain(|module_id| *module_id != id);
         });
     } else {
-        state
-            .master_effects
-            .write()
-            .retain(|effect| effect.module_id != id);
+        let mut effects = state.master_effects.write();
+        effects.retain(|effect| effect.module_id != id);
+        state.shared_graph.invalidate_identity_lineage();
     }
 }
 

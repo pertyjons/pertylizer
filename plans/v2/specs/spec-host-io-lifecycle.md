@@ -5,7 +5,7 @@
 | Status | Current |
 | Phase | 9 |
 | Created | 2026-09-11 |
-| Last reviewed | 2026-09-12 |
+| Last reviewed | 2026-10-17 |
 | Based on | ADR-0036, ADR-0024, ADR-0021, ADR-0032, ADR-0038, ADR-0054, ADR-0061, ADR-0062, ADR-0063, ADR-0064 |
 | Invariant prefix | IO |
 | Supersedes | — |
@@ -50,6 +50,8 @@ not guaranteed capabilities.
 | [ADR-0054](../decisions/ADR-0054-staged-producer-capacity-calibration.md) | Producer qualification before production live ingress |
 | [ADR-0061](../decisions/ADR-0061-ordered-compiled-session-ownership.md) | Ordered compiled transport and retained command ownership |
 | [ADR-0062](../decisions/ADR-0062-coupled-transport-and-note-capture.md) | Total source ordering and coupled capture outcomes |
+| [ADR-0079](../decisions/ADR-0079-mixed-host-raw-capture-interruption.md) | Raw-only late interruption and terminal priority in the combined host |
+| [ADR-0081](../decisions/ADR-0081-combined-host-software-boundary.md) | Default-off common input route, strict publication and stopped reset |
 
 ## Invariants
 
@@ -567,7 +569,7 @@ independent-clock source merging, live raw observation, restart, audio capture o
 | Question | Blocking? | ADR or task |
 |---|---|---|
 | Platform clock mapping, drift law and latency evidence | Before production timing consumption and Phase 9 exit; simulated lifecycle work may proceed | ADR-0022 |
-| Seamless plan changes, crossfades and live-note migration | Before the first consumer of each live change | ADR-0009, ADR-0010, ADR-0050 |
+| General compatible state and live-note migration | Before its first consumer; ADR-0083 accepts only exact native program/layout continuation, and ADR-0082 accepts compiled running reset | ADR-0010, ADR-0048; accepted subsets ADR-0009, ADR-0050, ADR-0082, ADR-0083 |
 | Complete producer capacity calibration | Before a production live adapter | ADR-0054 |
 | Backend capability and callback-quiescence proof | Before enabling that backend; unknown required bounds refuse. The [Linux output harness](#linux-output-custody-harness) proves the bounded ALSA output-custody subset under ADR-0063; input and physical clock qualification remain open; ADR-0064 covers its concurrent compiled-session queues | IO-INV-002, IO-INV-003 |
 
@@ -680,9 +682,11 @@ consumer contracts are built. Stopped plan readmission is specified below.
 The split session's stopped-only replacement follows
 [ADR-0064](../decisions/ADR-0064-concurrent-compiled-session-handoff.md#stopped-prepared-plan-readmission).
 Five credits bound all prepared candidates and their owning retirements, including
-unpublished values. Ordinary transport admission remains frozen until every credit
+unpublished values. Isolated compiled notes may retire with their old owner as
+specified below; their count is explicit and their identities never migrate.
+Ordinary transport admission remains frozen until every credit
 is resolved off-thread. Installation preserves device epoch and actual clock,
-requires empty outgoing carry and no note obligations, and returns an identified
+requires empty outgoing carry and no external note obligations, and returns an identified
 installed/refused outcome with the owning resources. The Linux example supplies
 the [concrete mailbox](../decisions/ADR-0064-concurrent-compiled-session-handoff.md#linux-latest-wins-plan-mailbox):
 three optional owning cells, a one-slot return queue and retained failure storage.
@@ -690,6 +694,244 @@ It compiles before publishing, immediately cancels overwritten candidates off-th
 and defers installation under retirement pressure. Withdrawal needs no extra credit.
 Joined cleanup recovers every cell without requiring another callback. Other hosts
 must establish their own transport and custody proof.
+
+### Experimental running compiled reset
+
+[ADR-0082](../decisions/ADR-0082-running-compiled-plan-reset.md) extends ADR-0064
+and ADR-0009 with a default-off compiled-only running reset through
+`PreparedPlanReplacement`. Preparation requires acknowledged Playing, zero ordinary
+credits, no other candidate and no external producer declaration. A fresh pair, Q-frame
+scratch and admitted timeline exist before a future aligned boundary B is selected.
+The preparation event limit bounds cold timeline width, not producer density. The
+application uses 16,384 events as a provisional cold limit, with no producer reselection.
+
+The successor is bootstrapped off-thread at B and the old anchor's position P through
+its own ordinary Play activation. Adoption and collection finish without rendering a
+DSP quantum: clock B, carry zero, empty exchange/credits, and catch-up/release charge
+owed for the first actual quantum. New generation, epoch, table and issuer counters stay
+intact. The payload is private until installation and its initial debt cannot be used
+for a second activation. If the new song has ended at P, the successor is instead fresh
+Stopped(P), without debt. Position is never clamped to the edited end.
+
+Audio verifies source origin, command watermark, Playing anchor, exact B and empty
+carry, plus the successor certificate. Late or changed-state attempts return Refused
+without changing old audio. A successful exchange keeps both owners for exactly Q output
+frames with old*(1-t)+new*t, t=(frame+1)/Q. The final frame preserves new sample bits.
+Old registry and authoritative minter end together only after the fade, off-thread;
+no old identity addresses the fresh table. No live/mixed release law changes.
+
+The owning return appears only after the fade. Collection clears the old credit before
+promoting the fresh controller with its own counters and ledger. Return pressure retains
+both owners and blocks new transport/edits. Any render failure silences the whole outer
+callback, retains both owners, and returns Interrupted for closed-origin teardown. It
+never resumes the old plan or acknowledges clean audio. Explicit application Stop and
+disable retain whole-wrapper mute/retirement without needing another old callback.
+
+The application permits one attempt per edit. Compile/preparation/late refusal retains
+the previous sound and metadata and defers to pause, Stop or a newer edit. A pending Pause
+is applied after owning collection unless a later Play cancels that unsent Pause.
+A boundary inside the ordinary four-margin end-stop
+lookahead defers to that stop. A shortened new end after P uses ordinary end-stop
+scheduling after collection; a stalled collector can therefore stop later than that
+end, as with ordinary delayed control polling. Success updates metadata only for the matching install
+sequence after successful audio; declined publication restores the previous metadata.
+Each renderer is separately admitted; aggregate transition CPU, complete transient
+cold-memory qualification, live ingress and production enablement remain open gates.
+
+Conformance: `host::session::transfer::replacement::running::tests` covers bootstrap,
+crossing-note cuts, fade arithmetic and endpoint under callback partitions, end-shortening,
+late refusal, fresh issuer continuation, in-flight cancellation refusal and interrupted
+custody. `lowering::app::edit_tests` covers actual saved-project publication, pending Pause,
+late single-attempt metadata recovery and whole-wrapper Stop retirement. Allocation
+controls cover installation and rendering. A false audio/receipt claim, identity leak,
+callback allocation/destruction or partition-dependent endpoint blocks acceptance.
+
+### Experimental native compiled voice continuation
+
+[ADR-0083](../decisions/ADR-0083-native-compiled-voice-continuation.md) adds
+`RunningEditMode::ContinueOrReset` to the owning running replacement lane.
+It retains the actual renderer and authoritative minter for an identical native
+physical layout and complete ordered compiled program. Only authored non-voice
+Trim bases may change, with no smoothing, automation or note-magnitude writes to
+those rows. All other prepared state/configuration, authored IDs, execution
+scopes/tags, slot assignments, voice policies and tuning must match. Plan-local
+mixer, parameter, note and passive tap addresses are checked before normalization.
+This SessionAudio API has no observer subscription handoff. Script/controller,
+feedback, sampler, loop/capture and external-source cases remain outside the proof.
+Unsupported programs choose the preceding running reset; binding/resource failures
+retain old sound and surface a diagnostic.
+
+Before Play publication, an optional owning witness copies the exact stamped
+activation list, bounded by count and actual capacity. Only applied Play collection
+makes it active. The proof binds plan, epoch, table, activation sequence and anchor;
+stale metadata is retired cold and selects reset. Two cold successor event copies
+are relabelled without minting: the renderer's list and the next active witness.
+Every occurrence/generation/time/order is retained. The actual minter's live keys
+are checked before publication and rebound at collection without resetting issuers,
+generations, ledger or free/retired indices. There is no identity-table rebuild.
+
+At exact aligned B with zero carry, unchanged Playing anchor and no ordinary
+credits, preflight validates every runtime binding before mutation. A changed
+Trim row must be exactly fresh base state or the static base override restored by
+ordinary Play, including absence of ramps and dynamic contributions. Installation
+sets the complete row to its new base and retains actual voice/DSP state, clock,
+anchor and scheduler cursor. Old plan/event/catch-up owners move into the envelope
+for off-thread collection. Ordinary render cannot bypass this transition. Installed
+requires the first successful nonempty successor render; zero frames remain pending.
+Interrupted closes the actual successor binding for teardown without resuming old
+audio. Owning return pressure freezes transport and edits until collection.
+
+The application requests this path only with an unchanged authored end. With a
+tracked GUI identity source, authoritative graph lineage must hold through the
+post-preparation publication check. Lower-level callers without an attached
+authority must ensure graph identity continuity themselves. It retains the reset
+lane's Pause/Play, Stop/disable, one-attempt and latest-wins rules.
+Prepared kind determines the queued-intent notice; rendered installation
+determines identity and omissions. Identical whole
+note programs deliberately identify the same performance here, without adding a
+persisted placement ID. Graph deletion/recreation invalidates lineage separately.
+Initial and private-reset witness failures are reported without disabling ordinary
+Play/reset. `ContinuationLimits` bounds count, witness capacity and transition
+capacity separately. The provisional application limits are 16,384 stamped events,
+4 MiB per witness and 4 MiB per transition, without producer reselection. Command
+credits bound queued witness owners, plus one active witness; a continuation charges
+two new event copies, proof and fixed payload. Retired owners remain held until
+collection. Aggregate transient memory/CPU and production qualification stay open.
+
+Conformance: `host::session::transfer::replacement::continuation::tests` compares
+continued held voices and stealing/bend state with normal single-plan references
+at four rates and callback partitions. Negative controls cover foreign bindings,
+changed programs, capacity, stale witnesses, zero-frame custody and interruption.
+`lowering::app::edit_tests` checks real saved voice/insert/return projects, repeated
+edits, lineage cancellation and reset followed by continuation. Any false identity,
+receipt or real-time claim blocks acceptance. Structural sounding-voice relocation,
+changed voice programs, mixed/live migration and observer handoff remain gated.
+
+### Experimental compatible global-state readmission
+
+`SessionControl::prepare_compatible_replacement` opts into a bounded internal
+experiment on the stopped compiled-session path. The ordinary replacement keeps
+its reset behavior. This experiment does not accept ADR-0010, migrate sounding
+voices or change the mixed-reset law.
+
+The compiler retains authored non-voice node IDs, exact execution scopes and
+runtime state slots; that table's capacity is charged by host table accounting.
+Preparation matches node and parameter IDs, requiring equal scope (including
+channel/bus tags), native prepared configuration, output layout and complete
+parameter metadata. Runtime slots are addresses, never identity. New, changed
+or ineligible nodes stay fresh. Sends remain fresh because application send IDs
+are positional. Note targets and note-magnitude destinations also stay fresh,
+even outside Voice scope, so retirement cannot leave an orphan gate or pitch.
+VM/sample table references are not migration signatures.
+Modulation, script/controller routing and feedback refuse this path. Stateful
+unidentified steps, including latency compensation, refuse too. Inert conversion
+copies outside voice sum/instance groups may remain fresh. Voice state stays
+fresh: preserving channel or bus histories is not sounding-voice continuity.
+
+The map binds both plan IDs; installation additionally requires the exact
+outgoing identity table, including after a same-plan republication. It checks
+every source/destination state and history extent, the one-to-one node map and
+all parameter spans before mutation. Map arrays retain their fallibly reserved
+capacities, use allocation-free unstable sorting and perform no shrink-to-fit
+conversion; their reported bytes cover every retained capacity. Installation copies small current state
+and parameter records and swaps preallocated per-node history owners. The
+outgoing owner receives the incoming fresh history buffers. Work scales with
+matched records, not delay length; no history payload is copied, allocated or
+freed in the callback. History accounting charges one Box owner per state
+record, without a terminator, plus every sample payload. Clocks, carry and note
+identities are not copied.
+
+An isolated compiled-only stopped owner may retire its old note registry and
+minter with the old pair. The receipt reports `retired_compiled_notes`; the
+incoming registry stays fresh. Any declared external producer range, adopted
+ingress store, outstanding activation or mixed partition retains refusal. A
+chained, uncollected intermediate minter with compiled notes also blocks
+readmission. Play uses the existing activation law: crossing notes are cut,
+parameter catch-up is applied and later onsets sound. No note is retriggered to
+pretend voice continuity. Other stopped/command checks still apply. A migration refusal
+retains the owning candidate and fences older publications like other non-origin
+refusals. Five credits bound the number of owning maps. Each preparation gives
+its map one fifth of that call's remaining control-byte allowance after charging
+the incoming controller. `migration_bytes()` reports that map separately from
+`control_bytes()`. Different limits across calls do not form one aggregate byte
+ceiling; the host budgets all outstanding owners and their transport. Collection
+destroys the map and outgoing owner off-thread.
+
+The migration tests compare continued oscillator/filter/delay rendering with a
+stopped compatible replacement after runtime slots move, at four sample rates
+and 1/64/256/irregular callbacks. Ordinary reset is the audible negative control.
+Separate controls cover changed state, unsupported routing/compensation, foreign
+plans, same-plan table changes, budget refusal and atomic storage preflight.
+These are software checks; production capacity and hardware timing remain gated.
+
+The experimental application now consumes this opt-in path for eligible edits at
+an acknowledged positive paused position. One candidate is in flight, with one
+forward cell, one return cell and one retained callback cell; its credit remains
+held until off-thread collection. Transport is frozen meanwhile. A valid callback
+drains old carry to zero before installation, splitting only when the boundary is
+inside the block. Original callback geometry is checked before splitting. A
+successful callback containing the boundary acknowledges the new installation,
+including when its prefix drained old carry. The sequence travels with the owner;
+a queued edit never borrows the previous plan's rendered identity.
+
+A second edit waits for collection. Unsupported routing or unidentified state
+falls back to an announced fresh restart. Transport and credit pressure wait. Ineligible producer declarations request
+a fresh restart rather than retrying permanently. Failures returned during preparation, including storage, allocation or
+map-budget failure, silence V2 and request leaving V2 mode through the V1-reset
+path; the old project is not resumed. These failures end V2 mode even when the
+fresh unsupported-graph fallback
+would not need a migration map. A refused installation, including migration
+storage failure discovered during preflight, or an uncollectable return requires a
+fresh session. A pending explicit Stop retains fresh-start intent through
+switch-ring pressure. Stop, fault recovery and position-zero edits retain
+fresh-session behavior. If an eligible edit shortens the arrangement below the
+retained position, the existing end-stop policy applies
+on resume; position is not clamped. Disable/Stop retire the complete old audio
+wrapper and both lane endpoints on the control thread, including unattempted
+candidates when no final old-session callback occurs. These controls establish
+no capacity or endurance selection. The application cold control allowance is
+65,536 bytes, including the existing five-credit envelope accounting and the
+map's remaining one-fifth allowance; event shares and callback limits are
+unchanged.
+
+Production GUI snapshots bracket authoritative EngineState projection with a
+monotonic, session-local module/effect lineage counter. Removal, clearing or
+replacement of identities invalidates continuity, even when an intermediate
+snapshot is never observed. Song-side bus deletion, rollback and undo also
+invalidate under the Song write guard, independently of command-ring admission.
+Whole-Song project loading and MCP song replacement do the same, including a
+load whose commands fail. This fence does not synchronize Song mutations with
+all engine-command publications or repair their existing V1 state semantics.
+In particular, MCP song replacement can retain the engine's old return-effect
+chains; a later reused bus ID can expose that stored chain. The lineage fence
+prevents old DSP-state inheritance, not that separate model/projection defect.
+Atomic project/mixer transactions remain Phase 10B work. Only admitted plans
+reach the compatible guard: V2 refuses duplicate bus IDs and IDs outside its
+eight-bit address field.
+The lineage counter's saturation permanently disables this path. The
+counter is checked again after preparation before publication; a changed
+counter cancels the complete unpublished candidate and returns its credit.
+This is not a persisted identity or canonical project revision. Lower-level
+callers without an attached authority remain responsible for identity continuity.
+
+Controls cover scope/tag changes, moved runtime slots, exact owner addresses,
+atomic refusal of aliased maps and damaged storage, compiled note retirement
+and refusal for a declared external producer before its first note. Application
+controls exercise real saved voice, insert and return-bus projects, preserving
+paused position and rendering later onsets audibly with no callback allocation
+or final deallocation. Removing an automation lane restores the new base at
+resume, and a note-driven non-voice envelope cannot inherit a retired gate.
+Coalesced same-ID replacement and mutation inside a
+snapshot force fresh pairs. Changed kernel configuration and unsupported graphs
+still reset. Running native voice continuation has the narrower exact-program
+contract above; general voice migration remains open.
+
+The bound mixed host separately permits a stopped reset to a fresh owner of an
+edited plan with the same rate, layout and maximum block size. It retains the
+existing crossfade and reset tombstones; it does not copy DSP or voice state.
+The two-source host controls compare changed successor audio, unchanged raw
+receipts and complete retirement under whole and split callbacks. A rate change
+returns the complete successor for off-thread teardown and device re-prepare.
 
 ## Simulated input clock and capture
 
@@ -837,6 +1079,159 @@ claims exclude OS response-time guarantees, hardware timestamps, production
 buffer sizing and arbitrary load. Physical timing, live audition and the complete
 producer qualification remain under their existing first-consumer gates.
 
+### Host-owned mixed transfer rehearsal
+
+[ADR-0078](../decisions/ADR-0078-host-owned-mixed-transfer-rehearsal.md) permits a
+default-off, non-shipping Rust API for one bound initial plan with one compiled
+and one live note producer and one simulated live source. The host supplies one
+empty bounded command queue and one empty bounded result queue, each with at
+least the admitted ordinary ingress depth `C`. Both queue halves remain with
+the host and are lent to control calls and audio callbacks. Note-on, channel
+bend and the exact key-up are the only exposed requests. The ordinary
+`PerformanceIngress::prepare` mixed-plan refusal remains in force.
+
+An onset receives a handle only after control has reserved its result and
+key-up places. A positive sound result comes from audio service, never from
+source staging or command push. Control returns the original observation on a
+pre-consumption refusal. A terminal fault publishes one halt to both halves;
+the observing callback and later callbacks are silent. Joined off-thread
+teardown accounts for outstanding command IDs, handles and queue packets. A
+missing returned queue endpoint reports incomplete custody explicitly. Its
+sounding identity report comes from the stopped renderer registry, so a
+future key-up served before publication still names the sounding note; a
+snapshot failure is returned explicitly.
+
+The rehearsal does not connect concrete source inboxes, the raw recorder or
+production capacity admission. It does not admit pedal, Panic, plan replacement,
+loop playback or a second source. The following bridge and ADR-0081 extend this
+initial surface; physical timing and Phase 9 exit remain open. The non-test `mixed_transfer_rehearsal` integration
+target uses the `mixed-transfer-rehearsal` feature; the same feature's library
+tests inject faults and count complete callback allocations.
+
+### Two-source mixed bridge rehearsal
+
+The `mixed-transfer-rehearsal` feature also offers a concrete two-source bridge
+over the host-owned transfer. Its two source rings keep independent connection
+generations and packet serials. The bridge stages each source's messages and
+frontiers through a bounded peer fence, forwards admitted sound commands, and
+retains exact source and command custody through joined teardown. The
+`mixed_source_bridge` integration target exercises this bridge with a separate
+raw recorder owner and host-owned queues. This is an experimental host shape;
+[EVD-0026](../evidence/phase-09/EVD-0026-combined-host-capacity-selection.md)
+selects capacities for the frozen serial stereo rehearsal;
+[EVD-0027](../evidence/phase-09/EVD-0027-mono-mixed-host-capacity-selection.md)
+selects its explicit-fold Mono counterpart. Both are bounded to the declared
+64-frame serial host. Production admission, application mono-device admission,
+other block sizes and continuous/concurrent capacity qualification remain open.
+The functional independent-cadence control below is separate from these measurements.
+
+The [persistent saved-project audio-owner control][mixed-thread-owner-control]
+keeps the callback on one worker through joined shutdown. Two source workers and
+control use their own halves; prepared reset/activation owners and complete
+retirements cross bounded SPSC mailboxes. Stereo and explicit-fold Mono output,
+raw receipts and normalized sound outcomes must equal the serial oracle at the
+four candidate rates. While the full retirement mailbox holds an uncollected
+Start, the audio worker must retain a refused stale candidate in its pending slot
+and continue rendering, with no callback/handoff heap activity and no extra final
+render. Control unwind must join workers before destroying the control halves.
+The logical clock grants one callback after control pumps
+its publication window. This short cross-thread lockstep control does not qualify
+free-running delivery, continuous scheduling, concurrent queue peaks or capacity,
+other block sizes or physical timing.
+
+A separate one-place raw-completion regression in the linked test module exercises
+`HostCallback::service_between_callbacks` on the default serial fixture. Completed
+raw packets must publish after control frees a completion-ring place, without
+another render. The older paced source/control/audio thread test calls this helper
+while waiting for render credit; its retry and audio loops have bounded deadlines.
+
+The separate [finite-prefix prototype][mixed-prefix-control] prequeues one saved
+project and both source prefixes before handing the callback to its worker. It
+then renders 1,024 output frames without per-callback permits or control service.
+Stereo/Mono audio, raw receipts and normalized sound outcomes match the serial
+oracle for 64-frame, irregular and single-1,024-frame partitions at all four
+candidate rates. This functional fixture declares a 1,024-frame maximum block;
+its sizes are not EVD-0026/27 capacity or timing qualification.
+
+The test-only startup snapshot distinguishes admitted source frontiers from raw
+frontiers successfully sent through the callback's packet ring. A full raw
+preparation queue can return no packet without an error; neither that result nor
+a failed ring push establishes raw delivery. The sound proof uses the actual
+publication-window wait. Separate 64/256-frame maximum-block controls expose
+unforwarded heads instead of silently widening their window.
+
+Both startup renderers have one quantum of initial output carry. The guard
+checks complete opened quanta, including partial-callback rounding, before either
+owner renders. Missing source, sound or raw coverage latches a host-owned reason,
+silences the complete failing callback and later output, and requests the existing
+host/raw halts. This reason is kept separately from the engine bridge's fault;
+no engine fault is invented. The prototype's halted control collects without
+staging or pumping late refill. Joined teardown classifies every staged or
+unserved packet and retains sounded open/sustained handles, without a final
+render. Invalid output shape stays retryable; clock exhaustion closes the host.
+
+Those prefix controls qualify startup only. The independent-cadence control below
+adds rolling delivery and reset coordination; concurrent capacity and physical
+timing remain unqualified. Production mixed refusals stay in force.
+
+[mixed-prefix-control]: ../../../crates/synth_engine_v2/tests/support/autonomous_prefix.rs
+
+[mixed-thread-owner-control]: ../../../crates/synth_engine_v2/tests/support/concurrent_saved_host.rs
+
+### Combined software host and strict publication
+
+[ADR-0081](../decisions/ADR-0081-combined-host-software-boundary.md) accepts the
+bound default-off common software host. `MixedBridgeControl::route_raw_first`
+performs raw admission before sound staging, keeps the source-ring identity and
+returns raw and sound outcomes separately. `MixedRawPolicy` implements
+[ADR-0079](../decisions/ADR-0079-mixed-host-raw-capture-interruption.md): only an
+actual classified late raw halt stops raw alone; unknown/terminal outcomes and
+direct raw errors stop the host. The exact receipts and errors remain retained. Classification is bound to the
+raw source generations. An interrupted raw proof exempts raw coverage only after
+a classified late halt, retaining its actual last queued frontier; sound and
+terminal checks still apply.
+The tolerant bridge still fences delayed peers and records late sound separately.
+
+The optional strict mode requires promised source prefixes. `MixedPublication`
+is minted from actual stage heads, frontiers and the publication window.
+`MixedRawPublisher` produces a source-generation-bound raw proof only after real
+FIFO sends succeed. A failed push and packet preparation grant no credit.
+A latest-value channel copies complete pairs through atomic fields bracketed by
+checked versions. The callback makes one bounded read attempt before draining
+commands, checks actual renderer carry/quantum demand, and never combines pieces
+of two updates. Missing strict coverage latches the first host reason and
+silences the observing callback and later output before raw rendering. Output
+shape/profile validation precedes this source preflight. Strict mode is not the
+tolerant peer policy and does not reclassify a raw-only interruption.
+
+A sealed transition proves that no source work is due before its end and binds
+both arms and the reset boundary. The wrapper rejects an old-arm proof on the
+successor or a wrong transition when crossing a pending reset. Source/recording
+ownership survives the sound reset. Old-source key-ups keep their reset
+classification; new sound never reinterprets them as a newer key's release.
+Retirements are offered immediately after the render that produces them. A full
+return channel retains the entire owner while callbacks continue. A missed reset
+offer returns its fresh owner for abandon and off-thread rearming.
+
+The [continuous saved-project control][mixed-continuous-control] uses one startup
+barrier and then an independent software callback clock while two source workers
+and control roll forward. At four rates, Stereo/Mono and three partitions, its
+16,384 output frames match an unguarded serial audio/raw/sound oracle, with and
+without held-note reset, compiled seek and retirement backpressure. Callback
+allocation probes cover publication reads, preflight, owner handoffs and both
+renderers. Separate controls check control loss, slot refusal, source/head caps,
+foreign raw/arm proofs, missed reset rearming and post-render return service.
+Mailbox unit tests check unread replacement, in-flight reads, version exhaustion
+and concurrent whole-pair consistency.
+
+These are functional software controls with a separately declared 1,024-frame
+maximum block. Their software clock is independent of device sample rate; there
+is no timing-budget, concurrent-capacity or physical-device acceptance claim.
+Production mixed ingress, application mono-device admission, representative
+complete reselection and ADR-0022 physical qualification remain gated.
+
+[mixed-continuous-control]: ../../../crates/synth_engine_v2/tests/support/continuous_saved_host.rs
+
 ### Finite audible simulated capture
 
 The non-shipping `capture` mode of `v2_cpal_output` connects reusable live hosting,
@@ -905,16 +1300,32 @@ the application's first V2 playback path. Implementation follows these rules:
   returns to the song start by preparing a fresh session. V2 offers no seek, loop or pattern
   preview. Entering and leaving V2 mode stops V1 and resets its DSP, so nothing V1 held or
   rendered silently is heard when the engines switch. Play and pause take effect two maximum
-  callbacks plus a quantum after they are requested. Stop, a refused edit and leaving V2
+  callbacks plus a quantum after they are requested. Stop, a refused paused edit and leaving V2
   mode silence V2 from the next callback; leaving cannot fail for want of ring space. A
-  project refused after an edit never plays: V2 is silenced and V2 mode is left through the
+  project refused after a paused edit never plays: V2 is silenced and V2 mode is left through the
   path that resets V1 first.
 - A project with any `Refused` lowering diagnostic does not play, and the notice names the
   first refusal. `Unrepresented` diagnostics play and remain visible. V2 mode never writes
   project state; loading and saving are unchanged.
 - An edit while stopped re-lowers off the audio thread and installs through stopped-only
-  replacement. An edit while playing applies at the next pause or stop, and the notice says
-  so; since V2 mode cannot seek, applying it restarts the song from its start, with a notice.
+  replacement. An edit while playing can use the
+  [isolated running reset](#experimental-running-compiled-reset), with previous audio
+  retained on compile or pre-install refusal.
+  At a positive paused position, eligible graphs use the
+  [compatible global-state experiment](#experimental-compatible-global-state-readmission)
+  to retain position and eligible unchanged authored non-voice records. Unsupported graphs restart
+  from the song start with a notice; position-zero edits and explicit Stop also use a
+  fresh session. Pending explicit Stop keeps fresh-start intent through switch-ring
+  pressure. Transient transport/credit pressure waits; ineligible producer declarations
+  request fresh restart. Paused-edit failures returned during preparation,
+  including migration-map budget/allocation/storage failure, silence V2 and
+  request leaving V2 mode through the V1-reset path. A collected paused installation refusal
+  triggers a fresh restart, including migration storage failure found at installation.
+  Play reports busy when a stopped replacement is pending. During a running swap,
+  Play cancels an unsent Pause; other Pause intent waits until replacement collection.
+  The rendered
+  plan identity changes only after a successful callback containing the installation
+  boundary.
 - MIDI input is disconnected before V2 mode is entered, with a visible notice, and
   reconnects only once the audio callback has released V2. No timestamp-capable input
   reaches V2.
@@ -931,6 +1342,12 @@ allocation, V2's own play, pause and stop, release only after the callback retir
 leaving V2 mode with a full command ring, silence from the next callback after stop or a
 refused edit, a deferred edit, an oversized callback taking V2's terminal fault with a
 visible re-preparation at the song start, and the refusals of an unlowerable project, a mono
-device and an unknown stream. EVD-0025 qualifies the partition.
+device and an unknown stream. `lowering::live::paused_edit` checks audible compatible
+continuation, partial carry, acknowledged pause, transport freeze, refused installation,
+the original callback ceiling and retained foreign-command refusal.
+`lowering::app::edit_tests` checks paused publication, repeated edits, explicit Stop,
+full-ring Stop retry, retirement, positive-position preparation refusal and recovery
+from a refused installation.
+EVD-0025 qualifies the partition; the edit controls add no capacity selection.
 The application toggle beside the MIDI indicator and the status-bar omissions badge are wiring
 in `gui/egui_backend/v2_flow.rs`, verified by the feature build rather than a GUI test.

@@ -60,9 +60,21 @@ impl PerformanceIngress {
     }
 
     /// The private mixed owner admits commands at the opening boundary, before draining.
-    #[cfg(all(test, feature = "simulated-ingress"))]
+    #[cfg(any(
+        all(test, feature = "simulated-ingress"),
+        feature = "mixed-transfer-rehearsal"
+    ))]
     pub(crate) fn set_mixed_admission_clock(&mut self, clock: SampleTime) {
         self.clock = clock;
+    }
+
+    /// Prepared queue depth used to bound mixed command service per quantum.
+    #[cfg(any(
+        all(test, feature = "simulated-ingress"),
+        feature = "mixed-transfer-rehearsal"
+    ))]
+    pub(crate) fn mixed_service_capacity(&self) -> usize {
+        self.entries.len()
     }
 
     /// Charge every entry whose destination this call can reach, and keep the rest.
@@ -149,7 +161,10 @@ impl PerformanceIngress {
             self.len = self.len.saturating_sub(1);
             // A drained credit-charged bend frees its budget place. The owner returns the
             // credit to the merger from the fall of this count.
-            #[cfg(all(test, feature = "simulated-ingress"))]
+            #[cfg(any(
+                all(test, feature = "simulated-ingress"),
+                feature = "mixed-transfer-rehearsal"
+            ))]
             if entry.bend_credit {
                 self.mixed_bend_queued = self.mixed_bend_queued.saturating_sub(1);
             }

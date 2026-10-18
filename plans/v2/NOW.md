@@ -1,6 +1,6 @@
 # Core V2: Current Work
 
-Last updated: 2026-10-09
+Last updated: 2026-10-17
 
 This file contains only active Core V2 state, blockers and next actions. Durable
 contracts live in ADRs and specifications; completed Phase 3 coordination
@@ -202,7 +202,17 @@ tests found no item fully met; items 7, 8 and 11 were then restated. The state i
 | 11 | Active-plan acknowledgement matches audio | Met in harness | Harness acknowledgement follows refusals and failed compiles and flags a failed callback |
 | 12 | ADR-0054 reselection and P03-R004 | Met for song playback | EVD-0025 selects the compiled and session partition; no live ingress, so P03-R004 is not reached |
 
-Live-editing stage 1 is built, stage 2 exists only for the live stream and stage 3 (ADR-0010) is not started.
+Live-editing stage 1 is built. Stage 2 now also has an isolated compiled-only
+application reset under [ADR-0082](decisions/ADR-0082-running-compiled-plan-reset.md)
+with a fresh owner and Q-frame crossfade; its software checks
+cover late refusal, retained Pause and interrupted custody. The
+[running-reset specification](specs/spec-host-io-lifecycle.md#experimental-running-compiled-reset)
+records the scope and provisional cold timeline bound. Stage 3 now has a bounded
+[native sounding-voice consumer](decisions/ADR-0083-native-compiled-voice-continuation.md):
+identical layout and complete note program, with only non-voice Trim base edits.
+It retains the actual DSP, identity table and authoritative minter. General
+structural/mixed/live voice migration, aggregate transition capacity and production
+qualification remain open.
 
 Next for Phase 9, in this order:
 
@@ -254,8 +264,141 @@ gate has not yet been amended to reflect that scope choice.
 
 ### Deferred design work — mixed producer activation
 
-ADR-0076 deferred this work to Phase 9's exit on 2026-09-29. No further
-rehearsal slice is selected. The record below is the state at deferral.
+#### Selected work — saved-project combined host and capacity readiness
+
+The pinned saved project now runs through the serial two-source host in Stereo
+and Mono at 64-frame callbacks and 44,100/48,000/96,000/192,000 Hz. The user-selected
+terminal half-sum is built under
+[ADR-0080](decisions/ADR-0080-explicit-terminal-mono-fold.md): explicit fixed ports,
+a pre-fold stereo master tap and a diagnostic excluding stereo V1 parity.
+The complete repository gate and independent Claude implementation/method reviews passed.
+
+[EVD-0026](evidence/phase-09/EVD-0026-combined-host-capacity-selection.md#results)
+and the fresh [EVD-0027 Mono result](evidence/phase-09/EVD-0027-mono-mixed-host-capacity-selection.md#results)
+complete the bounded serial experiments. Both first collections passed all
+reference/selected runs with stable capacities, zero callback heap activity,
+complete sound/raw custody and raw maxima within the predeclared budget. Mono's
+reviewed implementation/method freeze is `836b7527`; each record retains its
+exact source, limitations and external raw-trace location.
+
+[ADR-0081](decisions/ADR-0081-combined-host-software-boundary.md) accepts the bound,
+default-off combined software host; [ADR-0079](decisions/ADR-0079-mixed-host-raw-capture-interruption.md)
+now owns the library raw-first and raw-only interruption rule. The common route
+keeps source identity separate from raw IDs and sound occurrence handles.
+
+The [continuous saved-project control](../../crates/synth_engine_v2/tests/support/continuous_saved_host.rs)
+keeps one audio worker on an independent software callback clock while two sources
+and control roll publication forward. Across four rates, Stereo/Mono and three
+partitions, audio and receipts match the unguarded serial oracle, with and without
+held-note reset, compiled seek and blocked retirement. Opaque sound and actually
+queued raw proofs cross a bounded latest-value channel; missing strict coverage
+latches silence and complete joined custody. Missed reset offers return their
+owner for explicit rearming. This is a 1,024-frame maximum-block functional
+profile, not EVD-0026/27 capacity or physical cadence qualification. Strict
+promised-prefix mode does not replace tolerant peer fencing or raw-only late
+interruption.
+
+On 2026-10-17 the maintainer deferred complete capacity reselection until the
+production-enablement qualification. Development keeps the current provisional
+limits and overload/protected-release rules; capacities change during owner
+preparation, never through callback buffer growth. This does not waive ADR-0054,
+P03-R004 or accept production mixed ingress.
+
+Linux preparation now supplies passive `v2_cpal_output inspect <input> <output>`
+configuration reports, with no streams started. The shared duplex format checks
+retain exact refusals; advertised ranges are not negotiated timing evidence.
+Duplex also accepts explicit `--format i16|i32|f32` and `--repeat-default` (stop/join
+and prepare again at the current device defaults). Omitted options retain the
+default formats and alternate-rate attempt. Repeating defaults does not pin a
+rate across a device/default change or qualify requested rate changes.
+The 2026-10-17 ALSA inspection found the built-in analog input defaults to I24,
+which the harness refuses, while both endpoints advertise I16 stereo at 48 kHz.
+Only virtual MIDI ports were enumerated; a physical loopback/reference connection
+is unconfirmed. The inspection is a readiness diagnostic, not an EVD result.
+
+The [2026-10-17 Linux clock diagnostic](evidence/phase-03/EVD-0016-host-time-mapping.md)
+now checks the physical direct ALSA endpoints at 256 frames. Over 10,000 callbacks
+and 2,579 bridges per direction have no backwards callback steps, backend errors
+or lost probe records. The current mapping still fails F4 at 642 combined
+uncertainty frames versus `Q = 64`. This timestamp-only run stores no PCM and
+does not exercise the separate engine/monitoring path or measure round-trip latency.
+
+The maintainer selected combined-host integration and live editing on 2026-10-17.
+The [migration experiment](specs/spec-host-io-lifecycle.md#experimental-compatible-global-state-readmission)
+adds opt-in stopped-session DSP migration; the mixed host separately checks
+fresh edited-plan reset with raw custody retained. The maintainer approved
+compatible paused-position preservation on 2026-10-17. The application now waits
+for acknowledged pause and uses a single owning replacement lane for eligible
+authored non-voice nodes, retaining position and compatible instrument-instance,
+channel, bus and global state. Exact scope/tag matching prevents cross-scope
+inheritance. Per-node history owners move without copying delay payloads in the
+callback. A session-local authoritative lineage fence prevents coalesced
+same-ID deletion/recreation from inheriting state; it is not canonical identity.
+Isolated stopped compiled notes retire explicitly with the old owner; mixed or
+external ingress obligations retain refusal. Saved voice, insert and bus projects
+resume later onsets audibly, with fresh voice state and crossing notes cut by
+the existing activation law. Partial carry, rendered identity, repeated edits,
+atomic preflight, lineage changes and retirement have executable controls.
+Modulated/scripted graphs and changed native kernel configuration remain outside
+the paused migration consumer. Unsupported paused edits explicitly restart.
+The application now also prepares isolated compiled-only running resets with a
+fresh generation, epoch and table at a future boundary. A Q-frame crossfade
+retires the old owner; crossing notes are cut and later onsets use the new plan.
+Compile, preparation or late refusal keeps the old sound and metadata. A newer
+edit supersedes a declined older attempt, and Pause intent survives collection
+unless a later Play cancels it. Explicit Stop/disable retire both fading owners
+without another old callback. ADR-0082 retains these reset semantics.
+[ADR-0083](decisions/ADR-0083-native-compiled-voice-continuation.md) adds the bounded
+native sounding-voice consumer: master Trim edits preserve actual DSP and note
+identity when the complete program/layout is unchanged; other running edits use
+reset. Saved voice, insert and return projects, repeated edits and lineage
+cancellation have executable controls. The complete repository gate, affected
+repair checks and independent Claude reviews passed. ADR-0010 and ADR-0048 remain
+Proposed for general migration/rebuild. Structural sounding-voice relocation,
+external mixed/live state migration and observer handoff remain open. No production
+or physical timing gate is lifted.
+The legacy Song bus allocator saturates its `u16` counter and can reissue its
+maximum ID. V2 refuses bus IDs at or above 256 before migration preparation;
+repairing the general V1 allocator remains separate work. MCP `set_song` also
+retains old engine-side return-effect chains, which a later reused bus ID can
+expose. The lineage fence prevents old DSP-state transfer but does not fix that
+existing stored-state defect. Atomic Song/engine mutation remains Phase 10B
+work; no concurrent project-transaction fidelity is claimed here.
+
+The [replacement clock candidate](decisions/ADR-0022-hardware-time-mapping.md#replacement-candidate-frame--2026-10-17)
+remains a separate next action: synthetic observability controls before deciding
+isolated backend instrumentation. No replacement timing estimator is accepted.
+Physical adapter/reference and loopback controls still need their hardware.
+Complete capacity reselection and representative endurance remain owed before
+production enablement. Other project populations, application
+mono-device admission and unavailable authored-runtime/internal publishers retain
+their separate gates. Phase 9 remains
+open. The older DRAFT below remains unaccepted as a whole; ADR-0081 owns the bound
+software law, and production mixed refusals remain in force.
+
+#### Transfer checkpoint — 2026-10-16
+
+The following files are being committed only to carry unfinished Phase 9 work to
+another computer. They are not verified as Phase 9 evidence. Treat their
+contents as unaccepted work in progress, as if they were still uncommitted:
+they do not establish an EVD-0026 result, a mixed-host capacity selection, a
+production contract, or a Phase 9 acceptance claim.
+
+- `crates/pertylizer/src/lowering/graph.rs` and `render.rs` contain an unfinished
+  private mixed lowering route.
+- `crates/pertylizer/src/lowering/tests/evd_0026.rs` and
+  `crates/synth_engine_v2/tests/support/instrument_inserts.rs` carried unfinished
+  saved-project graph transcription and comparison checks. The selected work above
+  now connects the transcription to the two-source host's functional controls.
+- `plans/v2/decisions/DRAFT-mixed-producer-combined-host-law.md` remains a working
+  draft, not an accepted ADR or contract amendment.
+
+Before relying on any of this work, finish the implementation and evidence,
+review the entire checkpoint diff, and run the required gates. Keep the existing
+mixed-production refusals in force until their acceptance conditions are met.
+
+ADR-0076 deferred this work to Phase 9's exit on 2026-09-29. The record below
+retains that earlier rehearsal state; the selected work above owns the next actions.
 
 [ADR-0075](decisions/ADR-0075-mixed-producer-activation-ownership.md) frames the
 possible mixed-producer activation boundary. It is now `Deferred`: target ownership,
@@ -1181,10 +1324,14 @@ identity-table owner. Foreign packets with an otherwise valid first command
 ID fault before audio or ledger mutation, silence the callback, and remain
 named at teardown. These checks remain behind the test-only mixed path.
 
-[ADR-0078](decisions/ADR-0078-host-owned-mixed-transfer-rehearsal.md) is a
-reviewed proposal for a default-off, host-owned packet transfer rehearsal.
-It requires maintainer approval before the public mixed API or feature is
-enabled. The existing mixed-plan and application refusals remain in force.
+[ADR-0078](decisions/ADR-0078-host-owned-mixed-transfer-rehearsal.md) is
+accepted for a default-off, host-owned packet transfer rehearsal. Its
+one-source, initial-plan note-on, bend and exact key-up API runs through
+host-owned command and result queues with joined teardown. External and
+crate-internal tests cover its bounded transfer and fault behavior. The
+existing production mixed-plan and application refusals remain in force;
+two-source combined outcomes, transport activation and loop behavior remain
+Phase 9 exit work.
 
 ### Selected work — ordered transport through live I/O
 

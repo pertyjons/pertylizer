@@ -1956,8 +1956,8 @@ fn the_declared_event_peak_counts_the_lowered_timeline() {
 
 /// A harness profile at the rate every smoke-render test uses.
 /// The smoke render's profile. **Stereo** since `P08-S001`: the lowered instrument renders
-/// through its mix channel, whose output is stereo as V1's is, and a mono stream would
-/// refuse the channel's edge into the output rather than down-mix it (`SOUND-INV-014`).
+/// through its mix channel, whose output is stereo as V1's is. Mono lowering now
+/// inserts an explicit terminal fold and marks the outcome outside stereo V1 parity.
 /// The samples are interleaved, so a frame count is half the sample count.
 fn harness_profile() -> HostProfile {
     HostProfile::harness(
@@ -7023,3 +7023,13 @@ pub(crate) use live::{live_fixture_profile, live_fixture_project};
 mod phase7;
 mod phase8;
 mod phase8_exit;
+
+/// Real saved-project consumers for non-voice state readmission controls.
+pub(crate) fn state_migration_projects() -> Vec<crate::project::ProjectFile> {
+    let (instruments, song, global) = buses::returned_project(0.4, false);
+    vec![
+        corpus_project("subtractive-voice"),
+        phase8::corpus_with_inserts(&["dst-1", "dly-1"]),
+        crate::project::ProjectFile::new(instruments, 0, None, song, global),
+    ]
+}

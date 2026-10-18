@@ -1,8 +1,14 @@
 //! Fixed-storage live admission; all preparation remains in the parent module.
-#[cfg(all(test, feature = "simulated-ingress"))]
+#[cfg(any(
+    all(test, feature = "simulated-ingress"),
+    feature = "mixed-transfer-rehearsal"
+))]
 use super::RELEASE_GROUP_CAPACITY;
 use super::{ExhaustedResource, IngressEntry, IngressRefused, PendingStart, PerformanceIngress};
-#[cfg(all(test, feature = "simulated-ingress"))]
+#[cfg(any(
+    all(test, feature = "simulated-ingress"),
+    feature = "mixed-transfer-rehearsal"
+))]
 use crate::{identity::LiveRangeMinter, quantities::Cents};
 use crate::{
     identity::{IdentityError, IdentityTable, NoteIdentity, Resolution},
@@ -12,7 +18,10 @@ use crate::{
     time::{SampleTime, StreamEpoch, TimeSource},
 };
 /// What wrote a test-only mixed bend entry.
-#[cfg(all(test, feature = "simulated-ingress"))]
+#[cfg(any(
+    all(test, feature = "simulated-ingress"),
+    feature = "mixed-transfer-rehearsal"
+))]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum MixedBendOrigin {
     /// An onset on a bent scope wrote its scope's value at its own stamp.
@@ -45,7 +54,10 @@ impl PerformanceIngress {
     /// The hold is checked before ordinary room. With `B = C - 2H`, ordinary room holds
     /// exactly every hold's note-on and release, so when every hold is out the room is
     /// short too and the hold is the binding cause.
-    #[cfg(all(test, feature = "simulated-ingress"))]
+    #[cfg(any(
+        all(test, feature = "simulated-ingress"),
+        feature = "mixed-transfer-rehearsal"
+    ))]
     pub(crate) fn offer_mixed_note_on(
         &mut self,
         minter: &mut LiveRangeMinter,
@@ -103,7 +115,10 @@ impl PerformanceIngress {
     }
 
     /// An accepted release trades its reserved hold for a queue entry.
-    #[cfg(all(test, feature = "simulated-ingress"))]
+    #[cfg(any(
+        all(test, feature = "simulated-ingress"),
+        feature = "mixed-transfer-rehearsal"
+    ))]
     pub(crate) fn offer_mixed_note_off(
         &mut self,
         minter: &mut LiveRangeMinter,
@@ -142,7 +157,10 @@ impl PerformanceIngress {
     /// Every check precedes the first write, so a refusal changes nothing, and an
     /// accepted bend moves the order fence to its stamp even when it has no member: a
     /// later onset inheriting the value is never stamped before it.
-    #[cfg(all(test, feature = "simulated-ingress"))]
+    #[cfg(any(
+        all(test, feature = "simulated-ingress"),
+        feature = "mixed-transfer-rehearsal"
+    ))]
     pub(crate) fn offer_mixed_bend(
         &mut self,
         minter: &LiveRangeMinter,
@@ -181,13 +199,19 @@ impl PerformanceIngress {
     }
 
     /// Whether `entries` more bend entries fit the bend-credit budget.
-    #[cfg(all(test, feature = "simulated-ingress"))]
+    #[cfg(any(
+        all(test, feature = "simulated-ingress"),
+        feature = "mixed-transfer-rehearsal"
+    ))]
     fn mixed_bend_credits_free(&self, entries: usize) -> bool {
         self.mixed_bend_queued.saturating_add(entries) <= self.mixed_bend_budget
     }
 
     /// Append one credit-charged bend entry. The caller has checked the budget.
-    #[cfg(all(test, feature = "simulated-ingress"))]
+    #[cfg(any(
+        all(test, feature = "simulated-ingress"),
+        feature = "mixed-transfer-rehearsal"
+    ))]
     fn enqueue_mixed_bend(
         &mut self,
         time: SampleTime,
@@ -205,13 +229,19 @@ impl PerformanceIngress {
     }
 
     /// The private mixed owner's bend-credit budget `B`.
-    #[cfg(all(test, feature = "simulated-ingress"))]
+    #[cfg(any(
+        all(test, feature = "simulated-ingress"),
+        feature = "mixed-transfer-rehearsal"
+    ))]
     pub(crate) const fn mixed_bend_budget(&self) -> usize {
         self.mixed_bend_budget
     }
 
     /// Undrained entries charged to the bend-credit budget. The drain only lowers it.
-    #[cfg(all(test, feature = "simulated-ingress"))]
+    #[cfg(any(
+        all(test, feature = "simulated-ingress"),
+        feature = "mixed-transfer-rehearsal"
+    ))]
     pub(crate) const fn mixed_bend_queued(&self) -> usize {
         self.mixed_bend_queued
     }
@@ -309,9 +339,15 @@ impl PerformanceIngress {
             .filter(|slot| slot.is_some_and(|record| record.bend.is_some()))
             .count();
         // Credit-charged mixed bend entries occupy the withheld budget, not ordinary room.
-        #[cfg(all(test, feature = "simulated-ingress"))]
+        #[cfg(any(
+            all(test, feature = "simulated-ingress"),
+            feature = "mixed-transfer-rehearsal"
+        ))]
         let ordinary = self.len.saturating_sub(self.mixed_bend_queued);
-        #[cfg(not(all(test, feature = "simulated-ingress")))]
+        #[cfg(not(any(
+            all(test, feature = "simulated-ingress"),
+            feature = "mixed-transfer-rehearsal"
+        )))]
         let ordinary = self.len;
         let needed = ordinary
             .saturating_add(unstarted.saturating_mul(2))
@@ -321,7 +357,10 @@ impl PerformanceIngress {
             .saturating_add(entries)
             .saturating_add(holds);
         // The private mixed bend-credit budget is withheld from ordinary traffic.
-        #[cfg(all(test, feature = "simulated-ingress"))]
+        #[cfg(any(
+            all(test, feature = "simulated-ingress"),
+            feature = "mixed-transfer-rehearsal"
+        ))]
         let needed = needed.saturating_add(self.mixed_bend_budget);
         needed <= self.entries.len()
     }
@@ -955,6 +994,29 @@ impl PerformanceIngress {
             self.counters.non_monotone = self.counters.non_monotone.saturating_add(1);
             return Err(IngressRefused::NonMonotoneStamp { time, last });
         }
+        self.admit_horizon(time)
+    }
+
+    /// Whether [`Self::admit_horizon`] would admit `time`, without counting anything.
+    /// The private mixed owner parks a future Panic only inside the horizon; one beyond
+    /// it is served at once, so the store refuses and counts it as before.
+    #[cfg(any(
+        all(test, feature = "simulated-ingress"),
+        feature = "mixed-transfer-rehearsal"
+    ))]
+    pub(crate) fn within_horizon(&self, time: SampleTime) -> bool {
+        self.clock
+            .checked_add(self.forward_event_horizon)
+            .map_or(true, |end| time <= end)
+    }
+
+    /// The forward-horizon half of [`Self::admit`], counted once when it refuses.
+    ///
+    /// ADR-0078's transfer rehearsal evaluates it for every served packet before any
+    /// occurrence or queue mutation, including a key-up that only consumes a tombstone.
+    /// The offer that follows re-reads the same clock and stamp, so it cannot refuse or
+    /// count again.
+    pub(crate) fn admit_horizon(&mut self, time: SampleTime) -> Result<(), IngressRefused> {
         // `HOST-INV-013`'s single evaluation. Measured from the render clock recorded
         // by the drain or by the private mixed owner's current opening boundary, rather
         // than from a caller's notion of now: this half does not own a clock, and a
@@ -995,9 +1057,15 @@ impl PerformanceIngress {
         let entry = IngressEntry {
             event: TimedEvent::new(self.envelope(time), payload),
             redeems_hold,
-            #[cfg(all(test, feature = "simulated-ingress"))]
+            #[cfg(any(
+                all(test, feature = "simulated-ingress"),
+                feature = "mixed-transfer-rehearsal"
+            ))]
             inherited_bend: false,
-            #[cfg(all(test, feature = "simulated-ingress"))]
+            #[cfg(any(
+                all(test, feature = "simulated-ingress"),
+                feature = "mixed-transfer-rehearsal"
+            ))]
             bend_credit: false,
         };
         if let Some(slot) = self.entries.get_mut(self.head) {

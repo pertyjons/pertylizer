@@ -1,6 +1,9 @@
 //! Bounded group release through the latched live producer, with no voice stealing.
 use super::{IngressRefused, PerformanceIngress};
-#[cfg(all(test, feature = "simulated-ingress"))]
+#[cfg(any(
+    all(test, feature = "simulated-ingress"),
+    feature = "mixed-transfer-rehearsal"
+))]
 use crate::identity::LiveRangeMinter;
 use crate::{
     identity::{IdentityTable, NoteIdentity, Resolution, TableId},
@@ -18,12 +21,24 @@ pub enum ReleaseCause {
     SustainLift,
     Panic,
     Stop,
+    /// One group of a mixed Panic's cut of the compiled producer's open occurrences.
+    /// No compiled occurrence reserved a live release place, so it spends the
+    /// guaranteed-release share, which the mixed arm sizes for the full live backlog plus
+    /// one cut of the whole compiled span. A live store never offers it.
+    CompiledPanic,
+    /// A mixed whole-owner reset's group: every live occurrence of the fading owner,
+    /// ended at the end of its fade. It is neither a transport Stop nor a Panic. Each
+    /// member redeems the hold it reserved, so the group spends the guaranteed-release
+    /// share, in a quantum where the fading owner takes no other input. Only the mixed
+    /// owner offers it; the exclusive live path refuses it.
+    Reset,
 }
 impl ReleaseCause {
     pub(crate) const fn class(self) -> ProducerClass {
         match self {
             Self::Stop => ProducerClass::Session,
             Self::SustainLift | Self::Panic => ProducerClass::Live,
+            Self::CompiledPanic | Self::Reset => ProducerClass::Release,
         }
     }
 }
@@ -55,6 +70,32 @@ impl ReleaseGroup {
     pub const fn cause(self) -> ReleaseCause {
         self.cause
     }
+
+    /// One group of a mixed Panic's compiled cut: one to eight distinct identities of
+    /// one table, which the audio-owned compiled minter has already released.
+    #[cfg(any(
+        all(test, feature = "simulated-ingress"),
+        feature = "mixed-transfer-rehearsal"
+    ))]
+    pub(crate) fn compiled_panic(identities: &[NoteIdentity]) -> Option<Self> {
+        let first = identities.first().copied()?;
+        let len = u8::try_from(identities.len()).ok()?;
+        let mut group = Self {
+            table: first.table(),
+            indices: [0; RELEASE_GROUP_CAPACITY],
+            generations: [0; RELEASE_GROUP_CAPACITY],
+            len,
+            cause: ReleaseCause::CompiledPanic,
+        };
+        for (index, identity) in identities.iter().copied().enumerate() {
+            if identity.table() != first.table() || identities[..index].contains(&identity) {
+                return None;
+            }
+            *group.indices.get_mut(index)? = identity.index;
+            *group.generations.get_mut(index)? = identity.generation;
+        }
+        Some(group)
+    }
 }
 
 impl PerformanceIngress {
@@ -66,6 +107,8 @@ impl PerformanceIngress {
         cause: ReleaseCause,
     ) -> Result<(), IngressRefused> {
         if identities.len() > RELEASE_GROUP_CAPACITY
+            || cause == ReleaseCause::CompiledPanic
+            || cause == ReleaseCause::Reset
             || self.stealing != crate::ir::StealingPolicy::None
             || self.pending_len != 0
             || identities.len() > self.holds_outstanding.get() as usize
@@ -113,7 +156,10 @@ impl PerformanceIngress {
 
     /// The stamp a mixed Panic is queued at: its nominal stamp, or the last stamp
     /// this store accepted when that is later, so the order fence cannot refuse it.
-    #[cfg(all(test, feature = "simulated-ingress"))]
+    #[cfg(any(
+        all(test, feature = "simulated-ingress"),
+        feature = "mixed-transfer-rehearsal"
+    ))]
     pub(crate) const fn mixed_execution_stamp(&self, nominal: SampleTime) -> SampleTime {
         match self.last_accepted {
             Some(last) if last.as_u64() > nominal.as_u64() => last,
@@ -124,7 +170,10 @@ impl PerformanceIngress {
     /// Test-only mixed group release through the audio owner's live range, with the
     /// same preflight, hold conversion and single queue entry as the exclusive path.
     /// A member's undrained bend entries keep their credits until they drain.
-    #[cfg(all(test, feature = "simulated-ingress"))]
+    #[cfg(any(
+        all(test, feature = "simulated-ingress"),
+        feature = "mixed-transfer-rehearsal"
+    ))]
     pub(crate) fn offer_mixed_release_group(
         &mut self,
         minter: &mut LiveRangeMinter,
@@ -133,6 +182,7 @@ impl PerformanceIngress {
         cause: ReleaseCause,
     ) -> Result<(), IngressRefused> {
         if identities.len() > RELEASE_GROUP_CAPACITY
+            || cause == ReleaseCause::CompiledPanic
             || self.stealing != crate::ir::StealingPolicy::None
             || self.pending_len != 0
             || identities.len() > self.holds_outstanding.get() as usize

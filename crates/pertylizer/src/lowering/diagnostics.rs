@@ -164,6 +164,8 @@ pub enum ProjectSubject {
 #[must_use]
 #[non_exhaustive]
 pub enum LoweringReason {
+    /// Intentional terminal mono folding; a stereo V1 parity verdict is not defined.
+    MonoOutputFold,
     /// Intentional current-quantum detector timing, replacing V1's previous-callback cache.
     SidechainTiming,
     /// The module's type has no node kind in V2's registry.

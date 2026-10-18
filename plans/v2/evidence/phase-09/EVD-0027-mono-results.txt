@@ -1,0 +1,75 @@
+EVD-0027 first frozen Mono collection: compact results
+source revision: 836b7527af66fcd422915fa20f83ca76e9e769f0
+UTC: 2026-10-17T12:46:09.173141+00:00
+raw artifact: /home/per/pertylizer-evidence/phase-09/EVD-0027-836b7527-mono-run.txt
+raw SHA-256: 570c69d2d35645e55965ec622a3d35460c931e7d7e5eb4692c852472670514d2
+raw bytes: 2790288
+raw purpose: exact command/environment, all started configurations and callback durations, owner-local resources and shared queue peaks
+process exit: 0; first collection, no discarded prefix
+layout: Mono; block: 64 frames; sound G=4; compiled span S=2; sources=2
+law: half-sum with f64 intermediates, round once to f32; stereo master/tap precede explicit fold
+CPU 0; i7-13700H; performance governor; tsc; Linux 7.2.11-200.fc44; glibc 2.43; Rust/Cargo 1.99.1; LLVM 23.1.1
+All reported max/p999 values are separately recomputed from the raw duration rows; no timer-floor subtraction.
+rate_hz,kind,callback_count,max_ns,p999_ns,deadline_ns,empty_floor_ns,requested_heap_peak_bytes
+44100,reference,11024,70269,34043,362811,9,23504687
+44100,selected,11024,56463,27828,362811,9,21186351
+48000,reference,11024,75574,30184,333333,9,23567087
+48000,selected,11024,57817,30545,333333,9,21248751
+96000,reference,11024,66112,33835,166666,9,24335087
+96000,selected,11024,58354,28118,166666,9,22016751
+192000,reference,11024,69159,33421,83333,9,25871087
+192000,selected,11024,76709,38848,83333,9,23552751
+
+Controls passed before every configuration; all 88192 callbacks passed zero total allocation count, zero net count and zero net bytes.
+All observed resources fit frozen bounds and writable extents; zero rejected control writes.
+All sound/raw ownership and ordered message/frontier/exact key-up assertions passed.
+Each selected configuration was reproduced by reselection; governor was unchanged.
+
+Required-path maxima:
+rate=44100 kind=reference paths seek_or_loop=42.614µs loop=42.614µs stop=23.257µs start=20.983µs panic=29.241µs reset=61.277µs pressure=70.269µs
+rate=44100 kind=selected paths seek_or_loop=41.503µs loop=29.278µs stop=21.576µs start=19.563µs panic=26.521µs reset=56.463µs pressure=48.849µs
+rate=48000 kind=reference paths seek_or_loop=33.697µs loop=30.197µs stop=23.31µs start=21.557µs panic=26.438µs reset=61.036µs pressure=75.574µs
+rate=48000 kind=selected paths seek_or_loop=53.153µs loop=35.493µs stop=19.49µs start=22.255µs panic=26.006µs reset=57.817µs pressure=47.988µs
+rate=96000 kind=reference paths seek_or_loop=43.59µs loop=43.59µs stop=23.173µs start=21.04µs panic=27.423µs reset=63.81µs pressure=66.112µs
+rate=96000 kind=selected paths seek_or_loop=34.907µs loop=34.907µs stop=21.62µs start=19.781µs panic=26.868µs reset=58.354µs pressure=47.123µs
+rate=192000 kind=reference paths seek_or_loop=45.517µs loop=45.517µs stop=23.042µs start=21.125µs panic=27.743µs reset=58.293µs pressure=69.159µs
+rate=192000 kind=selected paths seek_or_loop=43.864µs loop=43.864µs stop=19.578µs start=19.868µs panic=26.145µs reset=76.709µs pressure=50.21µs
+
+Collected resource/heap observations (owner maxima combined componentwise, shared queues are host-level):
+rate=44100 kind=reference observations=FrozenObservations { producers: [Some(EventCount(6)), None, Some(EventCount(64)), Some(EventCount(57)), None, Some(EventCount(4))], holds: EventCount(4), performance: MixedTransferPlaces(68), commands: MixedTransferPlaces(36), results: MixedTransferPlaces(36), stage: [MixedTransferPlaces(18), MixedTransferPlaces(18)], raw_inputs: [MixedTransferPlaces(20), MixedTransferPlaces(20)], raw_packets: MixedTransferPlaces(38), raw_completions: MixedTransferPlaces(38), raw_commands: MixedTransferPlaces(1), raw_actions: MixedTransferPlaces(40) } requested_heap_upper_bound=AllocationInfo { count_total: 105222, count_current: 26, count_max: 414, bytes_total: 72684405, bytes_current: 12972416, bytes_max: 23504687 }
+rate=44100 kind=selected observations=FrozenObservations { producers: [Some(EventCount(6)), None, Some(EventCount(64)), Some(EventCount(57)), None, Some(EventCount(4))], holds: EventCount(4), performance: MixedTransferPlaces(68), commands: MixedTransferPlaces(36), results: MixedTransferPlaces(36), stage: [MixedTransferPlaces(18), MixedTransferPlaces(18)], raw_inputs: [MixedTransferPlaces(20), MixedTransferPlaces(20)], raw_packets: MixedTransferPlaces(38), raw_completions: MixedTransferPlaces(38), raw_commands: MixedTransferPlaces(1), raw_actions: MixedTransferPlaces(40) } requested_heap_upper_bound=AllocationInfo { count_total: 105222, count_current: 26, count_max: 414, bytes_total: 69152629, bytes_current: 12972416, bytes_max: 21186351 }
+rate=48000 kind=reference observations=FrozenObservations { producers: [Some(EventCount(6)), None, Some(EventCount(64)), Some(EventCount(57)), None, Some(EventCount(4))], holds: EventCount(4), performance: MixedTransferPlaces(68), commands: MixedTransferPlaces(36), results: MixedTransferPlaces(36), stage: [MixedTransferPlaces(18), MixedTransferPlaces(18)], raw_inputs: [MixedTransferPlaces(20), MixedTransferPlaces(20)], raw_packets: MixedTransferPlaces(38), raw_completions: MixedTransferPlaces(38), raw_commands: MixedTransferPlaces(1), raw_actions: MixedTransferPlaces(40) } requested_heap_upper_bound=AllocationInfo { count_total: 105222, count_current: 26, count_max: 414, bytes_total: 72809205, bytes_current: 12972416, bytes_max: 23567087 }
+rate=48000 kind=selected observations=FrozenObservations { producers: [Some(EventCount(6)), None, Some(EventCount(64)), Some(EventCount(57)), None, Some(EventCount(4))], holds: EventCount(4), performance: MixedTransferPlaces(68), commands: MixedTransferPlaces(36), results: MixedTransferPlaces(36), stage: [MixedTransferPlaces(18), MixedTransferPlaces(18)], raw_inputs: [MixedTransferPlaces(20), MixedTransferPlaces(20)], raw_packets: MixedTransferPlaces(38), raw_completions: MixedTransferPlaces(38), raw_commands: MixedTransferPlaces(1), raw_actions: MixedTransferPlaces(40) } requested_heap_upper_bound=AllocationInfo { count_total: 105222, count_current: 26, count_max: 414, bytes_total: 69277429, bytes_current: 12972416, bytes_max: 21248751 }
+rate=96000 kind=reference observations=FrozenObservations { producers: [Some(EventCount(6)), None, Some(EventCount(64)), Some(EventCount(57)), None, Some(EventCount(4))], holds: EventCount(4), performance: MixedTransferPlaces(68), commands: MixedTransferPlaces(36), results: MixedTransferPlaces(36), stage: [MixedTransferPlaces(18), MixedTransferPlaces(18)], raw_inputs: [MixedTransferPlaces(20), MixedTransferPlaces(20)], raw_packets: MixedTransferPlaces(38), raw_completions: MixedTransferPlaces(38), raw_commands: MixedTransferPlaces(1), raw_actions: MixedTransferPlaces(40) } requested_heap_upper_bound=AllocationInfo { count_total: 105222, count_current: 26, count_max: 414, bytes_total: 74345205, bytes_current: 12972416, bytes_max: 24335087 }
+rate=96000 kind=selected observations=FrozenObservations { producers: [Some(EventCount(6)), None, Some(EventCount(64)), Some(EventCount(57)), None, Some(EventCount(4))], holds: EventCount(4), performance: MixedTransferPlaces(68), commands: MixedTransferPlaces(36), results: MixedTransferPlaces(36), stage: [MixedTransferPlaces(18), MixedTransferPlaces(18)], raw_inputs: [MixedTransferPlaces(20), MixedTransferPlaces(20)], raw_packets: MixedTransferPlaces(38), raw_completions: MixedTransferPlaces(38), raw_commands: MixedTransferPlaces(1), raw_actions: MixedTransferPlaces(40) } requested_heap_upper_bound=AllocationInfo { count_total: 105222, count_current: 26, count_max: 414, bytes_total: 70813429, bytes_current: 12972416, bytes_max: 22016751 }
+rate=192000 kind=reference observations=FrozenObservations { producers: [Some(EventCount(6)), None, Some(EventCount(64)), Some(EventCount(57)), None, Some(EventCount(4))], holds: EventCount(4), performance: MixedTransferPlaces(68), commands: MixedTransferPlaces(36), results: MixedTransferPlaces(36), stage: [MixedTransferPlaces(18), MixedTransferPlaces(18)], raw_inputs: [MixedTransferPlaces(20), MixedTransferPlaces(20)], raw_packets: MixedTransferPlaces(38), raw_completions: MixedTransferPlaces(38), raw_commands: MixedTransferPlaces(1), raw_actions: MixedTransferPlaces(40) } requested_heap_upper_bound=AllocationInfo { count_total: 105222, count_current: 26, count_max: 414, bytes_total: 77417205, bytes_current: 12972416, bytes_max: 25871087 }
+rate=192000 kind=selected observations=FrozenObservations { producers: [Some(EventCount(6)), None, Some(EventCount(64)), Some(EventCount(57)), None, Some(EventCount(4))], holds: EventCount(4), performance: MixedTransferPlaces(68), commands: MixedTransferPlaces(36), results: MixedTransferPlaces(36), stage: [MixedTransferPlaces(18), MixedTransferPlaces(18)], raw_inputs: [MixedTransferPlaces(20), MixedTransferPlaces(20)], raw_packets: MixedTransferPlaces(38), raw_completions: MixedTransferPlaces(38), raw_commands: MixedTransferPlaces(1), raw_actions: MixedTransferPlaces(40) } requested_heap_upper_bound=AllocationInfo { count_total: 105222, count_current: 26, count_max: 414, bytes_total: 73885429, bytes_current: 12972416, bytes_max: 23552751 }
+
+Selected configurations:
+rate=44100 shares=[Compiled,AuthoredRuntime,Live,Session,Internal,Release]=[32, 96, 320, 128, 32, 352]
+max_events_per_quantum=960 max_scheduled_events_in_flight=4192 release_hold_capacity=32 performance_ingress_capacity=160
+commands=192 results=192 stage=64 raw_inputs=288 raw_packets=128 raw_completions=128
+raw_commands=32
+raw_actions=512
+raw_action_bytes=262144
+rate=48000 shares=[Compiled,AuthoredRuntime,Live,Session,Internal,Release]=[32, 96, 320, 128, 32, 352]
+max_events_per_quantum=960 max_scheduled_events_in_flight=4192 release_hold_capacity=32 performance_ingress_capacity=160
+commands=192 results=192 stage=64 raw_inputs=288 raw_packets=128 raw_completions=128
+raw_commands=32
+raw_actions=512
+raw_action_bytes=262144
+rate=96000 shares=[Compiled,AuthoredRuntime,Live,Session,Internal,Release]=[32, 96, 320, 128, 32, 352]
+max_events_per_quantum=960 max_scheduled_events_in_flight=4192 release_hold_capacity=32 performance_ingress_capacity=160
+commands=192 results=192 stage=64 raw_inputs=288 raw_packets=128 raw_completions=128
+raw_commands=32
+raw_actions=512
+raw_action_bytes=262144
+rate=192000 shares=[Compiled,AuthoredRuntime,Live,Session,Internal,Release]=[32, 96, 320, 128, 32, 352]
+max_events_per_quantum=960 max_scheduled_events_in_flight=4192 release_hold_capacity=32 performance_ingress_capacity=160
+commands=192 results=192 stage=64 raw_inputs=288 raw_packets=128 raw_completions=128
+raw_commands=32
+raw_actions=512
+raw_action_bytes=262144
+
+Scope: fixed serial Mono rehearsal only; no cross-session speed comparison, continuous/concurrent/physical qualification or production activation.
+Reproduction: exact collector command and source revision are in the raw artifact and EVD record; fresh timing samples will differ.

@@ -158,7 +158,12 @@ impl synth_mcp::bridge::MixingBridge for AppSynthBridge {
             .command_sender()
             .send(EngineCommand::CreateReturnBus { id })
         {
-            self.shared.song.write().delete_return_bus(id);
+            let mut song = self.shared.song.write();
+            song.delete_return_bus(id);
+            self.session
+                .state()
+                .shared_graph
+                .invalidate_identity_lineage();
             return Err(McpBridgeError::CommandSendFailed {
                 command: "CreateReturnBus",
             });
@@ -172,6 +177,10 @@ impl synth_mcp::bridge::MixingBridge for AppSynthBridge {
             let mut song = self.shared.song.write();
             song.delete_return_bus(id)
                 .ok_or(McpBridgeError::ReturnBusNotFound(return_id))?;
+            self.session
+                .state()
+                .shared_graph
+                .invalidate_identity_lineage();
         }
         if !self
             .session

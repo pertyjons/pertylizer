@@ -1,0 +1,197 @@
+EVD-0016 Linux fixed-256 diagnostic, 2026-10-17
+Only callback timestamps and metadata were retained; no PCM samples.
+
+=== Predeclared question, source and collection metadata ===
+{
+  "question": "Does the current direct sof-hda-dsp 256-frame duplex candidate retain complete, monotone callback/bridge records without backend faults?",
+  "limits": "Diagnostic only. One-period freshness already prevents F4 acceptance at this buffer. No calibrated ADC/DAC, round-trip, MIDI mapping, production capacity or platform qualification claim.",
+  "stopping_rule": "Exactly one declared collection; preserve failures. No tuning or retry after the result.",
+  "source_revision": "1b4bfbf0e52005f07d22df1504c0326c5cc65093",
+  "source_clean_before_capture": true,
+  "build_command": "CARGO_BUILD_JOBS=2 cargo build -p pertylizer --release --example evd_0016_cpal_timestamps",
+  "binary_sha256": "5b645309e3ff97e86a5f058eec6fba4b4f07e2af0ddd158ddc7065b020ee949a",
+  "command": "/home/per/github/pertylizer/target/release/examples/evd_0016_cpal_timestamps record duplex 10000 --physical --output-device alsa:hw:CARD=0,DEV=0 --input-device alsa:hw:CARD=0,DEV=0 --buffer-frames 256",
+  "kernel": "Linux-7.2.11-200.fc44.x86_64-x86_64-with-glibc2.43",
+  "affinity": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11,
+    12,
+    13,
+    14,
+    15,
+    16,
+    17,
+    18,
+    19
+  ],
+  "load_control": "Uncontrolled system load; no CPU or priority/governor tuning.",
+  "devices_exit": 0,
+  "rustc_exit": 0,
+  "cargo_exit": 0,
+  "alsa-playback_exit": 0,
+  "alsa-capture_exit": 0,
+  "midi_exit": 0,
+  "cpu_model": "model name\t: 13th Gen Intel(R) Core(TM) i7-13700H",
+  "governors": [
+    "performance"
+  ],
+  "utc_start": "2026-10-17T16:17:30.474762+00:00",
+  "load_before": "1.09 1.01 0.75 2/1814 415010",
+  "probe_exit": 0,
+  "utc_end": "2026-10-17T16:18:23.929128+00:00",
+  "load_after": "0.47 0.85 0.70 2/1784 415080",
+  "source_clean_after_capture": true,
+  "callbacks_sha256": "8a2b8a17ca8498bd8dc8703ad6cd396c857ed5e12c901ee63db9737449aae8a7",
+  "compressed_sha256": "953bd1fe62ea94a2955e68d620fc85c01910a0d652468ba943555d38c09a2049",
+  "analysis_command": "python3 -B plans/v2/evidence/phase-03/evd_0016_analyse.py --require-current-method /home/per/pertylizer-evidence/phase-09/linux-clock-2026-10-17-1b4bfbf0-fixed256/callbacks.csv",
+  "analysis_exit": 1,
+  "audit_command": "python3 -B plans/v2/evidence/phase-03/evd_0016_audit_f7.py /home/per/pertylizer-evidence/phase-09/linux-clock-2026-10-17-1b4bfbf0-fixed256/callbacks.csv.gz",
+  "audit_exit": 0
+}
+
+=== Device listing ===
+host=alsa
+os=linux
+arch=x86_64
+output_devices:
+  name=Discard all samples (playback) or generate zero samples (capture) id=alsa:null type=Unknown format=F32 rate=48000 channels=2 buffers=Range { min: 1, max: 268435455 }
+  name=PipeWire Sound Server id=alsa:pipewire type=Unknown format=F32 rate=48000 channels=2 buffers=Range { min: 16, max: 262144 }
+  name=Default ALSA Output (currently PipeWire Media Server) id=alsa:default type=Unknown format=F32 rate=48000 channels=2 buffers=Range { min: 16, max: 262144 }
+  name=sof-hda-dsp,  id=alsa:sysdefault:CARD=sofhdadsp type=Unknown format=F32 rate=48000 channels=2 buffers=Range { min: 2, max: 183253370 }
+  name=sof-hda-dsp,  id=alsa:hw:CARD=0,DEV=0 type=Unknown format=I32 rate=48000 channels=2 buffers=Range { min: 24, max: 2048 }
+  name=sof-hda-dsp,  id=alsa:plughw:CARD=0,DEV=0 type=Unknown format=F32 rate=48000 channels=2 buffers=Range { min: 2, max: 183253370 }
+  name=sof-hda-dsp, HDMI 1 id=alsa:hw:CARD=0,DEV=3 type=Unknown format=I24 rate=48000 channels=2 buffers=Range { min: 24, max: 2048 }
+  name=sof-hda-dsp, HDMI 1 id=alsa:plughw:CARD=0,DEV=3 type=Unknown format=F32 rate=48000 channels=2 buffers=Range { min: 2, max: 183253370 }
+  name=sof-hda-dsp, HDMI 2 id=alsa:hw:CARD=0,DEV=4 type=Unknown format=I24 rate=48000 channels=2 buffers=Range { min: 24, max: 2048 }
+  name=sof-hda-dsp, HDMI 2 id=alsa:plughw:CARD=0,DEV=4 type=Unknown format=F32 rate=48000 channels=2 buffers=Range { min: 2, max: 183253370 }
+  name=sof-hda-dsp, HDMI 3 id=alsa:hw:CARD=0,DEV=5 type=Unknown format=I24 rate=48000 channels=2 buffers=Range { min: 24, max: 2048 }
+  name=sof-hda-dsp, HDMI 3 id=alsa:plughw:CARD=0,DEV=5 type=Unknown format=F32 rate=48000 channels=2 buffers=Range { min: 2, max: 183253370 }
+  name=sof-hda-dsp,  id=alsa:hw:CARD=0,DEV=31 type=Unknown format=I32 rate=48000 channels=2 buffers=Range { min: 24, max: 2048 }
+  name=sof-hda-dsp,  id=alsa:plughw:CARD=0,DEV=31 type=Unknown format=F32 rate=48000 channels=2 buffers=Range { min: 2, max: 183253370 }
+input_devices:
+  name=Discard all samples (playback) or generate zero samples (capture) id=alsa:null type=Unknown format=F32 rate=48000 channels=2 buffers=Range { min: 1, max: 268435455 }
+  name=PipeWire Sound Server id=alsa:pipewire type=Unknown format=F32 rate=48000 channels=2 buffers=Range { min: 16, max: 262144 }
+  name=Default ALSA Output (currently PipeWire Media Server) id=alsa:default type=Unknown format=F32 rate=48000 channels=2 buffers=Range { min: 16, max: 262144 }
+  name=sof-hda-dsp,  id=alsa:sysdefault:CARD=sofhdadsp type=Unknown format=F32 rate=48000 channels=2 buffers=Range { min: 2, max: 183253370 }
+  name=sof-hda-dsp,  id=alsa:hw:CARD=0,DEV=0 type=Unknown format=I24 rate=48000 channels=2 buffers=Range { min: 24, max: 2048 }
+  name=sof-hda-dsp,  id=alsa:plughw:CARD=0,DEV=0 type=Unknown format=F32 rate=48000 channels=2 buffers=Range { min: 2, max: 183253370 }
+  name=sof-hda-dsp,  id=alsa:hw:CARD=0,DEV=6 type=Unknown format=I32 rate=48000 channels=2 buffers=Range { min: 24, max: 2048 }
+  name=sof-hda-dsp,  id=alsa:plughw:CARD=0,DEV=6 type=Unknown format=F32 rate=48000 channels=2 buffers=Range { min: 2, max: 183253370 }
+  name=sof-hda-dsp,  id=alsa:hw:CARD=0,DEV=7 type=Unknown format=I32 rate=16000 channels=2 buffers=Range { min: 24, max: 2048 }
+  name=sof-hda-dsp,  id=alsa:plughw:CARD=0,DEV=7 type=Unknown format=F32 rate=48000 channels=2 buffers=Range { min: 6, max: 268435455 }
+
+=== Device listing diagnostics ===
+
+
+=== Compiler ===
+rustc 1.99.1 (58cf8f9c3 2026-10-13)
+binary: rustc
+commit-hash: 58cf8f9c35b355199727627d07ae34a4e2846d67
+commit-date: 2026-10-13
+host: x86_64-unknown-linux-gnu
+release: 1.99.1
+LLVM version: 23.1.1
+
+=== Cargo ===
+cargo 1.99.1 (5f94df478 2026-08-27)
+
+=== ALSA playback endpoints ===
+**** List of PLAYBACK Hardware Devices ****
+card 0: sofhdadsp [sof-hda-dsp], device 0: HDA Analog (*) []
+  Subdevices: 1/1
+  Subdevice #0: subdevice #0
+card 0: sofhdadsp [sof-hda-dsp], device 3: HDMI1 (*) [HDMI 1]
+  Subdevices: 1/1
+  Subdevice #0: subdevice #0
+card 0: sofhdadsp [sof-hda-dsp], device 4: HDMI2 (*) [HDMI 2]
+  Subdevices: 1/1
+  Subdevice #0: subdevice #0
+card 0: sofhdadsp [sof-hda-dsp], device 5: HDMI3 (*) [HDMI 3]
+  Subdevices: 1/1
+  Subdevice #0: subdevice #0
+card 0: sofhdadsp [sof-hda-dsp], device 31: HDA Analog Deep Buffer (*) []
+  Subdevices: 1/1
+  Subdevice #0: subdevice #0
+
+=== ALSA capture endpoints ===
+**** List of CAPTURE Hardware Devices ****
+card 0: sofhdadsp [sof-hda-dsp], device 0: HDA Analog (*) []
+  Subdevices: 1/1
+  Subdevice #0: subdevice #0
+card 0: sofhdadsp [sof-hda-dsp], device 6: DMIC (*) []
+  Subdevices: 1/1
+  Subdevice #0: subdevice #0
+card 0: sofhdadsp [sof-hda-dsp], device 7: DMIC16kHz (*) []
+  Subdevices: 1/1
+  Subdevice #0: subdevice #0
+
+=== MIDI endpoints ===
+client 0: 'System' [type=kernel]
+    0 'Timer           '
+	Connecting To: 144:0
+    1 'Announce        '
+	Connecting To: 144:0
+client 14: 'Midi Through' [type=kernel]
+    0 'Midi Through Port-0'
+client 144: 'PipeWire-System' [type=user,pid=4186]
+    0 'input           '
+	Connected From: 0:1, 0:0
+client 145: 'PipeWire-RT-Event' [type=user,pid=4186]
+    0 'input           '
+
+=== Probe diagnostics ===
+
+
+=== Analyzer result ===
+artifact,platform,direction,callbacks,sample_rate_hz,quantum_frames,minimum_frames,maximum_frames,effective_rate_hz,drift_ppm,fit_residual_p999_frames,period_residual_p999_frames,bridge_half_width_max_frames,bridge_fit_residual_p999_frames,stream_now_freshness_bound_frames,latency_p50_frames,latency_p999_frames,bridged_uncertainty_frames,duplex_uncertainty_frames,realtime_denied_count,f4_outcome,falsifiers
+callbacks.csv,linux,input,10005,48000,64,256,256,47999.995238,-0.099,24.018,38.919,1.076,36.194,256,280.000,296.000,319,642,0,Not supported,F4: bridged p99.9 uncertainty 319 frames is at least Q=64; F4: duplex input-to-output uncertainty 642 frames is at least Q=64
+callbacks.csv,linux,output,10002,48000,64,256,256,48000.007397,0.154,23.467,39.507,3.245,38.446,256,240.000,256.000,323,642,0,Not supported,F4: bridged p99.9 uncertainty 323 frames is at least Q=64; F4: duplex input-to-output uncertainty 642 frames is at least Q=64
+
+=== Analyzer diagnostics ===
+
+
+=== Independent whole-trace audit ===
+direction,callbacks,bridges,backward_callback_steps,error_count,xrun_count,loss_count,realtime_denied_count
+input,10005,2579,0,0,0,0,0
+output,10002,2579,0,0,0,0,0
+
+=== Audit diagnostics ===
+
+
+The gzip header uses mtime=0. The compressed and uncompressed SHA-256 values
+are recorded in the collection metadata. No source or method changes preceded
+this collection, and no failed prefix was discarded or rerun.
+
+=== Pre-collection controls: recorded session command results ===
+Both commands below completed before the recorded probe start at
+2026-10-17T16:17:30.474762+00:00. These are the observed session results,
+not output emitted by the timestamp probe itself.
+command_1=python3 -B plans/v2/evidence/phase-03/evd_0016_analyse.py --self-test
+command_2=python3 -B scripts/check_v2_docs.py --evidence
+combined_session_exit=0
+observed_stdout:
+EVD-0016 analyzer controls passed (legacy and current single-direction/duplex positives + 30 classified mutations + 2 F4 negative outcomes + RealtimeDenied warning + release coverage + 15 endpoint cases).
+Core V2 documentation and evidence checks passed.
+
+=== Post-retention verification ===
+command=python3 -B scripts/check_v2_docs.py --evidence
+exit=0
+Core V2 documentation and evidence checks passed.
+
+command=python3 -B -m unittest scripts/test_check_v2_docs.py
+exit=0
+......................................
+----------------------------------------------------------------------
+Ran 38 tests in 0.039s
+
+OK

@@ -5,8 +5,8 @@ use crate::input_host::{
     managed::ManagedRun,
     prepare::PreparedAttempt,
     source::{
-        SOURCE_CELLS, SourceOwnedSendError, SourceProducer, SourceRetiredAttempt, SourceRetryToken,
-        SourceSendError,
+        SOURCE_BACKING_CELLS, SourceOwnedSendError, SourceProducer, SourceRetiredAttempt,
+        SourceRetryToken, SourceSendError,
     },
 };
 use cpal::{
@@ -463,7 +463,7 @@ pub(crate) fn service_joined_sources(
     managed: &mut ManagedRun,
 ) -> Option<Box<dyn std::error::Error>> {
     let mut first_error = None;
-    for _ in 0..=(SOURCE_CELLS * 2) {
+    for _ in 0..=(SOURCE_BACKING_CELLS * 2) {
         if let Err(error) = service(managed, &mut false) {
             eprintln!("joined_service={error}");
             if first_error.is_none() {

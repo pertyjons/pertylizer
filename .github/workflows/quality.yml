@@ -40,6 +40,14 @@ jobs:
         run: cargo test --workspace
       - name: V2 GUI tests
         run: cargo test -p pertylizer --features v2-lowering --lib gui::egui_backend::v2_flow::
+      - name: Mixed transfer rehearsal tests
+        run: |
+          cargo test -p synth_engine_v2 --no-default-features --features mixed-transfer-rehearsal --test mixed_transfer_rehearsal
+          cargo test -p synth_engine_v2 --no-default-features --features mixed-transfer-rehearsal --test mixed_source_bridge
+          cargo test -p synth_engine_v2 --no-default-features --features mixed-transfer-rehearsal --lib
+          cargo test -p synth_engine_v2 --no-default-features --features mixed-transfer-rehearsal --doc
+      - name: Mixed transfer rehearsal Clippy
+        run: cargo clippy -p synth_engine_v2 --all-targets --no-default-features --features mixed-transfer-rehearsal
       # The oversized-callback resource probe (LIMIT-0001, EVD-0006) has a
       # #[cfg(not(debug_assertions))] arm that dev-profile test runs never
       # compile; without this step no gate would ever execute or type-check it.

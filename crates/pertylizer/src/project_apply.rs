@@ -98,6 +98,9 @@ pub fn apply_project(
     {
         let mut s = song.write();
         *s = project.song.clone();
+        // Song owns return-bus IDs. Even a refused engine command must not let
+        // a newly loaded bus inherit state from the previous project's same ID.
+        session.state().shared_graph.invalidate_identity_lineage();
         // Upgrade legacy pre-Note-Grid projects: fold each pattern's linear
         // NoteProcessor rack into a pooled graph (before the rebuild below, which
         // then builds the new graphs' derived order alongside the existing pool).
@@ -1565,6 +1568,28 @@ mod tests {
             "{:?}",
             report.diagnostic_lines()
         );
+    }
+
+    #[test]
+    fn song_replacement_fences_bus_identity_even_when_no_command_can_be_admitted() {
+        let (_engine, handle) =
+            SynthEngine::with_command_capacity(synth_engine::CommandCapacity::new(1).unwrap());
+        let session = SynthSession::new(handle.command_sender(), Arc::clone(&handle.state));
+        assert!(
+            session
+                .command_sender()
+                .send(EngineCommand::SetMasterVolume(synth_core::Gain::UNITY))
+        );
+        let song: SharedSong = Arc::new(synth_sequencer::SharedSong::new(Song::new("old")));
+        let old_id = song.write().create_return_bus("old bus");
+        let mut incoming = empty_project("replacement");
+        assert_eq!(incoming.song.create_return_bus("new bus"), old_id);
+        let sample_library: SharedSampleLibrary =
+            Arc::new(std::sync::RwLock::new(SampleLibrary::default()));
+        let lineage = session.state().shared_graph.identity_lineage();
+        assert!(apply_project(&incoming, &session, &song, &sample_library).is_err());
+        assert_eq!(song.read().return_busses()[0].name, "new bus");
+        assert_ne!(session.state().shared_graph.identity_lineage(), lineage);
     }
 
     /// A load that overflows the engine's command ring must fail.

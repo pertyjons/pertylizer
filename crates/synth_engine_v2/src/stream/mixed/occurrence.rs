@@ -24,12 +24,19 @@
 //!
 //! Panic is a host command, not a source edge. The merger owns one command-ring place
 //! for it outside the ordinary room and refuses a second Panic at the caller boundary
-//! while the first is uncollected. On audio it ends every sounding and sustained live
-//! occurrence of every scope as one `Panic` release group: arm bounds the live hold
+//! while the first is uncollected, including while audio holds it parked until the
+//! quantum of its execution stamp opens. On audio it ends every sounding and sustained
+//! live occurrence of every scope as one `Panic` release group: arm bounds the live hold
 //! entitlement by one group, so the group is never split. A sustained occurrence's cell
 //! retires with the Panic; a key-down occurrence's cell becomes a tombstone that
-//! consumes and counts its later key-up. Panic leaves pedals, refusal tombstones,
-//! compiled occurrences and the transport unchanged.
+//! consumes and counts its later key-up. In the same quantum the compiled loop ends every
+//! open compiled occurrence at the same sample. Panic leaves pedals, refusal tombstones
+//! and the transport unchanged.
+//!
+//! A whole-owner reset ends the fading owner's live occurrences the same way, as one
+//! `Reset` group stamped at the end of its fade: a sustained cell retires and a key-down
+//! cell becomes a `Reset` tombstone. The fading owner serves no command after the reset
+//! boundary, so the tombstone only classifies the cell for teardown.
 //!
 //! Bend is scoped like sustain. The audio half owns each scope's bend value; a bend
 //! command names its scope, never a handle, and audio resolves its members: every
@@ -94,6 +101,7 @@ impl MixedBendCreditReturn {
     }
 
     /// Credits returned and not yet taken, for an invariant check.
+    #[cfg(test)]
     pub(super) fn pending(&self) -> MixedIngressQueueCount {
         MixedIngressQueueCount(self.0.load(Ordering::Acquire))
     }
@@ -142,6 +150,12 @@ impl MixedLiveScope {
     pub(super) const fn new(source: MixedLiveSource, channel: MidiChannel) -> Self {
         Self { source, channel }
     }
+
+    /// The channel this scope reaches on its source.
+    #[cfg(feature = "mixed-transfer-rehearsal")]
+    pub(super) const fn channel(self) -> MidiChannel {
+        self.channel
+    }
 }
 
 /// A merger-minted name for one live occurrence: a ledger cell and its generation.
@@ -165,6 +179,17 @@ pub(super) enum MixedOccurrenceState {
     /// A tombstone for a key-down occurrence Panic ended, carrying the identity the
     /// Panic group released. The key-up is consumed and counted.
     Panicked(NoteIdentity),
+    /// A tombstone for a key-down occurrence a whole-owner reset ended, carrying the
+    /// identity the reset group released. The fading owner serves no command after the
+    /// reset boundary, so its key-up never reaches this table.
+    #[cfg_attr(
+        not(any(
+            all(test, feature = "simulated-ingress"),
+            feature = "mixed-transfer-rehearsal"
+        )),
+        allow(dead_code, reason = "only the reset pair ends an owner")
+    )]
+    Reset(NoteIdentity),
 }
 
 /// How a release retired its cell.
@@ -227,6 +252,7 @@ pub(super) struct MixedPanicked {
 impl MixedPanicked {
     /// The execution stamp: the nominal stamp, or the ingress store's last accepted stamp
     /// when that is later, so a Panic is never refused for its order.
+    #[cfg(any(test, feature = "mixed-transfer-rehearsal"))]
     pub(super) const fn executed_at(&self) -> SampleTime {
         self.executed_at
     }
@@ -238,6 +264,63 @@ impl MixedPanicked {
 
 /// An applied Panic, or a refusal that changed no occurrence, hold or queue entry.
 pub(super) type MixedPanicResult = Result<MixedPanicked, MixedPanicRefused>;
+
+/// How a whole-owner reset ended one live occurrence of the fading owner.
+#[cfg(any(
+    all(test, feature = "simulated-ingress"),
+    feature = "mixed-transfer-rehearsal"
+))]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum MixedResetEnd {
+    /// The key was up under its pedal: the cell retired with the reset.
+    Retired(LiveOccurrenceId),
+    /// The key was down: the cell holds a `Reset` tombstone. Its key-up belongs to the
+    /// successor owner's merger, which never sends it here.
+    Tombstoned(LiveOccurrenceId),
+}
+
+/// The occurrences one whole-owner reset ended, in cell order, which is also the order
+/// of their identities in its `Reset` release group.
+#[cfg(any(
+    all(test, feature = "simulated-ingress"),
+    feature = "mixed-transfer-rehearsal"
+))]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) struct MixedResetEnded {
+    ended: [Option<MixedResetEnd>; RELEASE_GROUP_CAPACITY],
+}
+
+#[cfg(any(
+    all(test, feature = "simulated-ingress"),
+    feature = "mixed-transfer-rehearsal"
+))]
+impl MixedResetEnded {
+    pub(super) const NONE: Self = Self {
+        ended: [None; RELEASE_GROUP_CAPACITY],
+    };
+
+    pub(super) fn ended(&self) -> impl Iterator<Item = MixedResetEnd> + '_ {
+        self.ended.iter().flatten().copied()
+    }
+}
+
+/// Why the fading owner refused to end its live occurrences for a reset. Every
+/// occurrence, hold and queue entry is unchanged.
+#[cfg(any(
+    all(test, feature = "simulated-ingress"),
+    feature = "mixed-transfer-rehearsal"
+))]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Error)]
+pub(super) enum MixedResetLiveRefused {
+    #[error("more live occurrences than one release group carries")]
+    GroupCapacity,
+    /// The table's sounding and sustained occurrences do not account for every hold the
+    /// store has outstanding, so the group could not end every live obligation.
+    #[error("{members} table occurrences do not account for {holds:?} outstanding holds")]
+    Unaccounted { members: usize, holds: EventCount },
+    #[error(transparent)]
+    Ingress(IngressRefused),
+}
 
 /// Why the audio half refused a Panic. Every occurrence keeps its state.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Error)]
@@ -291,6 +374,9 @@ pub(super) enum MixedHandleRefused {
     Sustained,
     #[error("live occurrence cell has spent its generations")]
     Exhausted,
+    /// A whole-owner reset ended the occurrence; its owner takes no further input.
+    #[error("live occurrence was ended by a whole-owner reset")]
+    Reset,
 }
 
 /// The stamp a bend executed at and the members it wrote, in cell order. Each member
@@ -303,6 +389,7 @@ pub(super) struct MixedBent {
 
 impl MixedBent {
     /// The bend command's nominal stamp, unchanged by the ingress order fence.
+    #[cfg(test)]
     pub(super) const fn executed_at(&self) -> SampleTime {
         self.executed_at
     }
@@ -344,6 +431,9 @@ pub(super) enum MixedBendSubmitError {
     PhysicalPush,
     #[error("no command-ring place for a bend")]
     Full,
+    #[cfg(any(test, feature = "mixed-transfer-rehearsal"))]
+    #[error("bend precedes a queued Panic at {0:?}")]
+    BehindPanic(SampleTime),
     #[error("no prepared bend scope cell is free")]
     ScopeCapacity,
     /// Too few bend credits are free; they return as audio serves earlier commands and
@@ -367,17 +457,26 @@ pub(super) enum MixedOnsetSubmitError {
     PhysicalPush,
     #[error("no command-ring place for an onset and its reserved release")]
     Full,
+    #[cfg(any(test, feature = "mixed-transfer-rehearsal"))]
+    #[error("onset precedes a queued Panic at {0:?}")]
+    BehindPanic(SampleTime),
     /// The onset's scope may carry a non-zero bend, and no credit is free for the
     /// inherited bend entry. An onset on an unbent scope needs none.
     #[error("no bend credit is free for the onset's inherited bend")]
     BendCredit,
     #[error("mixed ingress command or live occurrence identity is exhausted")]
     IdentityExhausted,
+    /// Defensive: the vacant handle refused to open after its onset was minted as this
+    /// command. The merger halted; the command keeps its journal entry, its queue place
+    /// or pending slot and its bend credit, and no handle holds a release place.
+    #[error("the merger ledger refused the handle of minted onset {0:?}")]
+    LedgerDefect(MixedIngressCommandId),
 }
 
 /// Why the merger could not submit a pedal edge. A physical push fault retains
 /// the minted command and its ledger charge; other refusals change no state.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Error)]
+#[cfg(any(test, feature = "mixed-transfer-rehearsal"))]
 pub(super) enum MixedPedalSubmitError {
     #[error("mixed ingress transfer is halted")]
     Halted,
@@ -385,6 +484,9 @@ pub(super) enum MixedPedalSubmitError {
     PhysicalPush,
     #[error("no command-ring place for a pedal-down and its reserved lift")]
     Full,
+    #[cfg(any(test, feature = "mixed-transfer-rehearsal"))]
+    #[error("pedal edge precedes a queued Panic at {0:?}")]
+    BehindPanic(SampleTime),
     #[error("the reserved pedal-lift place is unavailable")]
     ReservedPlaceUnavailable,
     #[error("mixed ingress command identity is exhausted")]
@@ -394,6 +496,7 @@ pub(super) enum MixedPedalSubmitError {
 /// Why the merger refused a Panic. A physical push fault retains the minted
 /// command and its protected place; other refusals mint nothing.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Error)]
+#[cfg(any(test, feature = "mixed-transfer-rehearsal"))]
 pub(super) enum MixedPanicSubmitError {
     #[error("mixed ingress transfer is halted")]
     Halted,
@@ -401,6 +504,13 @@ pub(super) enum MixedPanicSubmitError {
     PhysicalPush,
     #[error("an earlier Panic {0:?} still holds the protected place")]
     Pending(MixedIngressCommandId),
+    #[error("Panic precedes an already submitted Panic at {0:?}")]
+    BehindPanic(SampleTime),
+    #[error("Panic at {at:?} is refused until audio opens the quantum after Panic at {previous:?}")]
+    SameServiceQuantum {
+        previous: SampleTime,
+        at: SampleTime,
+    },
     #[error("mixed ingress command identity is exhausted")]
     IdentityExhausted,
 }
@@ -418,8 +528,20 @@ pub(super) enum MixedReleaseSubmitError {
     NotOpen(LiveOccurrenceId),
     #[error("the live occurrence's reserved release place is unavailable")]
     ReservedPlaceUnavailable(LiveOccurrenceId),
+    #[cfg(any(test, feature = "mixed-transfer-rehearsal"))]
+    #[error("release precedes a queued Panic at {0:?}")]
+    BehindPanic(SampleTime),
     #[error("mixed ingress command identity is exhausted")]
     IdentityExhausted(LiveOccurrenceId),
+    /// Defensive: an open handle found no reserved release place to spend. The merger
+    /// halted before minting; the handle stays open.
+    #[error("the open live occurrence holds no reserved release place")]
+    ReservationDefect(LiveOccurrenceId),
+    /// Defensive: the open handle refused to begin releasing after its release was
+    /// minted as this command. The merger halted; the command keeps its journal entry
+    /// and its queue place or pending slot.
+    #[error("the merger ledger refused to release under minted command {0:?}")]
+    LedgerDefect(MixedIngressCommandId),
 }
 
 /// One cell's use, shared by the merger ledger and the audio table.
@@ -432,7 +554,7 @@ enum CellUse<S> {
 
 /// The merger's side of one cell.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum LedgerHold {
+pub(super) enum LedgerHold {
     /// Onset staged; one ring place stays reserved for the release.
     Open,
     /// The release was submitted as this command; the cell waits for `Retired`.
@@ -542,6 +664,7 @@ impl MixedOccurrenceLedger {
         }
     }
 
+    #[cfg(test)]
     pub(super) fn is_pending(&self, occurrence: LiveOccurrenceId) -> bool {
         self.sound_of(occurrence) == Some(LedgerSound::Pending)
     }
@@ -816,6 +939,7 @@ impl MixedOccurrenceLedger {
         true
     }
 
+    #[cfg(test)]
     pub(super) fn is_sustained(&self, occurrence: LiveOccurrenceId) -> bool {
         matches!(
             self.cell(occurrence),
@@ -824,17 +948,53 @@ impl MixedOccurrenceLedger {
         )
     }
 
+    /// Drop every cell's scope slot, so `vacant` still names a cell that `open` refuses.
+    #[cfg(all(test, feature = "mixed-transfer-rehearsal"))]
+    pub(super) fn forget_scopes(&mut self) {
+        self.scopes.clear();
+    }
+
+    /// Retire every cell's generations except the first `free` cells, which stay vacant.
+    #[cfg(all(test, feature = "mixed-transfer-rehearsal"))]
+    pub(super) fn exhaust_cells_after(&mut self, free: usize) {
+        for cell in self.cells.iter_mut().skip(free) {
+            *cell = CellUse::Exhausted;
+        }
+    }
+
     /// Cells the ledger was prepared with.
+    #[cfg(any(test, feature = "mixed-transfer-rehearsal"))]
     pub(super) fn width(&self) -> usize {
         self.cells.len()
     }
 
     /// Handles the merger has opened and not yet seen retired.
+    #[cfg(test)]
     pub(super) fn held(&self) -> usize {
         self.cells
             .iter()
             .filter(|cell| matches!(cell, CellUse::Held(..)))
             .count()
+    }
+
+    /// Every handle the merger still holds, in cell order, with its reservation state,
+    /// for an off-thread teardown.
+    #[cfg(feature = "mixed-transfer-rehearsal")]
+    pub(super) fn held_handles(&self) -> Vec<(LiveOccurrenceId, LedgerHold)> {
+        self.cells
+            .iter()
+            .enumerate()
+            .filter_map(|(index, cell)| match cell {
+                CellUse::Held(generation, held) => Some((
+                    LiveOccurrenceId {
+                        cell: LiveOccurrenceCell(u32::try_from(index).ok()?),
+                        generation: *generation,
+                    },
+                    held.hold,
+                )),
+                CellUse::Free(_) | CellUse::Exhausted => None,
+            })
+            .collect()
     }
 }
 
@@ -850,6 +1010,7 @@ enum PedalLatch {
 
 /// What the merger does with one pedal edge.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[cfg(any(test, feature = "mixed-transfer-rehearsal"))]
 pub(super) enum MixedPedalEdge {
     /// The edge changes the merger's pedal state and must be submitted.
     Effective,
@@ -864,6 +1025,7 @@ pub(super) enum MixedPedalEdge {
 pub(super) struct MixedPedalLedger {
     cells: Vec<Option<(MixedLiveScope, PedalLatch)>>,
     reserved: usize,
+    #[cfg(test)]
     redundant: EventCount,
 }
 
@@ -874,6 +1036,7 @@ impl MixedPedalLedger {
         Self {
             cells: vec![None; width.as_usize()],
             reserved: 0,
+            #[cfg(test)]
             redundant: EventCount::NONE,
         }
     }
@@ -893,6 +1056,7 @@ impl MixedPedalLedger {
     }
 
     /// Classify an edge against the merger's pedal state, counting a redundant one.
+    #[cfg(any(test, feature = "mixed-transfer-rehearsal"))]
     pub(super) fn classify(&mut self, scope: MixedLiveScope, down: bool) -> MixedPedalEdge {
         let effective = match self.latch(scope) {
             Some(PedalLatch::Down { .. }) => !down,
@@ -901,20 +1065,25 @@ impl MixedPedalLedger {
         if effective {
             MixedPedalEdge::Effective
         } else {
-            self.redundant = self
-                .redundant
-                .checked_add(EventCount::measured(1))
-                .unwrap_or(self.redundant);
+            #[cfg(test)]
+            {
+                self.redundant = self
+                    .redundant
+                    .checked_add(EventCount::measured(1))
+                    .unwrap_or(self.redundant);
+            }
             MixedPedalEdge::Redundant
         }
     }
 
     /// Whether an effective down can latch: its scope already has a cell, or one is free.
+    #[cfg(any(test, feature = "mixed-transfer-rehearsal"))]
     pub(super) fn can_press(&self, scope: MixedLiveScope) -> bool {
         self.latch(scope).is_some() || self.cells.iter().any(Option::is_none)
     }
 
     /// Latch an effective pedal-down submitted as `command` and reserve its lift's place.
+    #[cfg(any(test, feature = "mixed-transfer-rehearsal"))]
     pub(super) fn press(&mut self, scope: MixedLiveScope, command: MixedIngressCommandId) {
         let latch = PedalLatch::Down {
             pressed_by: command,
@@ -931,16 +1100,19 @@ impl MixedPedalLedger {
     }
 
     /// Release one lift reservation so the lift itself can take the place.
+    #[cfg(any(test, feature = "mixed-transfer-rehearsal"))]
     pub(super) fn take_reservation(&mut self) {
         self.reserved -= 1;
     }
 
     /// Undo [`Self::take_reservation`] when the lift could not be pushed.
+    #[cfg(any(test, feature = "mixed-transfer-rehearsal"))]
     pub(super) fn return_reservation(&mut self) {
         self.reserved += 1;
     }
 
     /// Record the lift pushed as `command` into the scope's former reservation.
+    #[cfg(any(test, feature = "mixed-transfer-rehearsal"))]
     pub(super) fn lift(&mut self, scope: MixedLiveScope, command: MixedIngressCommandId) {
         if let Some(latch) = self.latch_mut(scope) {
             *latch = PedalLatch::Lifting(command);
@@ -1012,11 +1184,13 @@ impl MixedPedalLedger {
     }
 
     /// Redundant pedal edges consumed at the merger.
+    #[cfg(test)]
     pub(super) const fn redundant(&self) -> EventCount {
         self.redundant
     }
 
     /// Whether the merger considers the scope's pedal down.
+    #[cfg(test)]
     pub(super) fn is_down(&self, scope: MixedLiveScope) -> bool {
         matches!(self.latch(scope), Some(PedalLatch::Down { .. }))
     }
@@ -1058,6 +1232,7 @@ impl MixedOccurrenceTable {
     }
 
     /// Scopes whose pedal is down, in cell order, for an off-thread teardown.
+    #[cfg(test)]
     pub(super) fn pedals_down(&self) -> Vec<MixedLiveScope> {
         self.pedals.iter().flatten().copied().collect()
     }
@@ -1080,12 +1255,20 @@ impl MixedOccurrenceTable {
             .collect()
     }
 
+    /// Scopes whose non-zero bend audio holds a cell for.
+    #[cfg(all(test, feature = "mixed-transfer-rehearsal"))]
+    pub(super) fn bend_cells_held(&self) -> usize {
+        self.bends.iter().flatten().count()
+    }
+
     /// Releases consumed by a refused onset's tombstone.
+    #[cfg(test)]
     pub(super) const fn released_after_refusal(&self) -> EventCount {
         self.released_after_refusal
     }
 
     /// Key-ups consumed by a tombstone Panic left.
+    #[cfg(any(test, feature = "mixed-transfer-rehearsal"))]
     pub(super) const fn released_after_panic(&self) -> EventCount {
         self.released_after_panic
     }

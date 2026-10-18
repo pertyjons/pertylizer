@@ -423,3 +423,22 @@ impl IdentityTable {
         self.slots.len() * size_of::<Slot>() + self.ranges.len() * size_of::<Range>()
     }
 }
+
+#[cfg(feature = "simulated-ingress")]
+impl IdentityTable {
+    pub(crate) fn can_continue_plan(&self, from: crate::plan::PlanId, note_count: usize) -> bool {
+        self.slots.iter().all(|slot| match slot {
+            Slot::Live { note, .. } => note.plan() == from && note.index() < note_count,
+            Slot::Free { .. } | Slot::Retired => true,
+        })
+    }
+
+    /// The caller preflights every slot before rebinding the actual authoritative table.
+    pub(crate) fn continue_plan(&mut self, to: crate::plan::PlanId) {
+        for slot in &mut self.slots {
+            if let Slot::Live { note, .. } = slot {
+                *note = crate::plan::NoteSlot::new(to, note.index());
+            }
+        }
+    }
+}

@@ -30,7 +30,10 @@ fn attribute_input_fault(
         || (pre_raw
             && matches!(
                 fault.reason,
-                InputError::SourceQueueFull | InputError::IdentityExhausted | InputError::Full
+                InputError::SourceQueueFull
+                    | InputError::ProtectedCapacity
+                    | InputError::IdentityExhausted
+                    | InputError::Full
             )))
         && let Some(InputObservation::Message { tick, arrival, .. }) = fault.observation
         && let Some(clock) = clock

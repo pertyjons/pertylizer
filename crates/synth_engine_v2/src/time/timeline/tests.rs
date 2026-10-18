@@ -27,3 +27,23 @@ fn mapped_quantum_can_repeat_the_same_position_at_every_sample() {
         );
     }
 }
+
+#[test]
+fn held_quantum_reports_its_position_at_every_offset_without_playing_it() {
+    let held = QuantumTimeline::held(Some(PlanPosition::new(17)));
+    for offset in 0..64 {
+        assert_eq!(
+            held.position_at(QuantumOffset::new(offset).unwrap()),
+            Some(PlanPosition::new(17))
+        );
+    }
+    assert!(held.is_held());
+    assert!(held.mapped_positions().is_none());
+    let positions = [PlanPosition::new(17); QUANTUM_FRAMES as usize];
+    assert!(!QuantumTimeline::mapped(&positions).is_held());
+    assert!(!QuantumTimeline::linear(Some(PlanPosition::new(17))).is_held());
+    assert_eq!(
+        QuantumTimeline::held(None).position_at(QuantumOffset::ZERO),
+        None
+    );
+}

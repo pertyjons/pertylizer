@@ -290,7 +290,7 @@ impl<R: RawBackend> BendBridge<R> {
 }
 
 fn queued_bends(audio: &MixedOneShotAudio) -> Vec<(SampleTime, Cents)> {
-    let mut queue = vec![None; audio.test_ingress.queue_capacity_for_test()];
+    let mut queue = vec![None; audio.test_ingress.queue_capacity()];
     let len = audio.test_ingress.copy_queue_for_test(&mut queue).unwrap();
     queue
         .into_iter()
@@ -446,7 +446,7 @@ fn same_source_bends_keep_channel_and_command_order() {
         assert_eq!((result.id, result.request), (command, request));
         assert!(matches!(result.outcome, MixedIngressOutcome::Bend(Ok(_))));
     }
-    let mut queue = vec![None; audio.test_ingress.queue_capacity_for_test()];
+    let mut queue = vec![None; audio.test_ingress.queue_capacity()];
     let len = audio.test_ingress.copy_queue_for_test(&mut queue).unwrap();
     let written: Vec<_> = queue
         .into_iter()
@@ -1828,7 +1828,7 @@ fn bent_onset_keeps_its_raw_and_stage_custody_at_the_minimum_bend_budget() {
     };
     assert_ne!(old_identity, new_identity);
     assert_eq!(bridge.stage.pressure(Source::First), (0, 1));
-    let mut queue = vec![None; audio.test_ingress.queue_capacity_for_test()];
+    let mut queue = vec![None; audio.test_ingress.queue_capacity()];
     let len = audio.test_ingress.copy_queue_for_test(&mut queue).unwrap();
     let live: Vec<_> = queue
         .into_iter()

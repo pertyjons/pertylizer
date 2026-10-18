@@ -37,13 +37,51 @@
 //! events discarded as stale, which is the difference between a diagnosable error and a
 //! silent nothing. [`MixedJoinedStream::open`] separately prepares two disjoint range owners
 //! from one target binding. It can seal one private initial schedule off-thread but exposes
-//! no mixed offer or rendering operation yet.
+//! no production mixed offer or rendering operation. ADR-0078's default-off
+//! `mixed-transfer-rehearsal` feature adds a non-shipping host-owned transfer rehearsal
+//! over that initial schedule; `PerformanceIngress::prepare` still refuses a mixed plan.
 
 #[cfg(test)]
 mod table_tests;
 
 mod live;
 mod mixed;
+#[cfg(feature = "mixed-transfer-rehearsal")]
+pub use mixed::{
+    MixedActivationAdopted, MixedActivationCollectError, MixedActivationCollectRefusal,
+    MixedActivationKind, MixedActivationLoop, MixedActivationOffer, MixedActivationOutcome,
+    MixedActivationPrepareError, MixedActivationReceipt, MixedActivationRefusal,
+    MixedActivationRetired, MixedActivationSlot, MixedBridgeAbandonRefusal, MixedBridgeArmed,
+    MixedBridgeCommitRefusal, MixedBridgeControl, MixedBridgeError, MixedBridgeFault,
+    MixedBridgeJoinError, MixedBridgeJoinParts, MixedBridgeJoinRefusal, MixedBridgeLifted,
+    MixedBridgeOutcome, MixedBridgePanicEnd, MixedBridgePanicRefusal, MixedBridgePanicked,
+    MixedBridgeReport, MixedBridgeResetAudio, MixedBridgeResetEnd, MixedBridgeResetForeignPort,
+    MixedBridgeResetLiveRefusal, MixedBridgeResetOwner, MixedBridgeResetPhase,
+    MixedBridgeResetReceipt, MixedBridgeResetRefusal, MixedBridgeResetRefused,
+    MixedBridgeResetRenderError, MixedBridgeResetRetired, MixedBridgeResetState,
+    MixedBridgeRetiredControl, MixedBridgeRetiredJoinRefusal, MixedBridgeRetiredTeardown,
+    MixedBridgeSealRefusal, MixedBridgeSealRefused, MixedBridgeStopAccepted,
+    MixedBridgeStopRefusal, MixedBridgeTeardown, MixedBridgeWait, MixedCommandPlace,
+    MixedKeyUpHandle, MixedKeyUpRetired, MixedOnsetRefusal, MixedPublication,
+    MixedPublicationFault, MixedPublicationGate, MixedPublicationPublishError,
+    MixedPublicationReceiver, MixedPublicationRefusal, MixedPublicationSender, MixedPumpStep,
+    MixedRetiredHandle, MixedSourceBend, MixedSourceCustody, MixedSourceFault, MixedSourceHandoff,
+    MixedSourceKeyUp, MixedSourceNoteOn, MixedSourcePacketId, MixedSourcePacketIdError, MixedSplit,
+    MixedStaged, MixedTransferArmError, MixedTransferArmRefusal, MixedTransferArmed,
+    MixedTransferAudio, MixedTransferAudioPort, MixedTransferBendApplied, MixedTransferBendRefused,
+    MixedTransferCollectError, MixedTransferCommand, MixedTransferCommandId, MixedTransferConsumer,
+    MixedTransferControl, MixedTransferControlPort, MixedTransferCustody, MixedTransferFault,
+    MixedTransferFence, MixedTransferHandleState, MixedTransferHeldCount, MixedTransferJoinError,
+    MixedTransferJoinParts, MixedTransferJoinRefusal, MixedTransferLifted, MixedTransferOutcome,
+    MixedTransferOwnerRefusal, MixedTransferPanicEnd, MixedTransferPanicRefused,
+    MixedTransferPanicState, MixedTransferPanicked, MixedTransferPedalDown,
+    MixedTransferPedalRefused, MixedTransferPlaces, MixedTransferProducer,
+    MixedTransferPublicationUsage, MixedTransferQueue, MixedTransferRefusal,
+    MixedTransferRenderError, MixedTransferReport, MixedTransferResourceUsage, MixedTransferResult,
+    MixedTransferScopeCount, MixedTransferSnapshotFault, MixedTransferSources,
+    MixedTransferSourcesError, MixedTransferStreamFault, MixedTransferSubmitError,
+    MixedTransferTeardown,
+};
 pub use mixed::{
     MixedEffectiveTimeError, MixedEffectiveTiming, MixedHistoryCandidate, MixedHistoryPrepareError,
     MixedInitialPrepareError, MixedJoinedPrepared, MixedJoinedStream, MixedStampPrepareError,
@@ -627,10 +665,27 @@ impl StreamControl {
         )
     }
 
-    /// Both stamped obligations and separately prepared activations block readmission.
+    /// Only an isolated compiled producer may retire its notes with a stopped owner.
+    /// Any declared external range, adopted ingress or uncollected activation refuses;
+    /// no live offer can enter the private session control during readmission.
     #[cfg(feature = "simulated-ingress")]
     pub(crate) fn has_replacement_obligations(&self) -> bool {
-        self.minter.live() != 0 || self.live_candidates != 0 || self.live_notes_open.get() != 0
+        if self.live_candidates != 0
+            || self.live_notes_open.get() != 0
+            || self.ingress_store.is_some()
+        {
+            return true;
+        }
+        let compiled = self
+            .plan
+            .compiled_note_producer()
+            .map(|producer| usize::from(producer.as_u16()));
+        for (index, range) in self.plan.note_producer_ranges().iter().enumerate() {
+            if range.get() != 0 && Some(index) != compiled {
+                return true;
+            }
+        }
+        compiled.is_none() && self.minter.live() != 0
     }
 
     /// This stream's epoch.
@@ -1579,5 +1634,45 @@ impl StreamControl {
     /// **all** of these already released.
     pub(crate) fn add_outstanding(&mut self, outstanding: &[NoteIdentity]) {
         self.outstanding.extend_from_slice(outstanding);
+    }
+}
+
+#[cfg(feature = "simulated-ingress")]
+impl StreamControl {
+    pub(crate) const fn continuation_sequence(&self) -> crate::transport::ActivationSequence {
+        self.in_force
+    }
+
+    pub(crate) fn preflight_continuation_plan(
+        &self,
+        next: &CompiledPlan,
+    ) -> Result<(), crate::plan::ContinuationError> {
+        if self.live_candidates != 0
+            || self.ingress_store.is_some()
+            || self.live_notes_open.get() != 0
+            || self.plan.note_targets().len() != next.note_targets().len()
+            || !self
+                .minter
+                .can_continue_plan(self.plan.id(), self.plan.note_targets().len())
+        {
+            return Err(crate::plan::ContinuationError::Storage);
+        }
+        Ok(())
+    }
+
+    /// Rebind the actual minter after the owning installation receipt, never a snapshot.
+    pub(crate) fn collect_continuation_plan(
+        &mut self,
+        prepared: &mut Self,
+        from: PlanId,
+        to: PlanId,
+    ) -> Result<(), crate::plan::ContinuationError> {
+        if self.plan.id() != from || prepared.plan.id() != to {
+            return Err(crate::plan::ContinuationError::Storage);
+        }
+        self.preflight_continuation_plan(&prepared.plan)?;
+        self.minter.continue_plan(to);
+        core::mem::swap(&mut self.plan, &mut prepared.plan);
+        Ok(())
     }
 }

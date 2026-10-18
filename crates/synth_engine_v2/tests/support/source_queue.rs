@@ -34,6 +34,10 @@ impl<T> SourceQueueWriter<T> {
     pub(super) fn try_push(&mut self, packet: T) -> Result<(), T> {
         self.queue.try_push(packet)
     }
+
+    pub(super) fn occupied_len(&self) -> usize {
+        self.queue.occupied_len()
+    }
 }
 
 impl<T: Copy + PartialEq> SourceQueueReader<T> {

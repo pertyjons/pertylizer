@@ -1410,7 +1410,9 @@ fn apply_mutation(
                 // Roll back so song and engine agree on the return-bus set.
                 // Nothing happened from the user's point of view, so nothing
                 // goes on the undo stack either.
-                song.write().delete_return_bus(id);
+                let mut song_w = song.write();
+                song_w.delete_return_bus(id);
+                handle.state.shared_graph.invalidate_identity_lineage();
             }
         }
         MixerMutation::DeleteReturn(id) => {
@@ -1444,7 +1446,12 @@ fn apply_mutation(
             let removed = {
                 let mut sw = song.write();
                 let index = sw.return_bus_index(id);
-                index.zip(sw.delete_return_bus(id))
+                let removed = index.zip(sw.delete_return_bus(id));
+                if removed.is_some() {
+                    // Song owns bus IDs; queue refusal cannot preserve continuity.
+                    handle.state.shared_graph.invalidate_identity_lineage();
+                }
+                removed
             };
             if let Some((index, bus)) = removed {
                 handle.send(EngineCommand::RemoveReturnBus { id });
@@ -1524,5 +1531,37 @@ mod layout_tests {
             wrapped > STRIP_WIDTH - 16.0,
             "wrapping in a vertical layout keeps ~the full strip width: got {wrapped}"
         );
+    }
+}
+
+#[cfg(test)]
+mod lineage_tests {
+    use super::*;
+
+    #[test]
+    fn deleting_a_song_bus_fences_identity_even_when_the_engine_queue_is_full() {
+        let (_engine, mut handle) = synth_engine::SynthEngine::with_command_capacity(
+            synth_engine::CommandCapacity::new(1).unwrap(),
+        );
+        assert!(handle.send(EngineCommand::SetMasterVolume(synth_core::Gain::UNITY)));
+        let song = Arc::new(synth_sequencer::SharedSong::new(
+            synth_sequencer::Song::new("lineage"),
+        ));
+        let bus = song.write().create_return_bus("return");
+        let lineage = handle.state.shared_graph.identity_lineage();
+        let mut undo = crate::undo::UndoManager::default();
+        let mut coalescer = crate::undo::DragCoalescer::default();
+        let mut mixer_undo = crate::undo::MixerUndo {
+            undo: &mut undo,
+            coalescer: &mut coalescer,
+        };
+        apply_mutation(
+            MixerMutation::DeleteReturn(bus),
+            &mut handle,
+            &song,
+            &mut mixer_undo,
+        );
+        assert!(song.read().return_busses().is_empty());
+        assert_ne!(handle.state.shared_graph.identity_lineage(), lineage);
     }
 }

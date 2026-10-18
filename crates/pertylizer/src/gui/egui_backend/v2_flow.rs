@@ -122,6 +122,7 @@ impl SynthApp {
         let Some(mut switch) = self.v2.switch.take() else {
             return;
         };
+        switch.track_identity_source(std::sync::Arc::clone(self.session.state()));
         if switch.is_active() {
             self.leave_v2(&mut switch);
         } else if !switch.is_released() {
@@ -138,8 +139,7 @@ impl SynthApp {
                 // must remain visible to the next poll instead of being labelled
                 // as already included in the installed plan.
                 let revision = self.audible_revision();
-                let project = self.create_project_from_app();
-                if switch.enable(&project) {
+                if switch.enable_from(|| self.create_project_from_app()) {
                     self.v2.revision = Some(revision);
                 } else {
                     self.reconnect_midi();
@@ -161,6 +161,7 @@ impl SynthApp {
         let Some(mut switch) = self.v2.switch.take() else {
             return;
         };
+        switch.track_identity_source(std::sync::Arc::clone(self.session.state()));
         switch.poll(|| self.create_project_from_app());
         if switch.needs_disable() {
             // The edited project was refused; leave through the path that resets V1 first.

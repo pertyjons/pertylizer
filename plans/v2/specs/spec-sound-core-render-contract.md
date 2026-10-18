@@ -3,10 +3,10 @@
 | Field | Value |
 |---|---|
 | Status | Current |
-| Phase | 1–7 |
+| Phase | 1–9 |
 | Created | 2026-08-19 |
-| Last reviewed | 2026-09-04, ADR-0006 and ADR-0007 accepted |
-| Based on | ADR-0001, ADR-0004, ADR-0005, ADR-0021, ADR-0032, ADR-0037, ADR-0040, ADR-0041, ADR-0043, ADR-0046, ADR-0047, ADR-0049, ADR-0050, ADR-0055, ADR-0065, ADR-0027, ADR-0006, ADR-0007 |
+| Last reviewed | 2026-10-17, ADR-0080 terminal fold and ADR-0081 combined software host |
+| Based on | ADR-0001, ADR-0004, ADR-0005, ADR-0021, ADR-0032, ADR-0037, ADR-0040, ADR-0041, ADR-0043, ADR-0046, ADR-0047, ADR-0049, ADR-0050, ADR-0055, ADR-0065, ADR-0027, ADR-0006, ADR-0007, ADR-0080, ADR-0081 |
 | Invariant prefix | `SOUND` |
 | Supersedes | — |
 | Superseded by | — |
@@ -18,7 +18,8 @@ specification constrains implementation.
 
 This specification is the current executable contract for the experimental
 Sound Core renderer, compiler, plan, runtime state, and internal arena through
-Phase 7's Control- and Audio-domain scripts, including scheduling, polyphony and modulation.
+Phase 7's Control- and Audio-domain scripts, including scheduling, polyphony and modulation,
+and Phase 9's explicit terminal mono folding.
 
 ## Non-goals
 
@@ -26,9 +27,9 @@ Project lowering has its own specification. This specification does not yet defi
 Note-domain scripts, the live host, state-preserving reload, or the final
 node catalog. Those follow in [`ROADMAP.md`](../ROADMAP.md).
 
-It does not define which layouts exist beyond `Mono` and `Stereo`, the summing
-law for a stereo-to-mono down-mix, or sample-rate conversion and oversampling
-islands. ADR-0041 leaves all three to later phases.
+It does not define layouts beyond `Mono` and `Stereo`, or sample-rate conversion
+and oversampling islands. ADR-0041 leaves those to later phases. ADR-0080
+supplies the explicit terminal stereo-to-mono law in `SOUND-INV-038`.
 
 ## Terminology
 
@@ -53,6 +54,7 @@ storage assigned to compiled signal lifetimes.
 | [ADR-0037](../decisions/ADR-0037-render-quantum-value.md) | `Q` is 64 frames, and ADR-0037 fixes it finally rather than provisionally |
 | [ADR-0040](../decisions/ADR-0040-v2-owns-its-dsp.md) | V2 owns the DSP it renders; no kernel is shared with V1 and no kernel carries a two-engine policy |
 | [ADR-0041](../decisions/ADR-0041-interleaved-internal-channel-layout.md) | One signal is one interleaved arena region of `Q` frames of `c` channels, at a recorded offset and length |
+| [ADR-0080](../decisions/ADR-0080-explicit-terminal-mono-fold.md) | Explicit terminal half-sum with wider intermediates; direct narrowing edges still refuse |
 | [ADR-0043](../decisions/ADR-0043-event-deferral-and-late-clamp.md) | A late event is clamped forward without rewriting its stamp; its sample and control effects follow the clamped render position |
 | [ADR-0046](../decisions/ADR-0046-destination-quantum-admission.md) | Capacity is admitted before rendering; the renderer never moves an event to make a quantum fit |
 | [ADR-0047](../decisions/ADR-0047-note-identity-in-the-event-contract.md) | A note-on names an occurrence as well as its node; a release names the occurrence alone |
@@ -71,6 +73,9 @@ storage assigned to compiled signal lifetimes.
 3. **SOUND-INV-003 — Immutable plan.** A compiled plan is immutable during
    rendering. Each renderer instance owns separate mutable node and stream
    state.
+   [ADR-0083](../decisions/ADR-0083-native-compiled-voice-continuation.md) permits
+   a checked immutable-plan binding exchange at a quantum boundary while retaining
+   actual state for its exact native layout/program case. It mutates neither plan.
 4. **SOUND-INV-004 — Host-profile admission.** A plan exceeding its
    `HostProfile` or `RenderLimits` is refused before rendering with an
    attributable resource report. Rendering never truncates the admitted plan to
@@ -112,7 +117,8 @@ storage assigned to compiled signal lifetimes.
    balance, the trim, the soft clipper and the hard clamp (`SOUND-INV-032`) —
    and since `P08-S003` the distortion and the delay (`SOUND-INV-033`) do too,
    as since `P08-S004` do the send and the post-fader send (`SOUND-INV-034`);
-   every other authored kind carries `Mono`. A layout beyond these two is
+   `StereoToMono` reads Stereo and writes Mono (`SOUND-INV-038`); every other
+   authored kind carries `Mono`. A layout beyond these two is
    the contract's general rule stated here and no code, until a consumer exists.
 10. **SOUND-INV-010 — Safe reuse.** Two overlapping live values never share
     storage: their physical sample ranges do not intersect at all, partial
@@ -144,8 +150,10 @@ storage assigned to compiled signal lifetimes.
     V1.
 14. **SOUND-INV-014 — Explicit conversion.** The only implicit conversion this
     phase inserts is mono to stereo, duplicating each sample into both channels
-    of one wider region. A stereo-to-mono edge is a compile error naming the
-    edge, both endpoints, and both layouts; no down-mix is summed by default.
+    of one wider region. A direct stereo-to-mono edge is a compile error naming
+    the edge, both endpoints and both layouts; no down-mix is summed by default.
+    An explicit `StereoToMono` node follows `SOUND-INV-038` and is never inserted
+    by edge validation.
     Every conversion is a scheduled operation with an identity, visible in the
     schedule, in the plan's buffer count, in the arena extent the resource
     report states as scratch bytes, and in diagnostics. An output whose layout
@@ -469,8 +477,19 @@ storage assigned to compiled signal lifetimes.
     by the registry being cleared at the boundary — and what keeps a stale identity from
     matching a note the incoming schedule started is the never-reused generation.
 
-    **This rule covers a stream whose note producers are compiled.** Three things it
-    does not close are named in ADR-0050 clause 8, as ADR-0051 raised it, and belong
+    [ADR-0081](../decisions/ADR-0081-combined-host-software-boundary.md) accepts a
+    separate law for its bound default-off combined host: both range minters stay
+    authoritative on audio; compiled candidates carry pairing tokens, not copied
+    generations; compiled restoration/reseeding touches only compiled-owned rows;
+    and shared playable instances are refused. Compiled transport preserves live
+    holds and expression. A stopped whole-owner reset ends old live occurrences
+    before retiring their owner; source key-ups remain reset tombstones rather
+    than resolving through the successor's table. No in-place table rebuild,
+    general shared-gate aggregation or production live adapter is admitted.
+
+    **The copy/promotion rule covers compiled note producers.** Outside ADR-0081's
+    bound software owner, three obligations remain in ADR-0050 clause 8 as raised
+    by ADR-0051, and belong
     to later slices: a non-compiled producer's release holds have no redemption
     authority at the boundary, so replacing such a producer's schedule is unsupported
     until holds exist; while an activation is outstanding the control must be the
@@ -1961,6 +1980,26 @@ V1's actual compressor, not a second transcription of its arithmetic.
    No silent meter omission and no profile capacity change is permitted here.
 
 
+### SOUND-INV-038 — Explicit terminal mono folding
+
+`StereoToMono` declares one Stereo audio input and one Mono audio output.
+For each frame it computes `(f64::from(left) + f64::from(right)) * 0.5` and
+rounds once to f32. The finite-input result is bounded by the input extrema;
+dual-mono retains even minimum subnormals and maximum finite values. Channel
+swaps are symmetric, opposite values cancel, and a single active channel
+contributes its rounded half. Float headroom is preserved without clamping.
+Existing sampler, delay and amplifier arithmetic keeps its own law.
+
+The node has no control, latency, history or tail, and does not permit in-place
+reuse across its different layouts. It is an ordinary declared scheduled node,
+with normal prepared-record and scratch accounting. Validation never inserts
+it; an otherwise identical narrowing edge without it still refuses. Project
+lowering may explicitly place it after its stereo master tap and before its
+mono output; that tap observes pre-fold stereo audio. Such a lowering emits
+`MonoOutputFold`, excludes stereo V1 parity and does not enable mono device
+admission in the application. Mono capacity and timing need fresh evidence.
+
+
 ## Conformance tests
 
 The `render::idle_tests` unit tests cover the low-level `PreparedRenderer::render_idle`
@@ -1985,7 +2024,8 @@ no stopped playhead, scheduler reconciliation or capture coupling is implied.
 | SOUND-INV-016 | `note_events`, over the compiled path, and the envelope kernel's own edge tests in `kernels`. **The clamped branch is covered separately**, because `note_events` runs offline where a late event cannot be presented: `render_contract`'s `a_late_note_edge_takes_effect_at_its_clamped_render_position` drives a late note-on and an on-time note-off through one live render and asserts an exact value per frame for both, so an edge dropped, held to a boundary, or applied at the head of the call fails it — a one-frame error is mutation-verified to fail. The count-only `a_late_event_is_clamped_forward_and_counted` cannot see any of that. `note_events` places each edge at an offset that is **not** a multiple of `Q` and asserts an exact value per frame, so an edge quantized to a boundary fails it; it renders the same edge through three host-block partitions and through both payloads and requires all of them bit-identical; and `an_edge_mid_ramp_starts_from_the_level_that_frame_would_have_had` covers the case the instantaneous-segment fixtures cannot see, where the level a frame starts from and the sample before it differ by one step. `layout_baseline` cannot cover any of this — every edge in its fixtures is on a boundary — so it is a regression control here rather than a placement check |
 | SOUND-INV-013 | Two mechanisms, and what each one carries is stated rather than blurred. **The type system** enforces exactly one thing: a `Kernel` cannot be *constructed outside* `node::kernels`, its field being private — so a descriptor elsewhere naming any function does not compile (`E0423`, mutation-verified). Every descriptor lives in `node.rs`, so every registered pointer is necessarily one of that module's constants; what those constants wrap is not settled by privacy, and an in-module `Kernel(foreign)` is well-typed. **A bounded source scan** carries the rest — `render_loop_purity`'s `the_kernel_registry_is_closed_and_no_scanned_form_forges_a_kernel` requires every construction site it recognises in that one file to be a declared constant, and checks the entries and constants it can parse agree in both directions. Nine forging routes are mutation-checked. What the scan is not is under *Unresolved questions* |
 | SOUND-INV-009, 010, 014 | `layout_baseline` for ADR-0041 clause 16's per-quantum digest comparison over its five fixtures, `arena_reuse` for the structural check over physical sample ranges and for `reuse_renders_bit_identically_to_no_reuse`, and `lowering`'s `a_mono_source_into_a_stereo_stream_widens_into_one_wider_region`, `a_mono_stream_compiles_exactly_one_output_operation` and `an_inserted_conversion_is_reported_and_not_only_scheduled` |
-| SOUND-INV-015 | `graph_validation`'s `every_kernel_admits_exactly_one_channel_on_every_port` over the macro-generated catalog, which since `P08-S001` and `P08-S002` holds every kind but the stereo stages to one channel and those to two — the six mixer stages, since `P08-S003` the two inserts and since `P08-S004` the two sends; `tests/mix_channel.rs`'s `a_channel_and_a_sum_admit_exactly_two_channels_on_every_port` holds the ten to exactly two, and `tests/mix_channel.rs` and `tests/mix_stages.rs` test every one of their kernels at two; and `kernels`' `the_widening_writes_every_channel_of_every_frame` for the one inserted operation with two admitted counts |
+| SOUND-INV-038 | `stereo_to_mono` pins literal arithmetic, subnormal/extreme values, channel symmetry, headroom, zero heap activity, separate arena regions, unchanged direct-edge refusal and host partitions. `lowering::render::evd_0026::mono_saved_lowering_keeps_the_stereo_graph_and_marks_the_explicit_terminal_fold` compares saved mono/stereo graphs and folded audio at all four rates and refuses stereo parity. |
+| SOUND-INV-015 | The macro-generated `graph_validation` catalog pins the port layouts in `every_kernel_admits_exactly_one_channel_on_every_port`: Mono kinds, Stereo stages, and the fixed Stereo-input/Mono-output exception `StereoToMono`. `mix_channel` and `mix_stages` exercise stereo processing; `stereo_to_mono` exercises the explicit mixed-layout kernel. `kernels`' `the_widening_writes_every_channel_of_every_frame` covers the inserted widening operation. |
 | SOUND-INV-017 | Two files, and the split is the invariant's own. **The minting table** is covered by `identity`: the three orphan branches separately — a free index, a live index at a superseded generation, and a retired one — along with disjoint producer ranges asserted by minting each producer's **whole** range rather than one index, the foreign-table resolution, counted retirement, over-emission distinguished from retirement erosion, a scoped mass release that leaves other producers alone, the refusal to rebuild while an obligation is outstanding, and the index-space relation at its boundary — enforced at `HostProfile` construction, as the invariant requires, not only where a table is built. Three are mutation-verified: resolving without comparing the generation, restarting a generation instead of retiring the index, and overlapping the producer ranges. **The event side** is covered by `note_identity`, over the compiled path. A release carries no node, so the fixture is two gates in series whose releases differ in *shape* — one instantaneous, one a ramp — because two sustain levels would render the same product and hide a release resolved to the wrong note. Sixteen cases: a release resolved through its occurrence; the same list with the other release rendering the other shape; two releases interleaved so the first names the **older** outstanding note; a producer's range bounding its *polyphony* rather than a piece's note count, with a one-note producer playing eight notes in sequence, refusing two at once, and stamping a valid list afterwards — a mint that failed part-way through having left nothing reserved; a reissued index still resolving **both** of the notes that used it, which is why the renderer keeps a registry the events write rather than reading the minter; a refused list leaving the minter as it found it, whose falsifier is the valid retry that follows; a spent release replayed against a node that has since been replayed, moving nothing and counted as an orphan rather than silently skipped, with the report **naming the occurrence** it refused; an occurrence from another plan's table refused and counted with the epoch equal, so the stale-epoch filter cannot be what caught it; a node address from another plan refused at stamping, which the renderer can no longer catch because its foreign filter compares the occurrence's table; the stamp carrying the renderer's own epoch; a compiled release that opens nothing refused at stamping; a plan declaring no producer unable to stamp a note at all; a second compiled producer refused at admission; and the compiled producer looked up rather than assumed to be producer 0, checked by declaring a one-wide runtime producer first so an assumed producer 0 exhausts on its second mint. `admission` adds the identity halves' memory to the scratch budget. Fifteen properties are mutation-verified: pairing by recency, resolving without the generation, dropping the table comparison, dropping the second-compiled-producer refusal, swallowing an unmatched release, assuming producer 0, never freeing a released occurrence, dropping the note-slot provenance check, not freeing an index at the paired release, resolving a release through the minter instead of the registry, minting during validation so a refused list keeps its indices, committing a partial mint instead of discarding it, refusing an orphan without counting it, refusing an orphan without naming it, and leaving the identity halves out of the scratch budget. **The live half is now covered in part**, by `simulated_ingress`: a live producer acquires its queue slot, release hold and identity together, the hold is spent when the release takes the slot it reserved and not a second time at publication, and a note-on is refused when the queue cannot also hold the release it would owe — that reservation arithmetic mutation-verified in both directions. The hold's exhaustion is asserted on its own, with six identities still free; **identity exhaustion is not asserted and cannot be**, because admission refuses a producer owing more releases than it can sound notes, so with `holds <= notes` the hold is always reached first, and the only remaining route is a generation space no test can walk. That conclusion holds only because a store is bound to the plan its renderer renders: a store carrying one plan's eight-hold entitlement while minting into another's two-index range makes the shortage reachable although each plan separately satisfies the relation, and an independent review found the binding missing. And clause 4's orphan attribution is carried by one named identity plus an aggregate count rather than by per-producer counts. **Naming the identity does name the producer**, since the ranges are disjoint by construction, so an index falls in exactly one. **The aggregate count is what cannot be attributed**: the renderer records the most recent orphan's identity and counts the rest, so two producers orphaning in one call are reported as one identity and a total. That is the gap this row records, and it is a property of the report's shape rather than of how many producers emit — two minting paths now exist, `stamp_compiled` and the live boundary's `StreamControl::offer_note_on`. Three earlier revisions justified the gap by the producer count, then by there being a single emitter, then by the disjoint ranges; independent reviews caught all three, the last because ranges identify the named occurrence and not the count beside it. The situation is not reachable here yet, and by a check rather than a convention: a live ingress store refuses a plan that also declares a compiled producer, which is how ADR-0051 clause 6's boundary is enforced while a gate reached by more than one has no ownership law. Plans declaring both exist in this crate's fixtures and are harmless, because none builds a store and without one a non-compiled declaration cannot emit. The generation ceiling remains a construction parameter for the reason this row gave before: walking a `u32` by minting is unreachable, and a rule no test can reach is a rule nobody has checked |
 | SOUND-INV-018 | `transport_activation.rs` and `transport.rs`: the effective point invariant to the four host partitions `2048`, `256`, `64` and `37`; a superseded candidate refused and counted; a stale-epoch candidate refused; both exchange occupancies refusing and told apart; an offer paired with another stream's renderer touching no counter; an offer into a faulted stream refused rather than trapping the candidate; a note cut at the boundary, asserted per frame on both sides; a seek between a note's edges buildable with the omission counted; a release with no note-on at all refused; a history note edge needing a producer, and a history holding more notes than that producer admits refused; an activation needing a schedule to replace; the schedule in force releasing its index to the replacement, and a withdrawn candidate's reservations released, both falsified by over-emission at a partition of one; every committed stamping keeping its reservations reclaimable; the minter standing still while a candidate holds a snapshot of it; a stream having one schedule and a second refused; a loop whose periodic extension does not fit refused at the build, and the same pass judged a second time against the compiled producer's admitted simultaneous notes, falsified by a late entry whose history and suffix each hold what the producer admits while the pass they straddle holds one more, by a pass that inherits the depth open where the loop starts, and by a crossing release lowering a count it ends nothing of; the pass that is judged being the one a wrap replays rather than the suffix the candidate carries, falsified by a late entry whose skipped events are the ones that collide at the wrap; and a crossing release counting in that pass, because clause 5 keeps its gate write where the bare omission dropped the event; the release scope being the compiled producer alone, and an empty producer declared before a sounding one not hiding the compaction; an adoption never happening in a call that renders no quantum; the boundary mass release charged as one session operation; a refused call adopting nothing when the boundary is the clock; a block the renderer cannot serve adopting nothing; a fault in **each** half of a split silencing the whole callback; a late activation taking effect at the clock and counted, an off-grid request that snaps forward without being late, and a late one displaced by nothing; a loop-bearing candidate passing off-thread admission but being refused at offer with its interval and counter asserted and active loop state absent from both halves by construction; the retired schedule coming back with the cursor, anchor and displacement it replaced; a retirement from another stream refused rather than promoted; withdrawal refusing a foreign candidate and a retirement and returning both; the catch-up restoring every prepared target with the boundary release charged beside it; a crossing note's gate cut whether or not automation touched it after its note-on, the equality falsifying a last-write restore and the silence falsifying no substitution at all, mutation-verified against both; and an omitted crossing release carrying its gate-down in place of the note contract, counted, with the pair that lies wholly after the destination placed untouched beside it. **Exclusive loop coverage under ADR-0065**: `looping::tests` holds actual audio and pass boundaries across host partitions, fresh identities, crossing source history, repeated Session and initial-junction admission, storage bounds, terminal exhaustion and guarded first-use allocation/deallocation. Live ingress across ordinary activation remains outside ADR-0050 clause 8; ADR-0067 supplies finite serial loop/session/capture integration; concurrent transfer and restart remain open. |
 | SOUND-INV-020 | `simulated_ingress.rs`, over the one pair of producers that exists, and the coverage is narrower than the rule. **The decisive case is a note and its release at one render position**: applied in the order they were offered the gate rises and falls at one sample and nothing sounds, while any order derived from ADR-0046's capacity classes applies the release first, refuses it as an orphan, and leaves the note sounding to the end. A mutation letting a release jump ahead of its own note-on fails that test and no other. The equivalence render is a weaker check than it looks and is cited as such: its two edges sit at different samples, so position sorting restores their order however they were presented — an independent review refuted an earlier claim that it proved release ordering. What it does establish is placement, falsified by displacing every ingress stamp one frame. Beside them: an entry whose destination is past the window waits and later lands on its own sample; and the ring wraps across three blocks with one alternating gate write per quantum, so the rendered square wave falsifies a **lost** entry while a **duplicated** one — idempotent in the audio, since one write charged twice into its own quantum wins the same way — is caught by the live share's peak instead. Both mutations were run, and an earlier version of that fixture wrote the same value from every slot and could see neither. **The rest of the declared sequence is not covered.** Authored runtime and renderer-internal producers do not exist, transport stop and panic have no producer, and the declaration-order rule needs two producers **emitting** into one position, which no plan can do until ADR-0051 clause 6 supplies a gate-ownership law — a live store refuses a plan that also declares a compiled producer, so the combination is refused rather than merely absent. Contiguity has no fixture for the same reason. Those cases arrive with the producers they need, and no test notices a producer nobody wrote a case for |

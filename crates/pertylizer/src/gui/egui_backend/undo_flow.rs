@@ -853,6 +853,10 @@ impl SynthApp {
                             song_w.delete_return_bus(*bus_id);
                         }
                     }
+                    self.session
+                        .state()
+                        .shared_graph
+                        .invalidate_identity_lineage();
                 }
                 // The engine owns the bus itself (its effect chain and mix
                 // buffer), so without this the restored bus exists only in the

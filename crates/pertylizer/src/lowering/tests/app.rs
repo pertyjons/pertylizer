@@ -349,12 +349,12 @@ fn an_edit_while_playing_applies_once_paused() {
         built = true;
         project.clone()
     });
-    assert!(!built, "no project is built while playing");
+    assert!(!built, "unacknowledged Play cannot prepare a replacement");
     assert!(
         control
             .take_notices()
             .iter()
-            .any(|n| n.contains("applies when playback stops or pauses"))
+            .any(|n| n.contains("edit remains pending"))
     );
     control.pause();
     let mut rebuilt = false;
@@ -376,7 +376,7 @@ fn an_edit_while_playing_applies_once_paused() {
         control
             .take_notices()
             .iter()
-            .any(|n| n.contains("restarts from the song start"))
+            .any(|n| n.contains("compatible edit queued"))
     );
 }
 
