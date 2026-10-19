@@ -142,6 +142,9 @@ pub struct McpSharedState {
     /// the next frame even when the window is unfocused. Installed by the
     /// GUI at attach time (an `egui::Context::request_repaint` closure).
     gui_repaint: Mutex<Option<Box<dyn Fn() + Send + Sync>>>,
+    /// Last GUI observation, never read or written by the audio thread.
+    #[cfg(feature = "v2-lowering")]
+    v2_playback: Mutex<V2Publisher>,
 }
 
 impl McpSharedState {
@@ -174,6 +177,8 @@ impl McpSharedState {
             gui_project_requests_pending: AtomicBool::new(false),
             gui_attached: AtomicBool::new(false),
             gui_repaint: Mutex::new(None),
+            #[cfg(feature = "v2-lowering")]
+            v2_playback: Mutex::new(V2Publisher::new()),
         }
     }
 
@@ -195,6 +200,20 @@ impl McpSharedState {
     /// sender, which disconnects its `recv_timeout` right away).
     pub fn detach_gui(&self) {
         self.gui_attached.store(false, Ordering::Release);
+        #[cfg(feature = "v2-lowering")]
+        {
+            // Clear only observational payload; serial and exhaustion survive reattachment.
+            let mut publisher = self
+                .v2_playback
+                .lock()
+                .unwrap_or_else(|error| error.into_inner());
+            publisher.last = None;
+            if publisher.unavailable
+                != Some(synth_mcp::v2_playback::UnavailableReason::IdentityExhausted)
+            {
+                publisher.unavailable = None;
+            }
+        }
         *self.gui_repaint.lock().unwrap_or_else(|e| e.into_inner()) = None;
         self.gui_project_requests_pending
             .store(false, Ordering::Release);
@@ -381,6 +400,155 @@ pub struct ConnectionLayout {
     pub to_module: String,
     /// Destination port name.
     pub to_port: String,
+}
+
+#[cfg(feature = "v2-lowering")]
+struct V2Publisher {
+    instance: synth_mcp::v2_playback::ServiceInstance,
+    #[cfg(any(all(feature = "gui-egui", feature = "mcp"), test))]
+    serial: u64,
+    last: Option<(
+        synth_mcp::v2_playback::PublicationId,
+        std::time::Instant,
+        synth_mcp::v2_playback::PlaybackState,
+    )>,
+    unavailable: Option<synth_mcp::v2_playback::UnavailableReason>,
+}
+#[cfg(feature = "v2-lowering")]
+impl V2Publisher {
+    fn new() -> Self {
+        use std::hash::BuildHasher;
+        // Independent randomized hash builders supply a probabilistic service nonce.
+        // It is a namespace for observations, never an authentication secret.
+        let nonce = [
+            std::collections::hash_map::RandomState::new().hash_one(0_u8),
+            std::collections::hash_map::RandomState::new().hash_one(1_u8),
+        ];
+        Self {
+            instance: synth_mcp::v2_playback::ServiceInstance::new(nonce),
+            #[cfg(any(all(feature = "gui-egui", feature = "mcp"), test))]
+            serial: 0,
+            last: None,
+            unavailable: None,
+        }
+    }
+    #[cfg(any(all(feature = "gui-egui", feature = "mcp"), test))]
+    fn publish(&mut self, state: synth_mcp::v2_playback::PlaybackState) -> bool {
+        if self.unavailable == Some(synth_mcp::v2_playback::UnavailableReason::IdentityExhausted) {
+            return false;
+        }
+        let Some(next) = self
+            .serial
+            .checked_add(1)
+            .and_then(std::num::NonZeroU64::new)
+        else {
+            self.unavailable = Some(synth_mcp::v2_playback::UnavailableReason::IdentityExhausted);
+            self.last = None;
+            return false;
+        };
+        self.unavailable = None;
+        self.serial = next.get();
+        self.last = Some((
+            synth_mcp::v2_playback::PublicationId::new(next),
+            std::time::Instant::now(),
+            state,
+        ));
+        true
+    }
+}
+impl McpSharedState {
+    /// Publish an owned GUI view. Exhaustion stops observation, without affecting sound.
+    #[cfg(all(
+        feature = "v2-lowering",
+        any(all(feature = "gui-egui", feature = "mcp"), test)
+    ))]
+    pub(crate) fn publish_v2_playback(
+        &self,
+        state: Result<synth_mcp::v2_playback::PlaybackState, V2PublicationError>,
+    ) -> Result<(), String> {
+        let mut publisher = self
+            .v2_playback
+            .lock()
+            .map_err(|_| "V2 observation publisher lock poisoned".to_owned())?;
+        let state = state.map_err(|error| {
+            publisher.last = None;
+            if publisher.unavailable
+                != Some(synth_mcp::v2_playback::UnavailableReason::IdentityExhausted)
+            {
+                publisher.unavailable = Some(match error {
+                    V2PublicationError::IdentityExhausted => {
+                        synth_mcp::v2_playback::UnavailableReason::IdentityExhausted
+                    }
+                    V2PublicationError::InvalidObservation => {
+                        synth_mcp::v2_playback::UnavailableReason::InvalidObservation
+                    }
+                });
+            }
+            error.to_string()
+        })?;
+        if !publisher.publish(state) {
+            return Err("V2 observation publication identities exhausted".to_owned());
+        }
+        Ok(())
+    }
+    /// Last GUI poll, with its age computed when the client reads it.
+    pub(crate) fn v2_playback_status(
+        &self,
+    ) -> Result<synth_mcp::v2_playback::V2PlaybackStatus, String> {
+        use synth_mcp::v2_playback::*;
+        #[cfg(not(feature = "v2-lowering"))]
+        return Ok(V2PlaybackStatus::unavailable(
+            UnavailableReason::NotCompiled,
+        ));
+        #[cfg(feature = "v2-lowering")]
+        {
+            if !self.gui_attached.load(Ordering::Acquire) {
+                return Ok(V2PlaybackStatus::unavailable(UnavailableReason::NoGui));
+            }
+            let publisher = self
+                .v2_playback
+                .lock()
+                .map_err(|_| "V2 observation publisher lock poisoned".to_owned())?;
+            if let Some(reason) = publisher.unavailable {
+                return Ok(V2PlaybackStatus::unavailable(reason));
+            }
+            let Some((id, time, state)) = &publisher.last else {
+                return Ok(V2PlaybackStatus::unavailable(
+                    UnavailableReason::NotPublished,
+                ));
+            };
+            let age_ms = u64::try_from(time.elapsed().as_millis()).unwrap_or(u64::MAX);
+            Ok(V2PlaybackStatus {
+                schema: PlaybackSchema::V1,
+                observation: PlaybackObservation::Published {
+                    instance: publisher.instance.clone(),
+                    publication: id.clone(),
+                    age_ms,
+                    state: state.clone(),
+                },
+            })
+        }
+    }
+}
+
+#[cfg(all(
+    feature = "v2-lowering",
+    any(all(feature = "gui-egui", feature = "mcp"), test)
+))]
+#[derive(Debug, thiserror::Error)]
+pub(crate) enum V2PublicationError {
+    #[error("V2 observation switch identities exhausted")]
+    IdentityExhausted,
+    #[error("invalid V2 plan observation")]
+    InvalidObservation,
+}
+
+/// CI's V2 GUI-flow filter also executes the publisher's private state-machine controls.
+#[cfg(all(test, feature = "v2-lowering", feature = "gui-egui", feature = "mcp"))]
+pub(crate) fn assert_v2_publisher_contracts() {
+    v2_status_tests::missing_gui_and_publication_are_explicit_and_detach_hides_old_sound();
+    v2_status_tests::publication_exhaustion_is_permanent_and_never_relabels_old_sound();
+    v2_invalid_status_tests::invalid_observation_is_distinct_from_permanent_exhaustion_and_clears_old_payload();
 }
 
 #[cfg(test)]
@@ -574,5 +742,127 @@ mod tests {
         });
         let _ = shared.request_gui_project(Duration::from_millis(10));
         assert_eq!(repaints.load(Ordering::Relaxed), 1);
+    }
+}
+
+#[cfg(all(test, feature = "v2-lowering"))]
+mod v2_status_tests {
+    use super::*;
+    use synth_mcp::v2_playback::*;
+    #[test]
+    pub(super) fn missing_gui_and_publication_are_explicit_and_detach_hides_old_sound() {
+        let shared = McpSharedState::new();
+        assert_eq!(
+            shared.v2_playback_status().unwrap(),
+            V2PlaybackStatus::unavailable(UnavailableReason::NoGui)
+        );
+        shared.attach_gui_once(|| Box::new(|| {}));
+        assert_eq!(
+            shared.v2_playback_status().unwrap(),
+            V2PlaybackStatus::unavailable(UnavailableReason::NotPublished)
+        );
+        shared
+            .publish_v2_playback(Ok(PlaybackState::Inactive { releasing: false }))
+            .unwrap();
+        assert!(matches!(
+            shared.v2_playback_status().unwrap().observation,
+            PlaybackObservation::Published {
+                state: PlaybackState::Inactive { releasing: false },
+                ..
+            }
+        ));
+        shared.detach_gui();
+        assert_eq!(
+            shared.v2_playback_status().unwrap(),
+            V2PlaybackStatus::unavailable(UnavailableReason::NoGui)
+        );
+        shared.attach_gui_once(|| Box::new(|| {}));
+        assert_eq!(
+            shared.v2_playback_status().unwrap(),
+            V2PlaybackStatus::unavailable(UnavailableReason::NotPublished)
+        );
+    }
+    #[test]
+    pub(super) fn publication_exhaustion_is_permanent_and_never_relabels_old_sound() {
+        let shared = McpSharedState::new();
+        shared.attach_gui_once(|| Box::new(|| {}));
+        shared.v2_playback.lock().unwrap().serial = u64::MAX - 1;
+        let state = PlaybackState::Inactive { releasing: false };
+        shared.publish_v2_playback(Ok(state.clone())).unwrap();
+        match shared.v2_playback_status().unwrap().observation {
+            PlaybackObservation::Published { publication, .. } => assert_eq!(
+                String::from(publication),
+                format!("publication-{}", u64::MAX)
+            ),
+            other => panic!("{other:?}"),
+        }
+        for _ in 0..3 {
+            assert!(shared.publish_v2_playback(Ok(state.clone())).is_err());
+            assert_eq!(
+                shared.v2_playback_status().unwrap(),
+                V2PlaybackStatus::unavailable(UnavailableReason::IdentityExhausted)
+            );
+        }
+    }
+}
+
+#[cfg(all(test, feature = "v2-lowering"))]
+mod v2_invalid_status_tests {
+    use super::*;
+    use synth_mcp::v2_playback::*;
+    #[test]
+    pub(super) fn invalid_observation_is_distinct_from_permanent_exhaustion_and_clears_old_payload()
+    {
+        let shared = McpSharedState::new();
+        shared.attach_gui_once(|| Box::new(|| {}));
+        let state = PlaybackState::Inactive { releasing: false };
+        shared.publish_v2_playback(Ok(state.clone())).unwrap();
+        assert!(
+            shared
+                .publish_v2_playback(Err(V2PublicationError::InvalidObservation))
+                .is_err()
+        );
+        assert_eq!(
+            shared.v2_playback_status().unwrap(),
+            V2PlaybackStatus::unavailable(UnavailableReason::InvalidObservation)
+        );
+        shared.detach_gui();
+        shared.attach_gui_once(|| Box::new(|| {}));
+        assert_eq!(
+            shared.v2_playback_status().unwrap(),
+            V2PlaybackStatus::unavailable(UnavailableReason::NotPublished)
+        );
+        shared.publish_v2_playback(Ok(state.clone())).unwrap();
+        match shared.v2_playback_status().unwrap().observation {
+            PlaybackObservation::Published { publication, .. } => {
+                assert_eq!(String::from(publication), "publication-2")
+            }
+            other => panic!("{other:?}"),
+        }
+        assert!(
+            shared
+                .publish_v2_playback(Err(V2PublicationError::IdentityExhausted))
+                .is_err()
+        );
+        assert_eq!(
+            shared.v2_playback_status().unwrap(),
+            V2PlaybackStatus::unavailable(UnavailableReason::IdentityExhausted)
+        );
+        shared.detach_gui();
+        shared.attach_gui_once(|| Box::new(|| {}));
+        assert_eq!(
+            shared.v2_playback_status().unwrap(),
+            V2PlaybackStatus::unavailable(UnavailableReason::IdentityExhausted)
+        );
+        assert!(
+            shared
+                .publish_v2_playback(Err(V2PublicationError::InvalidObservation))
+                .is_err()
+        );
+        assert!(shared.publish_v2_playback(Ok(state)).is_err());
+        assert_eq!(
+            shared.v2_playback_status().unwrap(),
+            V2PlaybackStatus::unavailable(UnavailableReason::IdentityExhausted)
+        );
     }
 }

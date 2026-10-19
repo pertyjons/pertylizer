@@ -3,7 +3,7 @@
 This is the compact status index for durable Core V2 decisions. Individual ADRs own rationale and evidence; current
 specifications own implementation semantics. Do not copy review history or measurement results into this file.
 
-Next free identifier: `ADR-0084`.
+Next free identifier: `ADR-0094`.
 
 ## Status vocabulary
 
@@ -131,9 +131,19 @@ the durable-decision test in `PROCESS.md` and normally do not need an ADR.
 | ADR-0078 | Host-owned mixed transfer rehearsal | Accepted | 9 | [ADR](decisions/ADR-0078-host-owned-mixed-transfer-rehearsal.md) | Default-off feature for one-shot mixed packets through host-owned queues; ordinary production mixed refusal remains |
 | ADR-0079 | Raw capture interruption in a mixed host | Accepted | 9 | [ADR](decisions/ADR-0079-mixed-host-raw-capture-interruption.md) | Library raw-first routing and monotone late/terminal classification; production mixed refusal remains |
 | ADR-0080 | Explicit terminal mono folding | Accepted | 9 | [ADR](decisions/ADR-0080-explicit-terminal-mono-fold.md) | Wider half-sum in an explicit node; lowering marks stereo parity ineligible; application mono admission and fresh mono evidence remain gated |
-| ADR-0081 | Combined-host software boundary | Accepted | 9 | [ADR](decisions/ADR-0081-combined-host-software-boundary.md) | Default-off common route, audio-owned identities, strict source publication and stopped reset; production capacity and physical qualification remain gated |
+| ADR-0081 | Combined-host software boundary | Accepted | 9 | [ADR](decisions/ADR-0081-combined-host-software-boundary.md) | Default-off common route, audio-owned identities, strict source publication and explicit stopped/running reset; production capacity and physical qualification remain gated |
 | ADR-0082 | Running compiled-plan reset | Accepted | 9 | [ADR](decisions/ADR-0082-running-compiled-plan-reset.md) | Fresh compiled owner, Q-frame fade, identified refusal and terminal owning retirement; compatible selection extended by ADR-0083; no production qualification |
-| ADR-0083 | Native compiled voice continuation | Accepted | 9 | [ADR](decisions/ADR-0083-native-compiled-voice-continuation.md) | Exact native program/layout, retained actual minter and DSP; non-voice Trim changes only; scoped successor to ADR-0082 |
+| ADR-0083 | Native compiled voice continuation | Accepted | 9 | [ADR](decisions/ADR-0083-native-compiled-voice-continuation.md) | Exact native program/layout, retained actual minter and DSP; non-voice Trim changes only; expanded by ADR-0085 for global structural edits |
+| ADR-0084 | Observation tap handoff | Accepted | 9 | [ADR](decisions/ADR-0084-observation-tap-handoff.md) | Stable node/port mapping, labelled generations and loss accounting; stopped/running session coordination; running-reset taps precede fade gain; cross-thread lifecycle remains separate |
+| ADR-0085 | Stable-voice global structural continuation | Accepted | 9 | [ADR](decisions/ADR-0085-stable-voice-global-structural-continuation.md) | Global geometry edits with fixed physical voice program and actual identity custody; expanded by ADR-0087 for unchanged logical voice programs; fixed-native mixed subset in ADR-0090 |
+| ADR-0086 | Observed V2 plan publication | Accepted | 9 | [ADR](decisions/ADR-0086-observed-v2-plan-publication.md) | One GUI/MCP observation of confirmed plan and omissions; session identities and lowering-input equality token, canonical project revision remains gated |
+| ADR-0087 | Native voice storage relocation | Accepted | 9 | [ADR](decisions/ADR-0087-native-voice-storage-relocation.md) | Stable authored voice program with relocated state/history/parameters; actual identity authority retained; logical note reindexing expanded by ADR-0091; fixed-native mixed subset in ADR-0090 |
+| ADR-0088 | Experimental mixed application boundary | Accepted | 9 | [ADR](decisions/ADR-0088-experimental-mixed-application-boundary.md) | Exact non-default application feature and dependency-test exception; explicitly approved on 2026-10-18 |
+| ADR-0089 | Threaded application observers and backend retirement | Accepted | 9 | [ADR](decisions/ADR-0089-threaded-application-observers.md) | Bounded owning observation lane and cold CPAL processor retirement; physical quiescence remains unqualified |
+| ADR-0090 | Fixed native mixed continuation | Accepted | 9 | [ADR](decisions/ADR-0090-fixed-native-mixed-continuation.md) | Stable source binding and retained actual mixed authorities under fixed native geometry; broader edits remain open |
+| ADR-0091 | Authored note reindexing | Accepted | 9 | [ADR](decisions/ADR-0091-authored-note-reindexing.md) | Actual isolated identity table and registry follow stable authored targets across logical reindexing; mixed structure remains separate |
+| ADR-0092 | Software mixed application owner | Accepted | 9 | [ADR](decisions/ADR-0092-software-mixed-application-owner.md) | Default-off saved-project and Arrival software-input ownership; provisional profile, transport, replacements and cold teardown |
+| ADR-0093 | Real mixed producer load consumers | Accepted | 9 | [ADR](decisions/ADR-0093-real-mixed-producer-load-consumers.md) | Parameter-only runtime Trim programs and node-linked internal Delay clears; actual occupancy without production qualification |
 
 ### Reversible decisions
 

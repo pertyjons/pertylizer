@@ -63,6 +63,8 @@ class DocumentationCheckerTests(unittest.TestCase):
             "check_decision_index",
             "check_evidence_ids",
             "check_evidence_harnesses",
+            "check_clock_observability",
+            "check_clock_interval_fit",
             "check_evidence_dependency_pins",
             "check_spec_prefixes",
             "check_inventory_coverage",
@@ -96,6 +98,58 @@ class DocumentationCheckerTests(unittest.TestCase):
                 f"{CHECKER.EVD_0016_F7_ARTIFACT}: required retained F7 audit input is missing",
             ],
         )
+
+    def test_clock_observability_requires_both_control_files(self) -> None:
+        errors: list[str] = []
+        CHECKER.check_clock_observability(errors)
+        self.assertEqual(len(errors), 2)
+        self.assertTrue(all("required clock observability control is missing" in e for e in errors))
+
+    def test_interval_fit_controls_are_required_and_use_their_own_nonempty_suite(self) -> None:
+        errors: list[str] = []
+        CHECKER.check_clock_interval_fit(errors)
+        self.assertEqual(len(errors), 2)
+        scripts = self.root / "scripts"
+        scripts.mkdir()
+        for name in ("clock_interval_fit.py", "test_clock_interval_fit.py"):
+            (scripts / name).write_text("", encoding="utf-8")
+        for code, summary, expected in ((1, "failed", "controls failed"), (0, "Ran 0 tests", "nonempty"),
+                                        (0, "Ran 20 tests\nOK", None),
+                                        (0, "Ran 20 tests\nOK (skipped=20)", "skipped required"),
+                                        (0, "Ran 20 tests\nOK (skipped=1)", "skipped required"),
+                                        (0, "Ran 20 tests\nOK (expected failures=1)", "skipped required")):
+            errors = []
+            with mock.patch.object(CHECKER.subprocess, "run", return_value=subprocess.CompletedProcess([], code, "", summary)) as run:
+                CHECKER.check_clock_interval_fit(errors)
+            self.assertIn("scripts.test_clock_interval_fit", run.call_args.args[0])
+            if expected is None:
+                self.assertEqual(errors, [])
+            else:
+                self.assertEqual(len(errors), 1)
+                self.assertIn(expected, errors[0])
+
+    def test_clock_observability_propagates_failure_and_rejects_empty_suite(self) -> None:
+        scripts = self.root / "scripts"
+        scripts.mkdir()
+        for name in ("clock_observability.py", "test_clock_observability.py"):
+            (scripts / name).write_text("", encoding="utf-8")
+        for code, stderr, expected in (
+            (1, "mutation failed", "controls failed"),
+            (0, "Ran 0 tests", "nonempty test summary"),
+            (0, "OK", "nonempty test summary"),
+            (0, "Ran 9 tests\nOK", None),
+            (0, "Ran 9 tests\nOK (skipped=9)", "skipped required"),
+        ):
+            with self.subTest(code=code, stderr=stderr):
+                errors: list[str] = []
+                result = subprocess.CompletedProcess([], code, "", stderr)
+                with mock.patch.object(CHECKER.subprocess, "run", return_value=result):
+                    CHECKER.check_clock_observability(errors)
+                if expected is None:
+                    self.assertEqual(errors, [])
+                else:
+                    self.assertEqual(len(errors), 1)
+                    self.assertIn(expected, errors[0])
 
     def test_retained_f7_audit_accepts_only_recorded_populations(self) -> None:
         for relative in (CHECKER.EVD_0016_F7_AUDIT, CHECKER.EVD_0016_F7_ARTIFACT):

@@ -8,6 +8,9 @@ pub mod replacement;
 #[cfg(test)]
 mod tests;
 
+#[cfg(test)]
+mod observation_tests;
+
 use super::*;
 use crate::host::HostError;
 use crate::plan::{CompiledPlan, PlanId};
@@ -266,6 +269,11 @@ impl SessionControl {
     pub const fn epoch(&self) -> StreamEpoch {
         self.origin.epoch
     }
+    /// Cold immutable geometry for the host's subscription and transition preparation.
+    pub fn plan(&self) -> &crate::plan::CompiledPlan {
+        self.control.plan()
+    }
+
     pub const fn plan_id(&self) -> PlanId {
         self.origin.plan
     }

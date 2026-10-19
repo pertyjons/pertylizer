@@ -126,7 +126,8 @@ fn run(subscriber: Subscriber) -> (Vec<f32>, Vec<f32>, usize) {
     let plan = compile(&monitored_live_voice(), &RenderConfig::new(profile()))
         .into_plan()
         .expect("an admitted plan");
-    let mut store = ObservationSubscriptions::prepare(&profile(), &plan);
+    let mut store = ObservationSubscriptions::prepare(&profile(), &plan)
+        .expect("observation identities available");
     let tap = store
         .subscribe(
             &plan,
@@ -265,7 +266,8 @@ fn a_store_for_another_plan_is_refused_and_silenced() {
     let other = compile(&monitored_live_voice(), &RenderConfig::new(profile()))
         .into_plan()
         .expect("a second plan");
-    let mut foreign = ObservationSubscriptions::prepare(&profile(), &other);
+    let mut foreign = ObservationSubscriptions::prepare(&profile(), &other)
+        .expect("observation identities available");
     let note = plan.resolve_note(ENVELOPE).expect("a note target");
     let source = SimulatedNoteInput::new(
         EndpointId::new("foreign".into()).expect("valid endpoint"),

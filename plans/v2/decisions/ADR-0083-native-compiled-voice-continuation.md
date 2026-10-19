@@ -9,7 +9,7 @@
 | Last reviewed | 2026-10-17 |
 | Related | ADR-0009, ADR-0010, ADR-0047, ADR-0048, ADR-0064, ADR-0077, ADR-0082 |
 | Supersedes | ADR-0082's reset-only application selection for the bounded compatible case |
-| Superseded by | — |
+| Superseded by | ADR-0085 adds bounded global structural edits with unchanged physical voices |
 
 ## Boundary and decision
 
@@ -29,8 +29,9 @@ Only authored non-voice Trim bases may change, with no smoothing, automation or
 note-magnitude write to those rows. The application first consumes master Trim
 changes. Scripts, controllers, feedback, samplers and structural voice edits choose reset.
 Loop/capture and external producer ownership remain outside this running lane. Identical passive mixer/tap
-descriptors are checked with plan-local addresses normalized; this session API
-exposes no observer subscription to migrate.
+descriptors are checked with plan-local addresses normalized. ADR-0085's normal
+session observation keeps its explicit transition gap; this consumer does not
+automatically hand observer subscriptions over.
 
 The actual adopted stamped list L is copied before Play publication into bounded
 cold metadata. Only an applied Play makes it authoritative. Its plan, epoch,

@@ -6,7 +6,7 @@
 | Status        | Deferred                                                     |
 | Phase         | 0A/9, deferred to the Phase 9 exit gate                       |
 | Created       | 2026-08-13                                                   |
-| Last reviewed | 2026-10-17                                                   |
+| Last reviewed | 2026-10-18                                                   |
 | Related       | ADR-0001, ADR-0032, ADR-0021, ADR-0036, ADR-0023, EVD-0016, P00A-T006 |
 | Supersedes    | —                                                            |
 | Superseded by | —                                                            |
@@ -223,10 +223,125 @@ The project maintainer must explicitly approve new `unsafe` getter
 implementations before code is written, under the repository's unsafe rule.
 No such implementation or approval is claimed here.
 
-Next, build synthetic observability controls for the required metadata using
-owned fixtures, independently of backend access. Then present the exact getter
-and instrumentation scope for the maintainer's implementation decision. The
+The owned-fixture controls below implement the synthetic observability step
+independently of backend access. Next, present the exact getter and
+instrumentation scope for the maintainer's implementation decision. The
 interface audit is complete; do not repeat it as a hardware feasibility spike.
+
+### Owned-report software controls — 2026-10-18
+
+[`clock_observability.py`](../../../scripts/clock_observability.py) implements
+the observation-only preflight. Its closed version-1 JSON artifact has exactly
+`version` and `reports`; each report requires every `ClockReport` field. Null
+records missing metadata, separately from validity flags. Unknown, missing,
+duplicate, non-finite and invalid typed fields are rejected. A backend extractor
+must report the actual status-query branch and validity flags; a requested
+timestamp type or advertised capability cannot fill an observed field.
+
+Reports retain one duplex arm, direction-local contiguous sequences starting at
+zero, requested/actual clocks and timestamp types, rate, running/status/report/
+accuracy/trigger validity, explicit fallback and negative-clamp flags, system
+observer brackets, status-system/audio/driver/trigger timestamps, accuracy, independently
+justified clock-age and frame-alignment bounds, frame position/derivation, and
+loss/error counters. Recovery starts a separate artifact; no startup prefix is
+discarded. The extractor must derive frame position from the actual queried
+hardware position, never the software callback count. This preflight checks
+availability and consistency, not the truth of an extractor's physical claims.
+Audio time may be trigger-relative while the trigger itself is absolute: their
+raw numbers are not compared across origins. Trigger validity is explicit.
+Clock names and audio timestamp types use the exact enum variant spellings in
+alsa 0.11.0 (`TstampType` and `AudioTstampType`). Unknown spellings are invalid
+input. Frame derivation is `status-hardware-position`, `synthetic-frame-counter`
+or `callback-count`; both non-hardware derivations are explicitly inconclusive.
+Owned positive controls model a hardware-position report; no fixture is a
+physical observation.
+
+`Observable` means both directions supplied at least two advancing complete
+reports. Fallback, unknown accuracy or missing metadata is `Inconclusive`.
+Invalid trigger origins, failed status queries, non-running streams, losses, clamping, clock reversals, repeated values,
+sequence gaps and source/rate/origin changes stop the candidate. Stop dominates
+missing metadata. Actual `Compat` cannot become observable by requesting it.
+Last known values survive null gaps, so missing metadata cannot hide a reversal
+or source change. Brackets are ordered within each direction; cross-direction
+query order is unspecified and supplies no common-clock proof.
+These are readiness classifications, not EVD-0016 physical verdicts. Accuracy
+never substitutes for clock age or frame correspondence; even arbitrarily
+large known bounds can be observable without passing F4.
+
+Run `python3 -B -m unittest scripts.test_clock_observability` for owned-fixture
+controls, which also run in the fast documentation gate. For a future extracted
+artifact use `python3 -B scripts/clock_observability.py <artifact.json>`; exit 0
+means observable, 1 means inconclusive/stopped and 2 means invalid input. Every
+valid output explicitly reports `physical_qualification: false`. No backend
+fork, new unsafe getter, production estimator or physical result is introduced.
+
+### Synthetic affine interval investigation — 2026-10-18
+
+`scripts/clock_interval_fit.py` investigates one candidate entirely with owned
+synthetic scenarios. It has no report loader, backend access, physical input
+mode or production consumer. Its output always identifies synthetic data and
+`physical_qualification: false`. Run it directly for the four-rate summary;
+`python3 -B -m unittest scripts.test_clock_interval_fit` runs its controls,
+also required separately by the fast documentation gate.
+
+The candidate assumes an affine frame position in one observer-clock axis,
+with a predeclared strictly positive nominal-rate/ppm slope interval. Every
+uncertainty is a hard bound, never a percentile or measured maximum treated as
+a guarantee. A report supplies the observer interval `[before - age, after]`
+and a floored position `p` whose frame interval is
+`[p - alignment, p + 1 + alignment]`. The closed upper endpoint conservatively
+includes the floor boundary. Frame alignment stays in frames, not converted
+through an unknown slope. No report-clock timestamp is added to the observer
+axis; its bridge remains an independent measurement obligation.
+
+Intersect the resulting linear half-planes in slope/intercept space using
+exact rational arithmetic. Re-center time at the first report's earliest
+possible observer time. Compute clipped corners from original boundary-line
+pairs. Prediction evaluates the surviving corners over the event-time interval
+and rounds outward to integer frames. Keep every startup constraint. The
+bounded experiment accepts at most 128 reports and uses only reports available
+at or before its declared decision time and predicts only at or after that decision;
+both midpoint negative controls use the
+same report prefix. Missing bounds, changed arm/source/clock, raw ordering or
+position reversals, a missing startup sequence, an empty model, a pre-start
+event or an exceeded declared horizon refuses prediction. Infeasibility
+invalidates the scenario; callers must discard every earlier conditional
+prediction. Returned interval copies do not self-revoke. It never silently
+drops a report and resumes.
+
+Coverage controls use four rates, both slope-prior extremes, zero drift,
+one-sided maximum age and same-sign frame alignment, quantization boundaries,
+causal horizons, nested constraints and growing event uncertainty. In the
+fixed 48 kHz summary scenario, true drift is +100 ppm inside a +/-200 ppm prior,
+12 reports are 250 ms apart, maximum age is 200 us, query brackets are 10 us,
+frame alignment is three frames and prediction is one second after the last
+report. Its conservative integer interval is 29 frames wide and covers truth.
+Nominal-slope and free-slope midpoint/max-residual controls both exclude truth
+under that same one-sided pattern. This is a sensitivity/control result, not a
+hardware precision measurement or a like-for-like comparison with F4's
+percentile-based sum. No duplex bound or Q-threshold support follows from it.
+
+A nonempty polygon does not validate the model or its hard bounds. Explicit
+counterexamples retain a nonempty model while excluding truth after one
+under-declared report bound, an unbridged clock offset, curvature not yet spanned by a report,
+a forward jump or drift just outside the prior over a short prefix. In the
+controls, three reports whose declared bounds admit no common line refuse,
+even though the true instantaneous slopes remain inside the prior. A wrong
+nominal rate refuses over the tested span. These failures block
+using feasibility as a reset detector or as evidence that a chosen ppm bound
+is sufficient. Curvature-aware fitting and outlier-tolerant statistical
+methods are not implemented or selected. A mathematically permitted repeated
+position also does not relax the separate observability preflight's stop rule.
+
+The investigation therefore does not select a replacement estimator. Physical
+preparation still requires independently justified age, frame/timestamp
+alignment and pointer granularity, slope/curvature limits, observer/report and
+adapter clock bridges, capture/playback position semantics and link/converter/
+analog offset. Loopback must measure the latter; no affine fit can identify an
+unobserved constant offset. The existing collector/analyzer and retained F4
+results remain unchanged. New backend unsafe access still requires the
+maintainer's explicit approval, and the actual physical collection method
+still requires its independent review before collection.
 
 ### Later measurement requirements and falsifiers
 
@@ -320,7 +435,7 @@ Three constraints hold in the meantime, so that the deferral cannot be used as p
 | Measure per-callback host timestamps on Linux, macOS, and Windows            | 9     | Revision-bound Linux direct-PCM data retained; F4 and F7 Not supported in separate runs. macOS/Windows missing |
 | Bridge each hardware-timestamped adapter's connection clock                  | 9     | Not started; requires a physical MIDI endpoint on a selected qualification host |
 | Measure each untimestamped adapter's arrival-time uncertainty                | 9     | Not started |
-| Build synthetic clock-report controls; decide isolated backend instrumentation | 9 | Access audit complete; new FFI requires maintainer approval before implementation |
+| Build synthetic clock-report controls; decide isolated backend instrumentation | 9 | Owned-report controls implemented; new FFI requires maintainer approval before implementation |
 | Write and accept this record against that evidence                           | 9     | Required before Phase 9 exit |
 
 ## Revisit conditions

@@ -30,6 +30,10 @@ use crate::report::{
 use crate::time::{FrameCount, QUANTUM_FRAMES};
 use crate::validate::{Validated, validate};
 
+#[cfg(test)]
+#[path = "tests/plan_identity_exhaustion.rs"]
+mod plan_identity_exhaustion;
+
 /// The preparation input.
 ///
 /// It carries the profile and nothing the profile already owns. The master plan's
@@ -126,6 +130,15 @@ pub(crate) fn compile_with(
     config: &RenderConfig,
     policy: ArenaPolicy,
 ) -> CompileOutcome {
+    compile_with_issuer(ir, config, policy, issue_plan_id)
+}
+
+fn compile_with_issuer(
+    ir: &GraphIr,
+    config: &RenderConfig,
+    policy: ArenaPolicy,
+    issue: impl FnOnce() -> Option<crate::plan::PlanId>,
+) -> CompileOutcome {
     let profile = config.host_profile();
     let mut warnings = Vec::new();
     for program in ir.scripts() {
@@ -218,11 +231,26 @@ pub(crate) fn compile_with(
         };
     }
 
+    let Some(plan_id) = issue() else {
+        warnings.extend_from_slice(validated.warnings());
+        return CompileOutcome {
+            report: preflight,
+            warnings,
+            plan: Err(CompileError::PlanIdentityExhausted),
+        };
+    };
     // Resource rows are recomputed after lowering; the static program workload is unchanged.
     warnings.retain(|warning| matches!(warning, CompileWarning::AudioScriptWork { .. }));
     warnings.extend_from_slice(validated.warnings());
-
-    let lowered = lower(ir, profile, &validated, &mut warnings, policy, &paths);
+    let lowered = lower(
+        ir,
+        profile,
+        &validated,
+        &mut warnings,
+        policy,
+        &paths,
+        plan_id,
+    );
     let report = build_report(
         ir,
         profile,
@@ -257,7 +285,21 @@ pub(crate) fn compile_with(
             {
                 Ok(scripts) => {
                     plan.install_scripts(scripts);
-                    Ok(plan)
+                    match crate::producer_programs::ProducerPrograms::prepare(
+                        ir.declarations(),
+                        &plan,
+                    ) {
+                        Ok(programs) => {
+                            if !programs.internal.is_empty() {
+                                warnings.push(CompileWarning::InternalClearCostUnqualified {
+                                    samples_per_quantum: programs.internal_clear_work,
+                                });
+                            }
+                            plan.producer_programs = programs;
+                            Ok(plan)
+                        }
+                        Err(error) => Err(error),
+                    }
                 }
                 Err(error) => Err(error),
             }
@@ -639,13 +681,19 @@ fn build_rows(
     // the record width unless the tables outweigh every node's records, in which case no
     // single authored object is responsible and the plan is — which is what `IrObject::Plan`
     // means in this report.
-    let prepared_bytes =
-        PreparedBytes::measured(node_prepared_bytes.get().saturating_add(tuning_bytes));
-    let prepared_contributor = if tuning_bytes > node_prepared_bytes.get() {
-        IrObject::Plan
-    } else {
-        node_contributor
-    };
+    let program_bytes = crate::producer_programs::declaration_bytes(declarations);
+    let prepared_bytes = PreparedBytes::measured(
+        node_prepared_bytes
+            .get()
+            .saturating_add(tuning_bytes)
+            .saturating_add(program_bytes),
+    );
+    let prepared_contributor =
+        if tuning_bytes.saturating_add(program_bytes) > node_prepared_bytes.get() {
+            IrObject::Plan
+        } else {
+            node_contributor
+        };
     let (mutable_bytes, mutable_contributor) =
         ir.mutable_bytes(inserted_records, capabilities.sample_rate());
     let mutable_bytes =
@@ -682,6 +730,21 @@ fn build_rows(
         ir.voice_instances(),
     );
 
+    let internal_bound = declarations
+        .internal_producers
+        .iter()
+        .fold(0_u32, |count, producer| {
+            count.saturating_add(producer.per_quantum().get())
+        });
+    let scratch_bytes = PreparedBytes::measured(scratch_bytes.get().saturating_add(
+        crate::producer_programs::internal_scratch_bytes(EventCount::measured(internal_bound)),
+    ));
+    let scratch_bytes = PreparedBytes::measured(
+        scratch_bytes.get().saturating_add(
+            (declarations.runtime_parameters.len() as u64)
+                .saturating_mul(size_of::<EventCount>() as u64),
+        ),
+    );
     let node_count = NodeCount::measured(u32::try_from(ir.nodes().len()).unwrap_or(u32::MAX));
     // A modulation edge is an edge of the plan (`SOUND-INV-027`): it is walked by the
     // schedule and read every quantum, so it is admitted against the same count.
@@ -1016,10 +1079,16 @@ fn build_rows(
     // mutually exclusive"; no such proof exists and none is built here, so every declared
     // source counts. Summing is the conservative direction: it can refuse a plan whose
     // sources never actually coincide, never admit one whose sources do.
+    let parameter_authored = declarations
+        .runtime_parameters
+        .iter()
+        .fold(0_u64, |sum, program| {
+            sum.saturating_add(u64::from(program.destination_occupancy().get()))
+        });
     let authored = declarations
         .authored_sources
         .iter()
-        .fold(0_u64, |total, source| {
+        .fold(parameter_authored, |total, source| {
             total.saturating_add(u64::from(source.destination_occupancy.get()))
         });
     rows.push(ResourceRow::new(
@@ -1090,7 +1159,7 @@ fn build_rows(
         .internal_producers
         .iter()
         .fold(0_u64, |total, producer| {
-            total.saturating_add(u64::from(producer.per_quantum.get()))
+            total.saturating_add(u64::from(producer.per_quantum().get()))
         });
     rows.push(ResourceRow::new(
         ResourceField::InternalEventShare,
@@ -1652,8 +1721,8 @@ fn lower(
     warnings: &mut Vec<CompileWarning>,
     policy: ArenaPolicy,
     paths: &crate::latency::PathLatencies,
+    plan_id: crate::plan::PlanId,
 ) -> Lowered {
-    let plan_id = issue_plan_id();
     let rate = profile.capabilities().sample_rate();
     let mut state = Lowering {
         ops: Vec::new(),

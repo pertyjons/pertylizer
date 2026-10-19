@@ -28,6 +28,8 @@ pub mod mixed_targets;
 pub mod pulse;
 #[cfg(feature = "simulated-ingress")]
 pub mod session;
+#[cfg(feature = "mixed-transfer-rehearsal")]
+pub mod software_input;
 mod types;
 pub use types::*;
 

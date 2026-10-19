@@ -408,6 +408,33 @@ def check_evidence_harnesses(errors: list[str]) -> None:
             errors.append(f"{relative_path}: self-test omitted its control summary")
 
 
+def check_clock_control_suite(stem: str, label: str, errors: list[str]) -> None:
+    paths = (Path(f"scripts/{stem}.py"), Path(f"scripts/test_{stem}.py"))
+    missing = [path for path in paths if not (REPO_ROOT / path).is_file()]
+    if missing:
+        errors.extend(f"{path}: required {label} control is missing" for path in missing)
+        return
+    completed = subprocess.run(
+        [sys.executable, "-B", "-m", "unittest", f"scripts.test_{stem}"],
+        cwd=REPO_ROOT, check=False, capture_output=True, text=True,
+    )
+    summary = completed.stderr + completed.stdout
+    if completed.returncode != 0:
+        errors.append(f"{label} controls failed: {summary.strip()}")
+    elif re.search(r"Ran ([1-9][0-9]*) tests?\b", summary) is None:
+        errors.append(f"{label} controls omitted a nonempty test summary")
+    elif re.search(r"\b(?:skipped|expected failures)=[1-9][0-9]*\b", summary):
+        errors.append(f"{label} skipped required controls or expected their failure")
+
+
+def check_clock_observability(errors: list[str]) -> None:
+    check_clock_control_suite("clock_observability", "clock observability", errors)
+
+
+def check_clock_interval_fit(errors: list[str]) -> None:
+    check_clock_control_suite("clock_interval_fit", "clock interval fit", errors)
+
+
 def check_retained_f7_audit(errors: list[str]) -> None:
     missing = False
     for path in (EVD_0016_F7_AUDIT, EVD_0016_F7_ARTIFACT):
@@ -715,6 +742,8 @@ def main(argv: list[str] | None = None) -> int:
     check_decision_index(errors)
     check_evidence_ids(errors)
     check_evidence_harnesses(errors)
+    check_clock_observability(errors)
+    check_clock_interval_fit(errors)
     if args.evidence:
         check_evidence_simulators(errors)
         check_retained_f7_audit(errors)

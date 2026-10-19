@@ -12,6 +12,8 @@
 //!   drop counters existed for years and reached no consumer at all, which is the
 //!   specific failure the report is the control against.
 
+mod hot;
+
 use thiserror::Error;
 
 use crate::ir::{IrError, IrObject};
@@ -23,6 +25,11 @@ use crate::time::{FrameCount, TimeError};
 /// Why a plan was not admitted.
 #[derive(Debug, Clone, Copy, PartialEq, Error)]
 pub enum CompileError {
+    #[error("mixed producer program: {reason}")]
+    ProducerProgram { reason: &'static str },
+    /// No process-local plan identity remains; no plan may alias an older one.
+    #[error("plan identity space is exhausted")]
+    PlanIdentityExhausted,
     /// An explicit feedback boundary violates its admitted ownership or timing rule.
     #[error("feedback boundary {node}: {reason}")]
     FeedbackBoundary {
@@ -856,6 +863,10 @@ pub enum PreparationFault {
 /// Something worth saying about a plan that was nevertheless admitted.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum CompileWarning {
+    /// Periodic full-history clears have no calibrated CPU coefficient.
+    InternalClearCostUnqualified {
+        samples_per_quantum: synth_core::SampleCount,
+    },
     /// Audio-rate work at maximum configured polyphony exceeds the static advisory threshold.
     AudioScriptWork {
         estimate: crate::script::AudioScriptCost,
@@ -904,6 +915,13 @@ pub enum CompileWarning {
 impl std::fmt::Display for CompileWarning {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            Self::InternalClearCostUnqualified {
+                samples_per_quantum,
+            } => write!(
+                f,
+                "internal clears require at most {} sample writes/quantum excluded from predicted_quantum_cost_ratio; load tooling only, no CPU admission bound",
+                samples_per_quantum.as_usize()
+            ),
             Self::AudioScriptWork { estimate } => write!(
                 f,
                 "{} audio script: {} VM work units/evaluation x {} frames x {} voices = {} units/quantum (advisory threshold {}); this is not a CPU-time estimate",
@@ -937,11 +955,21 @@ impl std::fmt::Display for CompileWarning {
 
 /// Why a render call could not be served.
 ///
-/// Every variant is returned **before** renderer state or output is mutated, except
-/// the two stream-contract faults, which are terminal for the epoch and say so:
-/// they silence the output, invalidate the carries, and publish `needs_reprepare`.
+/// Caller precondition refusals precede state or output mutation. Contract and
+/// producer faults are terminal at their owning render boundary: silence the
+/// whole callback, invalidate both carries and publish `needs_reprepare`.
 #[derive(Debug, Clone, Copy, PartialEq, Error)]
 pub enum RenderError {
+    #[error("{class} producer runtime storage is inconsistent")]
+    ProducerStorage {
+        class: crate::publish::ProducerClass,
+    },
+    #[error("{class} producer exceeded its admitted envelope")]
+    ProducerBound {
+        class: crate::publish::ProducerClass,
+    },
+    #[error(transparent)]
+    ProducerPublication(crate::publish::PublicationFault),
     /// A prepared note target cannot fit the group's cached index representation.
     #[error("prepared note target index {index} is not representable")]
     NoteTargetUnrepresentable { index: usize },
@@ -1088,6 +1116,7 @@ pub struct DiagnosticsReport {
     oversized_callback_faults: u64,
     clock_exhaustion_faults: u64,
     publication_faults: u64,
+    internal_producer_faults: u64,
     authored_source_faults: u64,
     displacement_faults: u64,
     late_activations: u64,
@@ -1285,7 +1314,12 @@ impl DiagnosticsReport {
         self.clock_exhaustion_faults
     }
 
-    /// Terminal authored-source failures; `AuthoredNoteStream::fault` retains their kind.
+    /// Terminal renderer-internal producer failures, separate from external publication.
+    pub const fn internal_producer_faults(&self) -> u64 {
+        self.internal_producer_faults
+    }
+
+    /// Terminal authored-source failures; the owning source retains their kind.
     pub const fn authored_source_faults(&self) -> u64 {
         self.authored_source_faults
     }

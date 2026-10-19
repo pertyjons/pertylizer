@@ -1252,3 +1252,6 @@ fn reset_release_queue_peak_is_retained_after_the_discarded_quantum_drains_it() 
         .expect("successor joins");
     assert_eq!(joined.custody(), MixedTransferCustody::Complete);
 }
+
+#[path = "running_tests.rs"]
+mod running_tests;

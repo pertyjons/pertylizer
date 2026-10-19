@@ -30,6 +30,7 @@ use super::{MixedIngressCommand, MixedIngressCommandFault, MixedIngressResult};
 ))]
 use crate::ingress::{RELEASE_GROUP_CAPACITY, ReleaseCause, ReleaseGroup};
 use crate::{
+    diagnostics::RenderError,
     identity::{CompiledRangeMinter, EndedNote, NoteIdentity, Resolution},
     looping::LoopPassId,
     publish::ProducerClass,
@@ -1032,6 +1033,18 @@ impl MixedOneShotAudio {
         &mut self,
         at: SampleTime,
     ) -> Result<MixedStopAccepted, MixedStopRefused> {
+        let accepted = self.preflight_compiled_stop(at)?;
+        if accepted == MixedStopAccepted::Scheduled {
+            self.stop_pending = Some(at);
+        }
+        Ok(accepted)
+    }
+
+    /// Pure admission: running reset must not schedule a Stop before committing.
+    pub(super) fn preflight_compiled_stop(
+        &self,
+        at: SampleTime,
+    ) -> Result<MixedStopAccepted, MixedStopRefused> {
         if self.fault.is_some() || self.audio.renderer.diagnostics().needs_reprepare() {
             return Err(MixedStopRefused::Faulted);
         }
@@ -1059,7 +1072,6 @@ impl MixedOneShotAudio {
                 return Ok(MixedStopAccepted::AlreadyStopped);
             }
         }
-        self.stop_pending = Some(at);
         Ok(MixedStopAccepted::Scheduled)
     }
 
@@ -1080,12 +1092,16 @@ impl MixedOneShotAudio {
             // The playhead this boundary plays, before anything moves: the loop's mapped
             // position while a loop runs, else the anchor's. A stopped loop never wraps;
             // the next adoption replaces its program.
-            let position = match (self.loop_cursor, self.loop_program.as_deref()) {
-                (Some(_), Some(program)) => Some(
-                    loop_position(self.effective_anchor, program.interval, clock)
-                        .ok_or(MixedOneShotRenderError::LoopTimeline)?,
-                ),
-                _ => self.audio.renderer.plan_position_at_clock(),
+            let position = if self.retiring_stop {
+                None
+            } else {
+                match (self.loop_cursor, self.loop_program.as_deref()) {
+                    (Some(_), Some(program)) => Some(
+                        loop_position(self.effective_anchor, program.interval, clock)
+                            .ok_or(MixedOneShotRenderError::LoopTimeline)?,
+                    ),
+                    _ => self.audio.renderer.plan_position_at_clock(),
+                }
             };
             self.stop_released = HeldNoteCount::NONE;
             let released = self.audio.renderer.stop_mixed_compiled_boundary(
@@ -1129,6 +1145,17 @@ impl MixedOneShotAudio {
     /// endpoint faults before any queue is touched, and every transfer fault this or the
     /// control half publishes silences the complete callback that observes it.
     pub(crate) fn render_with<Q: MixedAudioQueues>(
+        &mut self,
+        queues: &mut Q,
+        output: AudioBlockMut<'_>,
+    ) -> Result<(), MixedOneShotRenderError> {
+        let result = self.render_with_core(queues, output);
+        #[cfg(feature = "mixed-transfer-rehearsal")]
+        self.finish_continuation_render(result.is_ok());
+        result
+    }
+
+    pub(super) fn render_with_core<Q: MixedAudioQueues>(
         &mut self,
         queues: &mut Q,
         mut output: AudioBlockMut<'_>,
@@ -1190,7 +1217,19 @@ impl MixedOneShotAudio {
             self.fault = Some(error);
             match error {
                 MixedOneShotRenderError::Publication(_) => {
-                    self.audio.renderer.terminal_fault(&mut output);
+                    self.audio.renderer.terminal_fault(&mut output)
+                }
+                MixedOneShotRenderError::Render(
+                    RenderError::ProducerBound { class } | RenderError::ProducerStorage { class },
+                ) => self
+                    .audio
+                    .renderer
+                    .terminal_producer_fault(&mut output, class),
+                MixedOneShotRenderError::Render(RenderError::ProducerPublication(_)) => {
+                    self.audio.renderer.terminal_authored_fault(
+                        &mut output,
+                        crate::authored::AuthoredFault::Publication,
+                    )
                 }
                 MixedOneShotRenderError::Displacement(_) => {
                     self.audio.renderer.terminal_displacement_fault(&mut output);
@@ -1277,6 +1316,10 @@ impl MixedOneShotAudio {
         if opens_quantum {
             self.panic_current_service_at
                 .store(clock.as_u64(), Ordering::Release);
+        }
+        #[cfg(feature = "mixed-transfer-rehearsal")]
+        if opens_quantum {
+            self.service_continuation(clock);
         }
         if opens_quantum && !self.adopted && clock == self.timing.effective() {
             let adopted = self.audio.adopt_compiled_boundary(
@@ -1518,6 +1561,9 @@ impl MixedOneShotAudio {
                     cut,
                 );
             }
+            self.audio
+                .renderer
+                .publish_runtime_parameters(&mut publication)?;
             #[cfg(any(
                 all(test, feature = "simulated-ingress"),
                 feature = "mixed-transfer-rehearsal"
@@ -1573,6 +1619,12 @@ impl MixedOneShotAudio {
         if opens_quantum && self.test_fail_after_ingress_at == Some(clock) {
             return Err(MixedOneShotRenderError::InjectedAfterIngress);
         }
+        let sealed = publication.seal();
+        if opens_quantum {
+            self.audio.renderer.set_producer_external_total(
+                sealed.external_total(crate::publish::WindowRow::FIRST),
+            );
+        }
         // A stopped program holds the plan timeline for the whole quantum, so no
         // callback partition lets it advance while live notes and tails render.
         match self.transport {
@@ -1590,21 +1642,16 @@ impl MixedOneShotAudio {
                         .interval;
                     let positions = loop_positions(self.effective_anchor, interval, clock)
                         .ok_or(MixedOneShotRenderError::LoopTimeline)?;
-                    self.audio.renderer.render_loop_quantum(
-                        output,
-                        publication.seal().events(),
-                        &positions,
-                    )?
+                    self.audio
+                        .renderer
+                        .render_loop_quantum(output, sealed.events(), &positions)?
                 }
-                _ => self
-                    .audio
-                    .renderer
-                    .render(output, publication.seal().events())?,
+                _ => self.audio.renderer.render(output, sealed.events())?,
             },
             MixedCompiledTransport::Stopped { position, .. } => {
                 self.audio
                     .renderer
-                    .render_held(output, publication.seal().events(), position)?
+                    .render_held(output, sealed.events(), position)?
             }
         }
         self.next = next;

@@ -21,14 +21,14 @@ use crate::{
 
 /// A preallocated lock-free host ring. It can report a larger capacity than it has, and
 /// its consumer can hide its packets from the first `hidden_pops` pops.
-struct Ring<T> {
+pub(super) struct Ring<T> {
     ring: HeapRb<T>,
     reported_capacity: Option<usize>,
     hidden_pops: usize,
 }
 
 impl<T> Ring<T> {
-    fn new(capacity: usize) -> Self {
+    pub(super) fn new(capacity: usize) -> Self {
         Self {
             ring: HeapRb::new(capacity),
             reported_capacity: None,
@@ -37,9 +37,9 @@ impl<T> Ring<T> {
     }
 }
 
-struct Prod<T>(HeapProd<T>);
+pub(super) struct Prod<T>(HeapProd<T>);
 
-struct Cons<T> {
+pub(super) struct Cons<T> {
     ring: HeapCons<T>,
     hidden_pops: usize,
 }
@@ -87,7 +87,7 @@ impl<T> MixedTransferConsumer<T> for Cons<T> {
     }
 }
 
-type Armed = MixedTransferArmed<Ring<MixedTransferCommand>, Ring<MixedTransferResult>>;
+pub(super) type Armed = MixedTransferArmed<Ring<MixedTransferCommand>, Ring<MixedTransferResult>>;
 
 fn profile() -> HostProfile {
     history_tests::mixed_profile()
@@ -112,7 +112,7 @@ fn channel(number: u8) -> MidiChannel {
     MidiChannel::new(number)
 }
 
-fn note_on(frames: u64, raw: u8) -> MixedSourceNoteOn {
+pub(super) fn note_on(frames: u64, raw: u8) -> MixedSourceNoteOn {
     MixedSourceNoteOn {
         at: SampleTime::new(frames),
         channel: MidiChannel::CH1,
@@ -129,7 +129,7 @@ fn bend_on(frames: u64, on: MidiChannel, cents: f32) -> MixedSourceBend {
     }
 }
 
-fn callback<C, R>(
+pub(super) fn callback<C, R>(
     audio: &mut MixedTransferAudio,
     port: &mut MixedTransferAudioPort<C, R>,
     samples: &mut [f32],
@@ -435,7 +435,6 @@ fn each_undersized_bend_table_refuses_arm_and_returns_both_queues() {
 fn arm_returns_a_seeded_command_queue_with_its_opaque_packet() {
     let (prepared, candidate) = history_tests::one_shot_with_boundary_on(true);
     let owner = MixedIngressOwner {
-        plan: prepared.owner.control.plan.id(),
         epoch: prepared.epoch(),
         table: prepared.table_id(),
     };
@@ -1055,3 +1054,11 @@ fn resource_peaks_retain_an_onset_and_release_served_and_drained_in_one_callback
         usage
     );
 }
+
+#[test]
+fn issue_transfer_is_unique_under_concurrent_last_ids_and_refuses_permanently() {
+    crate::issuer_controls::assert_u64_issuer_exhaustion(issue_transfer_from);
+}
+
+#[path = "transfer/endurance_tests.rs"]
+mod endurance_tests;

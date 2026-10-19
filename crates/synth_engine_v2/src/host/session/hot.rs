@@ -266,8 +266,18 @@ impl SessionRuntime {
     pub(in crate::host) fn render(
         &mut self,
         renderer: &mut PreparedRenderer,
+        output: AudioBlockMut<'_>,
+        capture: Option<&mut SimulatedNoteRecorder>,
+    ) -> Result<(), ScheduledRenderError> {
+        self.render_observed(renderer, output, capture, None)
+    }
+
+    pub(in crate::host) fn render_observed(
+        &mut self,
+        renderer: &mut PreparedRenderer,
         mut output: AudioBlockMut<'_>,
         mut capture: Option<&mut SimulatedNoteRecorder>,
+        mut observers: Option<&mut crate::observe::ObservationSubscriptions>,
     ) -> Result<(), ScheduledRenderError> {
         let _quanta = renderer.validate_output(&mut output)?;
         let mut delivered = 0;
@@ -314,7 +324,13 @@ impl SessionRuntime {
                     PlaybackState::Stopped(_) => self.idle_quantum(renderer, window),
                     PlaybackState::Playing(_) => {
                         self.scheduler.set_session_operations(self.operations);
-                        self.scheduler.render(renderer, &mut self.arbiter, window)
+                        self.scheduler.render_observed(
+                            renderer,
+                            &mut self.arbiter,
+                            None,
+                            observers.as_deref_mut(),
+                            window,
+                        )
                     }
                 };
                 self.retain_adopted();

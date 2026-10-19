@@ -4,7 +4,7 @@ use crate::{
     host::session::SessionCommand,
     identity::TableId,
     plan::{ContinuationError, PlanId},
-    quantities::{EventCount, PreparedBytes},
+    quantities::{EventCount, PreparedBytes, RecordCount},
     render::TimedEvent,
     time::{StreamAnchor, StreamEpoch},
     transport::{ActivationSequence, TransportActivation},
@@ -14,6 +14,8 @@ use crate::{
 #[derive(Debug, Clone, Copy)]
 #[must_use]
 pub struct ContinuationLimits {
+    /// Bound structural preflight, copied rows and voice/history-owner exchanges.
+    pub maximum_transition_records: RecordCount,
     pub maximum_stamped_events: EventCount,
     pub witness_bytes: PreparedBytes,
     pub transition_bytes: PreparedBytes,

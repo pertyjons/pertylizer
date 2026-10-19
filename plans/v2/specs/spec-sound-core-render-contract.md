@@ -482,8 +482,9 @@ storage assigned to compiled signal lifetimes.
     authoritative on audio; compiled candidates carry pairing tokens, not copied
     generations; compiled restoration/reseeding touches only compiled-owned rows;
     and shared playable instances are refused. Compiled transport preserves live
-    holds and expression. A stopped whole-owner reset ends old live occurrences
-    before retiring their owner; source key-ups remain reset tombstones rather
+    holds and expression. A whole-owner reset ends old live occurrences before
+    retiring their owner; explicit running mode also stops compiled custody at
+    B + Q. Source key-ups remain reset tombstones rather
     than resolving through the successor's table. No in-place table rebuild,
     general shared-gate aggregation or production live adapter is admitted.
 

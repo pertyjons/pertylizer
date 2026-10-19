@@ -433,11 +433,24 @@ impl IdentityTable {
         })
     }
 
-    /// The caller preflights every slot before rebinding the actual authoritative table.
-    pub(crate) fn continue_plan(&mut self, to: crate::plan::PlanId) {
+    pub(crate) fn can_continue_notes(
+        &self,
+        bindings: &crate::plan::note_binding::NoteBindings,
+    ) -> bool {
+        self.slots.iter().all(|slot| match slot {
+            Slot::Live { note, .. } => bindings.accepts_note(*note),
+            Slot::Free { .. } | Slot::Retired => true,
+        })
+    }
+
+    /// The caller preflights every actual slot against the immutable authored map.
+    pub(crate) fn continue_note_bindings(
+        &mut self,
+        bindings: &crate::plan::note_binding::NoteBindings,
+    ) {
         for slot in &mut self.slots {
             if let Slot::Live { note, .. } = slot {
-                *note = crate::plan::NoteSlot::new(to, note.index());
+                bindings.apply_note(note);
             }
         }
     }

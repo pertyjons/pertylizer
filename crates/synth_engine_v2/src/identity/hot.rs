@@ -718,10 +718,13 @@ impl IdentityTable {
 
 #[cfg(feature = "simulated-ingress")]
 impl LiveNotes {
-    pub(crate) fn can_continue_plan(&self, from: crate::plan::PlanId, note_count: usize) -> bool {
+    pub(crate) fn can_continue_notes(
+        &self,
+        bindings: &crate::plan::note_binding::NoteBindings,
+    ) -> bool {
         for entry in &self.slots {
             if let Some(note) = entry
-                && (note.note.plan() != from || note.note.index() >= note_count)
+                && !bindings.accepts_note(note.note)
             {
                 return false;
             }
@@ -729,13 +732,42 @@ impl LiveNotes {
         true
     }
 
-    /// All rows were checked without mutation; table, index and generations stay intact.
-    pub(crate) fn continue_plan(&mut self, to: crate::plan::PlanId) {
-        for entry in &mut self.slots {
-            let Some(note) = entry else {
-                continue;
-            };
-            note.note = NoteSlot::new(to, note.note.index());
+    /// Actual identities and pool indices stay in place; only target bindings change.
+    pub(crate) fn continue_note_bindings(
+        &mut self,
+        bindings: &crate::plan::note_binding::NoteBindings,
+    ) {
+        for note in self.slots.iter_mut().flatten() {
+            bindings.apply_note(&mut note.note);
+        }
+    }
+}
+
+#[cfg(feature = "mixed-transfer-rehearsal")]
+impl RangeMinter {
+    pub(crate) fn accepts_plan_bindings(
+        &self,
+        bindings: crate::plan::binding::FixedPlanBindings,
+    ) -> bool {
+        for slot in &self.slots {
+            if let Slot::Live { note, .. } = slot
+                && !bindings.accepts_note(*note)
+            {
+                return false;
+            }
+        }
+        true
+    }
+
+    /// Every live slot was checked before mutation; authority and generations stay.
+    pub(crate) fn apply_plan_bindings(
+        &mut self,
+        bindings: crate::plan::binding::FixedPlanBindings,
+    ) {
+        for slot in &mut self.slots {
+            if let Slot::Live { note, .. } = slot {
+                *note = bindings.note(*note);
+            }
         }
     }
 }

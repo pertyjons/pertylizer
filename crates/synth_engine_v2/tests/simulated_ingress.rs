@@ -2052,7 +2052,7 @@ fn simulated_has_one_literal_construction_site_in_this_crate_s_source() {
     //
     // **Its limits are wider than the record implies, and are stated rather than glossed.**
     // It establishes that one place in this crate's `src` writes the literal path
-    // `TimeSource::Simulated` — the ingress store's `push`. It would **not** see an aliased
+    // `TimeSource::Simulated` — the crate-wide factory in `ingress/offers.rs`. It would **not** see an aliased
     // import, a wildcard `use`, a `Self::Simulated` inside the enum's own module, or a
     // construction in another crate, and it says nothing about whether a release build calls
     // the store or about a downstream consumer of a public enum. An independent review
@@ -2106,7 +2106,7 @@ fn simulated_has_one_literal_construction_site_in_this_crate_s_source() {
     );
     assert!(
         sites[0].contains("ingress/offers.rs"),
-        "the one site must be the ingress store, not {}",
+        "the one site must be the simulated provenance factory in ingress/offers.rs, not {}",
         sites[0]
     );
 }

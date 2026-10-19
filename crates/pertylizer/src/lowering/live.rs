@@ -39,6 +39,9 @@ use thiserror::Error;
 
 use super::{LoweredProject, Severity};
 
+#[path = "live_observation.rs"]
+mod observation;
+
 /// Command cells in each direction; play and pause need one each, the rest is headroom.
 const COMMAND_SLOTS: usize = 8;
 
@@ -53,6 +56,7 @@ pub const QUALIFIED_EVENTS_PER_QUANTUM: u32 = 360;
 /// Provisional cold copies of one adopted program, never a callback event quota.
 fn continuation_limits() -> ContinuationLimits {
     ContinuationLimits {
+        maximum_transition_records: synth_engine_v2::quantities::RecordCount::measured(16_384),
         maximum_stamped_events: EventCount::measured(16_384),
         witness_bytes: PreparedBytes::measured(4 * 1024 * 1024),
         transition_bytes: PreparedBytes::measured(4 * 1024 * 1024),
@@ -101,6 +105,7 @@ pub(crate) enum SongEditError {
 /// Control half, owned by the application thread.
 #[must_use]
 pub struct SongPlayback {
+    observers: observation::SongObservationControl,
     control: SessionControl,
     limits: SessionTransferLimits,
     edits: HeapProd<SongEdit>,
@@ -139,6 +144,7 @@ pub struct SongPlayback {
 /// Audio half, owned by the callback.
 #[must_use]
 pub struct SongAudio {
+    observers: super::observation::ObservationAudio,
     audio: SessionAudio,
     edits: HeapCons<SongEdit>,
     edited: HeapProd<SongEdit>,
@@ -229,8 +235,10 @@ pub(crate) fn prepare_unqualified(
     let (edit_writer, edited) = HeapRb::new(1).split();
     let clock = Arc::new(AtomicU64::new(0));
     let faulted = Arc::new(AtomicBool::new(false));
+    let (observers, observer_audio) = observation::SongObservationControl::prepare(&profile)?;
     Ok((
         SongPlayback {
+            observers,
             control,
             limits,
             edits,
@@ -260,6 +268,7 @@ pub(crate) fn prepare_unqualified(
             applied_log: Vec::new(),
         },
         SongAudio {
+            observers: observer_audio,
             audio,
             edits: edit_reader,
             edited: edit_writer,
@@ -284,6 +293,7 @@ impl SongPlayback {
         self.collect();
         !self.is_faulted()
             && self.outstanding == 0
+            && !self.observers.changing()
             && self.edit_pending.is_none()
             && self.unresolved_edit.is_none()
             && !self.edit_failed
@@ -338,6 +348,7 @@ impl SongPlayback {
         let plan = lowered
             .plan
             .ok_or_else(|| SongEditError::Preparation("no edited plan".to_owned()))?;
+        let observation = self.observers.prepare_edit(self.control.plan(), &plan);
         let events: Vec<_> = lowered
             .events
             .iter()
@@ -345,7 +356,7 @@ impl SongPlayback {
             .collect();
         let stream = AdmittedCompiledStream::admit(&plan, &events)
             .map_err(|error| SongEditError::Preparation(error.to_string()))?;
-        let packet = self
+        let mut packet = self
             .control
             .prepare_compatible_replacement(plan, stream, profile, self.limits)
             .map_err(|error| match error {
@@ -359,6 +370,17 @@ impl SongPlayback {
                 ) => SongEditError::Unsupported(error.to_string()),
                 _ => SongEditError::Preparation(error.to_string()),
             })?;
+        let observation_mirror =
+            match observation::SongObservationControl::attach(&mut packet, observation) {
+                Ok(mirror) => mirror,
+                Err(error) => {
+                    if let Err((packet, cancellation)) = self.control.cancel_replacement(packet) {
+                        self.unresolved_edit = Some(SongEdit { packet, install });
+                        return Err(SongEditError::Preparation(cancellation.to_string()));
+                    }
+                    return Err(SongEditError::Preparation(error.to_string()));
+                }
+            };
         if !publish_allowed() {
             if let Err((packet, error)) = self.control.cancel_replacement(packet) {
                 self.unresolved_edit = Some(SongEdit { packet, install });
@@ -377,6 +399,7 @@ impl SongPlayback {
                 }
             }
         }
+        self.observers.published(observation_mirror);
         self.edit_pending = Some(PlanPosition::new(lowered.lowered_frames.as_u64()));
         Ok(plan)
     }
@@ -387,6 +410,7 @@ impl SongPlayback {
         !self.is_faulted()
             && !self.edit_failed
             && self.outstanding == 0
+            && !self.observers.changing()
             && !self.is_editing()
             && self.ending.is_none()
             && matches!(self.control.snapshot().playback, PlaybackState::Playing(_))
@@ -429,6 +453,11 @@ impl SongPlayback {
         let plan = lowered
             .plan
             .ok_or_else(|| SongEditError::Preparation("no edited plan".to_owned()))?;
+        let observation = if preserve_graph_identity {
+            self.observers.prepare_edit(self.control.plan(), &plan)
+        } else {
+            self.observers.refuse_edit()
+        };
         let events: Vec<_> = lowered
             .events
             .iter()
@@ -439,7 +468,7 @@ impl SongPlayback {
         let clock = Arc::clone(&self.clock);
         let margin = self.margin;
         let end = self.end;
-        let packet = self
+        let mut packet = self
             .control
             .prepare_running_replacement(
                 plan,
@@ -470,6 +499,17 @@ impl SongPlayback {
                 },
             )
             .map_err(|error| SongEditError::Unsupported(error.to_string()))?;
+        let observation_mirror =
+            match observation::SongObservationControl::attach(&mut packet, observation) {
+                Ok(mirror) => mirror,
+                Err(error) => {
+                    if let Err((packet, cancellation)) = self.control.cancel_replacement(packet) {
+                        self.unresolved_edit = Some(SongEdit { packet, install });
+                        return Err(SongEditError::Preparation(cancellation.to_string()));
+                    }
+                    return Err(SongEditError::Preparation(error.to_string()));
+                }
+            };
         let kind = packet.kind();
         let continuation_unavailable = packet.continuation_unavailable();
         if kind == PlanReplacementKind::RunningCompatible && !publish_allowed() {
@@ -497,6 +537,7 @@ impl SongPlayback {
                 "reset queued without a voice-continuation witness: {error}"
             ));
         }
+        self.observers.published(observation_mirror);
         self.edit_pending = Some(PlanPosition::new(lowered.lowered_frames.as_u64()));
         Ok((plan, kind))
     }
@@ -580,11 +621,13 @@ impl SongPlayback {
     /// the playing state is the session's acknowledged state, not the last request; a
     /// faulted session is stopped.
     pub fn collect(&mut self) -> usize {
+        self.observers.poll();
         let mut applied = 0;
         if let Some(edit) = self.edited.try_pop() {
             let running = edit.packet.running_boundary().is_some();
             match self.control.collect_replacement(edit.packet) {
                 Ok(receipt) => {
+                    self.observers.edited(receipt.observation);
                     if let PlanReplacementOutcome::Installed(snapshot) = receipt.outcome {
                         if let Some(end) = self.edit_pending.take() {
                             self.end = end;
@@ -791,10 +834,16 @@ impl SongAudio {
         let Some(edit) = self.pending_edit.take() else {
             return;
         };
-        let result = if edit.packet.running_boundary().is_some() {
-            self.audio.begin_running_replacement(edit.packet)
-        } else {
-            self.audio.install_replacement(edit.packet)
+        let result = match (
+            edit.packet.running_boundary().is_some(),
+            self.observers.store_mut(),
+        ) {
+            (true, Some(store)) => self
+                .audio
+                .begin_running_replacement_observed(edit.packet, store),
+            (false, Some(store)) => self.audio.install_replacement_observed(edit.packet, store),
+            (true, None) => self.audio.begin_running_replacement(edit.packet),
+            (false, None) => self.audio.install_replacement(edit.packet),
         };
         let packet = match result {
             Ok(packet) | Err((packet, _)) => packet,
@@ -851,6 +900,7 @@ impl SongAudio {
         {
             return self.render_edit(output);
         }
+        let _observation_service = self.observers.service(self.audio.plan_id());
         if self.pending_edit.is_none() {
             self.pending_edit = self.edits.try_pop();
         }
@@ -915,11 +965,21 @@ impl SongAudio {
         let Some(edit) = self.pending_edit.as_mut() else {
             return false;
         };
-        let rendered = self
-            .audio
-            .render_running_replacement(&mut edit.packet, output.reborrow())
-            .is_ok();
+        let rendered = if let Some(store) = self.observers.store_mut() {
+            self.audio.render_running_replacement_observed(
+                &mut edit.packet,
+                output.reborrow(),
+                store,
+            )
+        } else {
+            self.audio
+                .render_running_replacement(&mut edit.packet, output.reborrow())
+        }
+        .is_ok();
         if !rendered {
+            if let Some(store) = self.observers.store_mut() {
+                store.end();
+            }
             output.silence();
             self.faulted.store(true, Ordering::Release);
         } else if matches!(
@@ -972,8 +1032,16 @@ impl SongAudio {
                 break;
             }
         }
-        let rendered = self.audio.render(output.reborrow()).is_ok();
+        let rendered = if let Some(store) = self.observers.store_mut() {
+            self.audio.render_observed(output.reborrow(), Some(store))
+        } else {
+            self.audio.render(output.reborrow())
+        }
+        .is_ok();
         if !rendered {
+            if let Some(store) = self.observers.store_mut() {
+                store.end();
+            }
             output.silence();
             self.faulted.store(true, Ordering::Release);
         }

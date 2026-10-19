@@ -487,6 +487,16 @@ pub trait InstrumentBridge: DiscoveryBridge {
     /// Get engine-wide status (CPU, voices, meters, transport).
     fn get_engine_status(&self) -> Result<EngineStatus, McpBridgeError>;
 
+    /// Last GUI observation of V2 output, independent of the V1 engine meters.
+    /// Bridges without that observation explicitly report it unavailable.
+    fn get_v2_playback_status(
+        &self,
+    ) -> Result<crate::v2_playback::V2PlaybackStatus, McpBridgeError> {
+        Ok(crate::v2_playback::V2PlaybackStatus::unavailable(
+            crate::v2_playback::UnavailableReason::NoPublisher,
+        ))
+    }
+
     /// Get build/version info for the running application (version, build
     /// timestamp, git commit/branch/dirty state at build time).
     fn get_version(&self) -> Result<VersionInfo, McpBridgeError>;

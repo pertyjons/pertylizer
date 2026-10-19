@@ -71,6 +71,11 @@ use crate::{
 };
 
 mod hot;
+#[cfg(feature = "mixed-transfer-rehearsal")]
+pub use transfer::continuation::{
+    MixedContinuationOutcome, MixedContinuationPacket, MixedContinuationPrepareError,
+    MixedContinuationRecovery, MixedContinuationRefusal, MixedContinuationRetired,
+};
 #[cfg(any(
     all(test, feature = "simulated-ingress"),
     feature = "mixed-transfer-rehearsal"
@@ -94,11 +99,11 @@ mod transfer;
 use hot::MixedAudioQueues;
 #[cfg(feature = "mixed-transfer-rehearsal")]
 pub use reset::{
-    MixedBridgeResetAudio, MixedBridgeResetEnd, MixedBridgeResetForeignPort,
-    MixedBridgeResetLiveRefusal, MixedBridgeResetOwner, MixedBridgeResetReceipt,
-    MixedBridgeResetRefusal, MixedBridgeResetRefused, MixedBridgeResetRenderError,
-    MixedBridgeResetRetired, MixedBridgeResetState, MixedBridgeStopAccepted,
-    MixedBridgeStopRefusal,
+    MixedBridgeCompiledCut, MixedBridgeResetAudio, MixedBridgeResetEnd,
+    MixedBridgeResetForeignPort, MixedBridgeResetLiveRefusal, MixedBridgeResetOwner,
+    MixedBridgeResetReceipt, MixedBridgeResetRefusal, MixedBridgeResetRefused,
+    MixedBridgeResetRenderError, MixedBridgeResetRetired, MixedBridgeResetState,
+    MixedBridgeStopAccepted, MixedBridgeStopRefusal,
 };
 #[cfg(feature = "mixed-transfer-rehearsal")]
 pub use transfer::{
@@ -447,6 +452,8 @@ pub(crate) struct MixedRetiredOffer {
 /// boundary allocates nothing and overwrites no earlier record.
 #[derive(Debug)]
 struct MixedOfferCell {
+    #[cfg(feature = "mixed-transfer-rehearsal")]
+    activation_custody: Option<transfer::activation::ActivationCustody>,
     candidate: MixedAudioCandidate,
     timing: MixedEffectiveTiming,
     ended: Vec<Option<crate::identity::EndedNote>>,
@@ -1722,7 +1729,9 @@ enum MixedIngressIdentityFault {
     OccurrenceCells,
 }
 
-/// The prepared plan, stream and note table that own one private transfer.
+/// The stream and authoritative note table that own one private transfer.
+/// Geometry may change while that source/handle lifetime continues; a PlanId
+/// belongs to prospective destinations, never to this stable ownership identity.
 #[cfg(any(
     all(test, feature = "simulated-ingress"),
     feature = "mixed-transfer-rehearsal"
@@ -1730,7 +1739,6 @@ enum MixedIngressIdentityFault {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[must_use]
 struct MixedIngressOwner {
-    plan: PlanId,
     epoch: StreamEpoch,
     table: TableId,
 }
@@ -3043,6 +3051,9 @@ pub(crate) enum MixedCollection {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
 #[allow(dead_code)]
 pub(crate) enum MixedCollectionError {
+    #[cfg(feature = "mixed-transfer-rehearsal")]
+    #[error("an owning continuation is pending or uncollected")]
+    ContinuationPending,
     #[error("mixed control and audio halves were crossed")]
     CrossedPair,
     #[error(transparent)]
@@ -3078,6 +3089,10 @@ pub(crate) struct MixedCollectionRefusal<C> {
 #[must_use]
 #[allow(dead_code)] // No production host may call the private scheduler.
 pub(crate) struct MixedOneShotAudio {
+    #[cfg(feature = "mixed-transfer-rehearsal")]
+    continuation: Option<Box<transfer::continuation::MixedContinuationPacket>>,
+    #[cfg(feature = "mixed-transfer-rehearsal")]
+    activation_custody: Option<Arc<std::sync::atomic::AtomicUsize>>,
     audio: MixedStreamAudio,
     arbiter: PublicationArbiter,
     events: Vec<MixedCompiledEvent>,
@@ -3099,6 +3114,8 @@ pub(crate) struct MixedOneShotAudio {
     transport: MixedCompiledTransport,
     /// At most one scheduled Stop, applied when its quantum boundary opens.
     stop_pending: Option<SampleTime>,
+    /// Retirement Stop has no playhead consumer and skips its fallible projection.
+    retiring_stop: bool,
     /// A Stop's own ended-note storage, sized like `compiled_ended`, so it never
     /// overwrites the adoption's boundary-ended record that teardown reads. Each
     /// applied Stop reuses it; `stop_released` names the latest Stop's prefix.
@@ -3338,6 +3355,10 @@ struct MixedTeardownParts {
 fn mixed_teardown_parts(
     audio: &MixedOneShotAudio,
 ) -> Result<MixedTeardownParts, MixedCollectionError> {
+    #[cfg(feature = "mixed-transfer-rehearsal")]
+    if audio.continuation.is_some() {
+        return Err(MixedCollectionError::ContinuationPending);
+    }
     let sounding = audio.audio.renderer.snapshot_mixed_sounding()?;
     let released = audio
         .released_compiled
@@ -3670,6 +3691,8 @@ impl MixedOneShotControl {
             }
         };
         Ok(MixedCandidateOffer(Box::new(MixedOfferCell {
+            #[cfg(feature = "mixed-transfer-rehearsal")]
+            activation_custody: None,
             candidate,
             timing,
             ended,
@@ -4098,7 +4121,7 @@ impl MixedStreamControl {
         {
             return Err(Box::new((MixedStreamOpenError::Partition, binding)));
         }
-        let mut renderer = match PreparedRenderer::prepare(
+        let mut renderer = match PreparedRenderer::prepare_mixed(
             Arc::clone(binding.plan_arc()),
             anchor,
             epoch,
@@ -4290,6 +4313,11 @@ impl MixedJoinedPrepared {
                 feature = "mixed-transfer-rehearsal"
             ))]
             MixedPanicCapability::Available,
+            #[cfg(any(
+                all(test, feature = "simulated-ingress"),
+                feature = "mixed-transfer-rehearsal"
+            ))]
+            crate::ingress::IngressOrigin::Simulated,
         )
     }
 
@@ -4310,6 +4338,11 @@ impl MixedJoinedPrepared {
             feature = "mixed-transfer-rehearsal"
         ))]
         panic_capability: MixedPanicCapability,
+        #[cfg(any(
+            all(test, feature = "simulated-ingress"),
+            feature = "mixed-transfer-rehearsal"
+        ))]
+        ingress_origin: crate::ingress::IngressOrigin,
     ) -> Result<(MixedOneShotControl, MixedOneShotAudio), Box<MixedOneShotArmRefusal>> {
         let control = &self.owner.control;
         let audio = &self.owner.audio;
@@ -4415,11 +4448,12 @@ impl MixedJoinedPrepared {
             all(test, feature = "simulated-ingress"),
             feature = "mixed-transfer-rehearsal"
         ))]
-        let test_ingress = match PerformanceIngress::prepare_mixed_rehearsal(
+        let test_ingress = match PerformanceIngress::prepare_mixed(
             profile,
             &control.plan,
             &audio.live_minter,
             &audio.renderer,
+            ingress_origin,
         ) {
             Ok(ingress) => ingress,
             Err(error) => {
@@ -4650,7 +4684,6 @@ impl MixedJoinedPrepared {
             feature = "mixed-transfer-rehearsal"
         ))]
         let ingress_owner = MixedIngressOwner {
-            plan: control.plan.id(),
             epoch: control.epoch,
             table: control.table,
         };
@@ -4763,6 +4796,10 @@ impl MixedJoinedPrepared {
                 off_thread: PhantomData,
             },
             MixedOneShotAudio {
+                #[cfg(feature = "mixed-transfer-rehearsal")]
+                continuation: None,
+                #[cfg(feature = "mixed-transfer-rehearsal")]
+                activation_custody: None,
                 audio,
                 arbiter,
                 events,
@@ -4783,6 +4820,7 @@ impl MixedJoinedPrepared {
                 render_started: false,
                 transport: MixedCompiledTransport::Running,
                 stop_pending: None,
+                retiring_stop: false,
                 stop_ended,
                 stop_released: HeldNoteCount::NONE,
                 stop_due: false,

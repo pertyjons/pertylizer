@@ -5,7 +5,7 @@
 //! project-change notification, MIDI disconnection while V2 is active, and the notices.
 
 use super::SynthApp;
-use crate::lowering::app::SongSwitch;
+use crate::lowering::app::{PlaybackView, SongSwitch};
 use synth_engine::EngineCommand;
 
 /// The parts of the project revision that change what V2 plays. Canvas layout and focus
@@ -56,10 +56,13 @@ mod revision_tests {
 /// The V2 toggle's state on the app.
 #[derive(Default)]
 pub(super) struct V2State {
-    switch: Option<SongSwitch>,
+    pub(super) switch: Option<SongSwitch>,
     revision: Option<AudibleRevision>,
     /// The MIDI port disconnected on entering V2 mode, reconnected on leaving it.
     midi_port: Option<String>,
+    view: Option<PlaybackView>,
+    #[cfg(feature = "mcp")]
+    publication_failure: Option<String>,
 }
 
 impl V2State {
@@ -68,11 +71,31 @@ impl V2State {
             switch: Some(switch),
             revision: None,
             midi_port: None,
+            view: None,
+            #[cfg(feature = "mcp")]
+            publication_failure: None,
         }
     }
 }
 
 impl SynthApp {
+    fn cache_v2_view(&mut self, switch: &SongSwitch) {
+        let view = switch.playback_view();
+        #[cfg(feature = "mcp")]
+        if let Some(shared) = &self.mcp_shared {
+            let result = shared.publish_v2_playback(mcp_playback_state(&view));
+            match result {
+                Ok(()) => self.v2.publication_failure = None,
+                Err(error) if self.v2.publication_failure.as_ref() != Some(&error) => {
+                    self.v2.publication_failure = Some(error.clone());
+                    self.dialog_state.set_status(error);
+                }
+                Err(_) => {} // The same observational failure was already surfaced.
+            }
+        }
+        self.v2.view = Some(view);
+    }
+
     fn audible_revision(&self) -> AudibleRevision {
         audible_revision_of(self.current_revision())
     }
@@ -152,7 +175,61 @@ impl SynthApp {
             }
         }
         self.show_v2_notices(&mut switch);
+        self.cache_v2_view(&switch);
         self.v2.switch = Some(switch);
+    }
+
+    #[cfg(feature = "v2-mixed-app")]
+    fn toggle_mixed(&mut self) {
+        let Some(mut switch) = self.v2.switch.take() else {
+            return;
+        };
+        switch.track_identity_source(std::sync::Arc::clone(self.session.state()));
+        if switch.mixed_active() {
+            self.leave_v2(&mut switch);
+        } else if switch.is_released() {
+            self.v2.midi_port = self.midi_handler.disconnect();
+            if self.silence_v1() {
+                if let Some(instrument) = self.active_instrument_id {
+                    let revision = self.audible_revision();
+                    if switch.enable_mixed_from(|| self.create_project_from_app(), instrument) {
+                        self.v2.revision = Some(revision);
+                    } else {
+                        self.reconnect_midi();
+                    }
+                } else {
+                    self.dialog_state.set_status(
+                        "Select a live instrument before running mixed playback".to_owned(),
+                    );
+                    self.reconnect_midi();
+                }
+            } else {
+                self.reconnect_midi();
+            }
+        } else {
+            self.dialog_state
+                .set_status("Leave the current V2 route before entering mixed playback".to_owned());
+        }
+        self.show_v2_notices(&mut switch);
+        self.cache_v2_view(&switch);
+        self.v2.switch = Some(switch);
+    }
+
+    #[cfg(feature = "v2-mixed-app")]
+    pub(super) fn mixed_note(
+        &mut self,
+        source: crate::lowering::app::SoftwareSource,
+        note: synth_core::MidiNote,
+        down: bool,
+    ) -> bool {
+        let Some(switch) = &mut self.v2.switch else {
+            return false;
+        };
+        if !switch.mixed_active() {
+            return false;
+        }
+        switch.mixed_note(source, note, down);
+        true
     }
 
     /// Per frame: service the V2 session, report project changes, and reconnect MIDI once
@@ -176,6 +253,7 @@ impl SynthApp {
             self.reconnect_midi();
         }
         self.show_v2_notices(&mut switch);
+        self.cache_v2_view(&switch);
         self.v2.switch = Some(switch);
     }
 
@@ -192,18 +270,78 @@ impl SynthApp {
     pub(super) fn render_v2_toggle(&mut self, ui: &mut egui::Ui) {
         use egui_remixicon::icons as ri;
         let active = self.v2_active();
-        let response = ui.selectable_label(active, "V2").on_hover_text(if active {
+        #[cfg(feature = "v2-mixed-app")]
+        {
+            let mixed = self
+                .v2
+                .switch
+                .as_ref()
+                .is_some_and(SongSwitch::mixed_active);
+            if ui.selectable_label(mixed, "Run mixed").on_hover_text(
+                "Experimental score and two software keyboards; unqualified capacity and Arrival timing; MIDI, recording and mixed tap observers unavailable"
+            ).clicked() { self.toggle_mixed(); }
+            if mixed
+                && let Some(instrument) = self
+                    .v2
+                    .switch
+                    .as_ref()
+                    .and_then(SongSwitch::mixed_instrument)
+            {
+                ui.label(format!("Live: {instrument:?}"));
+            }
+        }
+        #[cfg_attr(not(feature = "v2-mixed-app"), allow(unused_mut))]
+        let mut hover = if active {
             "Experimental V2 song playback is active: song only, MIDI off, no seek, loop or \
              pattern preview; the V1 transport does not affect it. Click to return to V1."
         } else {
             "Play the song through the experimental V2 engine (ADR-0077). Only projects V2 \
              can lower will play; entering stops V1."
-        });
+        };
+        #[cfg(feature = "v2-mixed-app")]
+        if self
+            .v2
+            .switch
+            .as_ref()
+            .is_some_and(SongSwitch::mixed_active)
+        {
+            hover = "Experimental mixed playback: score and software keys, MIDI and recording off; compiled seek and loop available. Click to return to V1.";
+        }
+        let response = ui.selectable_label(active, "V2").on_hover_text(hover);
         if response.clicked() {
             self.toggle_v2();
         }
         if !active {
             return;
+        }
+        #[cfg(feature = "v2-mixed-app")]
+        if self
+            .v2
+            .switch
+            .as_ref()
+            .is_some_and(SongSwitch::mixed_active)
+        {
+            let looping = self
+                .v2
+                .switch
+                .as_ref()
+                .is_some_and(SongSwitch::mixed_looping);
+            if ui
+                .button(if looping {
+                    "Leave loop and rewind"
+                } else {
+                    "Loop song from start"
+                })
+                .clicked()
+                && let Some(switch) = &mut self.v2.switch
+            {
+                switch.mixed_loop(!looping);
+            }
+            if ui.button("Seek start").clicked()
+                && let Some(switch) = &mut self.v2.switch
+            {
+                switch.mixed_seek_start();
+            }
         }
         let playing = self.v2.switch.as_ref().is_some_and(SongSwitch::is_playing);
         let (icon, hover) = if playing {
@@ -220,6 +358,7 @@ impl SynthApp {
                 switch.play(|| self.create_project_from_app());
             }
             self.show_v2_notices(&mut switch);
+            self.cache_v2_view(&switch);
             self.v2.switch = Some(switch);
         }
         if ui
@@ -230,17 +369,24 @@ impl SynthApp {
         {
             switch.stop(|| self.create_project_from_app());
             self.show_v2_notices(&mut switch);
+            self.cache_v2_view(&switch);
             self.v2.switch = Some(switch);
         }
     }
 
     /// The status-bar badge listing what V2 omits from the current project.
     pub(super) fn render_v2_badge(&self, ui: &mut egui::Ui) {
-        let Some(switch) = self.v2.switch.as_ref().filter(|s| s.is_active()) else {
+        let Some(view) = &self.v2.view else {
             return;
         };
-        let omissions = switch.omissions();
-        let rendered = switch.rendered_plan();
+        if !view.active {
+            if view.releasing {
+                ui.label("V2 switching off");
+            }
+            return;
+        }
+        let omissions = &view.omissions;
+        let rendered = view.rendered;
         let text = match (rendered, omissions.len()) {
             (Some(plan), 0) => format!("V2 {}", plan.plan_id()),
             (Some(plan), count) => format!("V2 {}: {count} omitted", plan.plan_id()),
@@ -262,7 +408,7 @@ impl SynthApp {
             }
             Some(plan) => {
                 let source = format!(
-                    "The last completed V2 callback rendered this plan. Serialized project input SHA-256: {}",
+                    "The last completed V2 callback rendered this plan. Captured lowering-input equality token (this service instance only): {}",
                     plan.project_digest()
                 );
                 if omissions.is_empty() {
@@ -272,6 +418,289 @@ impl SynthApp {
                 }
             }
         };
+        let scope = view.scope.map_or_else(
+            || "unavailable".to_owned(),
+            |scope| scope.value().to_string(),
+        );
+        let install = rendered.map_or_else(
+            || "unconfirmed".to_owned(),
+            |plan| plan.install().as_u64().to_string(),
+        );
+        let tooltip = format!(
+            "{tooltip}\nSession {scope}, installation {install}. Requested playing: {}; edit pending: {}; refused: {}. This is a session observation, not a canonical project revision or device heartbeat.",
+            view.requested_playing, view.edit_pending, view.refused
+        );
         ui.label(text).on_hover_text(tooltip);
+    }
+}
+
+#[cfg(feature = "mcp")]
+fn mcp_playback_state(
+    view: &PlaybackView,
+) -> Result<synth_mcp::v2_playback::PlaybackState, crate::mcp_shared::V2PublicationError> {
+    use crate::mcp_shared::V2PublicationError;
+    use synth_mcp::v2_playback::*;
+    if !view.active {
+        return Ok(PlaybackState::Inactive {
+            releasing: view.releasing,
+        });
+    }
+    let scope = SwitchScope::new(
+        view.scope
+            .ok_or(V2PublicationError::IdentityExhausted)?
+            .value(),
+    );
+    if view.refused {
+        return Ok(PlaybackState::Refused { scope });
+    }
+    let audible = view
+        .rendered
+        .map(|rendered| -> Result<AudiblePlan, V2PublicationError> {
+            let install = std::num::NonZeroU64::new(rendered.install().as_u64())
+                .ok_or(V2PublicationError::InvalidObservation)?;
+            let plan = std::num::NonZeroU64::new(rendered.plan_id().as_u64())
+                .ok_or(V2PublicationError::InvalidObservation)?;
+            let digest = LoweringDigest::try_from(rendered.project_digest().to_string())
+                .map_err(|_| V2PublicationError::InvalidObservation)?;
+            Ok(AudiblePlan {
+                install: RenderedInstall::new(install),
+                plan: RenderedPlan::new(plan),
+                projection: LoweringProjection::V1,
+                digest,
+                omissions: view.omissions.clone(),
+            })
+        })
+        .transpose()?;
+    Ok(PlaybackState::Active {
+        scope,
+        requested_playing: view.requested_playing,
+        edit_pending: view.edit_pending,
+        audible,
+    })
+}
+
+#[cfg(all(test, feature = "mcp"))]
+mod publication_tests {
+    use super::*;
+    use synth_core::audio::{
+        AudioCallbackContext, AudioProcessor, BufferSize, ChannelCount, DeviceSampleRate,
+        StreamInfo,
+    };
+    use synth_mcp::v2_playback::*;
+    struct Silent;
+    impl AudioProcessor for Silent {
+        fn process(&mut self, output: &mut [f32], _: &AudioCallbackContext) {
+            output.fill(0.0);
+        }
+    }
+    #[cfg(feature = "v2-mixed-app")]
+    #[test]
+    fn mixed_gui_and_mcp_share_actual_callback_confirmations_across_a_plan_edit() {
+        let (mut control, mut audio) = crate::lowering::app::wrap(Silent);
+        control.set_stream(&StreamInfo {
+            sample_rate: DeviceSampleRate::DVD_QUALITY,
+            buffer_size: BufferSize::MEDIUM,
+            channels: ChannelCount::Stereo,
+            output_latency: std::time::Duration::ZERO,
+            input_latency: None,
+        });
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../corpus/v2-reference/projects/subtractive-voice.ptz");
+        let mut project = crate::project::ProjectFile::load(path).unwrap();
+        let shared = crate::mcp_shared::McpSharedState::new();
+        shared.attach_gui_once(|| Box::new(|| {}));
+        assert!(control.enable_mixed_from(|| project.clone(), project.instruments[0].id));
+        let queued = control.playback_view();
+        shared
+            .publish_v2_playback(mcp_playback_state(&queued))
+            .unwrap();
+        assert!(queued.rendered.is_none());
+        let mut block = [0.0; 512];
+        let context = AudioCallbackContext {
+            sample_rate: DeviceSampleRate::DVD_QUALITY,
+            frames: 256,
+            channels: 2,
+            stream_time: 0.0,
+            sample_position: 0,
+            output_latency: synth_core::Seconds::ZERO,
+        };
+        let measured = allocation_counter::measure(|| audio.process(&mut block, &context));
+        assert_eq!((measured.count_total, measured.count_current), (0, 0));
+        let old = control.playback_view().rendered.unwrap();
+        project.global.master_volume = synth_core::Gain::new(0.37);
+        control.project_changed(|| project.clone());
+        let pending = control.playback_view();
+        assert_eq!(pending.rendered, Some(old));
+        assert!(pending.edit_pending);
+        for _ in 0..40 {
+            let measured = allocation_counter::measure(|| audio.process(&mut block, &context));
+            assert_eq!((measured.count_total, measured.count_current), (0, 0));
+            control.poll(|| project.clone());
+        }
+        let confirmed = control.playback_view();
+        let new = confirmed.rendered.unwrap();
+        assert_ne!(new.plan_id(), old.plan_id());
+        assert!(!confirmed.edit_pending);
+        shared
+            .publish_v2_playback(mcp_playback_state(&confirmed))
+            .unwrap();
+        match shared.v2_playback_status().unwrap().observation {
+            PlaybackObservation::Published {
+                state:
+                    PlaybackState::Active {
+                        audible: Some(audible),
+                        ..
+                    },
+                ..
+            } => {
+                assert_eq!(
+                    String::from(audible.plan),
+                    format!("plan-{}", new.plan_id().as_u64())
+                );
+                assert_eq!(
+                    String::from(audible.digest),
+                    new.project_digest().to_string()
+                );
+                assert_eq!(audible.projection, LoweringProjection::V1);
+            }
+            other => panic!("mixed plan was not published: {other:?}"),
+        }
+        control.disable();
+        let removed = control.playback_view();
+        assert!(removed.rendered.is_none());
+        shared
+            .publish_v2_playback(mcp_playback_state(&removed))
+            .unwrap();
+        audio.process(&mut block, &context);
+        control.poll(|| project.clone());
+        assert!(control.is_released());
+        assert!(control.take_notices().is_empty());
+    }
+
+    #[test]
+    fn private_publisher_lifecycle_controls_run_in_the_required_v2_flow_gate() {
+        crate::mcp_shared::assert_v2_publisher_contracts();
+    }
+
+    #[test]
+    fn the_gui_view_publishes_only_callback_confirmed_plans_and_never_queued_or_muted_plans() {
+        let (mut control, mut audio) = crate::lowering::app::wrap(Silent);
+        control.set_stream(&StreamInfo {
+            sample_rate: DeviceSampleRate::DVD_QUALITY,
+            buffer_size: BufferSize::MEDIUM,
+            channels: ChannelCount::Stereo,
+            output_latency: std::time::Duration::ZERO,
+            input_latency: None,
+        });
+        let project = crate::project::ProjectFile::new(
+            Vec::new(),
+            0,
+            None,
+            synth_sequencer::Song::new("publication"),
+            crate::project::GlobalProjectState::default(),
+        );
+        let shared = crate::mcp_shared::McpSharedState::new();
+        shared.attach_gui_once(|| Box::new(|| {}));
+        assert!(control.enable_from(|| project.clone()));
+        let queued = control.playback_view();
+        shared
+            .publish_v2_playback(mcp_playback_state(&queued))
+            .unwrap();
+        assert!(matches!(
+            shared.v2_playback_status().unwrap().observation,
+            PlaybackObservation::Published {
+                state: PlaybackState::Active { audible: None, .. },
+                ..
+            }
+        ));
+        let mut block = [0.0; 512];
+        let context = AudioCallbackContext {
+            sample_rate: DeviceSampleRate::DVD_QUALITY,
+            frames: 256,
+            channels: 2,
+            stream_time: 0.0,
+            sample_position: 0,
+            output_latency: synth_core::Seconds::ZERO,
+        };
+        let measured = allocation_counter::measure(|| audio.process(&mut block, &context));
+        assert_eq!((measured.count_total, measured.count_current), (0, 0));
+        assert!(
+            queued.rendered.is_none(),
+            "a cached view does not change with the callback"
+        );
+        let confirmed = control.playback_view();
+        let rendered = confirmed.rendered.unwrap();
+        shared
+            .publish_v2_playback(mcp_playback_state(&confirmed))
+            .unwrap();
+        match shared.v2_playback_status().unwrap().observation {
+            PlaybackObservation::Published {
+                state:
+                    PlaybackState::Active {
+                        audible: Some(audible),
+                        ..
+                    },
+                ..
+            } => {
+                assert_eq!(
+                    String::from(audible.plan),
+                    format!("plan-{}", rendered.plan_id().as_u64())
+                );
+                assert_eq!(
+                    String::from(audible.install),
+                    format!("install-{}", rendered.install().as_u64())
+                );
+                assert_eq!(
+                    String::from(audible.digest),
+                    rendered.project_digest().to_string()
+                );
+                assert_eq!(audible.omissions, confirmed.omissions);
+            }
+            other => panic!("{other:?}"),
+        }
+        control.stop(|| project.clone());
+        let stopped = control.playback_view();
+        assert!(stopped.active);
+        assert!(stopped.rendered.is_none());
+        shared
+            .publish_v2_playback(mcp_playback_state(&stopped))
+            .unwrap();
+        assert!(matches!(
+            shared.v2_playback_status().unwrap().observation,
+            PlaybackObservation::Published {
+                state: PlaybackState::Active { audible: None, .. },
+                ..
+            }
+        ));
+        control.disable();
+        let removed = control.playback_view();
+        assert!(removed.rendered.is_none());
+        shared
+            .publish_v2_playback(mcp_playback_state(&removed))
+            .unwrap();
+        assert!(matches!(
+            shared.v2_playback_status().unwrap().observation,
+            PlaybackObservation::Published {
+                state: PlaybackState::Inactive { releasing: true },
+                ..
+            }
+        ));
+        let mut refused = confirmed.clone();
+        refused.refused = true;
+        assert!(matches!(
+            mcp_playback_state(&refused).unwrap(),
+            PlaybackState::Refused { .. }
+        ));
+        let mut exhausted = confirmed;
+        exhausted.scope = None;
+        assert!(
+            shared
+                .publish_v2_playback(mcp_playback_state(&exhausted))
+                .is_err()
+        );
+        assert_eq!(
+            shared.v2_playback_status().unwrap(),
+            V2PlaybackStatus::unavailable(UnavailableReason::IdentityExhausted)
+        );
     }
 }

@@ -229,6 +229,9 @@ impl AuthoredNoteStream {
         let [(script_index, program)] = programs.as_slice() else {
             return Err(AuthoredPrepareError::SourceShape);
         };
+        if plan.producer_programs.present() {
+            return Err(AuthoredPrepareError::SourceShape);
+        }
         let [declaration] = plan.authored_sources() else {
             return Err(AuthoredPrepareError::SourceShape);
         };

@@ -2,8 +2,9 @@
 //!
 //! A reset replaces the active [`MixedOneShotAudio`] with a fresh owner, epoch and table
 //! at one quantum boundary `B`, and only while the active owner's compiled transport is
-//! stopped (rule 3.2). From `B` the old owner takes no input. It renders the same frames
-//! as the successor, and the two cross-fade over exactly `Q` frames by each frame's
+//! stopped through the legacy entry (rule 3.2). The explicit running entry instead
+//! cuts the old compiled program with a real Stop at `B + Q`. From `B` the old owner
+//! takes no input. It renders the same frames as the successor, and the two cross-fade over exactly `Q` frames by each frame's
 //! offset from `B`, so every callback partition delivers the same samples. At `B + Q` one
 //! `Reset` release group ends every old live occurrence and redeems its hold. The old
 //! owner then renders one discarded quantum, in which its registry releases those
@@ -11,12 +12,13 @@
 //! there and destroyed off the audio thread (rule 3.3, as ADR-0009 and ADR-0074 do).
 //!
 //! The pair holds the active owner and at most one secondary: a pending successor, the
-//! fading or retired old owner, or a refused successor (rule 3.6). A successor offered
-//! while the old program runs, or while the old owner still has transport or ingress
-//! work pending, is refused and returned, at its offer or at `B`. The pair never waits for
-//! the old owner to quiesce. The successor adopts its armed transition at `B` with its
-//! compiled transport stopped at its anchor's position, so it publishes only scoped
-//! restoration until a Start is offered to it.
+//! fading or retired old owner, or a refused successor (rule 3.6). The legacy entry
+//! refuses a running old program. Both entries refuse pending transport or ingress
+//! work, at offer or at `B`; neither waits for quiescence. In legacy mode the successor
+//! adopts its armed transition at `B` with compiled transport stopped at its anchor's
+//! position, so it publishes only scoped
+//! restoration until a Start is offered to it. The explicit running entry keeps the
+//! fresh successor running at its exact armed anchor; neither entry migrates state.
 //!
 //! Every owner in the pair carries its endpoint: the command source bound to it, which
 //! moves with it through every slot transition. The active owner is served only through
@@ -59,11 +61,11 @@ mod transfer_tests;
 
 #[cfg(feature = "mixed-transfer-rehearsal")]
 pub use host::{
-    MixedBridgeResetAudio, MixedBridgeResetEnd, MixedBridgeResetForeignPort,
-    MixedBridgeResetLiveRefusal, MixedBridgeResetOwner, MixedBridgeResetReceipt,
-    MixedBridgeResetRefusal, MixedBridgeResetRefused, MixedBridgeResetRenderError,
-    MixedBridgeResetRetired, MixedBridgeResetState, MixedBridgeStopAccepted,
-    MixedBridgeStopRefusal,
+    MixedBridgeCompiledCut, MixedBridgeResetAudio, MixedBridgeResetEnd,
+    MixedBridgeResetForeignPort, MixedBridgeResetLiveRefusal, MixedBridgeResetOwner,
+    MixedBridgeResetReceipt, MixedBridgeResetRefusal, MixedBridgeResetRefused,
+    MixedBridgeResetRenderError, MixedBridgeResetRetired, MixedBridgeResetState,
+    MixedBridgeStopAccepted, MixedBridgeStopRefusal,
 };
 
 /// The endpoint a pair names by default: the private rehearsal's own rings. Outside that
@@ -88,11 +90,26 @@ pub(super) enum MixedResetRefused {
     BoundaryPassed { at: SampleTime, clock: SampleTime },
     #[error("the fade after reset boundary {at} cannot be represented")]
     FadeUnrepresentable { at: SampleTime },
-    /// Rule 3.2: a reset installs only while the compiled transport is stopped.
+    /// The legacy entry preserves draft row 3.2's stopped-only first shape.
     #[error("the active owner's compiled program is running")]
     Running,
+    #[cfg(feature = "mixed-transfer-rehearsal")]
+    #[error("the active owner's compiled program is not running")]
+    NotRunning,
+    #[cfg(feature = "mixed-transfer-rehearsal")]
+    #[error("the active owner has not adopted its compiled program")]
+    NotAdopted,
+    #[cfg(feature = "mixed-transfer-rehearsal")]
+    #[error("the successor's running schedule does not start at the reset boundary")]
+    SuccessorSchedule,
+    #[cfg(feature = "mixed-transfer-rehearsal")]
+    #[error("the retirement Stop cannot be admitted")]
+    RetirementStop,
     #[error("a compiled Stop at {stop} is still pending")]
     StopPending { stop: SampleTime },
+    #[cfg(feature = "mixed-transfer-rehearsal")]
+    #[error("an in-place plan continuation is pending or uncollected")]
+    ContinuationPending,
     /// A later Start or seek waits in the active owner's offer slot.
     #[error("a later compiled candidate is pending")]
     OfferPending,
@@ -162,6 +179,21 @@ pub(super) struct MixedResetReceipt {
     pub(super) at: SampleTime,
     pub(super) ended_at: SampleTime,
     pub(super) live: MixedResetEnded,
+    pub(super) compiled_cut: Option<MixedCompiledCut>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) struct MixedCompiledCut {
+    pub(super) stop_at: SampleTime,
+    pub(super) old_position_at_b: Option<crate::time::PlanPosition>,
+    pub(super) old_pass: Option<crate::looping::LoopPassId>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum MixedResetMode {
+    Stopped,
+    #[cfg(feature = "mixed-transfer-rehearsal")]
+    Running,
 }
 
 /// One owner and the endpoint bound to it.
@@ -177,6 +209,7 @@ enum MixedResetSlot<E> {
         successor: Box<MixedOneShotAudio>,
         endpoint: E,
         at: SampleTime,
+        mode: MixedResetMode,
     },
     /// The old owner, cross-fading out; `faded` frames of the `Q`-frame fade are done.
     Fading {
@@ -318,6 +351,16 @@ impl<E> MixedResetPair<E> {
         endpoint: E,
         at: SampleTime,
     ) -> Result<(), (MixedResetRefused, Box<MixedOneShotAudio>, E)> {
+        self.offer_with_mode(successor, endpoint, at, MixedResetMode::Stopped)
+    }
+
+    fn offer_with_mode(
+        &mut self,
+        successor: Box<MixedOneShotAudio>,
+        endpoint: E,
+        at: SampleTime,
+        mode: MixedResetMode,
+    ) -> Result<(), (MixedResetRefused, Box<MixedOneShotAudio>, E)> {
         let clock = self.active.audio.renderer.clock();
         let refused = if self.fault.is_some() {
             Some(MixedResetRefused::Faulted)
@@ -330,7 +373,7 @@ impl<E> MixedResetPair<E> {
         } else if at.checked_add(FrameCount::QUANTUM).is_err() {
             Some(MixedResetRefused::FadeUnrepresentable { at })
         } else {
-            hot::reset_refusal(&self.active, &successor, at)
+            hot::reset_refusal(&self.active, &successor, at, mode)
         };
         if let Some(reason) = refused {
             return Err((reason, successor, endpoint));
@@ -339,6 +382,7 @@ impl<E> MixedResetPair<E> {
             successor,
             endpoint,
             at,
+            mode,
         };
         Ok(())
     }
@@ -628,6 +672,19 @@ impl<C, R> MixedResetTransferAudio<C, R> {
         let MixedResetTransferOwner { owner, endpoint } = successor;
         self.pair
             .offer_with(owner, endpoint, at)
+            .map_err(|(reason, owner, endpoint)| {
+                (reason, MixedResetTransferOwner { owner, endpoint })
+            })
+    }
+
+    pub(super) fn offer_running_reset(
+        &mut self,
+        successor: MixedResetTransferOwner<C, R>,
+        at: SampleTime,
+    ) -> Result<(), (MixedResetRefused, MixedResetTransferOwner<C, R>)> {
+        let MixedResetTransferOwner { owner, endpoint } = successor;
+        self.pair
+            .offer_with_mode(owner, endpoint, at, MixedResetMode::Running)
             .map_err(|(reason, owner, endpoint)| {
                 (reason, MixedResetTransferOwner { owner, endpoint })
             })

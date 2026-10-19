@@ -11,6 +11,12 @@
 //! prepared/mutable state separation are Phase 2's, and nothing here should
 //! anticipate them.
 
+mod producer_programs;
+pub use producer_programs::{
+    InternalProducerDeclaration, ProducerProgramError, RuntimeParameterEntry,
+    RuntimeParameterProgram, RuntimeProgramId,
+};
+
 use crate::quantities::{
     Amplitude, CostRatio, CutoffFrequency, DelayFeedback, DelayTime, EventCount, Frequency,
     GainFactor, HeldNoteCount, InstructionCount, NodeCount, NormalizedLevel, PhaseOffset,
@@ -1119,6 +1125,8 @@ pub struct PlanDeclarations {
     ///
     /// Empty for the same reason, and with the same purpose.
     pub internal_producers: Vec<InternalProducerDeclaration>,
+    /// Parameter-only runtime programs with zero release holds and retained future.
+    pub runtime_parameters: Vec<RuntimeParameterProgram>,
 }
 
 /// One admitted authored runtime source's conservative envelopes.
@@ -1155,20 +1163,6 @@ pub struct AuthoredSourceDeclaration {
     pub simultaneous_holds: EventCount,
 }
 
-/// One admitted renderer-internal producer's per-quantum maximum.
-///
-/// ADR-0046 clause 2 confines a renderer-internal emission to the quantum that generates it,
-/// which is exactly what makes a single declared per-quantum maximum a **complete** bound
-/// rather than a rate below which occupancy could still accumulate. A producer that needed a
-/// future target would first need clause 5's envelopes, which is a change to that record
-/// rather than a declaration this type could carry.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[must_use]
-pub struct InternalProducerDeclaration {
-    /// Most events it may emit into the quantum that generates them.
-    pub per_quantum: EventCount,
-}
-
 impl Default for PlanDeclarations {
     fn default() -> Self {
         Self {
@@ -1193,6 +1187,7 @@ impl Default for PlanDeclarations {
             // admission an envelope to partition that the plan never asked for.
             authored_sources: Vec::new(),
             internal_producers: Vec::new(),
+            runtime_parameters: Vec::new(),
         }
     }
 }

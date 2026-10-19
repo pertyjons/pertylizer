@@ -53,7 +53,11 @@ impl MixedOneShotAudio {
         }
         let identity = self.audio.live_minter.mint_keyed(self.audio.note, key)?;
         self.test_live = Some(TimedEvent::new(
-            crate::ingress::PerformanceIngress::envelope_for(self.audio.renderer.epoch(), at),
+            crate::ingress::PerformanceIngress::envelope_for(
+                self.audio.renderer.epoch(),
+                at,
+                crate::ingress::PerformanceIngress::simulated_source(),
+            ),
             EventPayload::Note {
                 identity,
                 edge: NoteEdge::On {

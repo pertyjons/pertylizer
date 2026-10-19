@@ -84,7 +84,19 @@ impl SessionAudio {
     }
 
     /// All due commands use the same quantum boundary machinery as the serial host.
-    pub fn render(&mut self, mut output: AudioBlockMut<'_>) -> Result<(), ScheduledRenderError> {
+    pub fn render(&mut self, output: AudioBlockMut<'_>) -> Result<(), ScheduledRenderError> {
+        self.render_observed(output, None)
+    }
+
+    /// Observe actual rendered quanta through the host-owned passive store.
+    /// Idle quanta do not execute DSP and produce no tap frames. A foreign-plan
+    /// store is ended after a successful render; queued old frames keep their label.
+    /// Owning replacement transitions keep their separate render entry points.
+    pub fn render_observed(
+        &mut self,
+        mut output: AudioBlockMut<'_>,
+        observers: Option<&mut crate::observe::ObservationSubscriptions>,
+    ) -> Result<(), ScheduledRenderError> {
         if self.running_transition {
             let error = ScheduledRenderError::RunningReplacementState;
             self.fault = Some(error);
@@ -92,13 +104,14 @@ impl SessionAudio {
             output.silence();
             return Err(error);
         }
-        self.render_owned(output)
+        self.render_owned_observed(output, observers)
     }
 
-    /// The ordinary entry enforces fade custody; the owning fade uses this body.
-    pub(super) fn render_owned(
+    /// The ordinary entry enforces fade custody; owning transitions use this body.
+    pub(super) fn render_owned_observed(
         &mut self,
         mut output: AudioBlockMut<'_>,
+        mut observers: Option<&mut crate::observe::ObservationSubscriptions>,
     ) -> Result<(), ScheduledRenderError> {
         if let Some(error) = self.fault {
             output.silence();
@@ -108,12 +121,20 @@ impl SessionAudio {
             output.silence();
             return Ok(());
         }
-        let result = self
-            .runtime
-            .render(&mut self.renderer, output.reborrow(), None);
+        let foreign = observers
+            .as_ref()
+            .is_some_and(|store| store.plan() != self.plan_id());
+        let result = self.runtime.render_observed(
+            &mut self.renderer,
+            output.reborrow(),
+            None,
+            observers.as_deref_mut(),
+        );
         if let Err(error) = result {
             output.silence();
             self.fault = Some(error);
+        } else if foreign && let Some(store) = observers {
+            store.end();
         }
         result
     }

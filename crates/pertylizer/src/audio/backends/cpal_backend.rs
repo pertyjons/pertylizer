@@ -260,6 +260,9 @@ struct CpalStream {
     position: Arc<AtomicU64>,
     async_errors: Arc<CpalAsyncErrorState>,
     diagnostic_source: CpalDiagnosticSource,
+    // Declaration order keeps the parent lease until native stream destruction.
+    #[cfg(feature = "v2-lowering")]
+    _retirement: super::retirement::RetirementLease,
 }
 
 impl CpalStream {
@@ -312,6 +315,9 @@ impl CpalStream {
         // Notify processor of stream parameters
         processor.on_stream_start(&info);
 
+        #[cfg(feature = "v2-lowering")]
+        let (mut processor, retirement) = super::retirement::prepare(processor)?;
+
         // Build the stream
         let stream = device
             .build_output_stream(
@@ -325,7 +331,14 @@ impl CpalStream {
                         data.fill(0.0);
                         return;
                     }
-                    async_errors_rt.notify_processor(processor.as_mut());
+                    #[cfg(feature = "v2-lowering")]
+                    let Some(processor) = processor.processor() else {
+                        data.fill(0.0);
+                        return;
+                    };
+                    #[cfg(not(feature = "v2-lowering"))]
+                    let processor = processor.as_mut();
+                    async_errors_rt.notify_processor(processor);
 
                     let frames = data.len() / channels as usize;
                     let current_position = position_clone.load(Ordering::Relaxed);
@@ -380,6 +393,8 @@ impl CpalStream {
             position,
             async_errors,
             diagnostic_source,
+            #[cfg(feature = "v2-lowering")]
+            _retirement: retirement,
         })
     }
 }

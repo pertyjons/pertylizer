@@ -188,3 +188,6 @@ pub struct ControllerRestore {
     pub(crate) override_value: ParameterValue,
     pub(crate) controller: Option<ParameterValue>,
 }
+
+#[cfg(feature = "mixed-transfer-rehearsal")]
+mod hot;

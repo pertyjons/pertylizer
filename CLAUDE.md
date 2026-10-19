@@ -110,6 +110,7 @@ cargo build --workspace
 cargo clippy --workspace --all-targets
 cargo clippy -p pertylizer --all-targets --features v2-lowering
 cargo test --workspace
+cargo test -p pertylizer --no-default-features --features v2-lowering --lib audio::backends::retirement::tests::
 cargo test -p pertylizer --features v2-lowering --lib gui::egui_backend::v2_flow::
 cargo test -p synth_engine_v2 --no-default-features --features mixed-transfer-rehearsal --test mixed_transfer_rehearsal
 cargo test -p synth_engine_v2 --no-default-features --features mixed-transfer-rehearsal --test mixed_source_bridge
@@ -120,12 +121,16 @@ cargo test -p synth_engine --release resource_limit_probe_oversized_callback_exp
 cargo doc --workspace --no-deps
 ```
 
-The complete repository gate adds configuration and MSRV coverage:
+The complete repository gate adds configuration, mixed application and MSRV coverage:
 
 ```bash
 cargo check --workspace --all-targets --no-default-features
 cargo check --workspace --all-targets --all-features
 cargo check -p pertylizer --no-default-features --features v2-lowering
+cargo check -p pertylizer --no-default-features --features v2-mixed-app
+cargo clippy -p pertylizer --all-targets --no-default-features --features v2-mixed-app
+cargo test -p pertylizer --no-default-features --features v2-mixed-app --lib lowering::
+cargo test -p pertylizer --features v2-mixed-app --lib gui::egui_backend::v2_flow::
 cargo +1.98.0 check --workspace
 ```
 
@@ -135,7 +140,7 @@ cargo +1.98.0 check --workspace
 therefore does not cover every workspace target. The explicit release-mode test
 is also required because its `#[cfg(not(debug_assertions))]` branch is not
 compiled by the ordinary development-profile test run. The feature-specific
-Clippy and test commands cover V2's GUI flow, which the default workspace
+Clippy and test commands cover V2's GUI flow and backend processor retirement, which the default workspace
 commands do not compile or execute; V2's switch tests already run under
 `cargo test --workspace`. The mixed-transfer feature also needs the explicit
 integration, library, documentation, and Clippy commands above because the
@@ -143,8 +148,8 @@ default workspace build does not enable it. Changes to its admission, identity,
 concurrency, or real-time path use the core Rust gate.
 
 The complete gate mirrors `.github/workflows/quality.yml`: the core gate plus
-the four configuration/MSRV commands above. The V2-only check covers the
-headless experimental application without default GUI features. The MSRV
+the configuration, mixed application and MSRV commands above. The `v2-lowering` and `v2-mixed-app` checks cover their respective
+headless experimental application configurations without default GUI features. The MSRV
 command requires the Rust 1.98 toolchain.
 
 The only pre-approved Clippy exceptions are `too_many_lines` for large

@@ -5,8 +5,8 @@
 | Status | Current |
 | Phase | 9 |
 | Created | 2026-09-11 |
-| Last reviewed | 2026-10-17 |
-| Based on | ADR-0036, ADR-0024, ADR-0021, ADR-0032, ADR-0038, ADR-0054, ADR-0061, ADR-0062, ADR-0063, ADR-0064 |
+| Last reviewed | 2026-10-19 |
+| Based on | ADR-0036, ADR-0024, ADR-0021, ADR-0032, ADR-0038, ADR-0054, ADR-0061, ADR-0062, ADR-0063, ADR-0064, ADR-0089, ADR-0090, ADR-0091 |
 | Invariant prefix | IO |
 | Supersedes | — |
 | Superseded by | — |
@@ -51,7 +51,7 @@ not guaranteed capabilities.
 | [ADR-0061](../decisions/ADR-0061-ordered-compiled-session-ownership.md) | Ordered compiled transport and retained command ownership |
 | [ADR-0062](../decisions/ADR-0062-coupled-transport-and-note-capture.md) | Total source ordering and coupled capture outcomes |
 | [ADR-0079](../decisions/ADR-0079-mixed-host-raw-capture-interruption.md) | Raw-only late interruption and terminal priority in the combined host |
-| [ADR-0081](../decisions/ADR-0081-combined-host-software-boundary.md) | Default-off common input route, strict publication and stopped reset |
+| [ADR-0081](../decisions/ADR-0081-combined-host-software-boundary.md) | Default-off common input route, strict publication and explicit stopped/running reset |
 
 ## Invariants
 
@@ -569,7 +569,7 @@ independent-clock source merging, live raw observation, restart, audio capture o
 | Question | Blocking? | ADR or task |
 |---|---|---|
 | Platform clock mapping, drift law and latency evidence | Before production timing consumption and Phase 9 exit; simulated lifecycle work may proceed | ADR-0022 |
-| General compatible state and live-note migration | Before its first consumer; ADR-0083 accepts only exact native program/layout continuation, and ADR-0082 accepts compiled running reset | ADR-0010, ADR-0048; accepted subsets ADR-0009, ADR-0050, ADR-0082, ADR-0083 |
+| General compatible state and live-note migration | Accepted subsets cover compiled native continuation, global structural edits and storage relocation, plus fixed-native mixed continuation; broader changes remain gated | ADR-0010, ADR-0048; accepted subsets ADR-0009, ADR-0050, ADR-0082, ADR-0083, ADR-0085, ADR-0087, ADR-0090 |
 | Complete producer capacity calibration | Before a production live adapter | ADR-0054 |
 | Backend capability and callback-quiescence proof | Before enabling that backend; unknown required bounds refuse. The [Linux output harness](#linux-output-custody-harness) proves the bounded ALSA output-custody subset under ADR-0063; input and physical clock qualification remain open; ADR-0064 covers its concurrent compiled-session queues | IO-INV-002, IO-INV-003 |
 
@@ -804,8 +804,108 @@ at four rates and callback partitions. Negative controls cover foreign bindings,
 changed programs, capacity, stale witnesses, zero-frame custody and interruption.
 `lowering::app::edit_tests` checks real saved voice/insert/return projects, repeated
 edits, lineage cancellation and reset followed by continuation. Any false identity,
-receipt or real-time claim blocks acceptance. Structural sounding-voice relocation,
-changed voice programs, mixed/live migration and observer handoff remain gated.
+receipt or real-time claim blocks acceptance. ADR-0087 adds bounded native voice storage relocation.
+Changed voice programs remain gated. Fixed-native mixed/live continuation follows
+ADR-0090 below.
+
+### Experimental stable-voice global structural continuation
+
+[ADR-0085](../decisions/ADR-0085-stable-voice-global-structural-continuation.md)
+adds native global-path geometry changes to `ContinueOrReset`. Physical voice
+steps, including compiler-inserted fade/sum steps, and parameter rows remain
+physically exact in this first consumer. ADR-0087 relaxes that restriction for
+an unchanged logical voice program. Authored voice identities/scopes, note
+addresses and complete magnitude fan-out still match. Matched authored kernel
+configurations and parameter bases cannot change. Global additions start
+fresh; compatible global states move by stable node/scope under the existing
+non-voice migration proof. Global note-driven rows refuse except ADR-0091's
+precisely bounded dormant native Global Envelope case below. Positional sends,
+modulation,
+controllers, scripts, samples, feedback and compensation records refuse this case.
+Output latency, device geometry, producer partition and ordered semantic program
+stay unchanged. Parameter events resolve through authored node/parameter identity.
+Matched global nodes whose role, layout or parameter rows would prevent complete
+migration refuse the compatible case. Unsupported shape is checked before the
+structural record budget, so it still chooses reset even with a small budget.
+
+Before mutation at B, validate all global/voice state, history and parameter
+extents. Move prepared geometry and history owners while keeping the actual
+renderer clock, anchor, epoch, live registry, carries and diagnostics. The actual
+minter retains its issuers and table at collection. The existing owning first
+render/acknowledgement, late refusal and interrupted teardown rules remain.
+`maximum_transition_records` bounds both plans' operation/parameter rows plus
+the identity partition; the application provisionally allows 16,384, separately
+from event and actual metadata-capacity limits. This is no production CPU bound.
+
+`SessionAudio::render_observed` now forwards normal rendered quanta through the
+passive store; idle quanta execute no DSP and generate no tap samples. After a
+successful render, foreign stores end, retain queued old frames and their old
+plan label, and receive no new samples. ADR-0084's paired observed running entries coordinate
+handoff after actual sound admission at B. They observe successor taps before
+reset fade gain, once per rendered quantum across partial carry, and end the
+store on interruption. Observation preparation or binding refusal ends the old
+labelled tail without rejecting sound. Sound refusal leaves the store untouched.
+An attached envelope requires observed begin; lost paired stores or bypassed
+observed rendering report detachment without claiming the original was ended.
+
+`install_replacement_observed` also hands over observation after successful
+stopped reset or compatible migration. Every sound/migration refusal and cold
+cancellation leaves the store untouched. Observation refusal ends only the old
+labelled tail, independently of sound admission. An attached envelope requires
+the observed entry and is returned whole if sent through legacy installation.
+Acknowledgement remains immediate; resumed normal observed rendering captures
+the first successor quantum without a second priming quantum. Stopped idle
+quanta produce no tap samples. Same-plan reset still advances the generation.
+
+Legacy unobserved stopped and running entries omit graph observations: end the
+old store before offering, then bind a fresh store after installation. This gap
+has no subscribed frame coverage; it is not measured zero or ring eviction. Under this gap policy, after refusal or
+cancellation bind a fresh store to the retained old plan. Ended handles remain
+ended and their labelled tail may still be drained.
+The threaded session control compares unobserved, draining, stalled and foreign
+stores across callback partitions, with exact sound and command custody.
+
+### Experimental native voice storage relocation
+
+[ADR-0087](../decisions/ADR-0087-native-voice-storage-relocation.md) extends the
+structural consumer to relocated physical storage with an unchanged logical
+voice program. Pair non-global steps in execution order, anchored by every
+stable authored voice identity/scope. Kernels, prepared native configurations,
+roles, local instances, layouts and in-place policies match. Inputs name the
+same preceding voice writers under the bijection, regardless of arena reuse.
+Relocated voice programs refuse global inputs; the fixed physical case checks
+any global input's stable authored identity and scope. Instance/sum groups
+translate through the map and prepass extent stays exact.
+
+Every authored voice control group retains its instance count and full parameter
+metadata; actual parameter rows relocate by authored address plus instance
+offset. Note targets and ordered magnitude fan-out match after checked node,
+parameter and tuning rebinding. Logical playable indices bind by stable authored
+node under ADR-0091; the actual registry at B and actual IdentityTable at owning
+collection receive the same checked note map. Device geometry, event shares,
+producer ranges/holds, tuning, output latency and complete ordered semantic
+program remain unchanged. Existing global matching still applies. Channel/bus control
+slots rebind through
+stable authored parameter addresses, with every remaining mixer field exact.
+Tap addresses retain authored node/port and logical index; payload node/buffer
+geometry comes from the successor plan.
+Changed voice programs, compensation and structural mixed/live state migration
+remain outside this case.
+
+Admit flat node/history and parameter maps off-thread, charging actual capacities
+and the existing transition record limit. Validate all source/destination extents
+and both strictly increasing node/parameter maps before any state transfer.
+Copy small records, swap history owners and exchange geometry without callback
+allocation or destruction; retain the actual registry, minter, time and owning
+return custody. Unsupported shape chooses reset before resource refusal.
+Compiler controls force actual physical relocation in both directions, compare
+warm voice history, automation, later bends/releases and in-progress stealing
+against an unedited normal renderer, and reject corrupt maps and changed voice
+meaning. The repeated control asserts a live sum fade both before and after
+relocation at actual render clock 192. Stereo copy/accumulate spend one fade step
+per frame and apply its gain equally to every channel; positioned controls use
+frame offsets. A separate two-quantum kernel oracle checks fade length, remaining
+state and reset in mono/stereo. Production and physical qualification remain open.
 
 ### Experimental compatible global-state readmission
 
@@ -926,9 +1026,11 @@ snapshot force fresh pairs. Changed kernel configuration and unsupported graphs
 still reset. Running native voice continuation has the narrower exact-program
 contract above; general voice migration remains open.
 
-The bound mixed host separately permits a stopped reset to a fresh owner of an
-edited plan with the same rate, layout and maximum block size. It retains the
-existing crossfade and reset tombstones; it does not copy DSP or voice state.
+The bound mixed host separately permits stopped reset, or explicit running reset
+under ADR-0081, to a fresh owner of an edited plan with the same rate, layout and
+maximum block size. Running mode cuts the old compiled program at B + Q; stopped
+mode keeps its original refusal. The successor starts its own armed program.
+The host retains the existing crossfade and reset tombstones; it does not copy DSP or voice state.
 The two-source host controls compare changed successor audio, unchanged raw
 receipts and complete retirement under whole and split callbacks. A rate change
 returns the complete successor for off-thread teardown and device re-prepare.
@@ -1290,7 +1392,9 @@ representative identity endurance and full production producer budgets remain op
 ## Application song playback
 
 [ADR-0077](../decisions/ADR-0077-experimental-v2-song-playback-in-the-application.md) owns
-the application's first V2 playback path. Implementation follows these rules:
+the application's first, isolated compiled V2 playback path. This section covers
+that route; the separately selected software mixed route is defined below.
+Implementation follows these rules:
 
 - The path lives under `pertylizer`'s `src/lowering/` behind the non-default `v2-lowering`
   feature; the application reaches it only through `crate::lowering`. A default build has no
@@ -1326,6 +1430,12 @@ the application's first V2 playback path. Implementation follows these rules:
   The rendered
   plan identity changes only after a successful callback containing the installation
   boundary.
+- GUI and MCP share one owned view selected from one rendered-install read.
+  [ADR-0086](../decisions/ADR-0086-observed-v2-plan-publication.md) defines the
+  read-only `get_v2_playback_status` response, prefixed identities, unavailable
+  states and GUI-publication age. Its lowering-input equality token is neither
+  an atomic project capture nor Phase 10's canonical revision; the response
+  supplies no device-liveness guarantee. Existing engine-status meters remain V1.
 - MIDI input is disconnected before V2 mode is entered, with a visible notice, and
   reconnects only once the audio callback has released V2. No timestamp-capable input
   reaches V2.
@@ -1351,3 +1461,229 @@ from a refused installation.
 EVD-0025 qualifies the partition; the edit controls add no capacity selection.
 The application toggle beside the MIDI indicator and the status-bar omissions badge are wiring
 in `gui/egui_backend/v2_flow.rs`, verified by the feature build rather than a GUI test.
+
+## Threaded application observers and terminal backend custody
+
+[ADR-0089](../decisions/ADR-0089-threaded-application-observers.md) defines the
+application's optional owning observer lane and its CPAL retirement consumer.
+Control prepares every subscription/read buffer and retains the acknowledged
+configuration. Audio services at most one request at outer callback entry, with
+read work capped to the profile's maximum callback frames. The two outstanding
+lane credits include returned replies; the application has a separate two-reply
+backlog. Actual transported capacities are admitted cold. Overflow reports dropped
+frames and lag, and a read never invents hardware time.
+
+Install/remove are serialized against sound replacement. A prepared observed
+replacement uses the actual audio-owned store throughout the transition and
+promotes its cold mirror only on its owning receipt. A render fault ends the
+store. Fresh sessions have fresh store identity. Joined teardown returns every
+completed or cancelled owner; a foreign pair is returned intact.
+
+Under `v2-lowering`, CPAL output processor destruction uses one cold worker with
+eight total admission reservations and an owning atomic mailbox per stream.
+Callback-closure destruction only publishes ownership; the worker first obtains
+exclusive mailbox ownership, then destroys the processor. The parent lease stays
+alive until the native stream field drops. Delayed closures, stalled destruction
+and bounded permanent failures consume reservations and cannot create additional
+workers. Default builds retain the existing CPAL route. Processor-field completion
+and backend payload completion are distinct from native-device quiescence.
+CoreAudio's native teardown assumptions and physical qualification stay open.
+
+Controls are in
+[threaded observation tests](../../../crates/pertylizer/src/lowering/tests/threaded_observation.rs),
+[backend retirement tests](../../../crates/pertylizer/src/audio/backends/retirement.rs)
+and the [switch tests](../../../crates/pertylizer/src/lowering/tests/app.rs).
+
+
+## Fixed native mixed continuation
+
+[ADR-0090](../decisions/ADR-0090-fixed-native-mixed-continuation.md) admits an
+in-place mixed replacement with identical native voice geometry, producer
+partition and compiled program modulo plan labels. Global Trim base changes
+follow the continuation proof. A target owned by an ADR-0093 runtime parameter
+program cannot change its base under continuation; it selects explicit reset.
+Structural changes and logical note reindexing
+remain outside this mixed path. The transfer serial, epoch and table identify
+the source owner; the DSP plan is a replaceable binding.
+
+The actual registry, minters, generations, release holds and source frontiers
+stay in place. At the chosen quantum boundary, complete prospective validation
+precedes all retagging of actual entries, queued ingress and loop/program
+storage. Installation precedes same-boundary compiled Stop and command service.
+Initial adoption must have finished. Every prepared or uncollected activation
+owner blocks continuation, including refused/cancelled receipts already taken
+from audio. One owning continuation credit serializes plan-specific operations.
+Raw live input and protected Panic keep their existing order.
+
+InstalledRendered confirms the whole installing callback, including every
+reset-wrapper segment. A later error in that callback instead returns
+InstalledFaulted and silences the whole block. Both promote actual installed
+cold metadata; only InstalledRendered evidences successful output. Refusal
+changes no actual plan. Withdrawal and quiescent recovery retain accounted
+custody without a final callback. After a destroyed packet, recovery re-admits
+immutable metadata only and reports InstalledUnconfirmed if already installed;
+it replaces no identity authority and makes no rendered-output claim. Recovery
+is public on the plain transfer, bridge and reset wrapper; the latter requires
+empty secondary custody. Unresolved or foreign custody refuses intact.
+
+Deterministic controls are in the
+[transfer continuation tests](../../../crates/synth_engine_v2/src/stream/mixed/transfer/continuation/tests.rs)
+and [two-source wrapper tests](../../../crates/synth_engine_v2/src/stream/mixed/transfer/bridge/continuation_tests.rs).
+This library result alone does not qualify production capacity, hardware timing
+or native quiescence. Application use follows the separately selected software
+mixed route below.
+
+
+## Authored note reindexing in compiled sessions
+
+[ADR-0091](../decisions/ADR-0091-authored-note-reindexing.md) extends isolated
+native continuation to logical note index changes under stable authored target
+identity. Native voice program, instance counts, kernel meaning and ordered
+routing retain the existing proof. Compare each retained voice target's own
+ordered magnitude group through mapped node, parameter and tuning addresses;
+range offsets may change. Private forward/inverse maps check plan, extent and
+inverse identity before any actual binding changes. Charge both vector capacities
+and include target extents in structural record work.
+
+The actual renderer registry is rebound at B and actual control IdentityTable
+at owning receipt collection. Table, epoch, generations, ages, victim selection
+and pool indices are retained. The old/new timeline and stamped witness use the
+same stable authored mapping. All session commands remain frozen until the
+owning receipt is collected; the caller retains unsent Stop/Play/Panic intent.
+A command carrying an old plan cannot cross B.
+
+Structural global note-driven DSP stays fresh. Only an unconnected native Global
+Envelope with no scheduled consumer and no magnitude destination on another node
+is eligible as a dormant global target. A note identity, future score/witness
+reference or parameter writer to its gate/magnitude nodes excludes preservation
+and selects explicit reset. Dormant targets may be added, retained or removed.
+Changed native voice meaning also selects reset. Exact-layout unchanged-target
+preservation is unchanged; structural mixed continuation remains refused.
+
+Compiler controls actually shift the retained voice note index by adding/removing
+a global gate, preserve warm Delay history and in-progress stealing, compare
+future notes/automation/bends/releases against normal unchanged audio at four
+rates and irregular callbacks, reject malformed maps atomically, and hand off
+an actual observation store beside the reindexing voice. These controls do not
+qualify production capacity or physical timing.
+
+
+## Software mixed application
+
+[ADR-0092](../decisions/ADR-0092-software-mixed-application-owner.md) owns this
+separately selected route.
+
+The separately selected `v2-mixed-app` route lowers the actual saved project
+with a declared live range and resolves its live envelope by the selected stable
+instrument identity. The binding is immutable for the armed owner. Changing GUI
+selection never retargets a held note. Default builds and the ordinary compiled
+V2 route retain their selection and transport policy.
+
+The route owns two logical software connections from the shared checked
+connection-generation issuer. Reopening never reuses either generation. Its
+constructor selects `Arrival` provenance before the ingress store accepts any
+event. Existing simulated rehearsal arming keeps `Simulated`; neither constructor
+can assert hardware timestamps. No native MIDI endpoint or physical clock mapping
+is attached. Raw capture, recording, strict publication and mixed tap observers
+are unavailable in this route. The isolated compiled observer completion remains
+separate.
+
+The application declares a provisional stereo profile with a 4096-frame callback
+ceiling and the engine's validated default limits, at 44.1, 48, 96 or 192 kHz.
+This is not EVD-0025's compiled qualification or EVD-0026's retained mixed
+selection. Admission enforces the declared bounds; no production CPU or latency
+qualification follows. A device callback is never split to manufacture a smaller
+qualified callback. Oversized callbacks reach the owner's terminal-fault path.
+
+An input nominal stamp is the maximum of the audio-published first-unrendered
+boundary plus two quanta and that source's previous frontier. Addition is checked.
+Both source frontiers advance after staged events on every GUI pump, including
+an idle peer. Continuous repaint services the tolerant bridge. GUI stalls stop
+new input admission while existing audio continues; resumed input receives a
+fresh dispatch estimate. No physical alignment or latency ceiling is claimed.
+Each source owns a bounded held-key table, checked before stage, and checked
+packet serials. A split onset retains its physical-key entry until its key-up
+settles the bridge tombstone. Repeat key-down is ignored. Focus loss releases
+both software sources, including pedal lifts. Teardown accounts for still-held
+keys rather than inventing release delivery. Each physical key keeps its onset
+packet identity; joined teardown must find that identity in a staged/in-flight,
+open-handle or refusal-tombstone record. The application retains typed counts of
+physical keys, pending packets, open handles, refused keys and pedal scopes.
+Lost or unknown command custody refuses successful joined settlement.
+
+A private audio-session enum extends the existing application switch. Prepared
+sessions, transport packets and returned owners cross bounded SPSC rings. The
+callback neither allocates nor destroys owning payloads. One operation credit
+serializes compiled transport and plan edits. Control coalesces the latest
+requested playing state, explicit destination and explicit loop selection
+independently while that credit is outstanding. Play cannot erase a pending
+Stop's rewind, and Seek cannot erase a pending Pause. The owning operation
+carries a checked location-intent revision. Every explicit destination or loop
+request advances it, including a repeated identical seek. An applied activation
+clears location dimensions only when that revision still matches its captured
+request; an older returned receipt cannot acknowledge a newer command.
+Pause uses compiled Stop and collects its actual stopped position. Explicit Stop
+also leaves the loop and retains a rewind to zero. Plain Pause keeps the loop.
+A stopped Seek promotes its adopted cursor before later Play or reset. A stopped
+reset returns its actual audio cursor in the owning completion; control checks
+it against the admitted destination before adopting it. Play resumes the
+acknowledged cursor and an existing loop unless an explicit destination or loop
+exit replaces them. These operations affect compiled sound only.
+
+Enabling the whole-song loop starts at zero, including while paused. Leaving a
+loop rewinds to zero and preserves the requested playing state. Seek exits the
+loop and preserves that state. These destinations are explicit GUI behavior,
+not inferred continuation positions. An activation refused at its audio boundary
+retains its requested dimensions for a fresh offer. A cold preparation refusal
+rejects the unpublished compound transport request, clears its location intent
+and restores requested playing state to the acknowledged state. It reports the
+refusal once and leaves sound unchanged; a refused loop never starts unlooped
+playback as a fallback. A declined plan edit remains pending with its previous
+audible plan; Pause, Stop, Seek, explicit loop exit
+or a newer project edit permits another attempt.
+
+Compatible edits use ADR-0090's owning fixed-native continuation. Changed program
+meaning or identity lineage uses an explicit whole-owner reset, including its
+seal, ready fence, fade receipt, source/tombstone handoff and joined old-owner
+teardown. The reset destination is a checked projection of the last actually
+adopted non-loop anchor while running, or the acknowledged stopped cursor.
+A whole-owner edit while a compiled loop is active is deferred until an explicit
+loop exit; no advisory cut receipt reconstructs a loop successor.
+
+The install sequence identifies a successful complete outer callback. The source
+owner also retains its initial install identity for cold retirement; a later plan
+install or refused candidate cannot change which control owns that retired audio.
+GUI and MCP use the same owned playback view. The existing project-only lowering
+digest retains its meaning and closed wire schema. The immutable live binding
+and host profile belong to the mixed session's private configuration; digest
+identity alone never proves full-plan equality. Canonical project revision stays
+with Phase 0B/10A.
+
+After explicit removal returns an audio owner, control settles owning returns on
+the cold thread. A pending reset can be withdrawn and abandoned. An already
+started fade may render at most one extra quantum into discarded stack storage
+solely to obtain its retirement receipt and join its owners. This happens only
+after callback quiescence, writes no switch acknowledgement or GUI/MCP plan
+publication, and is not audible-output evidence. A terminal failure reports cold
+destruction and failed joined settlement. CPAL processor field destruction is
+also destruction, not a fabricated owning return or native-device fence.
+
+
+## Real mixed load producers
+
+[ADR-0093](../decisions/ADR-0093-real-mixed-producer-load-consumers.md) adds
+only its parameter-only global Trim programs and periodic global Delay clears
+to the experimental mixed owner. The compiler proves stable target ownership,
+downstream influence and aggregate envelopes before a renderer can be prepared.
+Ordinary owners refuse these programs. Saved-project lowering does not declare
+them. Their authored source and internal arena are registered in the
+[host profile specification](spec-host-profile-and-render-limits.md).
+
+Absolute sample phase survives Stop, Seek and compatible continuation. A fresh
+owner publishes the latest parameter phase value through its charged authored
+path. A periodic internal action clears history only through its separate
+current-quantum record, copied into an offset-ordered control run after external
+controls at equal offsets. An over-emit ends the whole epoch. Presence,
+observed idle occupancy and unavailable producers remain distinct in reports;
+combined peaks use actual same-quantum external operation and internal charges.
+These mechanism controls do not qualify representative production occupancy.

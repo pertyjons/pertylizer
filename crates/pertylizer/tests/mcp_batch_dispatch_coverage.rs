@@ -31,6 +31,10 @@ use pertylizer::session::SynthSession;
 const BATCH_EXEMPT: &[&str] = &["batch_execute", "preview_note"];
 
 fn build_bridge() -> AppSynthBridge {
+    build_bridge_with_shared().0
+}
+
+fn build_bridge_with_shared() -> (AppSynthBridge, Arc<McpSharedState>) {
     let (_engine, handle) = SynthEngine::new();
     let song = Arc::new(synth_sequencer::SharedSong::new(Song::new("Headless")));
     let _ = handle
@@ -48,7 +52,10 @@ fn build_bridge() -> AppSynthBridge {
     let shared = Arc::new(McpSharedState::with_song(Arc::clone(&song)));
     // Keep the engine handle alive for the duration of the bridge via the
     // session (which holds the command sender + shared state Arc).
-    AppSynthBridge::new(session, shared, sample_library)
+    (
+        AppSynthBridge::new(session, Arc::clone(&shared), sample_library),
+        shared,
+    )
 }
 
 #[tokio::test]
@@ -96,4 +103,39 @@ async fn every_router_tool_is_reachable_via_batch_dispatch() {
              update BATCH_EXEMPT"
         );
     }
+}
+
+#[tokio::test]
+async fn v2_status_is_reachable_and_batch_polling_does_not_count_mutations() {
+    let (bridge, shared) = build_bridge_with_shared();
+    let server = SynthMcpServer::new(Arc::new(bridge) as Arc<dyn SynthBridge>);
+    let before = shared
+        .mutation_seq
+        .load(std::sync::atomic::Ordering::Acquire);
+    for _ in 0..3 {
+        let response = server
+            .dispatch_tool_for_test("get_v2_playback_status", serde_json::json!({}))
+            .await
+            .unwrap();
+        let status: synth_mcp::v2_playback::V2PlaybackStatus =
+            serde_json::from_str(&response).unwrap();
+        assert!(matches!(
+            status.observation,
+            synth_mcp::v2_playback::PlaybackObservation::Unavailable { .. }
+        ));
+    }
+    let response = server
+        .batch_execute_for_test(serde_json::json!({"operations":[
+            {"tool":"get_v2_playback_status","params":{}},
+            {"tool":"get_v2_playback_status","params":{}}
+        ]}))
+        .await;
+    let response: serde_json::Value = serde_json::from_str(&response).unwrap();
+    assert_eq!(response["succeeded"], 2);
+    assert_eq!(
+        shared
+            .mutation_seq
+            .load(std::sync::atomic::Ordering::Acquire),
+        before
+    );
 }

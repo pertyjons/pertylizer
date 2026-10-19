@@ -21,7 +21,7 @@ mod rehearsal;
 pub use rehearsal::{RehearsalRendererStorage, RehearsalRendererUsage, RehearsalUsageError};
 
 #[cfg(feature = "simulated-ingress")]
-mod migration;
+pub(crate) mod migration;
 #[cfg(feature = "simulated-ingress")]
 pub use migration::GlobalMigrationError;
 #[cfg(feature = "simulated-ingress")]
@@ -888,6 +888,7 @@ pub struct PreparedRenderer {
     control_starts: Vec<u32>,
     /// How far each node's run has been filled, while it is being built.
     control_fill: Vec<u32>,
+    producer_runtime: crate::producer_programs::ProducerRuntime,
     diagnostics: DiagnosticsReport,
     #[cfg(feature = "mixed-transfer-rehearsal")]
     rehearsal_usage: rehearsal::RehearsalCounters,
@@ -907,6 +908,20 @@ impl PreparedRenderer {
     /// must answer to the minter the control holds, because the renderer's foreign filter
     /// compares an occurrence's table against this registry's.
     pub(crate) fn prepare(
+        plan: std::sync::Arc<CompiledPlan>,
+        anchor: StreamAnchor,
+        epoch: StreamEpoch,
+        minter: crate::identity::TableId,
+    ) -> Result<Self, CompileError> {
+        if plan.producer_programs.present() {
+            return Err(CompileError::ProducerProgram {
+                reason: "producer programs require the mixed owner",
+            });
+        }
+        Self::prepare_mixed(plan, anchor, epoch, minter)
+    }
+
+    pub(crate) fn prepare_mixed(
         plan: std::sync::Arc<CompiledPlan>,
         anchor: StreamAnchor,
         epoch: StreamEpoch,
@@ -1096,6 +1111,9 @@ impl PreparedRenderer {
             .any(|op| matches!(op, PlanOp::Output { .. }));
 
         Ok(Self {
+            producer_runtime: crate::producer_programs::ProducerRuntime::prepare(
+                &plan.producer_programs,
+            ),
             // ADR-0041 clause 13: the arena is one allocation of variable-width regions,
             // sized by the extent the assignment reached rather than by a count of
             // uniform slots.
@@ -1142,6 +1160,7 @@ impl PreparedRenderer {
                 events_per_quantum
                     .saturating_mul(writes_per_note)
                     .saturating_add(identity_indices.saturating_mul(boundary_writes_per_note))
+                    .saturating_add(plan.producer_programs.internal_bound.get() as usize)
                     .saturating_add(
                         plan.modulated_sample_positioned_rows() as usize
                     )
@@ -1561,3 +1580,19 @@ mod tap_tests;
 #[cfg(test)]
 #[path = "render/idle_tests.rs"]
 mod idle_tests;
+
+#[cfg(feature = "mixed-transfer-rehearsal")]
+mod bindings;
+
+#[cfg(feature = "mixed-transfer-rehearsal")]
+impl PreparedRenderer {
+    pub(crate) const fn plan_arc(&self) -> &std::sync::Arc<CompiledPlan> {
+        &self.plan
+    }
+}
+
+mod producer_hot;
+
+#[cfg(test)]
+#[path = "render/producer_tests.rs"]
+mod producer_tests;

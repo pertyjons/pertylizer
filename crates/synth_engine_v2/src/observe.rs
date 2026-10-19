@@ -34,7 +34,24 @@ use crate::profile::HostProfile;
 use crate::quantities::{ChannelLayout, TapCount};
 use crate::time::FrameCount;
 
+mod handoff;
 pub(crate) mod hot;
+pub use handoff::{ObservationConfiguration, ObservationHandoff, ObservationHandoffError};
+
+/// One store's checked plan-handoff generation, independent of its subscription IDs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[must_use]
+pub struct ObservationGeneration(u64);
+
+impl ObservationGeneration {
+    pub const fn as_u64(self) -> u64 {
+        self.0
+    }
+
+    fn next(self) -> Option<Self> {
+        self.0.checked_add(1).map(Self)
+    }
+}
 
 #[cfg(test)]
 #[path = "tests/observation.rs"]
@@ -53,8 +70,12 @@ pub struct StoreId(u64);
 static NEXT_STORE_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
 
 impl StoreId {
-    fn issue() -> Self {
-        Self(NEXT_STORE_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed))
+    fn issue(counter: &std::sync::atomic::AtomicU64) -> Result<Self, SubscriptionRefused> {
+        use std::sync::atomic::Ordering::Relaxed;
+        counter
+            .try_update(Relaxed, Relaxed, |current| current.checked_add(1))
+            .map(Self)
+            .map_err(|_| SubscriptionRefused::IdentityExhausted)
     }
 }
 
@@ -87,6 +108,9 @@ impl SubscriptionId {
 /// reading a tap would otherwise read nothing and conclude the signal was silent.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum SubscriptionRefused {
+    /// Store identities never wrap or saturate into a previously issued handle.
+    #[error("observation store identity space is exhausted")]
+    IdentityExhausted,
     /// The slot or the plan offered belongs to another plan than the one the store was
     /// prepared for. All three are named, because the API takes the plan and the slot
     /// separately and either can be the one that does not match.
@@ -125,10 +149,16 @@ pub enum SubscriptionRefused {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[must_use]
 pub struct ObservationRead {
+    /// All returned frames belong to this plan. Handoff discards unread old frames.
+    pub plan: PlanId,
+    /// Changes even when a host later reinstalls an earlier immutable plan.
+    pub generation: ObservationGeneration,
+    /// A removed tap stays ended; a later same-ID declaration does not revive it.
+    pub ended: bool,
     /// Frames copied into the caller's buffer.
     pub frames: FrameCount,
-    /// Frames evicted since the previous read because the reader had fallen more than a
-    /// ring behind. Zero for a reader that keeps up.
+    /// Unread frames lost since the previous read, through ring eviction or a plan
+    /// handoff. Zero when every frame was read before eviction or handoff.
     pub dropped: FrameCount,
     /// Frames still unread after this read: how far behind the newest rendered quantum the
     /// reader stands. Zero means the reader has everything the renderer has pushed.
@@ -142,7 +172,7 @@ pub struct ObservationRead {
 /// host can run: at 48 kHz a `u64` of frames is twelve million years.
 #[derive(Debug)]
 struct Subscription {
-    tap: TapSlot,
+    tap: Option<TapSlot>,
     channels: usize,
     capacity_frames: usize,
     /// `capacity_frames × channels` samples, frame-major, written at `written % capacity`.
@@ -156,6 +186,7 @@ struct Subscription {
 #[derive(Debug)]
 pub struct ObservationSubscriptions {
     id: StoreId,
+    generation: ObservationGeneration,
     plan: PlanId,
     ring_frames: FrameCount,
     subscriptions: Vec<Subscription>,
@@ -167,14 +198,17 @@ impl ObservationSubscriptions {
     /// Off the audio thread, and holding nothing yet: a ring is allocated when a tap is
     /// subscribed, which is also off the audio thread — the store is only ever handed to a
     /// render call between subscriptions.
-    #[must_use]
-    pub fn prepare(profile: &HostProfile, plan: &CompiledPlan) -> Self {
-        Self {
-            id: StoreId::issue(),
+    pub fn prepare(
+        profile: &HostProfile,
+        plan: &CompiledPlan,
+    ) -> Result<Self, SubscriptionRefused> {
+        Ok(Self {
+            id: StoreId::issue(&NEXT_STORE_ID)?,
+            generation: ObservationGeneration(0),
             plan: plan.id(),
             ring_frames: profile.limits().observation().telemetry_ring_frames(),
             subscriptions: Vec::new(),
-        }
+        })
     }
 
     /// This store's identity, which every handle it issues carries.
@@ -215,7 +249,7 @@ impl ObservationSubscriptions {
         if self
             .subscriptions
             .iter()
-            .any(|existing| existing.tap == slot)
+            .any(|existing| existing.tap == Some(slot))
         {
             return Err(SubscriptionRefused::AlreadySubscribed {
                 index: slot.index(),
@@ -254,7 +288,7 @@ impl ObservationSubscriptions {
             index: self.subscriptions.len(),
         };
         self.subscriptions.push(Subscription {
-            tap: slot,
+            tap: Some(slot),
             channels,
             capacity_frames,
             ring,
@@ -263,6 +297,34 @@ impl ObservationSubscriptions {
             dropped_since_read: 0,
         });
         Ok(id)
+    }
+
+    /// A host may install only handles with no prior samples or ending boundary.
+    /// Reusing an ended or previously rendered handle could hide a coverage gap.
+    pub fn is_pristine(&self) -> bool {
+        self.generation.as_u64() == 0
+            && self.subscriptions.iter().all(|subscription| {
+                subscription.tap.is_some()
+                    && subscription.written == 0
+                    && subscription.consumed == 0
+                    && subscription.dropped_since_read == 0
+            })
+    }
+
+    /// Actual owned store and ring capacities, for a cold host transport budget.
+    pub fn prepared_bytes(&self) -> Option<crate::quantities::PreparedBytes> {
+        let mut bytes = self
+            .subscriptions
+            .capacity()
+            .checked_mul(size_of::<Subscription>())?
+            .checked_add(size_of::<Self>())?;
+        for subscription in &self.subscriptions {
+            bytes =
+                bytes.checked_add(subscription.ring.capacity().checked_mul(size_of::<f32>())?)?;
+        }
+        Some(crate::quantities::PreparedBytes::measured(
+            u64::try_from(bytes).ok()?,
+        ))
     }
 
     /// How many subscriptions the store holds.
@@ -285,40 +347,9 @@ impl ObservationSubscriptions {
         }
         self.subscriptions.get(id.index).map(|s| s.channels)
     }
-
-    /// Read what the renderer has pushed since the last read, oldest first, into `into`
-    /// (frame-major, the subscription's channel count per frame).
-    ///
-    /// Off the audio thread. Copies as many whole frames as `into` holds and the ring has;
-    /// the report says how many, how many were evicted unread since the previous read, and
-    /// how many remain. `None` for a handle this store did not issue.
+    /// Cold convenience read of the available labelled tail into caller-owned storage.
+    /// Callback users must call `read_bounded` with a separately admitted frame cap.
     pub fn read(&mut self, id: SubscriptionId, into: &mut [f32]) -> Option<ObservationRead> {
-        if id.store != self.id {
-            return None;
-        }
-        let subscription = self.subscriptions.get_mut(id.index)?;
-        let channels = subscription.channels.max(1);
-        let available = subscription.written.saturating_sub(subscription.consumed);
-        let wanted = u64::try_from(into.len() / channels).unwrap_or(u64::MAX);
-        let frames = available.min(wanted);
-        let capacity = subscription.capacity_frames as u64;
-        for frame in 0..frames {
-            let source_frame = usize::try_from((subscription.consumed + frame) % capacity).ok()?;
-            let source = source_frame * channels;
-            let target = usize::try_from(frame).ok()? * channels;
-            if let (Some(from), Some(to)) = (
-                subscription.ring.get(source..source + channels),
-                into.get_mut(target..target + channels),
-            ) {
-                to.copy_from_slice(from);
-            }
-        }
-        subscription.consumed += frames;
-        let dropped = core::mem::take(&mut subscription.dropped_since_read);
-        Some(ObservationRead {
-            frames: FrameCount::new(frames),
-            dropped: FrameCount::new(dropped),
-            behind: FrameCount::new(available - frames),
-        })
+        self.read_bounded(id, into, FrameCount::new(u64::MAX))
     }
 }

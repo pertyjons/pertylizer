@@ -144,9 +144,9 @@ fn an_index_whose_generations_run_out_is_retired_and_counted() {
     // earlier draft of the specification had no classification for it at all.
     //
     // The generation ceiling is a construction parameter because of this test. Walking a
-    // `u32` to its ceiling by minting would take longer than this project will exist, and a
-    // rule no test can reach is a rule nobody has checked — so the ceiling is what ADR-0047
-    // says it is, a measured width, and here it is two.
+    // `u32` to its ceiling would require billions of iterations, so a small ceiling
+    // exercises the complete sequence. The actual-width near-limit control below
+    // checks arithmetic separately; neither test qualifies a production lifetime.
     let mut table =
         IdentityTable::with_generation_ceiling(held(8), &[held(1)], 2).expect("a valid table");
 
@@ -745,4 +745,115 @@ fn a_release_scoped_to_a_producer_refuses_another_producers_occurrence() {
     // And the refusal took nothing: the first producer's own release still resolves.
     assert_eq!(table.release_for(first, theirs), Resolution::Live);
     assert_eq!(table.release_for(second, mine), Resolution::Live);
+}
+
+#[test]
+fn issue_table_id_is_unique_under_concurrent_last_ids_and_refuses_permanently() {
+    crate::issuer_controls::assert_u64_issuer_exhaustion(|counter| {
+        issue_table_id_from(counter).map(|identity| identity.0)
+    });
+}
+
+#[test]
+fn the_actual_u32_generation_ceiling_retires_without_aliasing_or_overflow() {
+    let mut table = IdentityTable::new(held(1), &[held(1)]).expect("table");
+    table.slots[0] = Slot::Free {
+        next_generation: u32::MAX - 1,
+    };
+    table.minted = u64::from(u32::MAX) - 1;
+    let before = table.mint(A, node()).expect("penultimate generation");
+    assert_eq!(before.generation(), u32::MAX - 1);
+    assert_eq!(table.release(before), Resolution::Live);
+    let last = table.mint(A, node()).expect("last generation");
+    assert_eq!(last.generation(), u32::MAX);
+    assert_eq!(
+        table.release(before),
+        Resolution::Orphan(OrphanCause::SupersededGeneration)
+    );
+    assert_eq!(table.resolve(last), Resolution::Live);
+    assert_eq!(table.release(last), Resolution::Live);
+    assert_eq!(table.retired(), 1);
+    for _ in 0..8 {
+        assert!(matches!(
+            table.mint(A, node()),
+            Err(IdentityError::ProducerRangeEroded { .. })
+        ));
+        assert_eq!(
+            table.resolve(last),
+            Resolution::Orphan(OrphanCause::RetiredIndex)
+        );
+    }
+}
+
+#[test]
+fn the_last_u16_identity_index_is_reusable_without_becoming_index_zero() {
+    let mut table =
+        IdentityTable::new(held(INDEX_SPACE), &[held(INDEX_SPACE)]).expect("full index domain");
+    let last = usize::from(u16::MAX);
+    table.slots[..last].fill(Slot::Retired);
+    table.retired = u64::from(u16::MAX);
+    // Reachable after every preceding index has spent all of its generations.
+    table.minted = u64::from(u16::MAX) * (u64::from(u32::MAX) + 1);
+    let first = table.mint(A, node()).expect("last index");
+    assert_eq!(first.index(), u16::MAX);
+    assert_eq!(table.release(first), Resolution::Live);
+    let next = table.mint(A, node()).expect("reusable last index");
+    assert_eq!(next.index(), u16::MAX);
+    assert_eq!(next.generation(), 1);
+    assert_eq!(
+        table.release(first),
+        Resolution::Orphan(OrphanCause::SupersededGeneration)
+    );
+    assert_eq!(table.resolve(next), Resolution::Live);
+    assert_eq!(table.release(next), Resolution::Live);
+}
+
+#[test]
+fn both_partition_minters_retire_the_actual_u32_ceiling_at_the_last_u16_index() {
+    fn last_partition() -> RangeMinter {
+        let table = IdentityTable::new(held(INDEX_SPACE), &[held(u32::from(u16::MAX)), held(1)])
+            .expect("full index domain");
+        let (_first, mut last) = table.split_fresh_two().expect("actual disjoint partition");
+        last.slots[0] = Slot::Free {
+            next_generation: u32::MAX - 1,
+        };
+        last.minted = u64::from(u32::MAX) - 1;
+        last
+    }
+    macro_rules! check {
+        ($wrapper:ty) => {{
+            let mut minter = <$wrapper>::from_partition(last_partition());
+            let before = minter
+                .mint_keyed(node(), crate::quantities::KeyIdentity::LOWEST)
+                .expect("penultimate generation");
+            assert_eq!(
+                (before.index(), before.generation()),
+                (u16::MAX, u32::MAX - 1)
+            );
+            assert_eq!(minter.release(before), Resolution::Live);
+            let last = minter
+                .mint_keyed(node(), crate::quantities::KeyIdentity::LOWEST)
+                .expect("last generation");
+            assert_eq!((last.index(), last.generation()), (u16::MAX, u32::MAX));
+            assert_eq!(
+                minter.release(before),
+                Resolution::Orphan(OrphanCause::SupersededGeneration)
+            );
+            assert_eq!(minter.resolve(last), Resolution::Live);
+            assert_eq!(minter.release(last), Resolution::Live);
+            assert_eq!(minter.0.retired, 1);
+            for _ in 0..8 {
+                assert!(matches!(
+                    minter.mint_keyed(node(), crate::quantities::KeyIdentity::LOWEST),
+                    Err(IdentityError::ProducerRangeEroded { retired: 1, .. })
+                ));
+                assert_eq!(
+                    minter.resolve(last),
+                    Resolution::Orphan(OrphanCause::RetiredIndex)
+                );
+            }
+        }};
+    }
+    check!(CompiledRangeMinter);
+    check!(LiveRangeMinter);
 }

@@ -108,7 +108,7 @@ fn note_driven(plan: &CompiledPlan, node: NodeSlot) -> bool {
             .any(|target| target.node == node)
 }
 
-fn check_plan(plan: &CompiledPlan) -> Result<(), GlobalMigrationError> {
+pub(crate) fn check_plan(plan: &CompiledPlan) -> Result<(), GlobalMigrationError> {
     for op in plan.ops() {
         match op {
             PlanOp::Modulate(_) | PlanOp::FeedbackWrite { .. } => {

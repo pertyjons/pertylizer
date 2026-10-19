@@ -52,18 +52,20 @@ pub use mixed::{
     MixedActivationKind, MixedActivationLoop, MixedActivationOffer, MixedActivationOutcome,
     MixedActivationPrepareError, MixedActivationReceipt, MixedActivationRefusal,
     MixedActivationRetired, MixedActivationSlot, MixedBridgeAbandonRefusal, MixedBridgeArmed,
-    MixedBridgeCommitRefusal, MixedBridgeControl, MixedBridgeError, MixedBridgeFault,
-    MixedBridgeJoinError, MixedBridgeJoinParts, MixedBridgeJoinRefusal, MixedBridgeLifted,
-    MixedBridgeOutcome, MixedBridgePanicEnd, MixedBridgePanicRefusal, MixedBridgePanicked,
-    MixedBridgeReport, MixedBridgeResetAudio, MixedBridgeResetEnd, MixedBridgeResetForeignPort,
-    MixedBridgeResetLiveRefusal, MixedBridgeResetOwner, MixedBridgeResetPhase,
-    MixedBridgeResetReceipt, MixedBridgeResetRefusal, MixedBridgeResetRefused,
-    MixedBridgeResetRenderError, MixedBridgeResetRetired, MixedBridgeResetState,
-    MixedBridgeRetiredControl, MixedBridgeRetiredJoinRefusal, MixedBridgeRetiredTeardown,
-    MixedBridgeSealRefusal, MixedBridgeSealRefused, MixedBridgeStopAccepted,
-    MixedBridgeStopRefusal, MixedBridgeTeardown, MixedBridgeWait, MixedCommandPlace,
-    MixedKeyUpHandle, MixedKeyUpRetired, MixedOnsetRefusal, MixedPublication,
-    MixedPublicationFault, MixedPublicationGate, MixedPublicationPublishError,
+    MixedBridgeCommitRefusal, MixedBridgeCompiledCut, MixedBridgeControl, MixedBridgeError,
+    MixedBridgeFault, MixedBridgeJoinError, MixedBridgeJoinParts, MixedBridgeJoinRefusal,
+    MixedBridgeLifted, MixedBridgeOutcome, MixedBridgePanicEnd, MixedBridgePanicRefusal,
+    MixedBridgePanicked, MixedBridgeReport, MixedBridgeResetAudio, MixedBridgeResetEnd,
+    MixedBridgeResetForeignPort, MixedBridgeResetLiveRefusal, MixedBridgeResetOwner,
+    MixedBridgeResetPhase, MixedBridgeResetReceipt, MixedBridgeResetRefusal,
+    MixedBridgeResetRefused, MixedBridgeResetRenderError, MixedBridgeResetRetired,
+    MixedBridgeResetState, MixedBridgeRetiredControl, MixedBridgeRetiredJoinRefusal,
+    MixedBridgeRetiredTeardown, MixedBridgeSealRefusal, MixedBridgeSealRefused,
+    MixedBridgeStopAccepted, MixedBridgeStopRefusal, MixedBridgeTeardown, MixedBridgeWait,
+    MixedCommandPlace, MixedContinuationOutcome, MixedContinuationPacket,
+    MixedContinuationPrepareError, MixedContinuationRecovery, MixedContinuationRefusal,
+    MixedContinuationRetired, MixedKeyUpHandle, MixedKeyUpRetired, MixedOnsetRefusal,
+    MixedPublication, MixedPublicationFault, MixedPublicationGate, MixedPublicationPublishError,
     MixedPublicationReceiver, MixedPublicationRefusal, MixedPublicationSender, MixedPumpStep,
     MixedRetiredHandle, MixedSourceBend, MixedSourceCustody, MixedSourceFault, MixedSourceHandoff,
     MixedSourceKeyUp, MixedSourceNoteOn, MixedSourcePacketId, MixedSourcePacketIdError, MixedSplit,
@@ -1646,16 +1648,23 @@ impl StreamControl {
     pub(crate) fn preflight_continuation_plan(
         &self,
         next: &CompiledPlan,
+        bindings: &crate::plan::note_binding::NoteBindings,
     ) -> Result<(), crate::plan::ContinuationError> {
         if self.live_candidates != 0
             || self.ingress_store.is_some()
             || self.live_notes_open.get() != 0
-            || self.plan.note_targets().len() != next.note_targets().len()
+            || bindings.old_plan() != self.plan.id()
+            || bindings.new_plan() != next.id()
             || !self
                 .minter
                 .can_continue_plan(self.plan.id(), self.plan.note_targets().len())
         {
             return Err(crate::plan::ContinuationError::Storage);
+        }
+        if !self.minter.can_continue_notes(bindings) {
+            // A structural global note destination stays fresh. An actual identity
+            // naming it makes preservation unsupported, so the caller selects reset.
+            return Err(crate::plan::ContinuationError::Plan);
         }
         Ok(())
     }
@@ -1666,12 +1675,13 @@ impl StreamControl {
         prepared: &mut Self,
         from: PlanId,
         to: PlanId,
+        bindings: &crate::plan::note_binding::NoteBindings,
     ) -> Result<(), crate::plan::ContinuationError> {
         if self.plan.id() != from || prepared.plan.id() != to {
             return Err(crate::plan::ContinuationError::Storage);
         }
-        self.preflight_continuation_plan(&prepared.plan)?;
-        self.minter.continue_plan(to);
+        self.preflight_continuation_plan(&prepared.plan, bindings)?;
+        self.minter.continue_note_bindings(bindings);
         core::mem::swap(&mut self.plan, &mut prepared.plan);
         Ok(())
     }

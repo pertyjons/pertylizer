@@ -129,8 +129,13 @@ static NEXT_INGRESS_STORE_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::
 /// an independent review found it.
 #[cfg(feature = "simulated-ingress")]
 fn issue_ingress_store_id() -> Option<IngressStoreId> {
+    issue_ingress_store_id_from(&NEXT_INGRESS_STORE_ID)
+}
+
+#[cfg(feature = "simulated-ingress")]
+fn issue_ingress_store_id_from(counter: &std::sync::atomic::AtomicU64) -> Option<IngressStoreId> {
     use std::sync::atomic::Ordering::Relaxed;
-    NEXT_INGRESS_STORE_ID
+    counter
         .try_update(Relaxed, Relaxed, |id| id.checked_add(1))
         .ok()
         .map(IngressStoreId)
@@ -471,6 +476,31 @@ impl IngressCounters {
     }
 }
 
+/// Constructor-only provenance; no physical clock can be asserted by this route.
+#[cfg(any(
+    all(test, feature = "simulated-ingress"),
+    feature = "mixed-transfer-rehearsal"
+))]
+#[derive(Clone, Copy, Debug)]
+pub(crate) enum IngressOrigin {
+    Simulated,
+    #[cfg(feature = "mixed-transfer-rehearsal")]
+    Arrival,
+}
+#[cfg(any(
+    all(test, feature = "simulated-ingress"),
+    feature = "mixed-transfer-rehearsal"
+))]
+impl IngressOrigin {
+    const fn time_source(self) -> crate::time::TimeSource {
+        match self {
+            Self::Simulated => PerformanceIngress::simulated_source(),
+            #[cfg(feature = "mixed-transfer-rehearsal")]
+            Self::Arrival => crate::time::TimeSource::Arrival,
+        }
+    }
+}
+
 /// One live producer's bounded ingress store.
 ///
 /// Preallocated to `performance_ingress_capacity` and written by index. It is a ring:
@@ -491,6 +521,7 @@ impl IngressCounters {
 #[derive(Debug)]
 #[must_use]
 pub struct PerformanceIngress {
+    time_source: crate::time::TimeSource,
     id: IngressStoreId,
     entries: Vec<Option<IngressEntry>>,
     head: usize,
@@ -733,7 +764,14 @@ impl PerformanceIngress {
         producer: ProducerId,
         renderer: &crate::render::PreparedRenderer,
     ) -> Result<Self, IngressPrepareError> {
-        Self::prepare_for(profile, plan, producer, renderer, false)
+        Self::prepare_for(
+            profile,
+            plan,
+            producer,
+            renderer,
+            false,
+            Self::simulated_source(),
+        )
     }
 
     /// The same registered queue, bound to the private mixed audio owner only.
@@ -742,11 +780,12 @@ impl PerformanceIngress {
         all(test, feature = "simulated-ingress"),
         feature = "mixed-transfer-rehearsal"
     ))]
-    pub(crate) fn prepare_mixed_rehearsal(
+    pub(crate) fn prepare_mixed(
         profile: &HostProfile,
         plan: &CompiledPlan,
         minter: &LiveRangeMinter,
         renderer: &crate::render::PreparedRenderer,
+        origin: IngressOrigin,
     ) -> Result<Self, IngressPrepareError> {
         let producer = minter.producer();
         let index = usize::from(producer.as_u16());
@@ -761,7 +800,14 @@ impl PerformanceIngress {
         if minter.id() != renderer.table_id() || expected != Some(minter.span()) {
             return Err(IngressPrepareError::ForeignLiveRange);
         }
-        Self::prepare_for(profile, plan, producer, renderer, true)
+        Self::prepare_for(
+            profile,
+            plan,
+            producer,
+            renderer,
+            true,
+            origin.time_source(),
+        )
     }
 
     #[cfg(feature = "simulated-ingress")]
@@ -771,6 +817,7 @@ impl PerformanceIngress {
         producer: ProducerId,
         renderer: &crate::render::PreparedRenderer,
         mixed_rehearsal: bool,
+        time_source: crate::time::TimeSource,
     ) -> Result<Self, IngressPrepareError> {
         let epoch = renderer.epoch();
         // **The store's plan must be the renderer's**, because the entitlement comes from
@@ -848,6 +895,7 @@ impl PerformanceIngress {
                 total.saturating_add(range.get() as usize)
             });
         Ok(Self {
+            time_source,
             id,
             entries: vec![None; depth],
             head: 0,
@@ -976,5 +1024,16 @@ impl PerformanceIngress {
     /// Holds this producer has outstanding.
     pub const fn holds_outstanding(&self) -> EventCount {
         self.holds_outstanding
+    }
+}
+
+#[cfg(all(test, feature = "simulated-ingress"))]
+mod issuer_tests {
+    use super::*;
+    #[test]
+    fn ingress_store_issuer_is_unique_under_concurrent_last_ids_and_refuses_permanently() {
+        crate::issuer_controls::assert_u64_issuer_exhaustion(|counter| {
+            issue_ingress_store_id_from(counter).map(|identity| identity.0)
+        });
     }
 }

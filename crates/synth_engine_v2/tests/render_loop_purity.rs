@@ -57,7 +57,7 @@ use std::path::{Path, PathBuf};
 /// whole-owner reset joins with its boundary decision, cross-fade and discarded quantum.
 /// Rehearsal counter mutations and the seed-row walk have their own checked hot file;
 /// off-thread usage and storage snapshots remain outside this region.
-const REGION: [&str; 53] = [
+const REGION: [&str; 64] = [
     "src/recording/notes/loop_capture/ordered/input/capture/transfer/hot.rs",
     "src/recording/notes/loop_capture/ordered/input/hot.rs",
     "src/recording/notes/loop_capture/ordered/input/clock.rs",
@@ -79,12 +79,22 @@ const REGION: [&str; 53] = [
     "src/host/session/transfer/replacement/running/hot.rs",
     "src/host/session/source/hot.rs",
     "src/render/hot.rs",
+    "src/render/producer_hot.rs",
+    "src/ir/producer_programs/hot.rs",
+    "src/diagnostics/hot.rs",
     "src/render/migration/hot.rs",
     "src/render/continuation.rs",
+    "src/render/bindings.rs",
+    "src/plan/binding.rs",
+    "src/plan/note_binding/hot.rs",
+    "src/controller/hot.rs",
+    "src/host/mixed_targets/hot.rs",
+    "src/stream/mixed/transfer/continuation/hot.rs",
     "src/host/session/transfer/replacement/continuation/hot.rs",
     "src/render/rehearsal/hot.rs",
     "src/render/slot.rs",
     "src/observe/hot.rs",
+    "../pertylizer/src/lowering/observation/hot.rs",
     "src/schedule/hot.rs",
     "src/publish/hot.rs",
     "src/identity/hot.rs",
@@ -96,6 +106,7 @@ const REGION: [&str; 53] = [
     "src/stream/mixed/occurrence/hot.rs",
     "src/stream/mixed/reset/hot.rs",
     "src/stream/mixed/reset/host/publication_hot.rs",
+    "src/stream/mixed/reset/host/continuation_hot.rs",
     "src/stream/mixed/transfer/publication.rs",
     "src/stream/mixed/transfer/publication/mailbox/hot.rs",
     "src/host/mixed_input/hot.rs",
@@ -576,13 +587,14 @@ fn every_call_the_render_loop_makes_is_inside_the_checked_region() {
 
     // The private mixed audio path publishes terminal command-order and
     // result-push faults. The reset pair also halts its active owner and the
-    // secondary owner on a terminal callback fault. Keep these `store`
+    // secondary owner on a terminal callback fault. An installed continuation
+    // also publishes a terminal post-install fault. Keep these `store`
     // exceptions tied to the exact Release atomic writes.
     assert_eq!(
         source
             .matches("self.ingress_halt.store(true, Ordering::Release);")
             .count(),
-        2
+        3
     );
     for receiver in ["self.active", "successor", "old"] {
         assert_eq!(
@@ -609,6 +621,7 @@ fn every_call_the_render_loop_makes_is_inside_the_checked_region() {
                 .or_else(|| trimmed.strip_prefix("const fn "))
                 .or_else(|| trimmed.strip_prefix("pub(crate) fn "))
                 .or_else(|| trimmed.strip_prefix("pub(super) fn "))
+                .or_else(|| trimmed.strip_prefix("pub(in crate::stream::mixed) fn "))
                 .or_else(|| trimmed.strip_prefix("pub(crate) const fn "))
                 .or_else(|| trimmed.strip_prefix("pub(super) const fn "))
         })
@@ -689,6 +702,9 @@ fn every_call_the_render_loop_makes_is_inside_the_checked_region() {
         "copy_within",
         "copy_from_slice",
         "iter",
+        // Fixed preallocated Option-entry arrays: flatten is a stack iterator
+        // skipping None slots, bounded by the backing slice, without allocation.
+        "flatten",
         "enumerate",
         "contains",
         "sort_unstable_by_key",
@@ -696,6 +712,9 @@ fn every_call_the_render_loop_makes_is_inside_the_checked_region() {
         "map_or",
         "ok",
         "is_some_and",
+        // Borrowed Arc allocation identity: pointer comparison only, without cloning,
+        // modifying reference counts, allocating, destroying or blocking.
+        "ptr_eq",
         // Option discriminant plus an inline predicate; the predicate body is scanned.
         "is_none_or",
         // The live boundary's counters and the report they reach. `diagnostics_mut` hands
@@ -1273,9 +1292,18 @@ fn every_call_the_render_loop_makes_is_inside_the_checked_region() {
         }
     }
 
+    let subscription_store_calls =
+        read_region_file("../pertylizer/src/lowering/observation/hot.rs")
+            .matches("subscription.store()")
+            .count();
     assert_eq!(
-        store_calls, 7,
-        "the five terminal-fault stores and two private Panic service-clock stores remain in the scanned region"
+        subscription_store_calls, 1,
+        "one checked subscription identity getter"
+    );
+    assert_eq!(
+        store_calls,
+        8 + subscription_store_calls,
+        "the five terminal-fault stores, two Panic stores, continuation terminal halt and checked subscription getter remain in the scanned region"
     );
     assert!(
         unresolved.is_empty(),

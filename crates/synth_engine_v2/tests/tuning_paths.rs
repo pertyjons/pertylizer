@@ -263,7 +263,8 @@ fn render_observed(
         CompiledEventScheduler::prepare(&mut control, &stream).expect("the stream prepares");
     let host = common::profile(BLOCK as u64, ChannelLayout::Mono);
     let mut arbiter = PublicationArbiter::prepare(&host).expect("the store is preparable");
-    let mut store = ObservationSubscriptions::prepare(&host, plan);
+    let mut store =
+        ObservationSubscriptions::prepare(&host, plan).expect("observation identities available");
     let tap = plan
         .resolve_tap(MONITOR, PortId::FIRST)
         .expect("the monitor declares a tap");

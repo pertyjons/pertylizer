@@ -1939,6 +1939,29 @@ impl SynthApp {
 
             ui.allocate_ui(Vec2::new(piano_width, keys_height), |ui| {
                 let event = self.keyboard.show_keys(ui);
+                #[cfg(feature = "v2-mixed-app")]
+                if self
+                    .v2
+                    .switch
+                    .as_ref()
+                    .is_some_and(crate::lowering::app::SongSwitch::mixed_active)
+                {
+                    if let Some(note) = event.note_on {
+                        self.mixed_note(
+                            crate::lowering::app::SoftwareSource::OnScreenKeyboard,
+                            note,
+                            true,
+                        );
+                    }
+                    for note in event.note_off {
+                        self.mixed_note(
+                            crate::lowering::app::SoftwareSource::OnScreenKeyboard,
+                            note,
+                            false,
+                        );
+                    }
+                    return;
+                }
 
                 if let Some(note) = event.note_on {
                     self.handle
@@ -1981,6 +2004,27 @@ impl SynthApp {
     }
 
     fn process_keyboard_input(&mut self, ctx: &egui::Context, gate: shortcuts::InputGate) {
+        #[cfg(feature = "v2-mixed-app")]
+        if let Some(switch) = &mut self.v2.switch
+            && switch.mixed_active()
+        {
+            let source = crate::lowering::app::SoftwareSource::ComputerKeyboard;
+            if !gate.allows_piano_keys() || !ctx.input(|input| input.focused) {
+                switch.release_mixed_sources();
+                for held in self.pressed_keys.values_mut() {
+                    *held = false;
+                }
+            } else {
+                crate::gui::input::handle_keyboard_input_with(
+                    ctx,
+                    &mut self.keyboard,
+                    &mut self.pressed_keys,
+                    |note, down| switch.mixed_note(source, note, down),
+                );
+            }
+            ctx.request_repaint();
+            return;
+        }
         // Always use CH1 for keyboard input - focused_instrument handles routing
         let active_channel = MidiChannelSelection::CH1;
 

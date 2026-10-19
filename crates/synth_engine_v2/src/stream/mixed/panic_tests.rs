@@ -461,6 +461,7 @@ fn a_panic_incapable_arm_needs_only_the_live_release_backlog() {
             &release_share_profile(ingress_capacity().get()),
             None,
             MixedPanicCapability::Absent,
+            crate::ingress::IngressOrigin::Simulated,
         )
         .expect("transfer without Panic needs no compiled cut reservation");
 }

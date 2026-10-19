@@ -54,15 +54,17 @@ const PERMITTED_DECLARATION: &str = r#"synth_engine_v2 = { path = "../synth_engi
 const PERMITTED_OPTIONAL_DECLARATION: &str =
     r#"synth_engine_v2 = { path = "../synth_engine_v2", optional = true }"#;
 
-/// The one feature that may enable the optional edge.
+/// The original base feature enabling the optional edge.
 ///
-/// Named rather than described, so that a second feature reaching the crate
-/// changes this constant instead of passing quietly. ADR-0056's revisit
-/// condition is exactly that: two would need a rule rather than a name.
+/// ADR-0088 adds one exact default-off mixed application forwarding rule;
+/// both names and that rule are checked below.
 const LOWERING_FEATURE: &str = "pertylizer/v2-lowering";
 
 /// The same feature, unqualified, as the consumer's own `[features]` table spells it.
 const LOWERING_FEATURE_NAME: &str = "v2-lowering";
+
+/// ADR-0088 permits exactly this default-off forwarding route.
+const MIXED_APP_FEATURE_NAME: &str = "v2-mixed-app";
 
 /// The module tree the lowering feature gates.
 ///
@@ -427,7 +429,7 @@ fn no_feature_of_any_crate_adds_a_second_dependent() {
     );
 }
 
-/// Only `v2-lowering` activates the optional dependency, and nothing forwards to it.
+/// Only the two ADR-0088 features activate the optional dependency.
 ///
 /// The two tree checks above cannot see this. `--all-features` enables every feature at once,
 /// so a second feature that also activates the dependency produces the *same* single
@@ -444,8 +446,8 @@ fn no_feature_of_any_crate_adds_a_second_dependent() {
 /// other word.
 ///
 /// A **forwarded** activation is a feature list containing `v2-lowering`, which would let an
-/// innocuous-looking feature switch the edge on at one remove. Neither is permitted, so
-/// `v2-lowering` stays the one name to look for.
+/// innocuous-looking feature switch the edge on at one remove. ADR-0088 permits only
+/// the exact `v2-mixed-app` declaration and refuses all other forwarders.
 #[test]
 fn only_the_lowering_feature_activates_the_optional_dependency() {
     let manifest = read(
@@ -499,14 +501,21 @@ fn only_the_lowering_feature_activates_the_optional_dependency() {
 
     assert_eq!(
         direct,
-        vec![LOWERING_FEATURE_NAME.to_owned()],
-        "exactly one feature may activate the optional dependency, and only \
-         `{LOWERING_FEATURE_NAME}`"
+        vec![
+            LOWERING_FEATURE_NAME.to_owned(),
+            MIXED_APP_FEATURE_NAME.to_owned()
+        ],
+        "only the two ADR-0088 features may activate the optional dependency"
+    );
+    assert_eq!(
+        forwarding,
+        vec![MIXED_APP_FEATURE_NAME.to_owned()],
+        "only ADR-0088's named feature may forward to the lowering feature"
     );
     assert!(
-        forwarding.is_empty(),
-        "these features forward to `{LOWERING_FEATURE_NAME}`, which activates the optional \
-         dependency at one remove: {forwarding:?}"
+        table.lines().any(|line| line.trim()
+            == r#"v2-mixed-app = ["v2-lowering", "synth_engine_v2/mixed-transfer-rehearsal"]"#),
+        "the mixed application forwarding rule must retain its exact approved shape"
     );
 }
 
@@ -755,12 +764,23 @@ fn no_shipping_feature_forwards_the_mixed_transfer_rehearsal() {
             let flags: Vec<&str> = set.iter().map(String::as_str).collect();
             let resolved = resolved_experimental_features(Some(member), &flags);
             reached |= !resolved.is_empty();
+            let approved = member == MEASUREMENT_CONSUMER
+                && (flags.contains(&"--all-features")
+                    || flags
+                        .windows(2)
+                        .any(|pair| pair == ["--features", MIXED_APP_FEATURE_NAME]));
             assert!(
-                resolved
-                    .iter()
-                    .all(|features| !features.iter().any(|enabled| enabled == REHEARSAL_FEATURE)),
-                "`{member}` with {flags:?} enables the non-shipping rehearsal: {resolved:?}"
+                resolved.iter().all(|features| {
+                    features.iter().any(|enabled| enabled == REHEARSAL_FEATURE) == approved
+                }),
+                "`{member}` with {flags:?} violates ADR-0088's exact forwarding boundary: {resolved:?}"
             );
+            if approved {
+                assert!(
+                    !resolved.is_empty(),
+                    "the approved route must reach the crate"
+                );
+            }
         }
     }
     assert!(

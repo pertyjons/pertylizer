@@ -5,9 +5,15 @@
 //! the latest-wins mailbox and an owning return lane; no queue type enters core.
 
 mod continuation;
+#[cfg(feature = "mixed-transfer-rehearsal")]
+pub(crate) use continuation::same_program as same_continuation_program;
 mod hot;
+mod observation;
+pub use observation::{ObservationAdmission, ObservationReplacementOutcome};
 mod running;
 pub use running::{RunningEditMode, RunningReplacementRequest};
+#[cfg(test)]
+mod stopped_observation_tests;
 #[cfg(test)]
 mod tests;
 
@@ -100,6 +106,8 @@ pub enum PlanReplacementError {
     State,
     #[error("collect the outgoing plan's earlier retirement first")]
     OutgoingTable,
+    #[error("observation handoff binding refused: {0}")]
+    Observation(crate::observe::ObservationHandoffError),
     #[error("compatible migration preparation failed: {0}")]
     Migration(#[from] crate::render::GlobalMigrationError),
 }
@@ -112,6 +120,7 @@ pub struct PlanReplacementReceipt {
     pub plan: PlanId,
     pub outcome: PlanReplacementOutcome,
     pub retired_compiled_notes: crate::quantities::HeldNoteCount,
+    pub observation: ObservationReplacementOutcome,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -132,6 +141,9 @@ pub struct PreparedPlanReplacement {
     epoch: StreamEpoch,
     plan: PlanId,
     prepared_from_table: TableId,
+    old_plan: PlanId,
+    observation: Option<ObservationAdmission>,
+    observation_outcome: ObservationReplacementOutcome,
     expected_position: PlanPosition,
     command_watermark: u64,
     control: SessionControl,
@@ -285,6 +297,9 @@ impl SessionControl {
             epoch: self.origin.epoch,
             plan: control.origin.plan,
             prepared_from_table: self.origin.table,
+            old_plan: self.origin.plan,
+            observation: None,
+            observation_outcome: ObservationReplacementOutcome::NotAttached,
             expected_position: position,
             command_watermark: self.acknowledged_serial,
             control,
@@ -343,6 +358,7 @@ impl SessionControl {
             plan: candidate.plan,
             outcome: PlanReplacementOutcome::Cancelled,
             retired_compiled_notes: crate::quantities::HeldNoteCount::NONE,
+            observation: candidate.observation_outcome,
         })
     }
 
@@ -396,6 +412,7 @@ impl SessionControl {
                 plan: candidate.plan,
                 outcome,
                 retired_compiled_notes: candidate.retired_compiled_notes,
+                observation: candidate.observation_outcome,
             });
         }
         if let PlanReplacementOutcome::Installed(snapshot) = outcome {
@@ -424,6 +441,10 @@ impl SessionControl {
             plan: candidate.plan,
             outcome,
             retired_compiled_notes: candidate.retired_compiled_notes,
+            observation: candidate.observation_outcome,
         })
     }
 }
+
+#[cfg(feature = "mixed-transfer-rehearsal")]
+pub(crate) use continuation::rebind_program as rebind_continuation_program;

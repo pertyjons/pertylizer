@@ -1,5 +1,6 @@
 //! Compatible app publication and teardown, using an eligible empty saved project.
 use super::*;
+use std::sync::atomic::Ordering;
 use synth_core::audio::{BufferSize, ChannelCount, DeviceSampleRate};
 use synth_engine_v2::time::PlanPosition;
 
@@ -217,6 +218,8 @@ fn a_refused_installation_restarts_with_the_latest_edited_project() {
     audio
         .active
         .as_mut()
+        .unwrap()
+        .compiled()
         .unwrap()
         .attempt_edit_before_boundary();
     control.poll(|| edited.clone());
@@ -479,7 +482,7 @@ fn late_running_edit_keeps_old_metadata_and_waits_without_an_automatic_retry() {
     edited.global.master_volume = synth_core::Gain::new(0.37);
     control.project_changed(|| edited.clone());
     let sequence = control.sent;
-    let active = audio.active.as_mut().unwrap();
+    let active = audio.active.as_mut().unwrap().compiled().unwrap();
     // Hold the owning cell on the callback side while its old renderer advances past B.
     active.defer_edit_past_boundary();
     callback(&mut audio, 256);
@@ -579,10 +582,30 @@ fn a_newer_edit_survives_an_older_pending_attempts_late_refusal() {
     control.pending_running.as_mut().unwrap().omissions = vec!["new plan omission".to_owned()];
     assert_eq!(control.rendered_plan(), Some(old));
     assert_eq!(control.omissions(), old_omissions);
+    let captured = control.playback_view();
+    assert_eq!(captured.rendered, Some(old));
+    assert_eq!(captured.omissions, old_omissions);
+    // A later callback cannot change either half of the captured GUI/MCP view.
+    control
+        .rendered_install
+        .store(sequence.as_u64(), Ordering::Release);
+    let newer = control.playback_view();
+    assert_ne!(newer.rendered, captured.rendered);
+    assert_eq!(newer.omissions, ["new plan omission"]);
+    assert_eq!(captured.omissions, old_omissions);
+    control
+        .rendered_install
+        .store(old.install().as_u64(), Ordering::Release);
     let mut second = first.clone();
     second.global.master_volume = synth_core::Gain::new(0.7);
     control.project_changed(|| panic!("one candidate already owns the lane"));
-    audio.active.as_mut().unwrap().defer_edit_past_boundary();
+    audio
+        .active
+        .as_mut()
+        .unwrap()
+        .compiled()
+        .unwrap()
+        .defer_edit_past_boundary();
     callback(&mut audio, 256);
     control.poll(|| second.clone());
     assert_eq!(control.sent, sequence.next().unwrap());
@@ -685,6 +708,42 @@ fn a_saved_project_master_level_edit_uses_voice_continuation() {
             LoweredProjectDigest::of(&edited).unwrap()
         );
     }
+}
+
+#[test]
+fn a_saved_project_global_insert_can_keep_its_actual_sounding_voices() {
+    let (mut control, mut audio, mut edited) = playing();
+    let _previous_notices = control.take_notices();
+    let inserts = crate::lowering::tests::state_migration_projects().remove(1);
+    let effect = inserts.instruments[0]
+        .patch
+        .modules
+        .iter()
+        .find(|module| module.module_type.is_effect())
+        .unwrap()
+        .clone();
+    edited.global.master_effects.push(effect);
+    let digest = LoweredProjectDigest::of(&edited).unwrap();
+    control.project_changed(|| edited.clone());
+    let notices = control.take_notices();
+    assert!(
+        notices
+            .iter()
+            .any(|notice| notice.contains("sounding voices")),
+        "{notices:?}"
+    );
+    let mut heard = false;
+    for _ in 0..45 {
+        heard |= callback(&mut audio, 256)
+            .iter()
+            .any(|sample| *sample != 0.0);
+        control.poll(|| edited.clone());
+    }
+    assert!(heard);
+    assert!(control.is_playing());
+    assert_eq!(control.rendered_plan().unwrap().project_digest(), digest);
+    assert!(!control.playback.as_ref().unwrap().is_editing());
+    assert!(!control.needs_disable());
 }
 
 #[test]

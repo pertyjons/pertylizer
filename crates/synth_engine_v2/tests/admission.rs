@@ -372,6 +372,7 @@ fn declared() -> PlanDeclarations {
         voices_per_instrument: VoiceCount::measured(2),
         authored_sources: Vec::new(),
         internal_producers: Vec::new(),
+        runtime_parameters: Vec::new(),
     }
 }
 
@@ -743,12 +744,18 @@ fn refusal_cases(host: &HostProfile) -> Vec<(ResourceField, GraphIr, HostProfile
             ResourceField::InternalEventShare,
             declaring(PlanDeclarations {
                 internal_producers: vec![
-                    InternalProducerDeclaration {
-                        per_quantum: events(3),
-                    },
-                    InternalProducerDeclaration {
-                        per_quantum: events(3),
-                    },
+                    InternalProducerDeclaration::periodic_delay_clear(
+                        NodeId::new(100),
+                        FrameCount::new(22),
+                        FrameCount::new(0),
+                    )
+                    .unwrap(),
+                    InternalProducerDeclaration::periodic_delay_clear(
+                        NodeId::new(101),
+                        FrameCount::new(22),
+                        FrameCount::new(0),
+                    )
+                    .unwrap(),
                 ],
                 ..PlanDeclarations::default()
             }),

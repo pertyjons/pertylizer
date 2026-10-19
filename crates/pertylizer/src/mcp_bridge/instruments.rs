@@ -399,6 +399,14 @@ impl synth_mcp::bridge::InstrumentBridge for AppSynthBridge {
         })
     }
 
+    fn get_v2_playback_status(
+        &self,
+    ) -> Result<synth_mcp::v2_playback::V2PlaybackStatus, McpBridgeError> {
+        self.shared
+            .v2_playback_status()
+            .map_err(McpBridgeError::Other)
+    }
+
     fn get_version(&self) -> Result<VersionInfo, McpBridgeError> {
         // Empty strings mean "built without git state" (see build.rs).
         let non_empty = |s: &'static str| (!s.is_empty()).then(|| s.to_string());

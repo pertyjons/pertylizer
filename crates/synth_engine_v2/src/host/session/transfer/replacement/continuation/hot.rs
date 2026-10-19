@@ -155,6 +155,7 @@ impl SessionAudio {
         &mut self,
         candidate: &mut PreparedPlanReplacement,
         mut output: AudioBlockMut<'_>,
+        observers: Option<&mut crate::observe::ObservationSubscriptions>,
     ) -> Result<(), ScheduledRenderError> {
         let belongs = candidate.id.generation == self.origin.generation
             && candidate.epoch == self.origin.epoch
@@ -183,7 +184,7 @@ impl SessionAudio {
             }
             return Err(error);
         }
-        let result = self.render_owned(output.reborrow());
+        let result = self.render_owned_observed(output.reborrow(), observers);
         if let Err(error) = result {
             output.silence();
             self.interrupt_continuation(candidate, error);

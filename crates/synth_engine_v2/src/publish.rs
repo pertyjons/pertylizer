@@ -257,8 +257,12 @@ static NEXT_ARBITER_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::Atomic
 /// `try_update` leaves the counter at its ceiling instead, so every later call refuses
 /// too. `Relaxed` is sufficient: the identities have to differ, not to order anything.
 fn issue_arbiter_id() -> Option<ArbiterId> {
+    issue_arbiter_id_from(&NEXT_ARBITER_ID)
+}
+
+fn issue_arbiter_id_from(counter: &std::sync::atomic::AtomicU64) -> Option<ArbiterId> {
     use std::sync::atomic::Ordering::Relaxed;
-    NEXT_ARBITER_ID
+    counter
         .try_update(Relaxed, Relaxed, |id| id.checked_add(1))
         .ok()
         .map(ArbiterId)

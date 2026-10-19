@@ -4,10 +4,11 @@ use crate::{
     host::session::{
         PlaybackState,
         transfer::replacement::{
-            PlanReplacementError, PlanReplacementOutcome, PlanReplacementRefusal,
-            PreparedPlanReplacement,
+            ObservationAdmission, ObservationReplacementOutcome, PlanReplacementError,
+            PlanReplacementOutcome, PlanReplacementRefusal, PreparedPlanReplacement,
         },
     },
+    observe::{ObservationHandoffError, ObservationSubscriptions},
     render::AudioBlockMut,
     schedule::ScheduledRenderError,
     time::{FrameCount, QUANTUM_FRAMES},
@@ -159,6 +160,17 @@ impl SessionAudio {
     /// render through `render_running_replacement` and retain it until an outcome exists.
     pub fn begin_running_replacement(
         &mut self,
+        candidate: Box<PreparedPlanReplacement>,
+    ) -> Result<Box<PreparedPlanReplacement>, (Box<PreparedPlanReplacement>, PlanReplacementError)>
+    {
+        if candidate.observation.is_some() {
+            return Err((candidate, PlanReplacementError::State));
+        }
+        self.begin_running_replacement_inner(candidate)
+    }
+
+    fn begin_running_replacement_inner(
+        &mut self,
         mut candidate: Box<PreparedPlanReplacement>,
     ) -> Result<Box<PreparedPlanReplacement>, (Box<PreparedPlanReplacement>, PlanReplacementError)>
     {
@@ -194,6 +206,22 @@ impl SessionAudio {
         // Keep every fresh-generation serial/epoch/table and initial adoption debt.
         core::mem::swap(self, &mut candidate.audio);
         self.running_transition = true;
+        Ok(candidate)
+    }
+
+    /// Pair with `render_running_replacement_observed` for the complete transition.
+    /// Sound refusal leaves the store untouched. After sound commits at B, an
+    /// observation refusal ends its old labelled tail without rejecting sound.
+    pub fn begin_running_replacement_observed(
+        &mut self,
+        candidate: Box<PreparedPlanReplacement>,
+        observers: &mut ObservationSubscriptions,
+    ) -> Result<Box<PreparedPlanReplacement>, (Box<PreparedPlanReplacement>, PlanReplacementError)>
+    {
+        let mut candidate = self.begin_running_replacement_inner(candidate)?;
+        if candidate.outcome.is_none() && self.running_transition {
+            self.install_observation_handoff(&mut candidate, observers);
+        }
         Ok(candidate)
     }
 
@@ -240,15 +268,80 @@ impl SessionAudio {
         }));
     }
 
-    /// While Fading this is the only render entry. Any failure silences the whole
+    /// While Fading use this entry or its observed counterpart. Failure silences the whole
     /// supplied outer block, closes the installed owner and retains both owners.
     pub fn render_running_replacement(
         &mut self,
         candidate: &mut PreparedPlanReplacement,
+        output: AudioBlockMut<'_>,
+    ) -> Result<(), ScheduledRenderError> {
+        if matches!(
+            candidate.observation_outcome,
+            ObservationReplacementOutcome::HandedOff { .. }
+        ) {
+            candidate.observation_outcome =
+                ObservationReplacementOutcome::Detached(ObservationHandoffError::NotObserved);
+        }
+        self.render_running_replacement_with_observers(candidate, output, None)
+    }
+
+    /// Observe successor quanta, before the reset fade, once even across partial
+    /// carry. Use the same store handed to the observed begin call for every
+    /// transition fragment. The outgoing scratch owner has no observation store.
+    pub fn render_running_replacement_observed(
+        &mut self,
+        candidate: &mut PreparedPlanReplacement,
+        output: AudioBlockMut<'_>,
+        observers: &mut ObservationSubscriptions,
+    ) -> Result<(), ScheduledRenderError> {
+        if let ObservationReplacementOutcome::HandedOff { .. } = candidate.observation_outcome {
+            let matches = match &candidate.observation {
+                Some(ObservationAdmission::Prepared(prepared)) => {
+                    prepared.matches_installed(observers)
+                }
+                _ => false,
+            };
+            if !matches {
+                observers.end();
+                candidate.observation_outcome =
+                    ObservationReplacementOutcome::Detached(ObservationHandoffError::Origin);
+            }
+        } else {
+            observers.end();
+            if matches!(
+                candidate.observation_outcome,
+                ObservationReplacementOutcome::NotAttached
+                    | ObservationReplacementOutcome::NotAttempted
+            ) {
+                candidate.observation_outcome =
+                    ObservationReplacementOutcome::Ended(ObservationHandoffError::NotPrepared);
+            }
+        }
+        let result = self.render_running_replacement_with_observers(
+            candidate,
+            output,
+            Some(&mut *observers),
+        );
+        if result.is_err() {
+            observers.end();
+            if let ObservationReplacementOutcome::HandedOff { generation, kind } =
+                candidate.observation_outcome
+            {
+                candidate.observation_outcome =
+                    ObservationReplacementOutcome::Interrupted { generation, kind };
+            }
+        }
+        result
+    }
+
+    fn render_running_replacement_with_observers(
+        &mut self,
+        candidate: &mut PreparedPlanReplacement,
         mut output: AudioBlockMut<'_>,
+        observers: Option<&mut ObservationSubscriptions>,
     ) -> Result<(), ScheduledRenderError> {
         if candidate.continuation.is_some() {
-            return self.render_continuing_replacement(candidate, output);
+            return self.render_continuing_replacement(candidate, output, observers);
         }
         if candidate
             .running
@@ -268,7 +361,7 @@ impl SessionAudio {
             }
             return Err(error);
         }
-        let result = self.render_running_inner(candidate, &mut output);
+        let result = self.render_running_inner(candidate, &mut output, observers);
         if let Err(error) = result {
             output.silence();
             self.interrupt_running(candidate, error);
@@ -329,6 +422,7 @@ impl SessionAudio {
         &mut self,
         candidate: &mut PreparedPlanReplacement,
         output: &mut AudioBlockMut<'_>,
+        mut observers: Option<&mut ObservationSubscriptions>,
     ) -> Result<(), ScheduledRenderError> {
         self.renderer.validate_output(output)?;
         let faded = self.fade_position(candidate)?;
@@ -351,7 +445,7 @@ impl SessionAudio {
         let mut head = output
             .window(0, frames)
             .ok_or(ScheduledRenderError::RunningReplacementState)?;
-        self.render_owned(head.reborrow())?;
+        self.render_owned_observed(head.reborrow(), observers.as_deref_mut())?;
         blend(reset, &mut head, faded)?;
         reset.faded = FrameCount::new(
             u64::try_from(faded + frames)
@@ -370,7 +464,7 @@ impl SessionAudio {
             let tail = output
                 .window(frames, output.frames() - frames)
                 .ok_or(ScheduledRenderError::RunningReplacementState)?;
-            self.render_owned(tail)?;
+            self.render_owned_observed(tail, observers)?;
         }
         Ok(())
     }

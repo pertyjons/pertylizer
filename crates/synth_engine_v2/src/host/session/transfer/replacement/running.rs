@@ -289,6 +289,9 @@ impl SessionControl {
             epoch: self.origin.epoch,
             plan: control.origin.plan,
             prepared_from_table: self.origin.table,
+            old_plan: self.origin.plan,
+            observation: None,
+            observation_outcome: super::ObservationReplacementOutcome::NotAttached,
             expected_position: position,
             command_watermark: self.acknowledged_serial,
             control,
@@ -342,3 +345,6 @@ fn prepare_initial(
 }
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod observation_tests;

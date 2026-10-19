@@ -610,6 +610,24 @@ pub fn lower_project(
     lower_project_with(instruments, song, global, profile, policy, None, &mut None)
 }
 
+/// Lower the same saved project with a separately declared software live range.
+#[cfg(feature = "v2-mixed-app")]
+pub(super) fn lower_project_mixed(
+    project: &crate::project::ProjectFile,
+    profile: HostProfile,
+    live: LiveNoteRange,
+) -> LoweredProject {
+    lower_project_with(
+        &project.instruments,
+        &project.song,
+        &project.global,
+        profile,
+        OutputPolicy::Parity,
+        Some(live),
+        &mut None,
+    )
+}
+
 /// [`lower_project`], with `live` appended to the plan's declarations after the compiled
 /// producer when present, and the graph left in `built` once it is built.
 ///

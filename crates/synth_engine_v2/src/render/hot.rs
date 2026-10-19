@@ -162,7 +162,24 @@ impl PreparedRenderer {
         self.fault(output);
     }
 
-    /// Attribute the exclusive authored owner's fault without mislabelling other causes
+    pub(crate) fn terminal_producer_fault(
+        &mut self,
+        output: &mut AudioBlockMut<'_>,
+        class: crate::publish::ProducerClass,
+    ) {
+        match class {
+            crate::publish::ProducerClass::Internal => {
+                self.diagnostics.count_internal_producer_fault()
+            }
+            crate::publish::ProducerClass::AuthoredRuntime => {
+                self.diagnostics.count_authored_source_fault()
+            }
+            _ => self.diagnostics.count_publication_fault(),
+        }
+        self.fault(output);
+    }
+
+    /// Attribute an authored source's fault without mislabelling other causes
     /// as publication overruns. Publication failures contribute to both named counters.
     pub(crate) fn terminal_authored_fault(
         &mut self,
@@ -850,6 +867,7 @@ impl PreparedRenderer {
         self.rehearsal_usage.begin_controls();
         self.control_starts.fill(0);
         self.control_fill.fill(0);
+        self.count_internal_controls();
 
         // `SOUND-INV-027`: a modulated sample-positioned row hands its composed value to the
         // quantum's first frame as one control, every quantum — the only path a value has
@@ -2069,7 +2087,15 @@ impl PreparedRenderer {
             // After the boundary controls and before the quantum: the edges are a property
             // of the samples about to be written, and the kernel that writes them is what
             // places each one.
+            if let Err(error) = self.generate_internal_records() {
+                self.fault(&mut output);
+                return Err(error);
+            }
             self.collect_timed_controls(&mut timed);
+            if let Err(error) = self.merge_internal_controls() {
+                self.fault(&mut output);
+                return Err(error);
+            }
             if let Err(error) = self.render_quantum(timeline) {
                 if matches!(error, RenderError::ClockExhausted(_)) {
                     self.diagnostics.count_clock_exhaustion();

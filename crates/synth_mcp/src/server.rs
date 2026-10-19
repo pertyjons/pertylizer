@@ -579,7 +579,7 @@ impl Mutations<String> {
 /// How long a client may treat `tools/list` as fresh.
 ///
 /// Ten minutes: long enough that reconnecting inside a working session does not
-/// re-fetch 219 tools, short enough that a restart with a different
+/// re-fetch 220 tools, short enough that a restart with a different
 /// `disabled_tools` set is picked up rather than cached indefinitely. Note this
 /// saves *transfer*, not context — the catalog still enters the model's prompt
 /// once per session, which is TODO §6.13's separate problem.
@@ -5522,6 +5522,7 @@ impl SynthMcpServer {
             "get_mod_matrix_routings" => get_mod_matrix_routings(InstrumentIdParam),
             "get_parameter" => get_parameter(GetParameterParam),
             "get_engine_status" => get_engine_status(NoParams),
+            "get_v2_playback_status" => get_v2_playback_status(NoParams),
             "get_version" => get_version(NoParams),
             "get_graph_diagnostics" => get_graph_diagnostics(InstrumentIdParam),
             "list_automation_lanes" => list_automation_lanes(PatternIdParam),
@@ -5717,7 +5718,7 @@ impl ServerHandler for SynthMcpServer {
     /// `cacheScope: public` for clients on `2026-07-28` — "immediately stale, and
     /// anyone may serve it". Both halves are wrong here. The catalog is built once
     /// by `build_router` and cannot change while the process runs, and at
-    /// 219 tools it is the largest thing this server ever sends; telling a client
+    /// 220 tools it is the largest thing this server ever sends; telling a client
     /// not to keep it means re-sending it on every reconnect.
     ///
     /// `Private` rather than `Public` because the list is *this instance's*: the

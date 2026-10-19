@@ -1,10 +1,12 @@
 //! Whole-pair installation at an empty-carry boundary. No owning value is dropped.
 
 use super::{
-    PlanReplacementError, PlanReplacementOutcome, PlanReplacementRefusal, PreparedPlanReplacement,
+    ObservationAdmission, ObservationReplacementOutcome, PlanReplacementError,
+    PlanReplacementOutcome, PlanReplacementRefusal, PreparedPlanReplacement,
 };
 use crate::host::session::PlaybackState;
 use crate::host::session::transfer::{SessionAudio, SessionSnapshot};
+use crate::observe::{ObservationHandoffError, ObservationSubscriptions};
 use crate::time::{FrameCount, QUANTUM_FRAMES, SampleTime, StreamAnchor};
 
 impl SessionAudio {
@@ -65,6 +67,67 @@ impl SessionAudio {
     /// becomes a retained Installed/Refused outcome. A protocol misuse returns the
     /// original box; neither route destroys plan, control, runtime or packet here.
     pub fn install_replacement(
+        &mut self,
+        candidate: Box<PreparedPlanReplacement>,
+    ) -> Result<Box<PreparedPlanReplacement>, (Box<PreparedPlanReplacement>, PlanReplacementError)>
+    {
+        if candidate.observation.is_some() {
+            return Err((candidate, PlanReplacementError::State));
+        }
+        self.install_replacement_inner(candidate)
+    }
+
+    /// Install stopped sound first, then hand observation to the actual successor.
+    /// Sound refusal leaves the store untouched. Observation refusal ends its old
+    /// labelled tail and never rejects the sound edit. Resume with `render_observed`;
+    /// ordinary stopped idle quanta still produce no observation samples.
+    pub fn install_replacement_observed(
+        &mut self,
+        candidate: Box<PreparedPlanReplacement>,
+        observers: &mut ObservationSubscriptions,
+    ) -> Result<Box<PreparedPlanReplacement>, (Box<PreparedPlanReplacement>, PlanReplacementError)>
+    {
+        let mut candidate = self.install_replacement_inner(candidate)?;
+        if matches!(
+            candidate.outcome,
+            Some(PlanReplacementOutcome::Installed(_))
+        ) {
+            self.install_observation_handoff(&mut candidate, observers);
+        }
+        Ok(candidate)
+    }
+
+    /// Called only after the sound commit, by stopped and running owning entries.
+    pub(super) fn install_observation_handoff(
+        &self,
+        candidate: &mut PreparedPlanReplacement,
+        observers: &mut ObservationSubscriptions,
+    ) {
+        let result = match &candidate.observation {
+            Some(ObservationAdmission::Prepared(prepared))
+                if prepared.new_plan() == self.plan_id() =>
+            {
+                observers
+                    .handoff(prepared)
+                    .map(|()| prepared.successor_generation())
+            }
+            Some(ObservationAdmission::Prepared(_)) => Err(ObservationHandoffError::Origin),
+            Some(ObservationAdmission::Refused(error)) => Err(*error),
+            None => Err(ObservationHandoffError::NotPrepared),
+        };
+        candidate.observation_outcome = match result {
+            Ok(generation) => ObservationReplacementOutcome::HandedOff {
+                generation,
+                kind: candidate.kind(),
+            },
+            Err(error) => {
+                observers.end();
+                ObservationReplacementOutcome::Ended(error)
+            }
+        };
+    }
+
+    fn install_replacement_inner(
         &mut self,
         mut candidate: Box<PreparedPlanReplacement>,
     ) -> Result<Box<PreparedPlanReplacement>, (Box<PreparedPlanReplacement>, PlanReplacementError)>

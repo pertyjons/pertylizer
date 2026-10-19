@@ -6,9 +6,9 @@
 | Status | Accepted |
 | Phase | 9 |
 | Created | 2026-10-17 |
-| Last reviewed | 2026-10-17 |
+| Last reviewed | 2026-10-18 |
 | Related | ADR-0046, ADR-0047, ADR-0048, ADR-0050, ADR-0051, ADR-0054, ADR-0075, ADR-0076, ADR-0078, ADR-0079, ADR-0080 |
-| Amends | ADR-0078's default-off host boundary; ADR-0050 clause 8 and ADR-0051 solely for this bound mixed owner; resolves ADR-0048's mixed stopped-owner-reset case only |
+| Amends | ADR-0078's default-off host boundary; ADR-0050 clause 8 and ADR-0051 solely for this bound mixed owner; accepts the running-reset case left open by the combined-host draft's row 3.2 and D10; resolves bounded mixed whole-owner reset, not state migration |
 | Supersedes | ADR-0075's software-boundary deferral only; its complete production qualification remains deferred |
 | Superseded by | — |
 
@@ -115,7 +115,8 @@ representation preserves arm identity without copying identity-table state.
 
 ## Reset coordination
 
-Reset remains stopped-owner only. Before offering a successor, control seals it,
+The existing reset entry remains stopped-owner only. Before offering either reset
+mode, control seals its successor,
 collects every old command and waits until the renderer has passed the last old
 command's quantum. An old command receipt alone does not prove ingress drained.
 The wrapper independently checks Stop, ingress, activation and the seal again.
@@ -136,6 +137,58 @@ return queue retains the complete owner in one audio-side slot while rendering
 continues. Control commits the exact reset receipt and joins the old owner off
 audio; the raw owner and source FIFOs retain their independent lifetimes.
 
+### Explicit running reset
+
+The [combined-host draft](DRAFT-mixed-producer-combined-host-law.md) proposed
+stopped-only reset in row 3.2 and left running reset open in D10. This accepted
+extension permits that case through a separate entry; installing under running
+transport is no longer a failure for that entry. The draft remains a historical
+proposal, not the authority for this additional mode.
+
+`MixedBridgeResetAudio::offer_running_reset` adds an opt-in running mode within
+the same default-off software boundary. It requires an already adopted running
+old program, an empty activation slot and drained old ingress. The successor is
+a fresh one-shot arm at exactly B, with its admitted anchor unchanged and its
+shifted restoration/suffix beginning no earlier than B. Fresh loop successors
+are refused; later loop activation and an already looping old owner retain
+their ordinary paths. The existing `offer_reset` still refuses a running owner;
+the running entry refuses a stopped owner. Neither entry migrates DSP or voices.
+
+The old program renders and may start compiled notes in [B, B + Q), with no
+new input from its old port. A real compiled Stop at B + Q applies before any
+compiled event there, alongside the live Reset release group. The discarded old
+quantum must leave both minters, registry and live holds empty. Unlike the
+isolated compiled-session reset, this consumer explicitly ends compiled custody
+before off-thread collection. Retirement skips the unused fallible playhead
+projection; defect-class renderer/custody failures after commit are terminal.
+
+All refusal checks and pure Stop preflight precede the seal decision. Only after
+successful live Reset admission does the final infallible commit schedule Stop.
+A refusal or withdrawal therefore leaves no future Stop. While a running reset
+is pending, a separate Stop returns `ResetPending` without mutation. The same
+Panic seal arbitration, commit tombstones and whole-owner return law apply.
+A Panic that loses cancellation after the seal decision reaches the successor;
+it does not cancel the old program's remaining faded compiled onsets.
+
+The receipt exposes a compiled cut: stop time, projected old position at B and
+established old loop pass before B's events/wrap. At a wrap exactly on B, position
+maps to the interval start while the pass still names the pre-wrap pass. An
+unavailable or unrepresentable advisory position is explicitly `None`; retirement
+does not reconstruct state from it. These describe the old owner,
+not continuity with the successor. Actual compiled releases become available
+only on retirement. The fade retains the existing mixed expression
+`successor * gain + old * (1 - gain)`, including its floating-point endpoint law.
+
+`reset::transfer_tests::running_tests` compares against ordinary old-owner Stop
+and fresh-successor render twins, with callback fragments through B and the
+fade, onsets at B - 1, B, B + Q - 1 and B + Q, and old loop wraps at B, B + 1,
+B + Q and B + Q + 1. Boundary refusal controls compare sound and transport,
+schedule, minter, cursor and hold state against an unoffered twin. Any changed
+old sound on refusal, later old onset, retained custody or callback allocation
+blocks acceptance. Optional detail does not. These are functional software
+controls; dual rendering plus the discarded quantum has no production deadline
+or all-producer capacity qualification.
+
 ## Falsifiers and executable checks
 
 Acceptance fails on changed serial audio/receipts, a late healthy source command,
@@ -149,7 +202,10 @@ transport, resets and joined ownership. Its
 cadence, two source workers, rolling control, reset with held notes, compiled
 seek and retirement backpressure. The serial oracle does not use publication
 certificates or the thread protocol. This is functional software evidence,
-not measured device cadence, worst-case latency or capacity selection.
+not measured device cadence, worst-case latency or capacity selection. Its
+synthetic cadence waits a new interval for each callback, independent of control
+and source progress. OS wake delays never trigger a burst of catch-up callbacks;
+the separate control-loss test still exhausts coverage and latches silence.
 
 The required mixed integration/library/documentation/Clippy gates and complete
 repository gate apply. A false claim, contradiction or missing ownership rule
@@ -164,3 +220,10 @@ reselection, P03-R004 endurance/width validation, physical timing and adapter
 evidence under ADR-0022, and a reviewed shipping dependency/feature decision.
 Application mono-device admission and other project populations have separate
 gates. This record accepts no Phase 9 exit and lifts no production refusal.
+
+## Named load consumers
+
+[ADR-0093](ADR-0093-real-mixed-producer-load-consumers.md) admits only its
+parameter-only Trim programs and linked internal Delay clears within the mixed
+owner. Unknown authored/internal publishers and unsupported owners remain
+refused. The software application does not declare these load consumers.

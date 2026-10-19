@@ -20,9 +20,10 @@ use super::super::{
     MixedOfferSlot, MixedOneShotAudio,
 };
 #[cfg(feature = "mixed-transfer-rehearsal")]
-use super::MixedResetEndpoint;
+use super::{MixedCompiledCut, MixedResetEndpoint};
 use super::{
-    MixedResetPair, MixedResetReceipt, MixedResetRefused, MixedResetRenderError, MixedResetSlot,
+    MixedResetMode, MixedResetPair, MixedResetReceipt, MixedResetRefused, MixedResetRenderError,
+    MixedResetSlot,
 };
 use crate::{
     quantities::{ChannelLayout, EventCount, HeldNoteCount},
@@ -84,7 +85,7 @@ where
 /// Why `successor` cannot take over from `old` at `at`, checked at the offer and again
 /// when `at` opens. Both owners are only read.
 ///
-/// The old owner must be stopped with nothing left to apply after `B`: no scheduled
+/// The old transport must match the chosen mode, with no pending input: no scheduled
 /// Stop, an empty offer slot, no unserved command, queued entry, parked Panic, owed
 /// compiled cut or unpushed result. The successor must be freshly armed for exactly `B`,
 /// under another epoch and table, with the old owner's output shape. A seal a due Panic
@@ -94,7 +95,12 @@ pub(super) fn reset_refusal(
     old: &MixedOneShotAudio,
     successor: &MixedOneShotAudio,
     at: SampleTime,
+    mode: MixedResetMode,
 ) -> Option<MixedResetRefused> {
+    #[cfg(feature = "mixed-transfer-rehearsal")]
+    if old.continuation.is_some() || successor.continuation.is_some() {
+        return Some(MixedResetRefused::ContinuationPending);
+    }
     let renderer = &old.audio.renderer;
     if old.fault.is_some()
         || renderer.diagnostics().needs_reprepare()
@@ -108,8 +114,20 @@ pub(super) fn reset_refusal(
     if sealed == Some(MixedResetSealState::Cancelled) {
         return Some(MixedResetRefused::PanicCancelled);
     }
-    if old.transport == MixedCompiledTransport::Running {
-        return Some(MixedResetRefused::Running);
+    match mode {
+        MixedResetMode::Stopped if old.transport == MixedCompiledTransport::Running => {
+            return Some(MixedResetRefused::Running);
+        }
+        #[cfg(feature = "mixed-transfer-rehearsal")]
+        MixedResetMode::Running => {
+            if old.transport != MixedCompiledTransport::Running {
+                return Some(MixedResetRefused::NotRunning);
+            }
+            if !old.adopted {
+                return Some(MixedResetRefused::NotAdopted);
+            }
+        }
+        _ => {}
     }
     if let Some(stop) = old.stop_pending {
         return Some(MixedResetRefused::StopPending { stop });
@@ -162,6 +180,35 @@ pub(super) fn reset_refusal(
     let effective = successor.timing.effective();
     if effective != at {
         return Some(MixedResetRefused::SuccessorBoundary { effective, at });
+    }
+    #[cfg(feature = "mixed-transfer-rehearsal")]
+    if mode == MixedResetMode::Running {
+        let Some(suffix) = successor.capsule.restoration_count.as_usize() else {
+            return Some(MixedResetRefused::SuccessorSchedule);
+        };
+        let events = super::super::MixedEffectiveEvents {
+            events: &successor.capsule.events,
+            shift: successor.timing.shift(),
+        };
+        if successor.effective_anchor.time() != at
+            || successor.loop_cursor.is_some()
+            || successor.loop_program.is_some()
+        {
+            return Some(MixedResetRefused::SuccessorSchedule);
+        }
+        for index in [0, suffix] {
+            match events.get(index) {
+                Ok(Some(event)) if event.envelope().time() >= at => {}
+                Ok(None) => {}
+                _ => return Some(MixedResetRefused::SuccessorSchedule),
+            }
+        }
+        let Ok(stop) = at.checked_add(FrameCount::QUANTUM) else {
+            return Some(MixedResetRefused::FadeUnrepresentable { at });
+        };
+        if old.preflight_compiled_stop(stop) != Ok(super::super::MixedStopAccepted::Scheduled) {
+            return Some(MixedResetRefused::RetirementStop);
+        }
     }
     None
 }
@@ -317,7 +364,10 @@ impl<E: MixedAudioQueues> MixedResetPair<E> {
         {
             return Err(MixedResetRenderError::OutputShape);
         }
-        if let Err(error) = self.render_inner(&mut output) {
+        let result = self.render_inner(&mut output);
+        #[cfg(feature = "mixed-transfer-rehearsal")]
+        self.active.finish_continuation_render(result.is_ok());
+        if let Err(error) = result {
             self.fault = Some(error);
             self.active.ingress_halt.store(true, Ordering::Release);
             match &self.secondary {
@@ -357,7 +407,7 @@ impl<E: MixedAudioQueues> MixedResetPair<E> {
                 return Err(MixedResetRenderError::Scratch);
             };
             self.active
-                .render_with(&mut self.active_endpoint, block.reborrow())
+                .render_with_core(&mut self.active_endpoint, block.reborrow())
                 .map_err(MixedResetRenderError::Active)?;
             self.fade(&mut block)?;
             offset += frames;
@@ -376,18 +426,19 @@ impl<E: MixedAudioQueues> MixedResetPair<E> {
         if !due {
             return;
         }
-        let (mut successor, mut endpoint, at) = match core::mem::take(&mut self.secondary) {
+        let (mut successor, mut endpoint, at, mode) = match core::mem::take(&mut self.secondary) {
             MixedResetSlot::Pending {
                 successor,
                 endpoint,
                 at,
-            } => (successor, endpoint, at),
+                mode,
+            } => (successor, endpoint, at, mode),
             other => {
                 self.secondary = other;
                 return;
             }
         };
-        match self.begin_reset(&successor, at, clock) {
+        match self.begin_reset(&successor, at, clock, mode) {
             Err(reason) => {
                 self.secondary = MixedResetSlot::Refused {
                     successor,
@@ -397,7 +448,14 @@ impl<E: MixedAudioQueues> MixedResetPair<E> {
                 };
             }
             Ok(receipt) => {
-                successor.install_reset_successor(at);
+                match mode {
+                    MixedResetMode::Stopped => successor.install_reset_successor(at),
+                    #[cfg(feature = "mixed-transfer-rehearsal")]
+                    MixedResetMode::Running => successor
+                        .audio
+                        .renderer
+                        .install_stopped_clock(successor.effective_anchor),
+                }
                 core::mem::swap(&mut self.active, &mut successor);
                 core::mem::swap(&mut self.active_endpoint, &mut endpoint);
                 self.secondary = MixedResetSlot::Fading {
@@ -411,17 +469,18 @@ impl<E: MixedAudioQueues> MixedResetPair<E> {
     }
 
     /// Every check, then a sealed old owner's one seal decision, then the old owner's
-    /// `Reset` group, which is its only change. A refusal before or by the group leaves
+    /// `Reset` group, then running mode's infallible retirement Stop commit. Refusal leaves
     /// both owners as they were; only the seal records that audio declined.
     fn begin_reset(
         &mut self,
         successor: &MixedOneShotAudio,
         at: SampleTime,
         clock: SampleTime,
+        mode: MixedResetMode,
     ) -> Result<MixedResetReceipt, MixedResetRefused> {
         let checked = if at < clock {
             Err(MixedResetRefused::BoundaryPassed { at, clock })
-        } else if let Some(reason) = reset_refusal(&self.active, successor, at) {
+        } else if let Some(reason) = reset_refusal(&self.active, successor, at, mode) {
             Err(reason)
         } else {
             at.checked_add(FrameCount::QUANTUM)
@@ -442,7 +501,34 @@ impl<E: MixedAudioQueues> MixedResetPair<E> {
             Ok(live) => {
                 #[cfg(feature = "mixed-transfer-rehearsal")]
                 old.observe_ingress_usage();
-                Ok(MixedResetReceipt { at, ended_at, live })
+                let compiled_cut = match mode {
+                    MixedResetMode::Stopped => None,
+                    #[cfg(feature = "mixed-transfer-rehearsal")]
+                    MixedResetMode::Running => {
+                        let position = match (old.loop_cursor, old.loop_program.as_deref()) {
+                            (Some(_), Some(program)) => super::super::hot::loop_position(
+                                old.effective_anchor,
+                                program.interval,
+                                at,
+                            ),
+                            _ => old.audio.renderer.plan_position_at_clock(),
+                        };
+                        // Final infallible sound commit: no future Stop exists on refusal.
+                        old.stop_pending = Some(ended_at);
+                        old.retiring_stop = true;
+                        Some(MixedCompiledCut {
+                            stop_at: ended_at,
+                            old_position_at_b: position,
+                            old_pass: old.loop_cursor.map(|cursor| cursor.pass),
+                        })
+                    }
+                };
+                Ok(MixedResetReceipt {
+                    at,
+                    ended_at,
+                    live,
+                    compiled_cut,
+                })
             }
             Err(refused) => {
                 #[cfg(feature = "mixed-transfer-rehearsal")]

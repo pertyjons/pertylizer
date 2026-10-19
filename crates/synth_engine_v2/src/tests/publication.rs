@@ -412,3 +412,10 @@ fn a_smaller_pass_does_not_expose_a_larger_ones_occupancy() {
         EventCount::NONE
     );
 }
+
+#[test]
+fn issue_arbiter_id_is_unique_under_concurrent_last_ids_and_refuses_permanently() {
+    crate::issuer_controls::assert_u64_issuer_exhaustion(|counter| {
+        issue_arbiter_id_from(counter).map(|identity| identity.0)
+    });
+}

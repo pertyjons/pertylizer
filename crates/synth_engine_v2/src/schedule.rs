@@ -1512,3 +1512,13 @@ pub(crate) fn stamp_all<M: StampMinter>(
         expressions_after_steal,
     })
 }
+
+#[cfg(feature = "mixed-transfer-rehearsal")]
+impl AdmittedCompiledStream {
+    pub(crate) fn owned_heap_bytes(&self) -> Option<crate::quantities::PreparedBytes> {
+        let bytes = self.events.capacity().checked_mul(size_of::<PlanEvent>())?;
+        Some(crate::quantities::PreparedBytes::measured(
+            u64::try_from(bytes).ok()?,
+        ))
+    }
+}

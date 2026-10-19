@@ -588,6 +588,7 @@ impl LiveInputStream {
                                     crate::ingress::PerformanceIngress::envelope_for(
                                         self.renderer.epoch(),
                                         clock,
+                                        crate::ingress::PerformanceIngress::simulated_source(),
                                     ),
                                     EventPayload::SetParameter {
                                         slot: cell.slot,

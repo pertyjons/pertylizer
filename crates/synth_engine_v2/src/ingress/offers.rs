@@ -43,6 +43,12 @@ pub(crate) struct MixedBendBudget {
 }
 
 impl PerformanceIngress {
+    /// The crate-wide construction site for simulated provenance. Software
+    /// Arrival arming never calls this factory for its own published events.
+    pub(crate) const fn simulated_source() -> crate::time::TimeSource {
+        crate::time::TimeSource::Simulated
+    }
+
     /// Test-only mixed offer through the owner's registered queue and live range.
     ///
     /// An accepted onset takes its note-on entry and its release hold from ordinary
@@ -849,7 +855,7 @@ impl PerformanceIngress {
             // The same capacity relation proved above covers both rings and every hold.
             if let Some(entry) = self.delayed_expressions.get_mut(self.expression_head) {
                 *entry = Some(crate::render::TimedEvent::new(
-                    Self::envelope_for(self.epoch, at),
+                    Self::envelope_for(self.epoch, at, self.time_source),
                     payload,
                 ));
                 self.expression_head = if self.expression_head + 1 == self.delayed_expressions.len()
@@ -1038,14 +1044,19 @@ impl PerformanceIngress {
 
     /// Write one entry. Every caller has already decided it fits.
     /// The stamp every event this store publishes carries: its stream's epoch, the time the
-    /// producer named, and the simulated source — the one place the source is written.
+    /// producer named, and the constructor-selected provenance. Arrival is unmeasured;
+    /// the software route cannot assert a hardware timestamp.
     pub(crate) const fn envelope(&self, time: SampleTime) -> EventEnvelope {
-        Self::envelope_for(self.epoch, time)
+        Self::envelope_for(self.epoch, time, self.time_source)
     }
 
     /// [`Self::envelope`] for a stream epoch, where the store itself is borrowed.
-    pub(crate) const fn envelope_for(epoch: StreamEpoch, time: SampleTime) -> EventEnvelope {
-        EventEnvelope::new(epoch, time, TimeSource::Simulated)
+    pub(crate) const fn envelope_for(
+        epoch: StreamEpoch,
+        time: SampleTime,
+        source: TimeSource,
+    ) -> EventEnvelope {
+        EventEnvelope::new(epoch, time, source)
     }
 
     pub(super) fn enqueue_entry(

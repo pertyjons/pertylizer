@@ -7,8 +7,14 @@ use crate::{
 };
 use thiserror::Error;
 
+mod structural;
+mod voice;
+pub(crate) use structural::StructuralContinuation;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
 pub enum ContinuationError {
+    #[error("structural continuation exceeds its transition record limit")]
+    RecordLimit,
     #[error("the active Play has no matching adopted timeline witness")]
     Unavailable,
     #[error("the compiled plan is outside the exact-layout native continuation scope")]
@@ -40,11 +46,27 @@ pub(crate) struct PlanContinuation {
     pub(crate) old: PlanId,
     pub(crate) new: PlanId,
     pub(crate) trims: Vec<TrimChange>,
+    pub(crate) notes: super::note_binding::NoteBindings,
     pub(crate) bytes: PreparedBytes,
+    pub(crate) structural: Option<StructuralContinuation>,
 }
 
 impl CompiledPlan {
     pub(crate) fn prepare_continuation(
+        &self,
+        other: &Self,
+        allowance: PreparedBytes,
+        records: crate::quantities::RecordCount,
+    ) -> Result<PlanContinuation, ContinuationError> {
+        match self.prepare_exact_continuation(other, allowance) {
+            Err(ContinuationError::Plan) => {
+                self.prepare_structural_continuation(other, allowance, records)
+            }
+            result => result,
+        }
+    }
+
+    fn prepare_exact_continuation(
         &self,
         other: &Self,
         allowance: PreparedBytes,
@@ -79,6 +101,7 @@ impl CompiledPlan {
             note_producer_ranges: _,
             note_producer_holds: _,
             authored_sources: _,
+            producer_programs: _,
             compiled_note_producer: _,
             forward_event_horizon: _,
             path_latencies: _,
@@ -116,6 +139,12 @@ impl CompiledPlan {
         {
             return Err(ContinuationError::Plan);
         }
+        if !self
+            .producer_programs
+            .same_program(&other.producer_programs)
+        {
+            return Err(ContinuationError::Plan);
+        }
         self.continuation_ops(other)?;
         self.continuation_addresses(other)?;
         self.continuation_notes(other)?;
@@ -124,16 +153,24 @@ impl CompiledPlan {
         if self.parameter_targets.len() != other.parameter_targets.len() {
             return Err(ContinuationError::Plan);
         }
+        let note_bytes = super::note_binding::NoteBindings::required_heap_bytes(self, other)?.get();
         let required = self
             .parameter_targets
             .len()
             .checked_mul(size_of::<TrimChange>())
             .and_then(|bytes| bytes.checked_add(size_of::<PlanContinuation>()))
             .and_then(|bytes| u64::try_from(bytes).ok())
+            .and_then(|bytes| bytes.checked_add(note_bytes))
             .ok_or(ContinuationError::Bytes)?;
         if required > allowance.get() {
             return Err(ContinuationError::Bytes);
         }
+        let notes = super::note_binding::NoteBindings::prepare(
+            self,
+            other,
+            super::note_binding::NoteBindingScope::Exact,
+            allowance,
+        )?;
         let mut trims = Vec::new();
         trims
             .try_reserve_exact(self.parameter_targets.len())
@@ -146,6 +183,12 @@ impl CompiledPlan {
         {
             if old == new && old.base.as_f32().to_bits() == new.base.as_f32().to_bits() {
                 continue;
+            }
+            if self
+                .producer_programs
+                .writes(ParameterSlot::new(self.id, index))
+            {
+                return Err(ContinuationError::Plan);
             }
             let mut normalized = *new;
             normalized.base = old.base;
@@ -171,6 +214,7 @@ impl CompiledPlan {
             .checked_mul(size_of::<TrimChange>())
             .and_then(|bytes| bytes.checked_add(size_of::<PlanContinuation>()))
             .and_then(|bytes| u64::try_from(bytes).ok())
+            .and_then(|bytes| bytes.checked_add(notes.heap_bytes().ok()?.get()))
             .ok_or(ContinuationError::Bytes)?;
         if bytes > allowance.get() {
             return Err(ContinuationError::Bytes);
@@ -179,7 +223,9 @@ impl CompiledPlan {
             old: self.id,
             new: other.id,
             trims,
+            notes,
             bytes: PreparedBytes::measured(bytes),
+            structural: None,
         })
     }
 
@@ -267,8 +313,8 @@ impl CompiledPlan {
     }
 
     // Mixer/tap IDs are plan-relative addresses. Exact record equality after checked
-    // relabelling preserves scope, physical destinations and every semantic field.
-    // Split SessionAudio has no observer-subscription API; tap regions stay identical.
+    // authored parameter rebinding preserves scope and every semantic field.
+    // Stores remain host-owned; compatible sound admission never reads their state.
     fn continuation_mix(&self, other: &Self) -> Result<(), ContinuationError> {
         if self.channels.len() != other.channels.len()
             || self.buses.len() != other.buses.len()
@@ -358,13 +404,16 @@ impl CompiledPlan {
         other: &Self,
         slot: ParameterSlot,
     ) -> Result<ParameterSlot, ContinuationError> {
-        if slot.plan() != other.id
-            || slot.index() >= self.parameter_targets.len()
-            || slot.index() >= other.parameter_targets.len()
-        {
+        if slot.plan() != other.id || slot.index() >= other.parameter_targets.len() {
             return Err(ContinuationError::Binding);
         }
-        Ok(ParameterSlot::new(self.id, slot.index()))
+        let address = other
+            .parameter_addresses
+            .iter()
+            .find(|address| address.slot == slot)
+            .ok_or(ContinuationError::Binding)?;
+        self.resolve_parameter(address.node, address.parameter)
+            .ok_or(ContinuationError::Plan)
     }
 
     fn continuation_nodes(&self, other: &Self) -> Result<(), ContinuationError> {

@@ -314,15 +314,17 @@ fn audio_worker(
         assert!(Instant::now() < deadline, "startup timeout");
         thread::sleep(Duration::from_micros(100));
     }
-    let start = Instant::now();
     let mut output = 0;
     for frames in parts {
         if progress.stop.load(Ordering::Acquire) {
             break;
         }
-        let next = start
+        // Functional cadence, not device deadlines: a delayed wake must not cause
+        // a burst of catch-up callbacks. This waits on no source/control progress;
+        // missing publication still reaches the unchanged strict guard below.
+        let next = Instant::now()
             + Duration::from_micros(
-                u64::try_from(output + frames).expect("bounded cadence") * MICROS_PER_FRAME,
+                u64::try_from(frames).expect("bounded cadence") * MICROS_PER_FRAME,
             );
         if let Some(wait) = next.checked_duration_since(Instant::now()) {
             thread::sleep(wait);

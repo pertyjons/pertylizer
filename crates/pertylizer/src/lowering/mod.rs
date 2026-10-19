@@ -42,7 +42,10 @@ pub mod diagnostics;
 pub mod graph;
 pub mod identity;
 pub mod live;
+#[cfg(feature = "v2-mixed-app")]
+pub(crate) mod mixed;
 pub mod modulation;
+pub mod observation;
 pub mod performance;
 pub mod render;
 

@@ -427,3 +427,10 @@ impl SealedBatch<'_> {
         self.arbiter.external_total_in(quantum)
     }
 }
+
+#[cfg(all(test, feature = "mixed-transfer-rehearsal"))]
+impl super::PublicationArbiter {
+    pub(crate) fn published_for_test(&self) -> &[crate::render::TimedEvent] {
+        self.events.get(..self.len).unwrap_or(&[])
+    }
+}

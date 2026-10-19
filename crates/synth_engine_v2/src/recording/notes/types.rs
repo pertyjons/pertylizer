@@ -179,8 +179,13 @@ impl CaptureStamp {
         self.published_at
     }
     pub const fn provenance(self) -> TimeSource {
-        // Reuse ADR-0053's single constructor for simulated provenance.
-        crate::ingress::PerformanceIngress::envelope_for(self.epoch, self.nominal).source()
+        // This capture type remains explicitly simulated.
+        crate::ingress::PerformanceIngress::envelope_for(
+            self.epoch,
+            self.nominal,
+            crate::ingress::PerformanceIngress::simulated_source(),
+        )
+        .source()
     }
 }
 

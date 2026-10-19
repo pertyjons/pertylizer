@@ -1,6 +1,6 @@
 # Core V2: Current Work
 
-Last updated: 2026-10-17
+Last updated: 2026-10-19
 
 This file contains only active Core V2 state, blockers and next actions. Durable
 contracts live in ADRs and specifications; completed Phase 3 coordination
@@ -133,6 +133,61 @@ must establish its fidelity disposition before lifting its diagnostic.
 
 ## Phase 9 — active
 
+### Selected software completion — 2026-10-18
+
+The maintainer subsequently requested completion of the six remaining software
+outcomes in the [completion register](reviews/phase-9-six-point-software-completion.md).
+The [approved mixed application boundary](decisions/ADR-0088-experimental-mixed-application-boundary.md)
+records explicit maintainer approval of the exact default-off feature on 2026-10-18.
+The [backend instrumentation proposal](reviews/phase-9-backend-instrumentation-proposal.md)
+adds no unsafe code and keeps the existing physical-qualification gate.
+
+The [observer delivery](reviews/phase-9-observer-delivery-review.md) completes
+the selected compiled-application observer lifecycle and the concrete backend
+instrumentation proposal. The [mixed continuation delivery](reviews/phase-9-mixed-continuation-delivery-review.md)
+adds fixed-native plan changes retaining the actual live authorities and source
+frontiers through transport, loops and failure custody. Authored note mapping
+under ADR-0091 adds isolated logical reindexing, actual authority preservation and
+explicit changed-program reset. The separately selected software mixed application
+under ADR-0092 adds saved-project playback, two Arrival software sources, owning
+transport and replacements, observed GUI/MCP plan publication and cold retirement
+accounting. The [real producer load delivery](reviews/phase-9-producer-load-review.md)
+under ADR-0093 adds actual parameter-only authored programs and internal Delay
+clear records, concurrent six-class occupancy/refusal controls and an opt-in
+calibration runner. All six selected software outcomes are complete within their
+recorded boundaries; production selection and physical qualification remain open.
+No physical/native teardown qualification or unsafe backend implementation is claimed.
+
+The maintainer selected five software outcomes: combined compiled/live transport,
+loops and replacement; structural sounding-state migration and observer handoff;
+overload and identity endurance controls; audible GUI/MCP revision publication
+coordinated with Phase 10A; and synthetic replacement-clock investigation plus
+physical-probe preparation. Work proceeds in bounded, independently reviewed
+slices. Physical qualification, production capacity selection and new unsafe
+backend access keep their existing gates. The first slice adds owned-fixture
+clock observability controls under ADR-0022, permanent plan/store identity exhaustion refusal
+and [observation handoff](decisions/ADR-0084-observation-tap-handoff.md).
+Later slices add ADR-0022's synthetic affine-interval investigation and
+[identity/credit churn controls](specs/spec-host-profile-and-render-limits.md#finite-identity-endurance-controls),
+with a production-calibration readiness method. Final six-share selection stays
+blocked on representative production workloads, cost evidence and simultaneous
+partition selection; the new periodic consumers establish software mechanisms.
+Normal sessions now expose passive observations, and
+[global structural continuation](decisions/ADR-0085-stable-voice-global-structural-continuation.md)
+retains unchanged physical voices. Running replacements now coordinate observer
+handoff after sound commits, including successor taps during reset fades.
+[Native voice storage relocation](decisions/ADR-0087-native-voice-storage-relocation.md)
+now retains an unchanged logical voice program through physical storage changes. Stopped
+reset and compatible migration
+now hand observation over after sound installs. Sound refusal and cancellation
+leave the store untouched; idle time creates no synthetic tap samples. The mixed
+wrapper adds explicit running reset with a compiled Stop at the fade's end,
+checked against ordinary-owner twins and boundary refusals under ADR-0081.
+[Observed plan publication](decisions/ADR-0086-observed-v2-plan-publication.md)
+connects the GUI badge and MCP through one callback-confirmed view. Canonical project revision
+still requires Phase 0B/10A's single authority; a session-local publication must
+not claim to discharge that dependency.
+
 [ADR-0036](decisions/ADR-0036-audio-device-and-input-lifecycle.md) and
 [ADR-0024](decisions/ADR-0024-recording-take-and-commit-semantics.md) are `Accepted`.
 Their current contracts are [host I/O lifecycle](specs/spec-host-io-lifecycle.md)
@@ -198,7 +253,7 @@ tests found no item fully met; items 7, 8 and 11 were then restated. The state i
 | 7 | Simulated live events and recording | Met as restated | Persistent asset and commit are Phase 10 work outside 9A |
 | 8 | Boundary ordering | Met | `ordered::boundaries` covers panic and sustain at a wrap; segmentation holds no pedal state, sealing derives it from the initial snapshot and admitted input; harness clicks keep their beat across a wrap |
 | 9 | Observers cannot alter audio | Met | `live_observation`: no store, a draining subscriber thread or a stalled one leave audio identical and never block |
-| 10 | Off-thread reclamation under saturation | Met | `saturated_reclamation_across_threads_never_moves_destruction_onto_the_callback` |
+| 10 | Off-thread reclamation under saturation in the bounded simulated owner | Met for that owner; native backend teardown remains separately qualified | `saturated_reclamation_across_threads_never_moves_destruction_onto_the_callback` |
 | 11 | Active-plan acknowledgement matches audio | Met in harness | Harness acknowledgement follows refusals and failed compiles and flags a failed callback |
 | 12 | ADR-0054 reselection and P03-R004 | Met for song playback | EVD-0025 selects the compiled and session partition; no live ingress, so P03-R004 is not reached |
 
@@ -253,9 +308,12 @@ Step 5 adds backend latency probes, software loopback and identity/concurrency e
 physical round-trip calibration and the complete production producer partition remain qualification gates.
 [EVD-0024](evidence/phase-09/EVD-0024-live-capacity-qualification.md) adds a controlled
 real-producer capacity matrix. Its component probes pass, but the coverage audit does not qualify
-production capacity: common host admission, same-stream live transport activation and a
-representative workload remain missing. All six shares, release holds and ingress depths retain
-their provisional status. No physical loopback is connected.
+production capacity. Later experimental work adds mixed playback/live ownership and same-stream
+transport, and ADR-0093 adds the two missing executable load consumers.
+Common host admission covering recording and mixed monitoring remains missing,
+along with representative workloads and CPU-cost qualification. All six
+shares, release holds and ingress depths retain their provisional status.
+No physical loopback is connected.
 On 2026-10-12, Linux enumerated an Akai MPK mini Play mk3 as ALSA sequencer
 client 24, port 0 (`09e8:0050`). Enumeration alone supplies no F10 paired
 reference, F11 clock bridge, or arrival-uncertainty result. The maintainer chose
@@ -354,9 +412,11 @@ identity when the complete program/layout is unchanged; other running edits use
 reset. Saved voice, insert and return projects, repeated edits and lineage
 cancellation have executable controls. The complete repository gate, affected
 repair checks and independent Claude reviews passed. ADR-0010 and ADR-0048 remain
-Proposed for general migration/rebuild. Structural sounding-voice relocation,
-external mixed/live state migration and observer handoff remain open. No production
-or physical timing gate is lifted.
+Proposed for general migration/rebuild. ADR-0087 now covers native voice storage
+relocation with an unchanged native voice program. ADR-0091 adds stable authored
+logical note reindexing in the isolated session. Changed voice meaning selects
+explicit reset; structural mixed/live migration remains outside these consumers.
+No production or physical timing gate is lifted.
 The legacy Song bus allocator saturates its `u16` counter and can reissue its
 maximum ID. V2 refuses bus IDs at or above 256 before migration preparation;
 repairing the general V1 allocator remains separate work. MCP `set_song` also
@@ -366,8 +426,9 @@ existing stored-state defect. Atomic Song/engine mutation remains Phase 10B
 work; no concurrent project-transaction fidelity is claimed here.
 
 The [replacement clock candidate](decisions/ADR-0022-hardware-time-mapping.md#replacement-candidate-frame--2026-10-17)
-remains a separate next action: synthetic observability controls before deciding
-isolated backend instrumentation. No replacement timing estimator is accepted.
+now has owned-fixture observability controls in the fast documentation gate.
+The next timing action is the isolated backend instrumentation decision;
+no replacement timing estimator is accepted.
 Physical adapter/reference and loopback controls still need their hardware.
 Complete capacity reselection and representative endurance remain owed before
 production enablement. Other project populations, application

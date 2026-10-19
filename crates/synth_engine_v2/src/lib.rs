@@ -176,3 +176,8 @@ pub mod authored;
 #[cfg(test)]
 #[path = "tests/feedback.rs"]
 mod feedback_tests;
+
+#[cfg(test)]
+mod issuer_controls;
+
+mod producer_programs;

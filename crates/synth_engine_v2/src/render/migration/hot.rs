@@ -9,6 +9,16 @@ impl PreparedGlobalMigration {
         old: &mut PreparedRenderer,
         new: &mut PreparedRenderer,
     ) -> Result<(), GlobalMigrationError> {
+        self.preflight_into(old, new)?;
+        self.install_into(old, new);
+        Ok(())
+    }
+
+    pub(crate) fn preflight_into(
+        &self,
+        old: &PreparedRenderer,
+        new: &PreparedRenderer,
+    ) -> Result<(), GlobalMigrationError> {
         if old.plan.id() != self.old || new.plan.id() != self.new {
             return Err(GlobalMigrationError::Origin);
         }
@@ -63,6 +73,11 @@ impl PreparedGlobalMigration {
                 .get(pair.new.index())
                 .ok_or(GlobalMigrationError::Storage)?;
         }
+        Ok(())
+    }
+
+    /// The immutable descriptor and both extents were checked without mutation.
+    pub(crate) fn install_into(&self, old: &mut PreparedRenderer, new: &mut PreparedRenderer) {
         // No fallible operation follows this point. Extents stay fixed, and the
         // checked bijection ensures every history owner moves exactly once. The
         // outgoing retirement receives fresh buffers; no payload is copied or freed.
@@ -78,6 +93,5 @@ impl PreparedGlobalMigration {
         for pair in &self.parameters {
             new.parameter_slots[pair.new.index()] = old.parameter_slots[pair.old.index()];
         }
-        Ok(())
     }
 }

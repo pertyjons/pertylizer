@@ -24,10 +24,12 @@ use pertylizer::audio::{
 };
 #[cfg(feature = "gui-egui")]
 use pertylizer::gui::{SynthGuiConfig, create_backend};
-#[cfg(any(feature = "gui-egui", feature = "mcp"))]
+#[cfg(feature = "gui-egui")]
 use pertylizer::synth_core::VoiceCount;
 #[cfg(any(feature = "gui-egui", feature = "mcp"))]
-use pertylizer::synth_engine::{AllocationMode, AllocatorConfig, SynthEngine};
+use pertylizer::synth_engine::SynthEngine;
+#[cfg(feature = "gui-egui")]
+use pertylizer::synth_engine::{AllocationMode, AllocatorConfig};
 
 /// Everything the binary accepts.
 ///

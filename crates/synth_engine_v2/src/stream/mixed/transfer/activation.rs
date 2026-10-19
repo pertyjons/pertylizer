@@ -136,6 +136,10 @@ pub struct MixedActivationPrepareError(ActivationPrepare);
 
 #[derive(Clone, Copy, Debug, PartialEq, Error)]
 enum ActivationPrepare {
+    #[error("activation custody identities are exhausted")]
+    CustodyExhausted,
+    #[error("an owning plan continuation is pending")]
+    ContinuationPending,
     #[error(transparent)]
     Prepare(MixedSubsequentPrepareError),
     #[error(transparent)]
@@ -147,6 +151,8 @@ enum ActivationPrepare {
 /// content, and the renderer counts it.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Error)]
 pub enum MixedActivationRefusal {
+    #[error("an owning plan continuation is pending or uncollected")]
+    ContinuationPending,
     /// The offer belongs to another transfer.
     #[error("the activation offer belongs to another transfer")]
     ForeignTransfer,
@@ -532,15 +538,24 @@ impl MixedTransferControl {
         effective: SampleTime,
         kind: MixedActivationKind,
     ) -> Result<MixedActivationOffer, MixedActivationPrepareError> {
+        if self.continuation_pending.is_some() {
+            return Err(MixedActivationPrepareError(
+                ActivationPrepare::ContinuationPending,
+            ));
+        }
         let candidate = self
             .inner
             .prepare_subsequent(requested, position, self.inner.in_force)
             .map_err(|error| MixedActivationPrepareError(ActivationPrepare::Prepare(error)))?;
         // A refused candidate is dropped here, off-thread; it minted nothing.
-        let offer = self
+        let mut offer = self
             .inner
             .seal_offer(candidate, effective, kind.into())
             .map_err(|refused| MixedActivationPrepareError(ActivationPrepare::Seal(refused.0)))?;
+        offer.0.activation_custody =
+            Some(ActivationCustody::acquire(&self.activation_custody).ok_or(
+                MixedActivationPrepareError(ActivationPrepare::CustodyExhausted),
+            )?);
         Ok(MixedActivationOffer {
             binding: self.binding,
             offer,
@@ -571,15 +586,24 @@ impl MixedTransferControl {
         effective: SampleTime,
         kind: MixedActivationKind,
     ) -> Result<MixedActivationOffer, MixedActivationPrepareError> {
+        if self.continuation_pending.is_some() {
+            return Err(MixedActivationPrepareError(
+                ActivationPrepare::ContinuationPending,
+            ));
+        }
         let candidate = self
             .inner
             .prepare_loop(requested, position, interval, self.inner.in_force)
             .map_err(|error| MixedActivationPrepareError(ActivationPrepare::Prepare(error)))?;
         // A refused candidate is dropped here, off-thread; it minted nothing.
-        let offer = self
+        let mut offer = self
             .inner
             .seal_loop_offer(candidate, effective, kind.into())
             .map_err(|refused| MixedActivationPrepareError(ActivationPrepare::Seal(refused.0)))?;
+        offer.0.activation_custody =
+            Some(ActivationCustody::acquire(&self.activation_custody).ok_or(
+                MixedActivationPrepareError(ActivationPrepare::CustodyExhausted),
+            )?);
         Ok(MixedActivationOffer {
             binding: self.binding,
             offer,
@@ -626,6 +650,10 @@ impl MixedOneShotAudio {
         &mut self,
         offer: MixedActivationOffer,
     ) -> Result<(), (MixedActivationRefusal, MixedActivationOffer)> {
+        if self.continuation.is_some() {
+            self.audio.renderer.count_refused_activation();
+            return Err((MixedActivationRefusal::ContinuationPending, offer));
+        }
         if self.transfer_binding != Some(offer.binding) {
             self.audio.renderer.count_refused_activation();
             return Err((MixedActivationRefusal::ForeignTransfer, offer));
@@ -724,5 +752,30 @@ impl MixedTransferAudio {
             .schedule_compiled_stop(at)
             .map(MixedBridgeStopAccepted::from)
             .map_err(MixedBridgeStopRefusal::from)
+    }
+}
+
+/// One cold-prepared activation owner, retained through cancellation/refusal and
+/// owning collection. Audio only moves its enclosing cell; destruction is cold.
+#[derive(Debug)]
+pub(in crate::stream::mixed) struct ActivationCustody(
+    std::sync::Arc<std::sync::atomic::AtomicUsize>,
+);
+impl ActivationCustody {
+    fn acquire(counter: &std::sync::Arc<std::sync::atomic::AtomicUsize>) -> Option<Self> {
+        counter
+            .try_update(
+                std::sync::atomic::Ordering::AcqRel,
+                std::sync::atomic::Ordering::Acquire,
+                |count| count.checked_add(1),
+            )
+            .ok()?;
+        Some(Self(std::sync::Arc::clone(counter)))
+    }
+}
+impl Drop for ActivationCustody {
+    fn drop(&mut self) {
+        // The private non-Clone guard acquires exactly once and releases once.
+        let _previous = self.0.fetch_sub(1, std::sync::atomic::Ordering::AcqRel);
     }
 }

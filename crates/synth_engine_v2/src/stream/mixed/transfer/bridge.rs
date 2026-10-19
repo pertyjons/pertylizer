@@ -148,7 +148,7 @@
 //! [`MixedPumpStep::Idle`] with its reason. A sound-path shortage is never terminal; it
 //! is a split or an audio refusal with a named reason.
 //!
-//! # Stopped-owner reset
+//! # Whole-owner reset
 //!
 //! One bridge spans a whole-owner reset at a quantum boundary `B`; only the transfer under
 //! it changes. The source lanes, serials, frontiers and pairing tables never move, so no
@@ -173,9 +173,9 @@
 //! fault, so teardown is always reachable; a sealed bridge refuses to join until one of
 //! them has run. A reset a due Panic cancelled, which
 //! [`MixedBridgeControl::reset_phase`] reports, refuses commit, a new seal and join until
-//! the abandon returns its successor. A compiled Stop cannot cancel a sealed reset in this
-//! shape: the old owner is already stopped, so the wrapper answers `AlreadyStopped` and
-//! changes nothing.
+//! the abandon returns its successor. A compiled Stop cannot cancel a pending reset:
+//! stopped mode answers `AlreadyStopped`; explicit running mode answers `ResetPending`
+//! until the reset decides, without changing the old program.
 
 use std::{
     collections::VecDeque,
@@ -368,7 +368,7 @@ pub enum MixedOnsetRefusal {
     /// The selected onset or pedal-down met a quiescent command ring: no command
     /// outstanding and fewer than two places free, so no collection could make room.
     CommandsFull,
-    /// A stopped-owner reset ended the old onset or pedal; its later key-up or lift
+    /// A whole-owner reset ended the old onset or pedal; its later key-up or lift
     /// belongs to the old source FIFO and must not reach the successor owner.
     Reset,
 }
@@ -852,6 +852,8 @@ impl MixedBridgeTeardown {
 /// Why [`MixedBridgeControl::seal_reset`] refused; both bridges are unchanged.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Error)]
 pub enum MixedBridgeSealRefusal {
+    #[error("an owning in-place continuation is pending or uncollected")]
+    ContinuationPending,
     /// Either bridge recorded or observed a terminal fault.
     #[error("a reset bridge is faulted")]
     Faulted,
@@ -994,7 +996,7 @@ pub enum MixedBridgeJoinError {
     },
 }
 
-/// Where the bridge's stopped-owner reset stands, as the control side last changed it.
+/// Where the bridge's whole-owner reset stands, as the control side last changed it.
 /// Only the control thread changes it, so it is exact after each call.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum MixedBridgeResetPhase {
@@ -1432,7 +1434,7 @@ struct BridgeState {
     reset: BridgeReset,
 }
 
-/// Whether a stopped-owner reset is sealed.
+/// Whether a whole-owner reset is sealed.
 #[derive(Debug)]
 enum BridgeReset {
     Open,
@@ -1488,6 +1490,12 @@ where
     }
 }
 
+struct BridgeInputBinding {
+    sources: MixedTransferSources,
+    fence: MixedTransferFence,
+    origin: crate::ingress::IngressOrigin,
+}
+
 impl MixedJoinedPrepared {
     /// Arm the two-source bridge over the bound initial one-shot plan.
     ///
@@ -1518,6 +1526,64 @@ impl MixedJoinedPrepared {
         CQ: MixedTransferQueue<MixedTransferCommand>,
         RQ: MixedTransferQueue<MixedTransferResult>,
     {
+        self.arm_bridge_input(
+            candidate,
+            profile,
+            BridgeInputBinding {
+                sources,
+                fence,
+                origin: crate::ingress::IngressOrigin::Simulated,
+            },
+            commands,
+            results,
+        )
+    }
+
+    /// Arm logical software sources with Arrival provenance. No native timestamp
+    /// is consumed. The host declares its unmeasured engine-boundary stamp rule.
+    pub fn arm_software_bridge<CQ, RQ>(
+        self,
+        candidate: MixedStampedCandidate,
+        profile: &HostProfile,
+        sources: &crate::host::software_input::SoftwareInputPair,
+        fence: MixedTransferFence,
+        commands: CQ,
+        results: RQ,
+    ) -> Result<MixedBridgeArmed<CQ, RQ>, Box<MixedTransferArmRefusal<CQ, RQ>>>
+    where
+        CQ: MixedTransferQueue<MixedTransferCommand>,
+        RQ: MixedTransferQueue<MixedTransferResult>,
+    {
+        self.arm_bridge_input(
+            candidate,
+            profile,
+            BridgeInputBinding {
+                sources: sources.sources(),
+                fence,
+                origin: crate::ingress::IngressOrigin::Arrival,
+            },
+            commands,
+            results,
+        )
+    }
+
+    fn arm_bridge_input<CQ, RQ>(
+        self,
+        candidate: MixedStampedCandidate,
+        profile: &HostProfile,
+        input: BridgeInputBinding,
+        commands: CQ,
+        results: RQ,
+    ) -> Result<MixedBridgeArmed<CQ, RQ>, Box<MixedTransferArmRefusal<CQ, RQ>>>
+    where
+        CQ: MixedTransferQueue<MixedTransferCommand>,
+        RQ: MixedTransferQueue<MixedTransferResult>,
+    {
+        let BridgeInputBinding {
+            sources,
+            fence,
+            origin,
+        } = input;
         let refuse = |reason, owner, candidate, commands, results| {
             Err(Box::new(MixedTransferArmRefusal {
                 reason,
@@ -1571,6 +1637,7 @@ impl MixedJoinedPrepared {
                 tables,
                 scopes: BRIDGE_SCOPES,
                 panic: MixedPanicCapability::Available,
+                origin,
             },
         )?;
         control.attach_reset_seal(&mut audio);
@@ -1650,7 +1717,7 @@ impl MixedBridgeControl {
         self.halt(MixedBridgeFault::RawSelfHalt)
     }
 
-    /// Seal a stopped-owner reset at the quantum boundary `at` for `successor`: a freshly
+    /// Seal a whole-owner reset at the quantum boundary `at` for `successor`: a freshly
     /// armed bridge of the same sources, in the same tie order, with the same bounds.
     /// Off-thread.
     ///
@@ -1688,6 +1755,11 @@ impl MixedBridgeControl {
     }
 
     fn seal_refusal(&self, successor: &Self, at: SampleTime) -> Option<MixedBridgeSealRefusal> {
+        if self.transfer.continuation_pending.is_some()
+            || successor.transfer.continuation_pending.is_some()
+        {
+            return Some(MixedBridgeSealRefusal::ContinuationPending);
+        }
         if self.fault().is_some() || successor.fault().is_some() {
             return Some(MixedBridgeSealRefusal::Faulted);
         }
@@ -1758,7 +1830,7 @@ impl MixedBridgeControl {
         None
     }
 
-    /// Where the stopped-owner reset stands. Exact after each call: only the control
+    /// Where the whole-owner reset stands. Exact after each call: only the control
     /// thread changes it. Audio's own decision at `B` is the wrapper's to report.
     pub fn reset_phase(&self) -> MixedBridgeResetPhase {
         match self.state.reset {
@@ -3826,3 +3898,75 @@ impl<CP, RC, CC, RP, B> MixedBridgeJoinRefusal<CP, RC, CC, RP, B> {
 #[cfg(test)]
 #[path = "bridge_tests.rs"]
 mod tests;
+
+impl MixedBridgeControl {
+    /// Prepare an in-place plan change without sealing either raw source lane.
+    pub fn prepare_continuation(
+        &mut self,
+        targets: crate::host::mixed_targets::MixedTargetAdmission,
+        choose_boundary: impl FnOnce() -> Option<SampleTime>,
+        metadata_allowance: crate::quantities::PreparedBytes,
+        maximum_records: crate::quantities::RecordCount,
+    ) -> Result<
+        Box<super::continuation::MixedContinuationPacket>,
+        Box<(
+            super::continuation::MixedContinuationPrepareError,
+            crate::host::mixed_targets::MixedTargetAdmission,
+        )>,
+    > {
+        self.transfer.prepare_continuation(
+            targets,
+            choose_boundary,
+            metadata_allowance,
+            maximum_records,
+        )
+    }
+    pub fn cancel_continuation(
+        &mut self,
+        packet: Box<super::continuation::MixedContinuationPacket>,
+    ) -> Result<
+        super::continuation::MixedContinuationRetired,
+        (
+            Box<super::continuation::MixedContinuationPacket>,
+            super::continuation::MixedContinuationRefusal,
+        ),
+    > {
+        self.transfer.cancel_continuation(packet)
+    }
+    pub fn collect_continuation(
+        &mut self,
+        packet: Box<super::continuation::MixedContinuationPacket>,
+    ) -> Result<
+        super::continuation::MixedContinuationRetired,
+        (
+            Box<super::continuation::MixedContinuationPacket>,
+            super::continuation::MixedContinuationRefusal,
+        ),
+    > {
+        self.transfer.collect_continuation(packet)
+    }
+}
+
+impl MixedBridgeControl {
+    /// Recover a destroyed continuation packet after callback quiescence. Only
+    /// immutable metadata is reconstructed; source custody and identities stay actual.
+    pub fn recover_abandoned_continuation(
+        &mut self,
+        audio: &mut super::MixedTransferAudio,
+    ) -> Result<
+        Option<super::continuation::MixedContinuationRecovery>,
+        super::continuation::MixedContinuationRefusal,
+    > {
+        self.transfer.recover_abandoned_continuation(audio)
+    }
+
+    pub(in crate::stream::mixed) fn recover_abandoned_owner(
+        &mut self,
+        audio: &mut super::super::MixedOneShotAudio,
+    ) -> Result<
+        Option<super::continuation::MixedContinuationRecovery>,
+        super::continuation::MixedContinuationRefusal,
+    > {
+        self.transfer.recover_abandoned_owner(audio)
+    }
+}

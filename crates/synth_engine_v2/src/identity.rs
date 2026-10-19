@@ -66,8 +66,12 @@ static NEXT_TABLE_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU6
 /// type exists to prevent. `Relaxed` is sufficient — the identities must differ, not order
 /// anything.
 fn issue_table_id() -> Option<TableId> {
+    issue_table_id_from(&NEXT_TABLE_ID)
+}
+
+fn issue_table_id_from(counter: &std::sync::atomic::AtomicU64) -> Option<TableId> {
     use std::sync::atomic::Ordering::Relaxed;
-    NEXT_TABLE_ID
+    counter
         .try_update(Relaxed, Relaxed, |id| id.checked_add(1))
         .ok()
         .map(TableId)
@@ -386,9 +390,9 @@ pub struct IdentityTable {
     /// The highest generation an index may mint before it retires.
     ///
     /// A construction parameter rather than a constant, because ADR-0047 leaves endurance
-    /// validation to P03-R004 — and because retirement is otherwise unreachable in a test:
-    /// walking a `u32` to its ceiling by minting would take longer than this project will
-    /// exist, and a rule no test can reach is a rule nobody has checked.
+    /// validation to P03-R004. Small ceilings exercise complete retirement sequences;
+    /// injected near-limit slots separately check the actual u32 arithmetic. Neither
+    /// control chooses a production workload or qualifies the width for its lifetime.
     pub(super) generation_ceiling: u32,
     /// Indices retired over this table's life, counted as `SOUND-INV-017` requires.
     pub(super) retired: u64,

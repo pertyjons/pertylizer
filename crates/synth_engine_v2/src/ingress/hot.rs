@@ -199,8 +199,9 @@ impl PerformanceIngress {
                 continue;
             };
             let epoch = self.epoch;
+            let source = self.time_source;
             let stamp = |time: SampleTime, payload: crate::render::EventPayload| {
-                crate::render::TimedEvent::new(Self::envelope_for(epoch, time), payload)
+                crate::render::TimedEvent::new(Self::envelope_for(epoch, time, source), payload)
             };
             if !pending.started {
                 let reset = stamp(
@@ -293,4 +294,51 @@ impl PerformanceIngress {
 const fn next(index: usize, capacity: usize) -> usize {
     let advanced = index.saturating_add(1);
     if advanced >= capacity { 0 } else { advanced }
+}
+
+#[cfg(feature = "mixed-transfer-rehearsal")]
+impl PerformanceIngress {
+    pub(crate) fn accepts_plan_bindings(
+        &self,
+        bindings: crate::plan::binding::FixedPlanBindings,
+    ) -> bool {
+        for entry in &self.entries {
+            if let Some(entry) = entry
+                && !bindings.accepts_event(entry.event)
+            {
+                return false;
+            }
+        }
+        for pending in &self.pending {
+            if let Some(pending) = pending
+                && !bindings.accepts_note(pending.note)
+            {
+                return false;
+            }
+        }
+        for event in &self.delayed_expressions {
+            if let Some(event) = event
+                && !bindings.accepts_event(*event)
+            {
+                return false;
+            }
+        }
+        true
+    }
+
+    /// No queue, hold, generation, frontier or redemption flag is reconstructed.
+    pub(crate) fn apply_plan_bindings(
+        &mut self,
+        bindings: crate::plan::binding::FixedPlanBindings,
+    ) {
+        for entry in self.entries.iter_mut().flatten() {
+            entry.event = bindings.event(entry.event);
+        }
+        for pending in self.pending.iter_mut().flatten() {
+            pending.note = bindings.note(pending.note);
+        }
+        for event in self.delayed_expressions.iter_mut().flatten() {
+            *event = bindings.event(*event);
+        }
+    }
 }

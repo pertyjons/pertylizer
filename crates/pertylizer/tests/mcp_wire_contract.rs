@@ -262,6 +262,9 @@ fn every_reply_family_matches_its_published_schema() {
         json!({"jsonrpc":"2.0","id":4,"method":"tools/call",
                "params":{"name":"import_sample","arguments":{"samples":[
                    {"path":"/nonexistent/a.wav"},{"path":"/nonexistent/b.wav"}]}}}),
+        // A V2 observation is explicitly unavailable in a headless publisher.
+        json!({"jsonrpc":"2.0","id":7,"method":"tools/call",
+               "params":{"name":"get_v2_playback_status","arguments":{}}}),
         // A document reader, which publishes no schema by design.
         json!({"jsonrpc":"2.0","id":5,"method":"tools/call",
                "params":{"name":"get_yams_reference","arguments":{}}}),
@@ -275,7 +278,7 @@ fn every_reply_family_matches_its_published_schema() {
     let catalog = reply(&replies, 1);
     assert_eq!(
         catalog["tools"].as_array().map(Vec::len),
-        Some(219),
+        Some(220),
         "the catalog itself must arrive — a compile-green server has shipped an \
          empty tools/list before"
     );
@@ -285,9 +288,22 @@ fn every_reply_family_matches_its_published_schema() {
         (3, "create_instrument"),
         (4, "import_sample"),
         (6, "batch_execute"),
+        (7, "get_v2_playback_status"),
     ] {
         assert_payload_matches_schema(catalog, tool, reply(&replies, id));
     }
+
+    let status = &reply(&replies, 7)["structuredContent"];
+    assert_eq!(status["schema"], "pertylizer.v2-playback/1");
+    assert_eq!(status["observation"]["status"], "unavailable");
+    assert_eq!(
+        status["observation"]["reason"],
+        if cfg!(feature = "v2-lowering") {
+            "no_gui"
+        } else {
+            "not_compiled"
+        }
+    );
 
     // A document tool publishes no schema, so it must not send a structured half
     // either — the two halves of that decision have to agree.

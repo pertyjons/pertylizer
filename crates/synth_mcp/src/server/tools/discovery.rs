@@ -183,6 +183,20 @@ impl SynthMcpServer {
     }
 
     #[tool(
+        description = "Get the last GUI observation of experimental V2 playback: the plan confirmed by a successful audio callback, its lowering-input equality token and omissions. Queued plans are not confirmed. Publication age measures the GUI poll, not device liveness. The digest includes cosmetic fields from the captured lowering input; compare tokens only within the same service instance. It is not a canonical project revision, current-edit hash or saved-file hash. V1 meters remain in get_engine_status. Explicitly unavailable without a publisher.",
+        annotations(read_only_hint = true)
+    )]
+    pub(crate) async fn get_v2_playback_status(
+        &self,
+        _params: Parameters<NoParams>,
+    ) -> Result<Json<crate::v2_playback::V2PlaybackStatus>, String> {
+        self.bridge
+            .get_v2_playback_status()
+            .map(Json)
+            .map_err(|error| format!("Error: {error}"))
+    }
+
+    #[tool(
         description = "Get build/version info for the running application: version, build \
                        timestamp (ISO 8601 / RFC 3339 UTC, e.g. 2026-07-03T14:30:00Z), git \
                        commit hash, branch, and whether the working tree had uncommitted \

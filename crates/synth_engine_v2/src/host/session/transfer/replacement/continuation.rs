@@ -68,16 +68,20 @@ impl SessionControl {
         {
             return Err(ContinuationError::Storage);
         }
-        let proof = match self
-            .control
-            .plan()
-            .prepare_continuation(plan, limits.transition_bytes)
-        {
+        let proof = match self.control.plan().prepare_continuation(
+            plan,
+            limits.transition_bytes,
+            limits.maximum_transition_records,
+        ) {
             Ok(proof) => proof,
             Err(ContinuationError::Plan) => return Ok(None),
             Err(error) => return Err(error),
         };
-        self.control.preflight_continuation_plan(plan)?;
+        match self.control.preflight_continuation_plan(plan, &proof.notes) {
+            Ok(()) => {}
+            Err(ContinuationError::Plan) => return Ok(None),
+            Err(error) => return Err(error),
+        }
         match same_program(self.control.plan(), plan, &self.stream, stream, &proof) {
             Ok(()) => {}
             Err(ContinuationError::Timeline) => return Ok(None),
@@ -102,7 +106,7 @@ impl SessionControl {
             size_of::<ContinuingReplacement>(),
         )?;
         for event in &mut events {
-            *event = relabel(*event, self.control.plan(), plan, witness)?;
+            *event = relabel(*event, self.control.plan(), plan, witness, &proof.notes)?;
         }
         let successor_events = copy_events(
             &events,
@@ -144,7 +148,7 @@ impl SessionControl {
     }
 }
 
-fn same_program(
+pub(crate) fn same_program(
     old: &CompiledPlan,
     new: &CompiledPlan,
     old_stream: &AdmittedCompiledStream,
@@ -158,12 +162,48 @@ fn same_program(
         return Err(ContinuationError::Timeline);
     }
     for (a, b) in old_stream.events().iter().zip(new_stream.events()) {
+        let old_note = match a.payload() {
+            CompiledPayload::NoteOn { slot, .. }
+            | CompiledPayload::NoteOff { slot, .. }
+            | CompiledPayload::Expression { slot, .. }
+            | CompiledPayload::Bend { slot, .. } => Some(slot),
+            CompiledPayload::SetParameter { .. } | CompiledPayload::Controller(_) => None,
+        };
+        if old_note.is_some_and(|slot| !proof.notes.accepts_note(slot)) {
+            return Err(ContinuationError::Timeline);
+        }
         let payload = rebind_program(b.payload(), new, old)?;
         if a.position() != b.position()
             || a.payload() != payload
             || !same_values(a.payload(), payload)
         {
             return Err(ContinuationError::Timeline);
+        }
+        if let CompiledPayload::SetParameter { slot, .. } = a.payload() {
+            let target = old
+                .parameter_targets()
+                .get(slot.index())
+                .ok_or(ContinuationError::Binding)?;
+            for address in old.note_addresses() {
+                if proof.notes.accepts_note(address.slot) {
+                    continue;
+                }
+                let note = old
+                    .note_targets()
+                    .get(address.slot.index())
+                    .ok_or(ContinuationError::Binding)?;
+                if note.node == target.node
+                    || old
+                        .note_magnitudes_of(address.slot)
+                        .iter()
+                        .any(|magnitude| magnitude.node == target.node)
+                {
+                    // Structural global note-driven DSP is fresh, never preserved.
+                    // A parameter writer makes this destination active even without
+                    // a note identity, so select the explicit reset path.
+                    return Err(ContinuationError::Timeline);
+                }
+            }
         }
         if let CompiledPayload::SetParameter { slot, .. } = a.payload()
             && proof
@@ -213,29 +253,37 @@ fn note_slot(
     from: &CompiledPlan,
     to: &CompiledPlan,
 ) -> Result<NoteSlot, ContinuationError> {
-    if slot.plan() != from.id()
-        || slot.index() >= from.note_targets().len()
-        || slot.index() >= to.note_targets().len()
-    {
+    if slot.plan() != from.id() || slot.index() >= from.note_targets().len() {
         return Err(ContinuationError::Binding);
     }
-    Ok(NoteSlot::new(to.id(), slot.index()))
+    let address = from
+        .note_addresses()
+        .iter()
+        .find(|address| address.slot == slot)
+        .ok_or(ContinuationError::Binding)?;
+    to.resolve_note(address.node)
+        .ok_or(ContinuationError::Timeline)
 }
 fn parameter_slot(
     slot: ParameterSlot,
     from: &CompiledPlan,
     to: &CompiledPlan,
 ) -> Result<ParameterSlot, ContinuationError> {
-    if slot.plan() != from.id()
-        || slot.index() >= from.parameter_targets().len()
-        || slot.index() >= to.parameter_targets().len()
-    {
+    if slot.plan() != from.id() || slot.index() >= from.parameter_targets().len() {
         return Err(ContinuationError::Binding);
     }
-    Ok(ParameterSlot::new(to.id(), slot.index()))
+    // A ParameterSlot names a whole group. An interior ParameterRow must not
+    // acquire group fan-out merely because its numeric index is in bounds.
+    let address = from
+        .parameter_addresses()
+        .iter()
+        .find(|address| address.slot == slot)
+        .ok_or(ContinuationError::Binding)?;
+    to.resolve_parameter(address.node, address.parameter)
+        .ok_or(ContinuationError::Timeline)
 }
 
-fn rebind_program(
+pub(crate) fn rebind_program(
     payload: CompiledPayload,
     from: &CompiledPlan,
     to: &CompiledPlan,
@@ -281,8 +329,12 @@ fn relabel(
     from: &CompiledPlan,
     to: &CompiledPlan,
     witness: &AdoptedTimelineWitness,
+    bindings: &crate::plan::note_binding::NoteBindings,
 ) -> Result<TimedEvent, ContinuationError> {
-    if event.envelope().epoch() != witness.epoch {
+    if event.envelope().epoch() != witness.epoch
+        || bindings.old_plan() != from.id()
+        || bindings.new_plan() != to.id()
+    {
         return Err(ContinuationError::Binding);
     }
     let checked = |identity: crate::identity::NoteIdentity| {
@@ -305,7 +357,7 @@ fn relabel(
                     key,
                     velocity,
                 } => NoteEdge::On {
-                    slot: note_slot(slot, from, to)?,
+                    slot: bindings.note(slot).ok_or(ContinuationError::Binding)?,
                     key,
                     velocity,
                 },
@@ -359,6 +411,7 @@ impl SessionControl {
                     plan: candidate.plan,
                     outcome,
                     retired_compiled_notes: crate::quantities::HeldNoteCount::NONE,
+                    observation: candidate.observation_outcome,
                 });
             }
         };
@@ -410,10 +463,18 @@ impl SessionControl {
                 return Err((candidate, PlanReplacementError::Continuation(error)));
             }
         };
-        if let Err(error) =
-            self.control
-                .collect_continuation_plan(&mut candidate.control.control, from, to)
-        {
+        let Some(continuation) = candidate.continuation.as_ref() else {
+            return Err((
+                candidate,
+                PlanReplacementError::Continuation(ContinuationError::Storage),
+            ));
+        };
+        if let Err(error) = self.control.collect_continuation_plan(
+            &mut candidate.control.control,
+            from,
+            to,
+            &continuation.proof.notes,
+        ) {
             self.closed = true;
             return Err((candidate, PlanReplacementError::Continuation(error)));
         }
@@ -431,6 +492,7 @@ impl SessionControl {
             plan: candidate.plan,
             outcome,
             retired_compiled_notes: crate::quantities::HeldNoteCount::NONE,
+            observation: candidate.observation_outcome,
         })
     }
 }

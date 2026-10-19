@@ -2899,9 +2899,16 @@ pub fn accumulate(_prepared: &PreparedNode, state: &mut NodeState, io: &mut Node
         total: *fade_total,
     };
     let mut due = 0_usize;
-    for (index, sample) in io.out.iter_mut().enumerate() {
-        fade.take(io.controls, &mut due, index);
-        *sample += fade.gain() * source.get(index).copied().unwrap_or(0.0);
+    let channels = io.channels.channels();
+    for frame in 0..io.out.len() / channels {
+        fade.take(io.controls, &mut due, frame);
+        let gain = fade.gain();
+        for channel in 0..channels {
+            let index = frame * channels + channel;
+            if let Some(sample) = io.out.get_mut(index) {
+                *sample += gain * source.get(index).copied().unwrap_or(0.0);
+            }
+        }
     }
     (*fade_remaining, *fade_total) = (fade.remaining, fade.total);
 }
@@ -3103,11 +3110,12 @@ pub fn copy(_prepared: &PreparedNode, state: &mut NodeState, io: &mut NodeIo<'_>
     let mut due = 0_usize;
     for frame in 0..frames {
         fade.take(io.controls, &mut due, frame);
+        let gain = fade.gain();
         for channel in 0..channels {
             let read = frame * source_channels + channel.min(source_channels - 1);
             let input = source.get(read).copied().unwrap_or(0.0);
             if let Some(sample) = io.out.get_mut(frame * channels + channel) {
-                *sample = fade.gain() * input;
+                *sample = gain * input;
             }
         }
     }

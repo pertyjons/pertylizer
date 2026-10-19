@@ -422,7 +422,7 @@ feature.
 
 [ADR-0081](ADR-0081-combined-host-software-boundary.md) extends the default-off
 software boundary to the two-source bridge, raw-first routing, scoped compiled
-transport and stopped-owner reset. It owns strict publication proofs and
+transport and explicit stopped/running whole-owner reset. It owns strict publication proofs and
 independent software callback cadence. The initial single-source transfer arm
 above remains narrower than that bridge. ADR-0079 owns raw-only interruption.
 The user-owned combined-host DRAFT remains unaccepted as a whole.

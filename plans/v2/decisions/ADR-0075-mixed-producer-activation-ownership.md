@@ -83,7 +83,9 @@ entire admitted compiled stream rather than accept a replaceable caller list.
 It must enumerate every gate and magnitude destination against each producer's
 identity range. Foreign or unrepresentable targets refuse. This artifact
 returns its plan, stream and live slot on refusal so a corrected binding can
-retry without recompilation. It accepts only note-target writers: compiled
+retry without recompilation. Its original boundary accepts only note-target
+writers; [ADR-0093](ADR-0093-real-mixed-producer-load-consumers.md) adds the
+two named downstream-only load consumers. Compiled
 `SetParameter` and `Controller` writes refuse, and it provides no live
 parameter lane. `Fade`, `Reset` and `RestoreController` require explicit
 accounting before a mixed host can emit

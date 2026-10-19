@@ -908,3 +908,102 @@ fn a_latency_keeps_stereo_order_in_place_and_resets_at_the_positioned_sample() {
     );
     assert_eq!(out, [1.0, 2.0, 0.0, 0.0, 0.0, 0.0, 13.0, 14.0]);
 }
+
+#[test]
+fn voice_sum_fades_spend_one_step_per_frame_with_identical_channel_gain() {
+    use crate::{
+        node::kernels::{ControlIndex, accumulate, copy},
+        quantities::ChannelLayout,
+        time::{FrameCount, QuantumTimeline},
+    };
+    for layout in [ChannelLayout::Mono, ChannelLayout::Stereo] {
+        for accumulating in [false, true] {
+            let channels = layout.channels();
+            let prepared = PreparedNode::Copy;
+            let mut state = NodeState::initial(&prepared);
+            let mut source = vec![0.0; 64 * channels];
+            for frame in 0..64 {
+                for channel in 0..channels {
+                    source[frame * channels + channel] =
+                        2.0 * f32::from(u16::try_from(channel + 1).unwrap());
+                }
+            }
+            let kernel = if accumulating { accumulate } else { copy };
+            for quantum in 0..2 {
+                let mut output = vec![if accumulating { 8.0 } else { 0.0 }; 64 * channels];
+                let controls = [if quantum == 0 {
+                    TimedControl {
+                        offset: QuantumOffset::new(62).unwrap(),
+                        control: ControlIndex::FADE_OUT,
+                        value: ParameterValue::from_frames(FrameCount::new(8)),
+                    }
+                } else {
+                    TimedControl {
+                        offset: QuantumOffset::new(8).unwrap(),
+                        control: ControlIndex::RESET,
+                        value: ParameterValue::ZERO,
+                    }
+                }];
+                let mut inputs = [InputBuffer::Unpatched; MAX_INPUTS];
+                inputs[0] = InputBuffer::Patched(&source);
+                if accumulating {
+                    inputs[1] = InputBuffer::InPlace;
+                }
+                assert_eq!(
+                    crate::render_allocation::count_allocs(|| kernel(
+                        &prepared,
+                        &mut state,
+                        &mut NodeIo {
+                            out: &mut output,
+                            channels: layout,
+                            inputs,
+                            timeline: QuantumTimeline::linear(None),
+                            controls: &controls,
+                            ramps: &[],
+                            samples: &[],
+                            scripts: crate::script::ScriptResources::default(),
+                            history: &mut [],
+                        }
+                    )),
+                    0
+                );
+                for frame in 0..64 {
+                    // Independent eight-frame ramp, beginning at frame 62 and
+                    // crossing the quantum, then held silent until reset at 72.
+                    let elapsed = quantum * 64 + frame;
+                    let gain = match elapsed {
+                        0..=62 | 72.. => 1.0,
+                        63..=69 => f32::from(u16::try_from(70 - elapsed).unwrap()) / 8.0,
+                        _ => 0.0,
+                    };
+                    for channel in 0..channels {
+                        let input = 2.0 * f32::from(u16::try_from(channel + 1).unwrap());
+                        let expected = if accumulating { 8.0 } else { 0.0 } + input * gain;
+                        assert_eq!(
+                            output[frame * channels + channel].to_bits(),
+                            expected.to_bits(),
+                            "layout={layout:?}, accumulating={accumulating}, frame={elapsed}, channel={channel}"
+                        );
+                    }
+                }
+                if quantum == 0 {
+                    assert!(matches!(
+                        state,
+                        NodeState::Sum {
+                            fade_remaining: 6,
+                            fade_total: 8
+                        }
+                    ));
+                } else {
+                    assert!(matches!(
+                        state,
+                        NodeState::Sum {
+                            fade_remaining: 0,
+                            fade_total: 0
+                        }
+                    ));
+                }
+            }
+        }
+    }
+}

@@ -38,8 +38,16 @@ jobs:
         run: cargo clippy -p pertylizer --all-targets --features v2-lowering
       - name: Test
         run: cargo test --workspace
+      - name: V2 backend retirement tests
+        run: cargo test -p pertylizer --no-default-features --features v2-lowering --lib audio::backends::retirement::tests::
       - name: V2 GUI tests
         run: cargo test -p pertylizer --features v2-lowering --lib gui::egui_backend::v2_flow::
+      - name: Mixed application checks
+        run: |
+          cargo check -p pertylizer --no-default-features --features v2-mixed-app
+          cargo clippy -p pertylizer --all-targets --no-default-features --features v2-mixed-app
+          cargo test -p pertylizer --no-default-features --features v2-mixed-app --lib lowering::
+          cargo test -p pertylizer --features v2-mixed-app --lib gui::egui_backend::v2_flow::
       - name: Mixed transfer rehearsal tests
         run: |
           cargo test -p synth_engine_v2 --no-default-features --features mixed-transfer-rehearsal --test mixed_transfer_rehearsal

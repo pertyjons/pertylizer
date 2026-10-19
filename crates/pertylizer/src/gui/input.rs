@@ -142,6 +142,22 @@ pub fn handle_keyboard_input(
     pressed_keys: &mut HashMap<u8, bool>,
     active_channel: MidiChannelSelection,
 ) {
+    handle_keyboard_input_with(ctx, keyboard, pressed_keys, |note, down| {
+        if down {
+            handle.note_on_channel(note, synth_core::Velocity::new(0.8), active_channel);
+        } else {
+            handle.note_off_channel(note, active_channel);
+        }
+    });
+}
+
+/// Reuse the same piano mapping for an explicitly selected input destination.
+pub(crate) fn handle_keyboard_input_with(
+    ctx: &egui::Context,
+    keyboard: &mut PianoKeyboard,
+    pressed_keys: &mut HashMap<u8, bool>,
+    mut note_event: impl FnMut(MidiNote, bool),
+) {
     let octave_offset = keyboard.octave_offset();
 
     // Collect input state first (avoids borrow issues)
@@ -150,18 +166,14 @@ pub fn handle_keyboard_input(
     // Process note-ons
     for note in input_state.pressed {
         if !pressed_keys.get(&note).copied().unwrap_or(false) {
-            handle.note_on_channel(
-                MidiNote::new(note),
-                synth_core::Velocity::new(0.8),
-                active_channel,
-            );
+            note_event(MidiNote::new(note), true);
             pressed_keys.insert(note, true);
         }
     }
 
     // Process note-offs
     for note in input_state.released {
-        handle.note_off_channel(MidiNote::new(note), active_channel);
+        note_event(MidiNote::new(note), false);
         pressed_keys.insert(note, false);
     }
 

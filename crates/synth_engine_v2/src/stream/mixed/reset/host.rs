@@ -1,8 +1,8 @@
 //! The public face of the reset wrapper over host-armed transfer owners (ADR-0078's
 //! rehearsal, draft Item 3).
 //!
-//! A host boxes each armed audio half with the audio port its own arm returned, wraps the
-//! active one, schedules its compiled Stop, and offers a freshly armed successor for a
+//! For `offer_reset`, a host boxes each armed audio half with its arm's audio port,
+//! wraps the active one, schedules compiled Stop, and offers a fresh successor for a
 //! quantum boundary `B` once that Stop has applied (rule 3.2). From `B` the old owner
 //! serves no port, cross-fades out over `Q` frames, ends its live occurrences in one
 //! `Reset` group at `B + Q` and retires (rule 3.3). The retired old owner and a successor
@@ -19,6 +19,11 @@
 //! reset and joined teardown names it unserved. The bridge owns the handoff of old held
 //! keys to reset tombstones after the wrapper reports an applied reset.
 //!
+//! `offer_running_reset` explicitly replaces an already adopted running program.
+//! Its old compiled onsets keep sounding through the fade; Stop at `B + Q` prevents
+//! later onsets and releases compiled custody alongside the live Reset group.
+//! A pending running reset refuses a separate Stop without scheduling anything.
+//!
 //! Later Starts and seeks reach the active owner through the wrapper with the same
 //! binding check as a directly rendered audio half, so after each committed reset only
 //! the successor's own offers are accepted. A pending reset refuses an offer, and a
@@ -26,6 +31,7 @@
 //! uncollected receipt crosses `B` into the fading owner.
 
 use thiserror::Error;
+mod continuation_hot;
 mod publication_hot;
 
 use super::super::{
@@ -39,8 +45,9 @@ use super::super::{
     },
 };
 use super::{
-    MixedResetForeignEndpoint, MixedResetReceipt, MixedResetRefused, MixedResetRenderError,
-    MixedResetSlot, MixedResetTransferAudio, MixedResetTransferOwner,
+    MixedCompiledCut, MixedResetForeignEndpoint, MixedResetMode, MixedResetReceipt,
+    MixedResetRefused, MixedResetRenderError, MixedResetSlot, MixedResetTransferAudio,
+    MixedResetTransferOwner,
 };
 use crate::{
     render::AudioBlockMut,
@@ -141,6 +148,8 @@ impl<C, R> MixedBridgeResetForeignPort<C, R> {
 /// successor comes back unchanged and the active owner renders on as before.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Error)]
 pub enum MixedBridgeResetRefusal {
+    #[error("an in-place plan continuation is pending or uncollected")]
+    ContinuationPending,
     /// The wrapper or its active owner is terminally faulted.
     #[error("the mixed reset wrapper or its active owner is terminally faulted")]
     Faulted,
@@ -167,9 +176,21 @@ pub enum MixedBridgeResetRefusal {
         /// The refused boundary.
         at: SampleTime,
     },
-    /// Rule 3.2: the active owner's compiled program is running.
+    /// The legacy entry preserves draft row 3.2's stopped-only first shape.
     #[error("the active owner's compiled program is running")]
     Running,
+    /// The explicit running-reset entry requires a running compiled program.
+    #[error("the active owner's compiled program is not running")]
+    NotRunning,
+    /// The old armed transition must already have adopted.
+    #[error("the active owner has not adopted its compiled program")]
+    NotAdopted,
+    /// The successor must start its admitted one-shot program exactly at B.
+    #[error("the successor's running schedule does not start at the reset boundary")]
+    SuccessorSchedule,
+    /// The retiring owner's boundary Stop failed pure preflight.
+    #[error("the retirement Stop cannot be admitted")]
+    RetirementStop,
     /// A compiled Stop is scheduled and has not applied.
     #[error("a compiled Stop at {stop} is still pending")]
     StopPending {
@@ -234,7 +255,12 @@ impl From<MixedResetRefused> for MixedBridgeResetRefusal {
             Private::BoundaryPassed { at, clock } => Self::BoundaryPassed { at, clock },
             Private::FadeUnrepresentable { at } => Self::FadeUnrepresentable { at },
             Private::Running => Self::Running,
+            Private::NotRunning => Self::NotRunning,
+            Private::NotAdopted => Self::NotAdopted,
+            Private::SuccessorSchedule => Self::SuccessorSchedule,
+            Private::RetirementStop => Self::RetirementStop,
             Private::StopPending { stop } => Self::StopPending { stop },
+            Private::ContinuationPending => Self::ContinuationPending,
             Private::OfferPending => Self::OfferPending,
             Private::ActivationUncollected => Self::ActivationUncollected,
             Private::IngressPending => Self::IngressPending,
@@ -303,7 +329,33 @@ pub struct MixedBridgeResetReceipt {
     receipt: MixedResetReceipt,
 }
 
+/// The old compiled program's deliberate cut in an explicit running reset.
+/// This reports the old playhead without re-anchoring the fresh successor.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[must_use]
+pub struct MixedBridgeCompiledCut(MixedCompiledCut);
+
+impl MixedBridgeCompiledCut {
+    pub const fn stop_at(&self) -> SampleTime {
+        self.0.stop_at
+    }
+    /// The mapped playhead at B, including a wrap to the interval start at B.
+    /// None means projection is unavailable or unrepresentable; it is advisory.
+    pub const fn old_position_at_b(&self) -> Option<crate::time::PlanPosition> {
+        self.0.old_position_at_b
+    }
+    /// The established pass before B's events or wrap; no successor pass is implied.
+    pub const fn old_pass(&self) -> Option<crate::looping::LoopPassId> {
+        self.0.old_pass
+    }
+}
+
 impl MixedBridgeResetReceipt {
+    /// Present only for an explicit running reset; the Stop applies at B + Q.
+    pub fn compiled_cut(&self) -> Option<MixedBridgeCompiledCut> {
+        self.receipt.compiled_cut.map(MixedBridgeCompiledCut)
+    }
+
     pub(crate) const fn old_binding(&self) -> MixedTransferBinding {
         self.binding
     }
@@ -396,6 +448,14 @@ impl<C, R> std::fmt::Debug for MixedBridgeResetRetired<C, R> {
 }
 
 impl<C, R> MixedBridgeResetRetired<C, R> {
+    /// Actual compiled releases after the retirement Stop and discarded quantum.
+    /// Stopped-owner resets do not issue that Stop and return None.
+    pub fn compiled_released(&self) -> Option<crate::quantities::HeldNoteCount> {
+        self.receipt
+            .compiled_cut()
+            .map(|_| self.owner.0.owner.stop_released)
+    }
+
     /// The reset that retired the owner.
     pub const fn receipt(&self) -> MixedBridgeResetReceipt {
         self.receipt
@@ -466,6 +526,9 @@ impl From<MixedStopAccepted> for MixedBridgeStopAccepted {
 /// Why the active owner refused a compiled Stop. A refusal changes nothing.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Error)]
 pub enum MixedBridgeStopRefusal {
+    /// A running reset owns the future retirement Stop until it decides at B.
+    #[error("a running reset is pending")]
+    ResetPending,
     /// The wrapper or its active owner is terminally faulted.
     #[error("the mixed reset wrapper or its active owner is terminally faulted")]
     Faulted,
@@ -600,19 +663,29 @@ impl<C, R> MixedBridgeResetAudio<C, R> {
 
     /// Schedule the active owner's compiled-scoped Stop at the quantum boundary `at`,
     /// applied before that quantum's compiled events in every callback partition. Live
-    /// notes keep sounding. A reset is refused until the Stop has applied (rule 3.2).
+    /// notes keep sounding. The legacy reset waits until Stop applies (rule 3.2).
+    /// A pending explicit running reset refuses a separate Stop without changing sound.
     /// Callable between callbacks on the audio thread; it allocates and frees nothing.
     ///
     /// # Errors
     ///
     /// A faulted wrapper or owner, a boundary that is not a later quantum boundary after
-    /// the armed transition, or a Stop already scheduled.
+    /// the armed transition, a Stop already scheduled, or a running reset pending.
     pub fn schedule_stop(
         &mut self,
         at: SampleTime,
     ) -> Result<MixedBridgeStopAccepted, MixedBridgeStopRefusal> {
         if self.inner.fault().is_some() {
             return Err(MixedBridgeStopRefusal::Faulted);
+        }
+        if matches!(
+            self.inner.pair.secondary,
+            MixedResetSlot::Pending {
+                mode: MixedResetMode::Running,
+                ..
+            }
+        ) {
+            return Err(MixedBridgeStopRefusal::ResetPending);
         }
         self.inner
             .pair
@@ -684,6 +757,25 @@ impl<C, R> MixedBridgeResetAudio<C, R> {
     ) -> Result<(), (MixedBridgeResetRefusal, MixedBridgeResetOwner<C, R>)> {
         self.inner
             .offer_reset(successor.0, at)
+            .map_err(|(reason, owner)| (reason.into(), MixedBridgeResetOwner(owner)))
+    }
+
+    /// Explicitly replace a running compiled/live owner at B. Its compiled program
+    /// keeps sounding through the Q-frame fade, then a real Stop cuts it at B + Q.
+    /// The fresh successor starts its own armed program and anchor at B; this is
+    /// reset, not state migration. Existing `offer_reset` remains stopped-only.
+    /// The same bridge seal and whole-owner return rules apply. A refused offer
+    /// schedules no Stop and leaves the old sound unchanged.
+    ///
+    /// # Errors
+    /// Running-reset admission refused; the complete successor is returned.
+    pub fn offer_running_reset(
+        &mut self,
+        successor: MixedBridgeResetOwner<C, R>,
+        at: SampleTime,
+    ) -> Result<(), (MixedBridgeResetRefusal, MixedBridgeResetOwner<C, R>)> {
+        self.inner
+            .offer_running_reset(successor.0, at)
             .map_err(|(reason, owner)| (reason.into(), MixedBridgeResetOwner(owner)))
     }
 
@@ -793,5 +885,22 @@ where
         self.inner
             .render(output)
             .map_err(MixedBridgeResetRenderError::from)
+    }
+}
+
+impl<C, R> MixedBridgeResetAudio<C, R> {
+    /// Quiescent cold recovery after the host destroyed a continuation packet.
+    /// A pending/fading/retired reset refuses without changing either owner.
+    pub fn recover_abandoned_continuation(
+        &mut self,
+        control: &mut crate::stream::MixedBridgeControl,
+    ) -> Result<
+        Option<crate::stream::MixedContinuationRecovery>,
+        crate::stream::MixedContinuationRefusal,
+    > {
+        if !matches!(self.inner.pair.secondary, MixedResetSlot::Empty) {
+            return Err(crate::stream::MixedContinuationRefusal::Busy);
+        }
+        control.recover_abandoned_owner(&mut self.inner.pair.active)
     }
 }

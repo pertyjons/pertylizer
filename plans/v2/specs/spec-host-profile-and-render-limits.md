@@ -1009,6 +1009,7 @@ drop licence and is separate from HOST-INV-009's registry below.
 | Store | Admitting declaration and checked relation | Overload rule |
 |---|---|---|
 | Note YAMS finite source | SOUND-INV-030; N complete raw inputs <= named identity range, distinct gate instances and hold entitlement; 2N <= authored destination and retained-future envelopes; pending reservations + materialized holds <= N; at most 32 tempo segments | Refuse the complete source before playback; any runtime violation terminates the stream. No live share or queue is borrowed |
+| Mixed parameter program | ADR-0093; distinct stable targets + entries times ceil(Q / period) fit the aggregate authored share; zero future and holds; downstream global native Trim targets only | Refuse the complete plan before playback; an over-emit ends the epoch; no borrowing from note, live or release stores |
 
 The fixed occurrence records hold raw input, future release, identity and compact
 generated trace together. Source byte reporting uses their actual boxed extent
@@ -1017,6 +1018,28 @@ remain in ordinary plan/node resource accounting; compiled automation uses the
 existing admitted scheduler store. EVD-0020 records the real peaks before normal
 consumer enablement. The finite bound does not qualify a streaming producer or
 the complete production-live partition.
+
+The mixed parameter program's initialization burst uses the same publication
+path and envelope as periodic entries. Its boxed templates and resolved tables
+are included in prepared immutable bytes. Application lowering does not declare
+this producer; normal enabling still requires ADR-0054's occupancy evidence.
+
+#### Mixed internal arena
+
+| Store | Admitting declaration and checked relation | Overload rule |
+|---|---|---|
+| Periodic global Delay clear arena | ADR-0093; actual stable node-linked emitters, sum of ceil(Q / period) fits Internal; one quantum only; boxed records and extra timed controls charged to scratch | No external-batch mutation, dropping or deferral; the first record above the bound ends the epoch with whole-callback silence and invalidated carries |
+
+Periodic clears zero both complete Delay lines. The compiler reports the
+admitted maximum sample writes per quantum and an
+`InternalClearCostUnqualified` advisory. These writes are explicitly excluded
+from `predicted_quantum_cost_ratio`; its ordinary node model is not a CPU bound
+for the load consumers. Downstream enabling still requires ADR-0054 cost and
+occupancy evidence.
+
+Internal clears follow external controls at equal offsets. The separate arena
+record is the sole cause of the positioned Delay reset; its per-node copy is
+derived scratch. A missing emitter remains unavailable in load reports.
 
 #### Renderer-ingress source-store registry
 
@@ -1144,6 +1167,16 @@ section did.
 `LIMIT-0020` is the field's reason for existing: V1 publishes meters through a 128-slot array whose `publish()` is an
 `if let Some(slot)`, so a project with more metered channels loses meters with no signal to anyone. Under ADR-0021 part
 3 that is a compile error naming the requested and available tap counts.
+
+Observation stores refuse preparation when their process-local identity space
+is exhausted. They never wrap or saturate into another store's handles.
+[ADR-0084](../decisions/ADR-0084-observation-tap-handoff.md) adds a cold, separately
+budgeted handoff descriptor keyed by authored node/port. Installation preflights
+the store, plans, generation and subscriptions before mutation. It discards and
+counts unread old frames, labels subsequent reads with plan/generation/ended
+state and leaves removed handles ended. Generation exhaustion refuses; an
+observation failure cannot refuse a sound edit. Session integration must bind
+the handoff to the actual sound boundary and establish identity continuity.
 
 ### Mixing
 
@@ -1467,6 +1500,104 @@ the two possibilities.
 - Phase 1 and Phase 2 reject an over-full caller span before mutation. Phase 3 treats a share, scheduled-store,
   external-batch or internal-arena overrun as a terminal contract fault. No phase allocates, defers or trims to absorb
   it.
+
+## Finite identity endurance controls
+
+Process-local identities never wrap or reissue an exhausted value. The controls
+inject local counters into the actual issuers; they do not overwrite process
+statics or substitute a second implementation of the arithmetic.
+
+| Identity | Issued domain | Exhaustion control |
+|---|---|---|
+| Observation store, note table, publication arbiter, ingress store, mixed transfer | u64, 1 through MAX - 1 | Last values issued once; repeated refusal at MAX. Concurrent local-counter controls use a common start barrier and cover table/arbiter/ingress/transfer uniqueness |
+| Stream epoch | u32, 0 through MAX - 1 | Zero origin retained; last two epochs followed by permanent refusal |
+| Plan and connection/source generation | u64, 1 through MAX | Concurrent plan control uses a common start barrier; existing checked host issuer refuses after the last value |
+| Observation handoff generation | u64, 0 through MAX | Existing handoff control refuses a successor after MAX |
+| Note index and generation | u16 index, u32 generation 0 through MAX | Highest actual index remains addressable; final generations retire the index permanently, and a stale release cannot end its successor |
+
+`PlanIdentityExhausted` retains the compile resource report and advisories; a
+last admitted plan remains usable. Store preparation returns
+`IdentityExhausted`, preventing subscription-handle aliasing. Preparation can
+consume process identities for candidates later refused or cancelled; a
+continuation retaining the active epoch/table does not refund a fresh
+candidate's preparation. Note generation exhaustion erodes the producer's
+range and reports it instead of aliasing another occurrence.
+
+The mixed-transfer software churn control uses 65,540 on/bend/key-up cycles on
+one physical live index in a 48 kHz Mono fixture, beside a held compiled note.
+It renders 8,389,120 cycle frames per run with callback partitions 1, 37, 64 and
+128. Audio bits, generation sequence and result/refusal totals match. Every
+64th cycle saturates conservative control credit/command admission; the refused
+observation and frontier stay unchanged, and the reserved exact key-up still
+succeeds. The immediately preceding handle is refused at the handle layer and
+never releases the new generation; separate minter controls exercise stale
+identities. Every cycle conserves free plus lock-free-returned bend credits,
+leaves no live hold or queued entry, and retains identical renderer, ingress
+and publication storage. Callback allocator activity is zero. The final
+compiled Stop and joined teardown account for both
+minters and every outstanding command.
+
+Each run observes 208,921 results and 1,025 transient control refusals, ending
+at note generation 65,539. Audio admission refuses zero bends in this fixture:
+control backpressure is the overload exercised, not DSP over-emission or a
+hardware deadline. The four executable producer classes remain visible;
+authored-runtime and renderer-internal observations remain unavailable rather
+than measured zeros. These are finite-space and sustained software controls,
+not P03-R004 production endurance, elapsed-time evidence or ADR-0054 capacity
+selection. CI runs them through the explicit mixed-transfer library gate.
+
+## Production calibration readiness
+
+On 2026-10-17 the maintainer deferred complete capacity reselection until
+production-enablement qualification, as recorded in
+[NOW](../NOW.md#phase-9--active). The selected 2026-10-18 software scope leaves
+final qualification to a representative production environment. Software
+controls do not remove ADR-0054's requirement to measure the complete
+simultaneously legal partition. The following inputs
+must exist before selecting a production profile; a missing producer, resource
+observation or workload bound leaves readiness inconclusive.
+
+1. Declare the candidate profile and workload before measuring: all six shares,
+   total event cap, release holds, each ingress/result/command depth, sample
+   rates, channel layouts, maximum callback size, graph/voice/source maxima,
+   compiled and live burst placement, transport/loop/reset frequency and the
+   intended uninterrupted lifetime. Bound the hottest note index's reuse rate
+   and process preparation/connection/publication rates; averages across idle
+   indices cannot qualify an identity width.
+2. Exercise real compiled, live, session, authored-runtime, internal and release
+   paths concurrently under those bounds. A synthetic publication charge or an
+   unexpected nonzero diagnostic is not evidence of an executable producer.
+   The current mixed fixture's two unavailable classes must be supplied by their
+   actual first consumers before final six-share reselection.
+3. Retain per-quantum occupancy and its same-quantum external total, as well as
+   each class's independent high water. Do not sum independent peaks into a
+   claimed simultaneous observation. Retain live holds, queue occupancy,
+   deferred releases, renderer event/control/scratch use, observer storage,
+   prepared candidates and retiring owners. Include the reset callback's two
+   rendered owners and discarded quanta, not just steady-state cost.
+4. Test declared maxima, one-beyond-bound refusal and repeated recovery, with
+   delayed sources/control/readers and full return lanes. Verify unchanged
+   frontiers on refusal, protected release/Panic custody, no aliasing, bounded
+   memory, explicit diagnostic loss and no callback allocation, locks or I/O.
+   Software output/receipt controls must pass before timing the workload.
+5. Retain the exact revision, compiler/toolchain, features, release build,
+   machine/OS/backend, device configuration, workload inputs and scenario
+   counts. Predeclare warm-up, collection duration and cost/latency thresholds;
+   preserve startup and interruption arms. Timing with allocation instrumentation
+   or a development-profile unit-test wall clock cannot select a production
+   deadline or resource margin.
+6. Independently review the collected occupancy, cost, lifetime and overload
+   conclusions. Reselect every affected share and bound together, rerun the
+   profile relations and admission/refusal controls, and retain the evidence
+   before enabling a production adapter. Missing measurements are never zero,
+   and the provisional software fixture must not silently become production.
+
+The executable dry run is the `endurance_tests` library filter with
+`--no-default-features --features mixed-transfer-rehearsal`; `--nocapture`
+prints its software-only scope and counts. Existing mixed-host integration
+controls separately exercise independent callback/source cadence, transport,
+loops and stopped reset custody. Neither command constitutes the final run
+above, and no numeric production limit is selected here.
 
 ## Conformance tests
 

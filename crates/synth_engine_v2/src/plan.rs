@@ -11,8 +11,12 @@
 //! capacity reaching the audio thread without having passed admission is a defect
 //! rather than a fallback.
 
+#[cfg(feature = "mixed-transfer-rehearsal")]
+pub(crate) mod binding;
 #[cfg(feature = "simulated-ingress")]
 pub(crate) mod continuation;
+#[cfg(feature = "simulated-ingress")]
+pub(crate) mod note_binding;
 #[cfg(feature = "simulated-ingress")]
 pub use continuation::ContinuationError;
 
@@ -150,19 +154,18 @@ impl std::fmt::Display for PlanId {
 
 /// Issue the next plan identity.
 ///
-/// Saturates rather than wrapping at `u64::MAX`, which is unreachable: a compilation
-/// every nanosecond would take five centuries to get there, and a wrapped identity
-/// would make two plans indistinguishable — the one thing this type exists to prevent.
-pub(crate) fn issue_plan_id() -> PlanId {
+/// Exhaustion refuses permanently. Saturating would reissue the final identity.
+pub(crate) fn issue_plan_id() -> Option<PlanId> {
     static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-    PlanId(
-        NEXT.try_update(
-            std::sync::atomic::Ordering::Relaxed,
-            std::sync::atomic::Ordering::Relaxed,
-            |current| Some(current.saturating_add(1)),
-        )
-        .map_or(u64::MAX, |previous| previous.saturating_add(1)),
-    )
+    issue_plan_id_from(&NEXT)
+}
+
+pub(crate) fn issue_plan_id_from(counter: &std::sync::atomic::AtomicU64) -> Option<PlanId> {
+    use std::sync::atomic::Ordering::Relaxed;
+    counter
+        .try_update(Relaxed, Relaxed, |current| current.checked_add(1))
+        .ok()
+        .map(|previous| PlanId(previous + 1))
 }
 
 /// One addressable parameter in the plan, by index.
@@ -1249,6 +1252,7 @@ pub struct CompiledPlan {
     /// review found exactly that: the authored link proved the index resolved and was
     /// non-compiled, which is not the same as proving it was *unclaimed*.
     authored_sources: Vec<crate::ir::AuthoredSourceDeclaration>,
+    pub(crate) producer_programs: crate::producer_programs::ProducerPrograms,
     compiled_note_producer: Option<crate::identity::ProducerId>,
     forward_event_horizon: FrameCount,
     path_latencies: crate::latency::PathLatencies,
@@ -1299,7 +1303,9 @@ impl CompiledPlan {
     /// Some outer tables overlap those rows; charging both is deliberately conservative.
     #[cfg(feature = "simulated-ingress")]
     pub(crate) fn host_table_bytes(&self) -> Option<u64> {
-        let mut bytes = u64::try_from(size_of::<Self>() + 256).ok()?;
+        let mut bytes = u64::try_from(size_of::<Self>() + 256)
+            .ok()?
+            .checked_add(self.producer_programs.heap_bytes())?;
         bytes = bytes.checked_add(
             u64::try_from(self.ops.capacity().checked_mul(size_of::<PlanOp>())?).ok()?,
         )?;
@@ -1498,7 +1504,7 @@ impl CompiledPlan {
         reason = "a prepared plan carries exactly the capacities admission copied into it; \
                   bundling them would hide which ones the renderer depends on"
     )]
-    pub(crate) const fn new(
+    pub(crate) fn new(
         id: PlanId,
         ops: Vec<PlanOp>,
         regions: Vec<BufferRegion>,
@@ -1563,6 +1569,7 @@ impl CompiledPlan {
             note_producer_ranges,
             note_producer_holds,
             authored_sources,
+            producer_programs: crate::producer_programs::ProducerPrograms::default(),
             compiled_note_producer,
             forward_event_horizon,
             path_latencies,
@@ -1636,6 +1643,16 @@ impl CompiledPlan {
     #[cfg(feature = "simulated-ingress")]
     pub(crate) fn non_voice_state_nodes(&self) -> &[(NodeId, crate::ir::ExecutionScope, NodeSlot)] {
         &self.non_voice_state_nodes
+    }
+
+    pub(crate) fn authored_steps(&self) -> &[(NodeId, crate::ir::ExecutionScope, NodeSlot)] {
+        &self.authored_state_nodes
+    }
+
+    /// Admitted maximum full-history clear writes, excluded from the uncalibrated
+    /// advisory CPU ratio. These first consumers are load tooling only.
+    pub const fn internal_clear_sample_writes_per_quantum(&self) -> synth_core::SampleCount {
+        self.producer_programs.internal_clear_work
     }
 
     /// The operations, in execution order.

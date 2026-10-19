@@ -210,6 +210,108 @@ const OFF: [u8; 3] = [0x80, 60, 0];
 const WINDOW: u64 = 512;
 
 #[test]
+fn software_bridge_binds_arrival_provenance_and_settles_both_source_releases() {
+    use crate::host::software_input::SoftwareInputPair;
+    use crate::time::TimeSource;
+    let profile = history_tests::mixed_profile();
+    let sources = SoftwareInputPair::open().expect("software sources");
+    let depth = MixedJoinedPrepared::transfer_capacity(&profile).get();
+    let (prepared, candidate) = history_tests::one_shot_with_boundary_on(true);
+    let armed = prepared
+        .arm_software_bridge(
+            candidate,
+            &profile,
+            &sources,
+            MixedTransferFence {
+                stage_cells: MixedTransferPlaces::new(8),
+                held_onsets: MixedTransferPlaces::new(16),
+                peer_wait: FrameCount::new(64),
+            },
+            Ring(HeapRb::new(depth + 1)),
+            Ring(HeapRb::new(depth + 1)),
+        )
+        .expect("Arrival arm");
+    let mut rig = Rig {
+        armed,
+        first: Source {
+            generation: sources.sources().first(),
+            serial: 0,
+        },
+        second: Source {
+            generation: sources.sources().second(),
+            serial: 0,
+        },
+    };
+    assert_eq!(
+        rig.armed
+            .audio
+            .inner
+            .test_ingress
+            .envelope(SampleTime::new(100))
+            .source(),
+        TimeSource::Arrival
+    );
+    for second in [false, true] {
+        let on = if second {
+            rig.second.handoff(100, ON)
+        } else {
+            rig.first.handoff(100, ON)
+        };
+        assert_eq!(rig.stage(on), Ok(MixedStaged::Staged));
+    }
+    for first in [true, false] {
+        let (packet, at) = if first {
+            rig.first.frontier(128)
+        } else {
+            rig.second.frontier(128)
+        };
+        rig.armed
+            .control
+            .advance_frontier(packet, at)
+            .expect("source frontier");
+    }
+    while matches!(rig.pump().expect("pump"), MixedPumpStep::Forwarded { .. }) {}
+    rig.render(128).expect("compiled and software notes render");
+    let onsets = rig.collect();
+    assert_eq!(onsets.len(), 2);
+    assert!(
+        onsets
+            .iter()
+            .all(|report| matches!(report.outcome(), MixedBridgeOutcome::NoteOn(Ok(_))))
+    );
+    for first in [true, false] {
+        let off = if first {
+            rig.first.handoff(140, OFF)
+        } else {
+            rig.second.handoff(140, OFF)
+        };
+        assert_eq!(rig.stage(off), Ok(MixedStaged::Staged));
+        let (packet, at) = if first {
+            rig.first.frontier(192)
+        } else {
+            rig.second.frontier(192)
+        };
+        rig.armed
+            .control
+            .advance_frontier(packet, at)
+            .expect("release frontier");
+    }
+    while matches!(
+        rig.pump().expect("release pump"),
+        MixedPumpStep::Forwarded { .. }
+    ) {}
+    rig.render(128).expect("releases render");
+    assert_eq!(rig.collect().len(), 2);
+    let teardown = rig.join();
+    assert_eq!(teardown.fault(), None);
+    assert!(
+        teardown.held().is_empty()
+            && teardown.open().is_empty()
+            && teardown.tombstones().is_empty()
+    );
+}
+
+#[test]
 fn the_window_is_one_largest_callback_in_whole_quanta_inside_the_horizon() {
     let rig = Rig::new();
     let profile = history_tests::mixed_profile();
@@ -662,6 +764,7 @@ fn successor(sources: MixedTransferSources) -> (MixedBridgeControl, ControlPort,
 /// The old bridge with its audio half in the reset wrapper, and an armed successor whose
 /// parts wait to be sealed and offered.
 struct ResetRig {
+    running_reset: bool,
     control: MixedBridgeControl,
     /// The live control port: the old arm's until commit, then the successor's.
     port: ControlPort,
@@ -676,6 +779,10 @@ struct ResetRig {
 
 impl ResetRig {
     fn new() -> Self {
+        Self::with_running(false)
+    }
+
+    fn with_running(running_reset: bool) -> Self {
         let first = Source::new("first");
         let second = Source::new("second");
         let sources =
@@ -687,12 +794,15 @@ impl ResetRig {
             audio_port,
         } = arm_at(SampleTime::new(64), sources, fence());
         let mut wrapper = Wrapper::new(Owner::new(audio, audio_port).expect("the arm's own port"));
-        assert_eq!(
-            wrapper.schedule_stop(STOP),
-            Ok(MixedBridgeStopAccepted::Scheduled)
-        );
+        if !running_reset {
+            assert_eq!(
+                wrapper.schedule_stop(STOP),
+                Ok(MixedBridgeStopAccepted::Scheduled)
+            );
+        }
         let (next_control, next_port, next_owner) = successor(sources);
         Self {
+            running_reset,
             control,
             port: control_port,
             wrapper,
@@ -749,12 +859,15 @@ impl ResetRig {
 
     fn offer(&mut self) -> Result<(), MixedBridgeResetRefusal> {
         let owner = self.next_owner.take().expect("an unoffered successor");
-        self.wrapper
-            .offer_reset(owner, B)
-            .map_err(|(reason, owner)| {
-                self.next_owner = Some(owner);
-                reason
-            })
+        let offered = if self.running_reset {
+            self.wrapper.offer_running_reset(owner, B)
+        } else {
+            self.wrapper.offer_reset(owner, B)
+        };
+        offered.map_err(|(reason, owner)| {
+            self.next_owner = Some(owner);
+            reason
+        })
     }
 
     /// Render whole quanta up to `B`, then open it with an eight-frame callback, so an
@@ -860,58 +973,60 @@ fn pump_all(rig: &mut ResetRig) -> Vec<MixedPumpStep> {
 
 #[test]
 fn an_old_onset_key_up_staged_while_sealed_is_consumed_as_reset_and_never_reaches_the_successor() {
-    let mut rig = ResetRig::new();
-    let on = sounding_old_note(&mut rig);
-    rig.seal().expect("seal");
-    assert_eq!(rig.control.reset_ready(), Some(B));
+    for running in [false, true] {
+        let mut rig = ResetRig::with_running(running);
+        let on = sounding_old_note(&mut rig);
+        rig.seal().expect("seal");
+        assert_eq!(rig.control.reset_ready(), Some(B));
 
-    // The key-up arrives before `B`, but the old transfer takes nothing while sealed.
-    let off = rig.first.handoff(B_FRAMES - 20, OFF);
-    assert_eq!(rig.stage(off), Ok(MixedStaged::Staged));
-    assert_eq!(
-        rig.pump(),
-        Ok(MixedPumpStep::Idle(MixedBridgeWait::ResetSealed { at: B }))
-    );
-    assert_eq!(rig.control.last_stamp(), Some(SampleTime::new(100)));
+        // The key-up arrives before `B`, but the old transfer takes nothing while sealed.
+        let off = rig.first.handoff(B_FRAMES - 20, OFF);
+        assert_eq!(rig.stage(off), Ok(MixedStaged::Staged));
+        assert_eq!(
+            rig.pump(),
+            Ok(MixedPumpStep::Idle(MixedBridgeWait::ResetSealed { at: B }))
+        );
+        assert_eq!(rig.control.last_stamp(), Some(SampleTime::new(100)));
 
-    let (retired, old_port) = reset_at_b(&mut rig);
-    let receipt = retired.receipt();
-    assert_eq!(receipt.at(), B);
-    assert_eq!(receipt.ended_at(), SampleTime::new(B_FRAMES + Q));
-    let ended: Vec<_> = receipt.ended().collect();
-    assert!(matches!(ended[..], [MixedBridgeResetEnd::Tombstoned(_)]));
+        let (retired, old_port) = reset_at_b(&mut rig);
+        let receipt = retired.receipt();
+        assert_eq!(receipt.at(), B);
+        assert_eq!(receipt.ended_at(), SampleTime::new(B_FRAMES + Q));
+        let ended: Vec<_> = receipt.ended().collect();
+        assert!(matches!(ended[..], [MixedBridgeResetEnd::Tombstoned(_)]));
 
-    // At commit the staged key-up carries the reset; it leaves its lane as a split.
-    assert_eq!(
-        rig.pump(),
-        Ok(MixedPumpStep::Split {
-            packet: off.packet,
-            split: MixedSplit::AfterRefusedOnset {
-                onset: on.packet,
-                reason: MixedOnsetRefusal::Reset,
-            },
-        })
-    );
-    assert_eq!(rig.pump(), Ok(MixedPumpStep::Idle(MixedBridgeWait::Empty)));
-    assert_eq!(
-        rig.control.lane_charge(rig.first.generation),
-        Some((MixedTransferPlaces::NONE, MixedTransferPlaces::NONE))
-    );
+        // At commit the staged key-up carries the reset; it leaves its lane as a split.
+        assert_eq!(
+            rig.pump(),
+            Ok(MixedPumpStep::Split {
+                packet: off.packet,
+                split: MixedSplit::AfterRefusedOnset {
+                    onset: on.packet,
+                    reason: MixedOnsetRefusal::Reset,
+                },
+            })
+        );
+        assert_eq!(rig.pump(), Ok(MixedPumpStep::Idle(MixedBridgeWait::Empty)));
+        assert_eq!(
+            rig.control.lane_charge(rig.first.generation),
+            Some((MixedTransferPlaces::NONE, MixedTransferPlaces::NONE))
+        );
 
-    let (live, old) = rig.join_committed(retired, old_port);
-    assert_eq!(
-        old.handles(),
-        [(on.packet, MixedRetiredHandle::Ended(ended[0]))],
-        "the old handle is ended by the reset group, not by a key-up"
-    );
-    assert!(old.unclassified().is_empty() && old.unmatched().is_empty());
-    assert!(old.bridge().held().is_empty());
-    assert_eq!(live.fault(), None);
-    assert!(live.held().is_empty() && live.open().is_empty());
-    assert!(
-        live.transfer().outstanding().is_empty() && live.transfer().handles().is_empty(),
-        "the successor never received a release"
-    );
+        let (live, old) = rig.join_committed(retired, old_port);
+        assert_eq!(
+            old.handles(),
+            [(on.packet, MixedRetiredHandle::Ended(ended[0]))],
+            "the old handle is ended by the reset group, not by a key-up"
+        );
+        assert!(old.unclassified().is_empty() && old.unmatched().is_empty());
+        assert!(old.bridge().held().is_empty());
+        assert_eq!(live.fault(), None);
+        assert!(live.held().is_empty() && live.open().is_empty());
+        assert!(
+            live.transfer().outstanding().is_empty() && live.transfer().handles().is_empty(),
+            "the successor never received a release"
+        );
+    }
 }
 
 #[test]
@@ -1776,147 +1891,149 @@ fn a_seal_refusal_returns_the_successor_and_leaves_the_bridge_open() {
 
 #[test]
 fn a_pending_panic_refuses_the_seal_and_a_due_panic_cancels_a_sealed_reset() {
-    let mut rig = ResetRig::new();
-    rig.release_peer(1 << 16);
-    let (packet, frontier) = rig.first.frontier(1 << 16);
-    rig.control
-        .advance_frontier(packet, frontier)
-        .expect("frontier");
-    rig.render_to(256);
-    let at = SampleTime::new(300);
-    assert_eq!(rig.control.panic(at), Ok(()));
-    let refuse = |rig: &mut ResetRig| {
-        let next = rig.next_control.take().expect("successor");
-        let refused = rig
-            .control
-            .seal_reset(next, B)
-            .expect_err("a pending Panic");
-        let reason = refused.reason();
-        rig.next_control = Some(refused.into_successor());
-        reason
-    };
-    assert_eq!(
-        refuse(&mut rig),
-        MixedBridgeSealRefusal::PanicPending { at }
-    );
-    assert!(matches!(rig.pump(), Ok(MixedPumpStep::Panic { stamp, .. }) if stamp == at));
-    assert_eq!(
-        refuse(&mut rig),
-        MixedBridgeSealRefusal::PanicPending { at }
-    );
-    rig.render(Q).expect("the Panic's callback");
-    assert_eq!(
-        refuse(&mut rig),
-        MixedBridgeSealRefusal::PanicPending { at }
-    );
-    let reports = rig.collect();
-    assert!(
-        matches!(
-            reports.as_slice(),
-            [report] if report.packet().is_none()
-                && matches!(report.outcome(), MixedBridgeOutcome::Panic(Ok(_)))
-        ),
-        "{reports:?}"
-    );
-    // Collection frees the cell, so the reset seals.
-    rig.seal().expect("the Panic cell is free");
-    rig.render(Q).expect("a later quantum opens");
-    assert_eq!(
-        rig.control.reset_phase(),
-        MixedBridgeResetPhase::Sealed { at: B }
-    );
-    // Stamped inside `B`'s own quantum, so still due there: it cancels the reset.
-    let due = SampleTime::new(B_FRAMES + 10);
-    assert_eq!(rig.control.panic(due), Ok(()));
-    assert_eq!(
-        rig.control.reset_phase(),
-        MixedBridgeResetPhase::Cancelled { at: B, panic: due }
-    );
-    assert_eq!(rig.control.reset_ready(), None);
-    assert_eq!(rig.control.panic_pending(), Some(due));
-    assert_eq!(rig.offer(), Err(MixedBridgeResetRefusal::PanicCancelled));
-    let mut applied = ResetRig::new();
-    applied.render_to(B_FRAMES - Q);
-    applied.seal().expect("seal");
-    applied.offer().expect("offer");
-    applied.open_b();
-    assert_eq!(
-        rig.control.commit_reset(applied.receipt()).map(drop),
-        Err(MixedBridgeCommitRefusal::Cancelled { at: B })
-    );
-    let (third, _, _) = successor(rig.sources);
-    let refused = rig.control.seal_reset(third, B).expect_err("cancelled");
-    assert_eq!(
-        refused.reason(),
-        MixedBridgeSealRefusal::Cancelled { at: B }
-    );
-    assert_eq!(
-        rig.control.reset_phase(),
-        MixedBridgeResetPhase::Cancelled { at: B, panic: due },
-        "every refusal left the cancelled reset as it was"
-    );
+    for running in [false, true] {
+        let mut rig = ResetRig::with_running(running);
+        rig.release_peer(1 << 16);
+        let (packet, frontier) = rig.first.frontier(1 << 16);
+        rig.control
+            .advance_frontier(packet, frontier)
+            .expect("frontier");
+        rig.render_to(256);
+        let at = SampleTime::new(300);
+        assert_eq!(rig.control.panic(at), Ok(()));
+        let refuse = |rig: &mut ResetRig| {
+            let next = rig.next_control.take().expect("successor");
+            let refused = rig
+                .control
+                .seal_reset(next, B)
+                .expect_err("a pending Panic");
+            let reason = refused.reason();
+            rig.next_control = Some(refused.into_successor());
+            reason
+        };
+        assert_eq!(
+            refuse(&mut rig),
+            MixedBridgeSealRefusal::PanicPending { at }
+        );
+        assert!(matches!(rig.pump(), Ok(MixedPumpStep::Panic { stamp, .. }) if stamp == at));
+        assert_eq!(
+            refuse(&mut rig),
+            MixedBridgeSealRefusal::PanicPending { at }
+        );
+        rig.render(Q).expect("the Panic's callback");
+        assert_eq!(
+            refuse(&mut rig),
+            MixedBridgeSealRefusal::PanicPending { at }
+        );
+        let reports = rig.collect();
+        assert!(
+            matches!(
+                reports.as_slice(),
+                [report] if report.packet().is_none()
+                    && matches!(report.outcome(), MixedBridgeOutcome::Panic(Ok(_)))
+            ),
+            "{reports:?}"
+        );
+        // Collection frees the cell, so the reset seals.
+        rig.seal().expect("the Panic cell is free");
+        rig.render(Q).expect("a later quantum opens");
+        assert_eq!(
+            rig.control.reset_phase(),
+            MixedBridgeResetPhase::Sealed { at: B }
+        );
+        // Stamped inside `B`'s own quantum, so still due there: it cancels the reset.
+        let due = SampleTime::new(B_FRAMES + 10);
+        assert_eq!(rig.control.panic(due), Ok(()));
+        assert_eq!(
+            rig.control.reset_phase(),
+            MixedBridgeResetPhase::Cancelled { at: B, panic: due }
+        );
+        assert_eq!(rig.control.reset_ready(), None);
+        assert_eq!(rig.control.panic_pending(), Some(due));
+        assert_eq!(rig.offer(), Err(MixedBridgeResetRefusal::PanicCancelled));
+        let mut applied = ResetRig::with_running(running);
+        applied.render_to(B_FRAMES - Q);
+        applied.seal().expect("seal");
+        applied.offer().expect("offer");
+        applied.open_b();
+        assert_eq!(
+            rig.control.commit_reset(applied.receipt()).map(drop),
+            Err(MixedBridgeCommitRefusal::Cancelled { at: B })
+        );
+        let (third, _, _) = successor(rig.sources);
+        let refused = rig.control.seal_reset(third, B).expect_err("cancelled");
+        assert_eq!(
+            refused.reason(),
+            MixedBridgeSealRefusal::Cancelled { at: B }
+        );
+        assert_eq!(
+            rig.control.reset_phase(),
+            MixedBridgeResetPhase::Cancelled { at: B, panic: due },
+            "every refusal left the cancelled reset as it was"
+        );
 
-    // The Panic forwards to the old transfer, which serves it at its stamp inside `B`.
-    let Ok(MixedPumpStep::Panic { id, stamp }) = rig.pump() else {
-        panic!("the Panic forwards to the old transfer");
-    };
-    assert_eq!(stamp, due);
-    rig.render_to(B_FRAMES + Q);
-    let reports = rig.collect();
-    assert!(
-        matches!(
-            reports.as_slice(),
-            [report] if report.id() == id
-                && report.executed_at() == due
-                && matches!(report.outcome(), MixedBridgeOutcome::Panic(Ok(_)))
-        ),
-        "{reports:?}"
-    );
-    assert_eq!(rig.wrapper.state(), MixedBridgeResetState::Empty);
+        // The Panic forwards to the old transfer, which serves it at its stamp inside `B`.
+        let Ok(MixedPumpStep::Panic { id, stamp }) = rig.pump() else {
+            panic!("the Panic forwards to the old transfer");
+        };
+        assert_eq!(stamp, due);
+        rig.render_to(B_FRAMES + Q);
+        let reports = rig.collect();
+        assert!(
+            matches!(
+                reports.as_slice(),
+                [report] if report.id() == id
+                    && report.executed_at() == due
+                    && matches!(report.outcome(), MixedBridgeOutcome::Panic(Ok(_)))
+            ),
+            "{reports:?}"
+        );
+        assert_eq!(rig.wrapper.state(), MixedBridgeResetState::Empty);
 
-    // A cancelled reset refuses the join until abandon returns the successor.
-    let ResetRig {
-        control,
-        port,
-        wrapper,
-        next_port,
-        next_owner,
-        ..
-    } = rig;
-    let (active, secondary) = wrapper.into_owners();
-    assert!(secondary.is_none());
-    let (audio, audio_port) = active.into_parts();
-    let refused = control
-        .join(audio, Some(port), Some(audio_port))
-        .expect_err("cancelled");
-    assert_eq!(
-        refused.reason(),
-        MixedBridgeJoinError::ResetCancelled { at: B }
-    );
-    let (mut control, audio, port, audio_port) = refused.into_parts();
-    let owner = next_owner.expect("the successor the offer refused");
-    let next = control
-        .abandon_reset(&owner)
-        .expect("a cancelled reset is abandoned");
-    assert_eq!(control.reset_phase(), MixedBridgeResetPhase::Open);
-    let teardown = control
-        .join(audio, port, audio_port)
-        .expect("the old arm joins");
-    assert_eq!(teardown.panic(), None);
-    assert_eq!(
-        teardown.transfer().custody(),
-        MixedTransferCustody::Complete
-    );
-    let (next_audio, next_audio_port) = owner.into_parts();
-    let teardown = next
-        .join(next_audio, next_port, Some(next_audio_port))
-        .expect("the abandoned successor joins");
-    assert_eq!(teardown.panic(), None);
-    assert!(teardown.held().is_empty());
-    assert_eq!(
-        teardown.transfer().custody(),
-        MixedTransferCustody::Complete
-    );
+        // A cancelled reset refuses the join until abandon returns the successor.
+        let ResetRig {
+            control,
+            port,
+            wrapper,
+            next_port,
+            next_owner,
+            ..
+        } = rig;
+        let (active, secondary) = wrapper.into_owners();
+        assert!(secondary.is_none());
+        let (audio, audio_port) = active.into_parts();
+        let refused = control
+            .join(audio, Some(port), Some(audio_port))
+            .expect_err("cancelled");
+        assert_eq!(
+            refused.reason(),
+            MixedBridgeJoinError::ResetCancelled { at: B }
+        );
+        let (mut control, audio, port, audio_port) = refused.into_parts();
+        let owner = next_owner.expect("the successor the offer refused");
+        let next = control
+            .abandon_reset(&owner)
+            .expect("a cancelled reset is abandoned");
+        assert_eq!(control.reset_phase(), MixedBridgeResetPhase::Open);
+        let teardown = control
+            .join(audio, port, audio_port)
+            .expect("the old arm joins");
+        assert_eq!(teardown.panic(), None);
+        assert_eq!(
+            teardown.transfer().custody(),
+            MixedTransferCustody::Complete
+        );
+        let (next_audio, next_audio_port) = owner.into_parts();
+        let teardown = next
+            .join(next_audio, next_port, Some(next_audio_port))
+            .expect("the abandoned successor joins");
+        assert_eq!(teardown.panic(), None);
+        assert!(teardown.held().is_empty());
+        assert_eq!(
+            teardown.transfer().custody(),
+            MixedTransferCustody::Complete
+        );
+    }
 }
 
 /// Assert that one collected Panic report ended exactly `expected`, in any group order.
@@ -1934,108 +2051,110 @@ fn assert_panic_ended(report: &MixedBridgeReport, expected: &[MixedSourcePacketI
 
 #[test]
 fn a_panic_stamped_after_the_fade_quantum_follows_the_reset_outcome() {
-    for commit in [true, false] {
-        let mut rig = ResetRig::new();
-        let old_on = sounding_old_note(&mut rig);
-        rig.seal().expect("seal");
-        let new_on = rig.first.handoff(B_FRAMES + 20, [0x90, 64, 100]);
-        assert_eq!(rig.stage(new_on), Ok(MixedStaged::Staged));
-        rig.offer().expect("offer");
-        // The first sample after `B`'s quantum: never due at `B`, so it never cancels.
-        let late = SampleTime::new(B_FRAMES + Q);
-        assert_eq!(rig.control.panic(late), Ok(()));
-        assert_eq!(
-            rig.control.reset_phase(),
-            MixedBridgeResetPhase::Sealed { at: B }
-        );
-        assert_eq!(
-            rig.pump(),
-            Ok(MixedPumpStep::Idle(MixedBridgeWait::ResetSealed { at: B }))
-        );
-        let (packet, at) = rig.first.frontier(B_FRAMES + 2 * Q);
-        rig.control.advance_frontier(packet, at).expect("frontier");
-        if commit {
-            rig.open_b();
-            let (retired, old_port) = rig.commit();
+    for running in [false, true] {
+        for commit in [true, false] {
+            let mut rig = ResetRig::with_running(running);
+            let old_on = sounding_old_note(&mut rig);
+            rig.seal().expect("seal");
+            let new_on = rig.first.handoff(B_FRAMES + 20, [0x90, 64, 100]);
+            assert_eq!(rig.stage(new_on), Ok(MixedStaged::Staged));
+            rig.offer().expect("offer");
+            // The first sample after `B`'s quantum: never due at `B`, so it never cancels.
+            let late = SampleTime::new(B_FRAMES + Q);
+            assert_eq!(rig.control.panic(late), Ok(()));
             assert_eq!(
-                retired.receipt().ended().count(),
-                1,
-                "the Reset group ends the old note at B + Q"
+                rig.control.reset_phase(),
+                MixedBridgeResetPhase::Sealed { at: B }
             );
-            let steps = pump_all(&mut rig);
-            assert!(
-                matches!(
-                    steps.as_slice(),
-                    [
-                        MixedPumpStep::Forwarded { packet, .. },
-                        MixedPumpStep::Panic { stamp, .. },
-                    ] if *packet == new_on.packet && *stamp == late
-                ),
-                "{steps:?}"
+            assert_eq!(
+                rig.pump(),
+                Ok(MixedPumpStep::Idle(MixedBridgeWait::ResetSealed { at: B }))
             );
-            for _ in 0..2 {
-                rig.render(Q).expect("successor callback");
+            let (packet, at) = rig.first.frontier(B_FRAMES + 2 * Q);
+            rig.control.advance_frontier(packet, at).expect("frontier");
+            if commit {
+                rig.open_b();
+                let (retired, old_port) = rig.commit();
+                assert_eq!(
+                    retired.receipt().ended().count(),
+                    1,
+                    "the Reset group ends the old note at B + Q"
+                );
+                let steps = pump_all(&mut rig);
+                assert!(
+                    matches!(
+                        steps.as_slice(),
+                        [
+                            MixedPumpStep::Forwarded { packet, .. },
+                            MixedPumpStep::Panic { stamp, .. },
+                        ] if *packet == new_on.packet && *stamp == late
+                    ),
+                    "{steps:?}"
+                );
+                for _ in 0..2 {
+                    rig.render(Q).expect("successor callback");
+                }
+                let reports = rig.collect();
+                let [onset, panic] = reports.as_slice() else {
+                    panic!("the successor served both: {reports:?}");
+                };
+                assert_eq!(onset.packet(), Some(new_on.packet));
+                assert_eq!(panic.executed_at(), late);
+                // The Panic ends only the successor's note.
+                assert_panic_ended(panic, &[new_on.packet]);
+                let (live, old) = rig.join_committed(retired, old_port);
+                assert_eq!(live.panic(), None);
+                assert_eq!(old.bridge().panic(), None);
+                assert!(matches!(
+                    old.handles(),
+                    [(packet, MixedRetiredHandle::Ended(_))] if *packet == old_on.packet
+                ));
+            } else {
+                let returned = rig.wrapper.withdraw_pending().expect("pending successor");
+                let next = rig
+                    .control
+                    .abandon_reset(&returned)
+                    .expect("the withdrawn successor is fresh");
+                let steps = pump_all(&mut rig);
+                assert!(
+                    matches!(
+                        steps.as_slice(),
+                        [
+                            MixedPumpStep::Forwarded { packet, .. },
+                            MixedPumpStep::Panic { stamp, .. },
+                        ] if *packet == new_on.packet && *stamp == late
+                    ),
+                    "{steps:?}"
+                );
+                rig.render_to(B_FRAMES + 2 * Q);
+                let reports = rig.collect();
+                let [onset, panic] = reports.as_slice() else {
+                    panic!("the old owner served both: {reports:?}");
+                };
+                assert_eq!(onset.packet(), Some(new_on.packet));
+                assert_eq!(panic.executed_at(), late);
+                // The Panic ends both notes on the old owner.
+                assert_panic_ended(panic, &[old_on.packet, new_on.packet]);
+                let ResetRig {
+                    control,
+                    port,
+                    wrapper,
+                    next_port,
+                    ..
+                } = rig;
+                let (active, secondary) = wrapper.into_owners();
+                assert!(secondary.is_none());
+                let (audio, audio_port) = active.into_parts();
+                let teardown = control
+                    .join(audio, Some(port), Some(audio_port))
+                    .expect("the old arm joins");
+                assert_eq!(teardown.panic(), None);
+                let (next_audio, next_audio_port) = returned.into_parts();
+                let teardown = next
+                    .join(next_audio, next_port, Some(next_audio_port))
+                    .expect("the abandoned successor joins");
+                assert_eq!(teardown.panic(), None);
             }
-            let reports = rig.collect();
-            let [onset, panic] = reports.as_slice() else {
-                panic!("the successor served both: {reports:?}");
-            };
-            assert_eq!(onset.packet(), Some(new_on.packet));
-            assert_eq!(panic.executed_at(), late);
-            // The Panic ends only the successor's note.
-            assert_panic_ended(panic, &[new_on.packet]);
-            let (live, old) = rig.join_committed(retired, old_port);
-            assert_eq!(live.panic(), None);
-            assert_eq!(old.bridge().panic(), None);
-            assert!(matches!(
-                old.handles(),
-                [(packet, MixedRetiredHandle::Ended(_))] if *packet == old_on.packet
-            ));
-        } else {
-            let returned = rig.wrapper.withdraw_pending().expect("pending successor");
-            let next = rig
-                .control
-                .abandon_reset(&returned)
-                .expect("the withdrawn successor is fresh");
-            let steps = pump_all(&mut rig);
-            assert!(
-                matches!(
-                    steps.as_slice(),
-                    [
-                        MixedPumpStep::Forwarded { packet, .. },
-                        MixedPumpStep::Panic { stamp, .. },
-                    ] if *packet == new_on.packet && *stamp == late
-                ),
-                "{steps:?}"
-            );
-            rig.render_to(B_FRAMES + 2 * Q);
-            let reports = rig.collect();
-            let [onset, panic] = reports.as_slice() else {
-                panic!("the old owner served both: {reports:?}");
-            };
-            assert_eq!(onset.packet(), Some(new_on.packet));
-            assert_eq!(panic.executed_at(), late);
-            // The Panic ends both notes on the old owner.
-            assert_panic_ended(panic, &[old_on.packet, new_on.packet]);
-            let ResetRig {
-                control,
-                port,
-                wrapper,
-                next_port,
-                ..
-            } = rig;
-            let (active, secondary) = wrapper.into_owners();
-            assert!(secondary.is_none());
-            let (audio, audio_port) = active.into_parts();
-            let teardown = control
-                .join(audio, Some(port), Some(audio_port))
-                .expect("the old arm joins");
-            assert_eq!(teardown.panic(), None);
-            let (next_audio, next_audio_port) = returned.into_parts();
-            let teardown = next
-                .join(next_audio, next_port, Some(next_audio_port))
-                .expect("the abandoned successor joins");
-            assert_eq!(teardown.panic(), None);
         }
     }
 }
@@ -2488,3 +2607,6 @@ fn every_staged_packet_is_accounted_exactly_once_across_both_teardowns() {
     assert_eq!(live.held(), [(far.packet, MixedSourceCustody::Staged)]);
     assert!(live.open().is_empty() && live.tombstones().is_empty());
 }
+
+#[path = "bridge/continuation_tests.rs"]
+mod continuation;

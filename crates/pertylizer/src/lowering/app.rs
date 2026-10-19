@@ -8,7 +8,7 @@
 //! song start. Sessions cross to the callback and back through bounded rings, so the
 //! callback neither allocates nor frees.
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU64, Ordering};
 
 use ringbuf::{
     HeapCons, HeapProd, HeapRb,
@@ -26,6 +26,12 @@ use synth_engine_v2::{
 
 use super::live::{SongAudio, SongEditError, SongPlayback, SongPlaybackError, prepare_song};
 use super::render::{OutputPolicy, lower_project};
+#[cfg(feature = "v2-mixed-app")]
+mod mixed_route;
+#[cfg(feature = "v2-mixed-app")]
+pub use super::mixed::MixedRetirement;
+#[cfg(feature = "v2-mixed-app")]
+pub use mixed_route::SoftwareSource;
 
 /// The largest callback the V1 engine accepts, and the V2 profile's maximum block.
 pub const MAX_CALLBACK_FRAMES: usize = 4096;
@@ -60,7 +66,7 @@ impl InstallSequence {
     }
 }
 
-/// Canonical JSON projection of the project fields passed to V2 lowering,
+/// Opaque hash of sorted JSON for the project fields passed to V2 lowering,
 /// independent of the plan identity and callback installation sequence.
 /// Non-finite raw floats serialize as `null`, so this is not a bitwise identity
 /// for every possible in-memory `ProjectFile`.
@@ -72,7 +78,9 @@ impl LoweredProjectDigest {
     /// Hash the project fields consumed by `lower_project`. Converting to a
     /// JSON value first gives map fields a stable key order.
     pub(crate) fn of(project: &crate::project::ProjectFile) -> Result<Self, serde_json::Error> {
-        let value = serde_json::to_value((&project.instruments, &project.song, &project.global))?;
+        let mut value =
+            serde_json::to_value((&project.instruments, &project.song, &project.global))?;
+        value.sort_all_objects();
         let bytes = serde_json::to_vec(&value)?;
         let hash = Sha256::digest(bytes);
         let mut digest = [0; 32];
@@ -106,14 +114,97 @@ impl RenderedPlan {
     }
 
     #[cfg(any(feature = "gui-egui", test))]
+    pub(crate) const fn install(self) -> InstallSequence {
+        self.install
+    }
+
+    #[cfg(any(feature = "gui-egui", test))]
     pub(crate) const fn project_digest(self) -> LoweredProjectDigest {
         self.project
     }
 }
 
+/// Process-local switch identity, separate from each switch's installation sequence.
+#[cfg(any(feature = "gui-egui", test))]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[must_use]
+pub(crate) struct SwitchScope(std::num::NonZeroU64);
+#[cfg(any(feature = "gui-egui", test))]
+impl SwitchScope {
+    pub(crate) fn value(self) -> std::num::NonZeroU64 {
+        self.0
+    }
+    pub(super) fn issue(counter: &AtomicU64) -> Option<Self> {
+        counter
+            .try_update(Ordering::Relaxed, Ordering::Relaxed, |value| {
+                value.checked_add(1)
+            })
+            .ok()
+            .and_then(|value| value.checked_add(1))
+            .and_then(std::num::NonZeroU64::new)
+            .map(Self)
+    }
+}
+#[cfg(any(feature = "gui-egui", test))]
+static NEXT_SWITCH_SCOPE: AtomicU64 = AtomicU64::new(0);
+
+/// One control-side observation; plan and omissions use one callback acknowledgement.
+#[cfg(any(feature = "gui-egui", test))]
+#[derive(Clone, Debug)]
+pub(crate) struct PlaybackView {
+    pub(crate) scope: Option<SwitchScope>,
+    pub(crate) active: bool,
+    pub(crate) releasing: bool,
+    pub(crate) requested_playing: bool,
+    pub(crate) edit_pending: bool,
+    pub(crate) refused: bool,
+    pub(crate) rendered: Option<RenderedPlan>,
+    pub(crate) omissions: Vec<String>,
+}
+
 enum SwitchCommand {
     /// A session and its install sequence number, counted from 1 in queue order.
     Install(InstallSequence, Box<SongAudio>),
+    #[cfg(feature = "v2-mixed-app")]
+    InstallMixed(InstallSequence, Box<super::mixed::MixedSongAudio>),
+}
+
+enum ActiveAudio {
+    Compiled(Box<SongAudio>),
+    #[cfg(feature = "v2-mixed-app")]
+    Mixed(Box<super::mixed::MixedSongAudio>),
+}
+impl ActiveAudio {
+    fn render(&mut self, block: AudioBlockMut<'_>) -> bool {
+        match self {
+            Self::Compiled(audio) => audio.render(block),
+            #[cfg(feature = "v2-mixed-app")]
+            Self::Mixed(audio) => audio.render(block),
+        }
+    }
+    fn install_sequence(&self) -> InstallSequence {
+        match self {
+            Self::Compiled(audio) => audio.install_sequence(),
+            #[cfg(feature = "v2-mixed-app")]
+            Self::Mixed(audio) => audio.install_sequence(),
+        }
+    }
+    #[cfg(test)]
+    fn compiled(&mut self) -> Option<&mut SongAudio> {
+        match self {
+            Self::Compiled(audio) => Some(audio),
+            #[cfg(feature = "v2-mixed-app")]
+            Self::Mixed(_) => None,
+        }
+    }
+    #[cfg(test)]
+    fn edit_is_fading(&self) -> bool {
+        match self {
+            Self::Compiled(audio) => audio.edit_is_fading(),
+            #[cfg(feature = "v2-mixed-app")]
+            Self::Mixed(_) => false,
+        }
+    }
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -124,17 +215,37 @@ enum InstallError {
     IdentityExhausted,
 }
 
+/// Destruction of the processor's fields, distinct from native-device quiescence
+/// and from freeing its enclosing Box or the backend mailbox.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ProcessorRetirement {
+    Pending,
+    FieldsDropped,
+    /// Destruction occurred during unwind; this does not identify its cause.
+    Failed,
+}
+
+struct ProcessorDropMarker(Arc<AtomicU8>);
+impl Drop for ProcessorDropMarker {
+    fn drop(&mut self) {
+        self.0.store(
+            if std::thread::panicking() { 2 } else { 1 },
+            Ordering::Release,
+        );
+    }
+}
+
 /// The audio processor the application hands to its output stream.
 #[must_use]
 pub struct EngineSwitch<P: AudioProcessor> {
     v1: P,
-    active: Option<Box<SongAudio>>,
+    active: Option<ActiveAudio>,
     commands: HeapCons<SwitchCommand>,
-    retired: HeapProd<Box<SongAudio>>,
+    retired: HeapProd<ActiveAudio>,
     /// A session waiting for room in the retirement ring; never dropped here.
-    retiring: Option<Box<SongAudio>>,
+    retiring: Option<ActiveAudio>,
     /// The session V2 mode's removal took out, waiting for room in the retirement ring.
-    removed: Option<Box<SongAudio>>,
+    removed: Option<ActiveAudio>,
     /// Set by the control half to leave V2 mode; it cannot fail to be delivered. While set,
     /// nothing is heard; it is honoured once every queued install has been admitted.
     remove: Arc<AtomicBool>,
@@ -148,6 +259,8 @@ pub struct EngineSwitch<P: AudioProcessor> {
     /// The sequence number of the active session's install.
     admitted: InstallSequence,
     scratch: Box<[f32]>,
+    // Last: published only after all preceding processor fields have dropped.
+    _drop_marker: ProcessorDropMarker,
 }
 
 /// A projection bracketed by the authoritative module/effect lineage counter.
@@ -168,9 +281,18 @@ struct RunningPublication {
 /// The control half, owned by the GUI thread.
 #[must_use]
 pub struct SongSwitch {
+    processor_retirement: Arc<AtomicU8>,
+    #[cfg(any(feature = "gui-egui", test))]
+    scope: Option<SwitchScope>,
     commands: HeapProd<SwitchCommand>,
-    retired: HeapCons<Box<SongAudio>>,
+    retired: HeapCons<ActiveAudio>,
     playback: Option<SongPlayback>,
+    #[cfg(feature = "v2-mixed-app")]
+    mixed: Option<super::mixed::MixedPlayback>,
+    #[cfg(feature = "v2-mixed-app")]
+    last_mixed_retirement: Option<MixedRetirement>,
+    #[cfg(feature = "v2-mixed-app")]
+    retiring_mixed: Vec<(InstallSequence, super::mixed::MixedPlayback)>,
     identity_source: Option<Arc<synth_engine::EngineState>>,
     /// The lineage of the input used by the current control pair.
     identity_lineage: Option<synth_core::ContentRevision>,
@@ -219,11 +341,21 @@ pub fn wrap<P: AudioProcessor>(v1: P) -> (SongSwitch, EngineSwitch<P>) {
     let remove = Arc::new(AtomicBool::new(false));
     let muted_until = Arc::new(AtomicU64::new(0));
     let rendered_install = Arc::new(AtomicU64::new(InstallSequence::NONE.as_u64()));
+    let processor_retirement = Arc::new(AtomicU8::new(0));
     (
         SongSwitch {
+            processor_retirement: processor_retirement.clone(),
+            #[cfg(any(feature = "gui-egui", test))]
+            scope: SwitchScope::issue(&NEXT_SWITCH_SCOPE),
             commands,
             retired: retired_reader,
             playback: None,
+            #[cfg(feature = "v2-mixed-app")]
+            mixed: None,
+            #[cfg(feature = "v2-mixed-app")]
+            last_mixed_retirement: None,
+            #[cfg(feature = "v2-mixed-app")]
+            retiring_mixed: Vec::with_capacity(SLOTS),
             identity_source: None,
             identity_lineage: None,
             latest_plan: None,
@@ -258,12 +390,22 @@ pub fn wrap<P: AudioProcessor>(v1: P) -> (SongSwitch, EngineSwitch<P>) {
             rendered_install,
             admitted: InstallSequence::NONE,
             scratch: vec![0.0; MAX_CALLBACK_FRAMES * CHANNELS.max(8)].into_boxed_slice(),
+            _drop_marker: ProcessorDropMarker(processor_retirement),
         },
     )
 }
 
 impl<P: AudioProcessor> EngineSwitch<P> {
-    fn retire(&mut self, session: Box<SongAudio>) {
+    #[cfg(all(test, feature = "v2-mixed-app"))]
+    pub(crate) fn actual_mixed_stopped_position_for_test(
+        &self,
+    ) -> Option<synth_engine_v2::time::PlanPosition> {
+        match self.active.as_ref()? {
+            ActiveAudio::Mixed(audio) => audio.stopped_position_for_test(),
+            ActiveAudio::Compiled(_) => None,
+        }
+    }
+    fn retire(&mut self, session: ActiveAudio) {
         if let Err(session) = self.retired.try_push(session) {
             // Room returns when the control half collects; the session waits here.
             self.retiring = Some(session);
@@ -279,7 +421,15 @@ impl<P: AudioProcessor> EngineSwitch<P> {
             let Some(command) = self.commands.try_pop() else {
                 break;
             };
-            let SwitchCommand::Install(sequence, session) = command;
+            let (sequence, session) = match command {
+                SwitchCommand::Install(sequence, session) => {
+                    (sequence, ActiveAudio::Compiled(session))
+                }
+                #[cfg(feature = "v2-mixed-app")]
+                SwitchCommand::InstallMixed(sequence, session) => {
+                    (sequence, ActiveAudio::Mixed(session))
+                }
+            };
             let previous = self.active.replace(session);
             self.admitted = sequence;
             if let Some(previous) = previous {
@@ -341,12 +491,22 @@ impl<P: AudioProcessor> AudioProcessor for EngineSwitch<P> {
                 .store(InstallSequence::NONE.as_u64(), Ordering::Release);
             return;
         }
-        // An oversized callback reaches the session, whose terminal fault silences it and
-        // asks for re-preparation (IO-INV-002); it is never skipped or split here.
+        // The complete callback reaches its owner without splitting. Mixed output
+        // shape failures latch silence and ask control to leave this owner.
+        #[cfg(feature = "v2-mixed-app")]
+        if usize::from(context.channels) != CHANNELS
+            && let ActiveAudio::Mixed(audio) = song
+        {
+            audio.refuse_output_shape();
+        }
         let rendered = usize::from(context.channels) == CHANNELS
             && AudioBlockMut::new(output, context.frames, ChannelLayout::Stereo)
                 .is_ok_and(|block| song.render(block));
         if !rendered {
+            #[cfg(feature = "v2-mixed-app")]
+            if let ActiveAudio::Mixed(audio) = song {
+                audio.refuse_output_shape();
+            }
             output.fill(0.0);
         }
         self.admitted = song.install_sequence();
@@ -374,6 +534,16 @@ impl<P: AudioProcessor> AudioProcessor for EngineSwitch<P> {
 }
 
 impl SongSwitch {
+    /// The control half remains able to observe processor field destruction after
+    /// AudioHost has relinquished its backend stream. This is not a device fence.
+    pub fn processor_retirement(&self) -> ProcessorRetirement {
+        match self.processor_retirement.load(Ordering::Acquire) {
+            1 => ProcessorRetirement::FieldsDropped,
+            2 => ProcessorRetirement::Failed,
+            _ => ProcessorRetirement::Pending,
+        }
+    }
+
     /// Attach the same authoritative snapshot owner the GUI/MCP project builder reads.
     #[cfg(any(feature = "gui-egui", test))]
     pub(crate) fn track_identity_source(&mut self, source: Arc<synth_engine::EngineState>) {
@@ -440,8 +610,14 @@ impl SongSwitch {
     /// revision nor a device-liveness indication.
     #[must_use]
     pub(crate) fn rendered_plan(&self) -> Option<RenderedPlan> {
-        let rendered = self.rendered_install()?;
-        self.playback.as_ref()?;
+        self.rendered_plan_at(self.rendered_install())
+    }
+
+    fn rendered_plan_at(&self, rendered: Option<InstallSequence>) -> Option<RenderedPlan> {
+        let rendered = rendered?;
+        if !self.is_active() {
+            return None;
+        }
         self.latest_plan
             .filter(|plan| plan.install == rendered)
             .or_else(|| {
@@ -467,6 +643,10 @@ impl SongSwitch {
     /// Whether V2 mode is active.
     #[must_use]
     pub const fn is_active(&self) -> bool {
+        #[cfg(feature = "v2-mixed-app")]
+        if self.mixed.is_some() {
+            return true;
+        }
         self.playback.is_some()
     }
 
@@ -474,19 +654,23 @@ impl SongSwitch {
     /// been retired and collected. Only then may MIDI reach V1 again.
     #[must_use]
     pub const fn is_released(&self) -> bool {
-        self.playback.is_none() && !self.occupied && self.retiring == 0
+        !self.is_active() && !self.occupied && self.retiring == 0
     }
 
     /// Whether the V2 song is playing, as the session last acknowledged or was asked.
     #[must_use]
     pub fn is_playing(&self) -> bool {
+        #[cfg(feature = "v2-mixed-app")]
+        if let Some(mixed) = &self.mixed {
+            return mixed.is_playing();
+        }
         self.playback.as_ref().is_some_and(SongPlayback::is_playing)
     }
 
     /// What the active session omits, for a persistent indicator; empty outside V2 mode.
     #[must_use]
     pub fn omissions(&self) -> &[String] {
-        if self.playback.is_none() {
+        if !self.is_active() {
             return &[];
         }
         if let Some(pending) = &self.pending_running
@@ -495,6 +679,45 @@ impl SongSwitch {
             return &pending.omissions;
         }
         &self.omissions
+    }
+
+    #[cfg(any(feature = "gui-egui", test))]
+    fn mixed_edit_pending(&self) -> bool {
+        #[cfg(feature = "v2-mixed-app")]
+        {
+            self.mixed.is_some() && self.pending_running.is_some()
+        }
+        #[cfg(not(feature = "v2-mixed-app"))]
+        {
+            false
+        }
+    }
+
+    /// Capture once per GUI poll/action and share the owned view with badge and MCP.
+    #[cfg(any(feature = "gui-egui", test))]
+    pub(crate) fn playback_view(&self) -> PlaybackView {
+        let rendered = self.rendered_install();
+        let omissions = if !self.is_active() {
+            &[][..]
+        } else if let Some(pending) = &self.pending_running
+            && rendered == Some(pending.install)
+        {
+            &pending.omissions
+        } else {
+            &self.omissions
+        };
+        PlaybackView {
+            scope: self.scope,
+            active: self.is_active(),
+            releasing: !self.is_released(),
+            requested_playing: self.is_playing(),
+            edit_pending: self.rebuild_pending
+                || self.playback.as_ref().is_some_and(SongPlayback::is_editing)
+                || self.mixed_edit_pending(),
+            refused: self.disable_pending,
+            rendered: self.rendered_plan_at(rendered),
+            omissions: omissions.to_vec(),
+        }
     }
 
     /// Notices for the application to show, oldest first.
@@ -598,6 +821,12 @@ impl SongSwitch {
         lineage: Option<synth_core::ContentRevision>,
     ) -> bool {
         self.collect_retired();
+        #[cfg(feature = "v2-mixed-app")]
+        if self.mixed_active() {
+            self.notices
+                .push("Leave mixed playback before entering compiled V2 playback".to_owned());
+            return false;
+        }
         if self.playback.is_some() {
             return true;
         }
@@ -641,7 +870,7 @@ impl SongSwitch {
     /// Leave V2 mode. The removal cannot fail to reach the callback: from its next callback
     /// V2 is silent, and V1 is heard again once every queued install has been admitted.
     pub fn disable(&mut self) {
-        if self.playback.is_none() {
+        if !self.is_active() {
             return;
         }
         self.remove.store(true, Ordering::Release);
@@ -649,6 +878,10 @@ impl SongSwitch {
             self.retiring += 1;
         }
         self.occupied = false;
+        #[cfg(feature = "v2-mixed-app")]
+        if let Some(mixed) = self.mixed.take() {
+            self.retiring_mixed.push((mixed.owner_install(), mixed));
+        }
         self.playback = None;
         self.latest_plan = None;
         self.pending_running = None;
@@ -941,6 +1174,11 @@ impl SongSwitch {
 
     /// Play from the start or from where V2 paused. A deferred edit is applied first.
     pub fn play(&mut self, project: impl FnOnce() -> crate::project::ProjectFile) {
+        #[cfg(feature = "v2-mixed-app")]
+        if self.mixed_active() {
+            self.mixed_play();
+            return;
+        }
         self.pause_pending = false;
         if self.disable_pending {
             self.notices
@@ -974,6 +1212,11 @@ impl SongSwitch {
 
     /// Pause where the song is; a pending edit retains the request until collection.
     pub fn pause(&mut self) {
+        #[cfg(feature = "v2-mixed-app")]
+        if self.mixed_active() {
+            self.mixed_pause(false);
+            return;
+        }
         self.pause_pending = true;
         self.service_pause();
     }
@@ -1002,6 +1245,11 @@ impl SongSwitch {
 
     /// Stop and return to the song start, with any deferred edit applied.
     pub fn stop(&mut self, project: impl FnOnce() -> crate::project::ProjectFile) {
+        #[cfg(feature = "v2-mixed-app")]
+        if self.mixed_active() {
+            self.mixed_pause(true);
+            return;
+        }
         if self.playback.is_none() || self.disable_pending {
             return;
         }
@@ -1024,6 +1272,12 @@ impl SongSwitch {
     /// Note an edit. Acknowledged playing can reset through a crossfade; paused
     /// edits use compatible readmission. `project` is called only when ready.
     pub fn project_changed(&mut self, project: impl FnOnce() -> crate::project::ProjectFile) {
+        #[cfg(feature = "v2-mixed-app")]
+        if self.mixed_active() {
+            let snapshot = self.snapshot(project);
+            self.mixed_project_changed(&snapshot);
+            return;
+        }
         if self.playback.is_none() {
             return;
         }
@@ -1044,6 +1298,20 @@ impl SongSwitch {
     /// readmits deferred paused edits and prepares a fresh session after a fault.
     pub fn poll(&mut self, project: impl FnOnce() -> crate::project::ProjectFile) {
         self.collect_retired();
+        #[cfg(feature = "v2-mixed-app")]
+        if let Some(mixed) = &mut self.mixed {
+            if let Err(error) = mixed.poll() {
+                self.notices.push(error.to_string());
+                self.disable_pending = true;
+            }
+            self.notices.extend(mixed.take_notices());
+            self.reconcile_mixed_edit();
+            if self.rebuild_pending && !self.running_declined {
+                let snapshot = self.snapshot(project);
+                self.mixed_project_changed(&snapshot);
+            }
+            return;
+        }
         if self.disable_pending {
             // The refused project's session is muted; the application leaves V2 mode.
             return;
@@ -1085,7 +1353,26 @@ impl SongSwitch {
     fn collect_retired(&mut self) {
         while let Some(session) = self.retired.try_pop() {
             self.retiring = self.retiring.saturating_sub(1);
+            #[cfg(not(feature = "v2-mixed-app"))]
             drop(session);
+            #[cfg(feature = "v2-mixed-app")]
+            if let ActiveAudio::Mixed(audio) = session {
+                let sequence = audio.owner_install();
+                if let Some(index) = self
+                    .retiring_mixed
+                    .iter()
+                    .position(|(id, _)| *id == sequence)
+                {
+                    let (_, control) = self.retiring_mixed.remove(index);
+                    match control.close(*audio) {
+                        Ok(summary) => self.last_mixed_retirement = Some(summary),
+                        Err(error) => self.notices.push(error.to_string()),
+                    }
+                } else {
+                    self.notices
+                        .push("Retired mixed audio has no matching control owner".to_owned());
+                }
+            }
         }
     }
 

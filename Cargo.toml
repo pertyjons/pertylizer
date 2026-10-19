@@ -74,6 +74,8 @@ midir = "0.11.0"
 
 # Lock-free communication
 ringbuf = "0.5.1"
+# Owned pointer handoff for the opt-in V2 backend retirement worker.
+atomicbox = "=0.4.0"
 arc-swap = "1.9.2"
 
 # Compile-time assertions (Send bounds / layout of thread-transferred structs).

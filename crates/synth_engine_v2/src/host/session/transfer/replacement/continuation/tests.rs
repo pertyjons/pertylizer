@@ -7,8 +7,8 @@ use crate::{
         transfer::{
             ContinuationLimits, SessionAudio, SessionControl,
             replacement::{
-                PlanReplacementKind, PlanReplacementOutcome, RunningEditMode,
-                RunningReplacementRequest,
+                PlanReplacementKind, PlanReplacementOutcome, PlanReplacementRefusal,
+                RunningEditMode, RunningReplacementRequest,
             },
         },
     },
@@ -42,6 +42,44 @@ fn plan_with_stealing(
     profile: HostProfile,
     level: f32,
     stealing: crate::ir::StealingPolicy,
+) -> CompiledPlan {
+    plan_with_global_stage(profile, level, stealing, None)
+}
+
+fn plan_with_global_stage(
+    profile: HostProfile,
+    level: f32,
+    stealing: crate::ir::StealingPolicy,
+    stage: Option<IrNodeKind>,
+) -> CompiledPlan {
+    plan_with_global_stages(profile, level, stealing, stage.as_slice())
+}
+
+fn plan_with_global_stages(
+    profile: HostProfile,
+    level: f32,
+    stealing: crate::ir::StealingPolicy,
+    stages: &[IrNodeKind],
+) -> CompiledPlan {
+    let stages: Vec<_> = stages
+        .iter()
+        .enumerate()
+        .map(|(index, kind)| {
+            (
+                NodeId::new(6 + u32::try_from(index).unwrap()),
+                *kind,
+                ExecutionScope::Global,
+            )
+        })
+        .collect();
+    plan_with_keyed_global_stages(profile, level, stealing, &stages)
+}
+
+fn plan_with_keyed_global_stages(
+    profile: HostProfile,
+    level: f32,
+    stealing: crate::ir::StealingPolicy,
+    stages: &[(NodeId, IrNodeKind, ExecutionScope)],
 ) -> CompiledPlan {
     let graph = GraphIr::builder()
         .node(
@@ -87,11 +125,6 @@ fn plan_with_stealing(
             (TRIM, PortId::FIRST),
             SignalDomain::Audio,
         )
-        .connect(
-            (TRIM, PortId::FIRST),
-            (NodeId::new(5), PortId::FIRST),
-            SignalDomain::Audio,
-        )
         .tuning(
             ExecutionScope::Voice,
             crate::tuning::PreparedTuning::equal_temperament().unwrap(),
@@ -105,12 +138,417 @@ fn plan_with_stealing(
                 simultaneous_holds: EventCount::NONE,
             }],
             ..PlanDeclarations::default()
-        })
+        });
+    let mut graph = graph;
+    let mut previous = TRIM;
+    for (node, kind, scope) in stages {
+        graph = graph.node(*node, *kind, *scope).connect(
+            (previous, PortId::FIRST),
+            (*node, PortId::FIRST),
+            SignalDomain::Audio,
+        );
+        previous = *node;
+    }
+    let graph = graph
+        .connect(
+            (previous, PortId::FIRST),
+            (NodeId::new(5), PortId::FIRST),
+            SignalDomain::Audio,
+        )
         .build()
         .unwrap();
     compile(&graph, &RenderConfig::new(profile))
         .into_plan()
         .unwrap()
+}
+
+#[test]
+fn a_global_structural_stage_preserves_actual_held_voices_and_later_releases() {
+    for rate in [44_100.0, 48_000.0, 96_000.0, 192_000.0] {
+        let profile = profile(rate);
+        for partitions in [&[1][..], &[64], &[256], &[512], &[7, 19, 3, 111]] {
+            let old = plan(profile, 0.8);
+            let program = events(&old);
+            let (_, mut reference) = start(old.clone(), &program, profile);
+            let (mut control, mut audio) = start(old, &program, profile);
+            let table = audio.origin.table;
+            let epoch = audio.epoch();
+            let new = plan_with_global_stage(
+                profile,
+                0.8,
+                crate::ir::StealingPolicy::None,
+                Some(IrNodeKind::HardClamp),
+            );
+            assert!(matches!(
+                audio.renderer.plan().prepare_continuation(
+                    &new,
+                    witness_limits().transition_bytes,
+                    crate::quantities::RecordCount::measured(0)
+                ),
+                Err(ContinuationError::RecordLimit)
+            ));
+            let candidate = prepare(&mut control, &audio, new, profile);
+            assert_eq!(candidate.kind(), PlanReplacementKind::RunningCompatible);
+            assert!(
+                candidate
+                    .continuation
+                    .as_ref()
+                    .unwrap()
+                    .proof
+                    .structural
+                    .is_some()
+            );
+            let mut installed = None;
+            assert_eq!(
+                crate::render_allocation::count_allocs(
+                    || installed = Some(audio.begin_running_replacement(candidate).unwrap())
+                ),
+                0
+            );
+            let mut candidate = installed.unwrap();
+            let mut frame = 0;
+            let mut part = 0;
+            let mut sound = Vec::new();
+            while frame < 1280 {
+                let count = partitions[part % partitions.len()].min(1280 - frame);
+                let mut output = vec![0.0; count * 2];
+                assert_eq!(
+                    crate::render_allocation::count_allocs(|| {
+                        let block =
+                            AudioBlockMut::new(&mut output, count, ChannelLayout::Stereo).unwrap();
+                        if candidate.outcome().is_none() {
+                            audio
+                                .render_running_replacement(&mut candidate, block)
+                                .unwrap();
+                        } else {
+                            audio.render(block).unwrap();
+                        }
+                    }),
+                    0
+                );
+                let expected = render(&mut reference, count);
+                assert_eq!(
+                    output
+                        .iter()
+                        .map(|sample| sample.to_bits())
+                        .collect::<Vec<_>>(),
+                    expected
+                        .iter()
+                        .map(|sample| sample.to_bits())
+                        .collect::<Vec<_>>(),
+                    "rate={rate}, parts={partitions:?}, frame={frame}"
+                );
+                sound.extend(output);
+                frame += count;
+                part += 1;
+            }
+            assert!(sound.iter().any(|sample| *sample != 0.0));
+            assert!(sound[2000..].iter().all(|sample| *sample == 0.0));
+            let receipt = control.collect_replacement(candidate).unwrap();
+            assert!(matches!(
+                receipt.outcome,
+                PlanReplacementOutcome::Installed(_)
+            ));
+            assert_eq!(audio.origin.table, table);
+            assert_eq!(control.origin.table, table);
+            assert_eq!(audio.epoch(), epoch);
+            assert_eq!(audio.publication_faults(), 0);
+        }
+    }
+}
+
+#[test]
+fn repeated_structural_edits_keep_warm_delay_history_and_bounded_owning_custody() {
+    use crate::quantities::{DelayFeedback, DelayTime};
+    let profile = profile(48_000.0);
+    let delay = IrNodeKind::Delay {
+        time_left: DelayTime::new(0.001).unwrap(),
+        time_right: DelayTime::new(0.002).unwrap(),
+        feedback: DelayFeedback::new(0.4).unwrap(),
+        mix: NormalizedLevel::new(0.4).unwrap(),
+        tone: NormalizedLevel::FULL,
+    };
+    let stages = [delay, IrNodeKind::HardClamp];
+    let old = plan_with_global_stages(profile, 0.8, crate::ir::StealingPolicy::None, &stages[..1]);
+    let source_plan = old.clone();
+    let program: Vec<_> = events(&old)
+        .into_iter()
+        .filter(|event| matches!(event.payload(), CompiledPayload::NoteOn { .. }))
+        .collect();
+    let (_, mut reference) = start(old.clone(), &program, profile);
+    let (mut control, mut audio) = start(old, &program, profile);
+    let table = audio.origin.table;
+    for index in 0..128 {
+        let count = if index % 2 == 0 { 2 } else { 1 };
+        let next = plan_with_global_stages(
+            profile,
+            0.8,
+            crate::ir::StealingPolicy::None,
+            &stages[..count],
+        );
+        let stream = AdmittedCompiledStream::admit(
+            &next,
+            &program
+                .iter()
+                .map(|event| {
+                    let payload = rebind_program(event.payload(), &source_plan, &next).unwrap();
+                    PlanEvent::new(event.position(), payload)
+                })
+                .collect::<Vec<_>>(),
+        )
+        .unwrap();
+        let candidate = prepare_admitted(&mut control, &audio, next, stream, profile);
+        assert_eq!(candidate.kind(), PlanReplacementKind::RunningCompatible);
+        let mut owner = None;
+        assert_eq!(
+            crate::render_allocation::count_allocs(
+                || owner = Some(audio.begin_running_replacement(candidate).unwrap())
+            ),
+            0
+        );
+        let mut owner = owner.unwrap();
+        let mut samples = [0.0; 128];
+        assert_eq!(
+            crate::render_allocation::count_allocs(|| audio
+                .render_running_replacement(
+                    &mut owner,
+                    AudioBlockMut::new(&mut samples, 64, ChannelLayout::Stereo).unwrap()
+                )
+                .unwrap()),
+            0
+        );
+        assert_eq!(
+            samples.as_slice(),
+            render(&mut reference, 64).as_slice(),
+            "edit={index}"
+        );
+        let receipt = control.collect_replacement(owner).unwrap();
+        assert!(matches!(
+            receipt.outcome,
+            PlanReplacementOutcome::Installed(_)
+        ));
+        assert!(!control.has_replacements());
+        assert!(!control.has_outstanding());
+        assert_eq!(audio.origin.table, table);
+        assert_eq!(control.origin.table, table);
+        assert_eq!(audio.publication_faults(), 0);
+    }
+    let boundary = audio.clock();
+    audio
+        .enqueue(control.prepare_stop(boundary).unwrap())
+        .unwrap();
+    let _stopped = render(&mut audio, 64);
+    let _receipt = control.collect(audio.take_completed().unwrap()).unwrap();
+    assert!(!control.has_outstanding());
+    // Stop holds dormant compiled state; its two identities stay owned until
+    // activation or cold teardown, rather than disappearing during an edit.
+    assert_eq!(audio.renderer.readmission_retired_notes().get(), 2);
+}
+
+#[test]
+fn structural_voice_extent_refusal_cannot_partially_transfer_global_state() {
+    let profile = profile(48_000.0);
+    let delay = IrNodeKind::Delay {
+        time_left: crate::quantities::DelayTime::new(0.001).unwrap(),
+        time_right: crate::quantities::DelayTime::new(0.002).unwrap(),
+        feedback: crate::quantities::DelayFeedback::new(0.4).unwrap(),
+        mix: NormalizedLevel::new(0.4).unwrap(),
+        tone: NormalizedLevel::FULL,
+    };
+    let old = plan_with_global_stages(profile, 0.8, crate::ir::StealingPolicy::None, &[delay]);
+    let program = events(&old);
+    let (_, mut reference) = start(old.clone(), &program, profile);
+    let (mut control, mut audio) = start(old, &program, profile);
+    let origin = audio.origin;
+    let next = plan_with_global_stages(
+        profile,
+        0.8,
+        crate::ir::StealingPolicy::None,
+        &[delay, IrNodeKind::HardClamp],
+    );
+    let mut candidate = prepare(&mut control, &audio, next, profile);
+    let structural = candidate
+        .continuation
+        .as_mut()
+        .unwrap()
+        .proof
+        .structural
+        .as_mut()
+        .unwrap();
+    structural.voice_nodes[0].history += 1;
+    let candidate = audio.begin_running_replacement(candidate).unwrap();
+    assert!(matches!(
+        candidate.outcome(),
+        Some(PlanReplacementOutcome::Refused(
+            PlanReplacementRefusal::Continuation(ContinuationError::Storage)
+        ))
+    ));
+    assert_eq!(audio.origin, origin);
+    assert_eq!(render(&mut audio, 512), render(&mut reference, 512));
+    let receipt = control.collect_replacement(candidate).unwrap();
+    assert!(matches!(
+        receipt.outcome,
+        PlanReplacementOutcome::Refused(_)
+    ));
+    assert!(!control.has_replacements());
+}
+
+#[test]
+fn global_automation_and_its_stamped_witness_follow_a_shifted_stable_parameter_address() {
+    let profile = profile(48_000.0);
+    let delay = IrNodeKind::Delay {
+        time_left: crate::quantities::DelayTime::new(0.001).unwrap(),
+        time_right: crate::quantities::DelayTime::new(0.002).unwrap(),
+        feedback: crate::quantities::DelayFeedback::new(0.4).unwrap(),
+        mix: NormalizedLevel::new(0.4).unwrap(),
+        tone: NormalizedLevel::FULL,
+    };
+    let old = plan_with_keyed_global_stages(
+        profile,
+        0.8,
+        crate::ir::StealingPolicy::None,
+        &[(NodeId::new(6), delay, ExecutionScope::Global)],
+    );
+    let old_slot = old
+        .resolve_parameter(NodeId::new(6), crate::ir::parameters::DELAY_MIX)
+        .unwrap();
+    let mut program = events(&old);
+    program.push(PlanEvent::new(
+        PlanPosition::new(320),
+        CompiledPayload::SetParameter {
+            slot: old_slot,
+            value: ParameterValue::new(0.7).unwrap(),
+        },
+    ));
+    program.sort_by_key(|event| event.position());
+    let (_, mut reference) = start(old.clone(), &program, profile);
+    let (mut control, mut audio) = start(old.clone(), &program, profile);
+    let new = plan_with_keyed_global_stages(
+        profile,
+        0.8,
+        crate::ir::StealingPolicy::None,
+        &[
+            (
+                NodeId::new(7),
+                IrNodeKind::Trim {
+                    level: Amplitude::UNITY,
+                },
+                ExecutionScope::Global,
+            ),
+            (NodeId::new(6), delay, ExecutionScope::Global),
+        ],
+    );
+    let shifted = new
+        .resolve_parameter(NodeId::new(6), crate::ir::parameters::DELAY_MIX)
+        .unwrap();
+    assert_ne!(old_slot.index(), shifted.index());
+    let new_program: Vec<_> = program
+        .iter()
+        .map(|event| {
+            PlanEvent::new(
+                event.position(),
+                rebind_program(event.payload(), &old, &new).unwrap(),
+            )
+        })
+        .collect();
+    let stream = AdmittedCompiledStream::admit(&new, &new_program).unwrap();
+    let candidate = prepare_admitted(&mut control, &audio, new, stream, profile);
+    let actual = install_and_render(&mut control, &mut audio, candidate);
+    assert_eq!(actual, render(&mut reference, 64));
+    assert_eq!(render(&mut audio, 512), render(&mut reference, 512));
+}
+
+#[test]
+fn unsupported_shape_precedes_limits_and_shifted_strip_rows_obey_them() {
+    let profile = profile(48_000.0);
+    let old = plan(profile, 0.8);
+    let changed = plan_with_global_stage(
+        profile,
+        0.7,
+        crate::ir::StealingPolicy::None,
+        Some(IrNodeKind::HardClamp),
+    );
+    assert!(matches!(
+        old.prepare_continuation(
+            &changed,
+            witness_limits().transition_bytes,
+            crate::quantities::RecordCount::measured(0)
+        ),
+        Err(ContinuationError::Plan)
+    ));
+    let strip = IrNodeKind::Channel {
+        fader: Amplitude::UNITY,
+        pan: crate::controller::BipolarLevel::new(0.0).unwrap(),
+        muted: false,
+    };
+    let scope = ExecutionScope::Channel(crate::ir::ChannelTag::new(1));
+    let old = plan_with_keyed_global_stages(
+        profile,
+        0.8,
+        crate::ir::StealingPolicy::None,
+        &[(NodeId::new(6), strip, scope)],
+    );
+    let added = IrNodeKind::Delay {
+        time_left: crate::quantities::DelayTime::new(0.001).unwrap(),
+        time_right: crate::quantities::DelayTime::new(0.002).unwrap(),
+        feedback: crate::quantities::DelayFeedback::new(0.4).unwrap(),
+        mix: NormalizedLevel::new(0.4).unwrap(),
+        tone: NormalizedLevel::FULL,
+    };
+    let new = plan_with_keyed_global_stages(
+        profile,
+        0.8,
+        crate::ir::StealingPolicy::None,
+        &[
+            (NodeId::new(7), added, scope),
+            (NodeId::new(6), strip, scope),
+        ],
+    );
+    let new_strip = new.channels()[0];
+    assert!(new_strip.mute.index() >= old.parameter_targets().len());
+    assert!(matches!(
+        old.prepare_continuation(
+            &new,
+            witness_limits().transition_bytes,
+            crate::quantities::RecordCount::measured(0)
+        ),
+        Err(ContinuationError::RecordLimit)
+    ));
+    let program = events(&old);
+    let (mut control, audio) = start(old, &program, profile);
+    let candidate = prepare(&mut control, &audio, new, profile);
+    assert_eq!(candidate.kind(), PlanReplacementKind::RunningCompatible);
+    let receipt = control.cancel_replacement(candidate).unwrap();
+    assert_eq!(receipt.outcome, PlanReplacementOutcome::Cancelled);
+}
+
+#[test]
+fn a_voice_parameter_row_cannot_be_relabelled_as_a_group_slot() {
+    let profile = profile(48_000.0);
+    let old = plan(profile, 0.8);
+    let new = plan(profile, 0.8);
+    let group = old
+        .parameter_addresses()
+        .iter()
+        .find(|address| {
+            old.parameter_targets()[address.slot.index()]
+                .instances
+                .get()
+                > 1
+        })
+        .unwrap()
+        .slot;
+    let interior = ParameterSlot::new(old.id(), group.index() + 1);
+    assert_eq!(
+        parameter_slot(interior, &old, &new),
+        Err(ContinuationError::Binding)
+    );
+    let resolved = parameter_slot(group, &old, &new).unwrap();
+    assert!(
+        new.parameter_addresses()
+            .iter()
+            .any(|address| address.slot == resolved)
+    );
 }
 fn events(plan: &CompiledPlan) -> Vec<PlanEvent> {
     let slot = plan.resolve_note(NodeId::new(2)).unwrap();
@@ -141,6 +579,7 @@ fn events(plan: &CompiledPlan) -> Vec<PlanEvent> {
 }
 fn witness_limits() -> ContinuationLimits {
     ContinuationLimits {
+        maximum_transition_records: crate::quantities::RecordCount::measured(16_384),
         maximum_stamped_events: EventCount::limit(16_384).unwrap(),
         witness_bytes: PreparedBytes::limit(4 * 1024 * 1024).unwrap(),
         transition_bytes: PreparedBytes::limit(4 * 1024 * 1024).unwrap(),
@@ -554,7 +993,24 @@ fn authoritative_minter_bindings_are_checked_before_publication() {
     let _unpaired = next_events.pop().unwrap();
     let stream = AdmittedCompiledStream::admit(&next, &next_events).unwrap();
     // Corrupt only private test authority, leaving its real timeline/renderer untouched.
-    control.control.minter_mut().continue_plan(next.id());
+    let forward = crate::plan::note_binding::NoteBindings::prepare(
+        control.control.plan(),
+        &next,
+        crate::plan::note_binding::NoteBindingScope::Exact,
+        witness_limits().transition_bytes,
+    )
+    .unwrap();
+    let reverse = crate::plan::note_binding::NoteBindings::prepare(
+        &next,
+        control.control.plan(),
+        crate::plan::note_binding::NoteBindingScope::Exact,
+        witness_limits().transition_bytes,
+    )
+    .unwrap();
+    control
+        .control
+        .minter_mut()
+        .continue_note_bindings(&forward);
     let serial = control.publication_serial;
     let result = control.prepare_running_replacement(
         next,
@@ -580,7 +1036,10 @@ fn authoritative_minter_bindings_are_checked_before_publication() {
     assert_eq!(control.publication_serial, serial);
     assert_eq!(audio.plan_id(), old_id);
     assert_eq!(control.plan_id(), old_id);
-    control.control.minter_mut().continue_plan(old_id);
+    control
+        .control
+        .minter_mut()
+        .continue_note_bindings(&reverse);
     assert!(render(&mut audio, 64).iter().any(|sample| *sample != 0.0));
 }
 
@@ -912,3 +1371,101 @@ fn optional_reset_witness_failure_is_reported_without_disabling_the_reset() {
     ));
     assert!(control.active_timeline.is_none());
 }
+
+#[test]
+fn observed_structural_continuation_keeps_held_voice_sound_and_later_releases() {
+    use crate::{
+        host::session::transfer::replacement::ObservationReplacementOutcome,
+        observe::ObservationSubscriptions,
+    };
+    let profile = profile(48_000.0);
+    for partition in [1, 37, 64, 511] {
+        let old = plan_with_global_stages(
+            profile,
+            0.8,
+            crate::ir::StealingPolicy::None,
+            &[IrNodeKind::StereoMonitor],
+        );
+        let next = plan_with_global_stages(
+            profile,
+            0.8,
+            crate::ir::StealingPolicy::None,
+            &[IrNodeKind::StereoMonitor, IrNodeKind::HardClamp],
+        );
+        let mut store = ObservationSubscriptions::prepare(&profile, &old).unwrap();
+        let handle = store
+            .subscribe(
+                &old,
+                old.resolve_tap(NodeId::new(6), PortId::FIRST).unwrap(),
+            )
+            .unwrap();
+        let budget = PreparedBytes::measured(4096);
+        let handoff = store
+            .configuration(budget)
+            .unwrap()
+            .prepare_handoff(&old, &next, budget)
+            .unwrap();
+        let program = events(&old);
+        let (_, mut reference) = start(old.clone(), &program, profile);
+        let (mut control, mut audio) = start(old, &program, profile);
+        let table = audio.origin.table;
+        let epoch = audio.epoch();
+        let mut candidate = prepare(&mut control, &audio, next, profile);
+        assert_eq!(candidate.kind(), PlanReplacementKind::RunningCompatible);
+        candidate.attach_observation(Ok(handoff).into()).unwrap();
+        let mut returned = None;
+        assert_eq!(
+            crate::render_allocation::count_allocs(|| {
+                returned = Some(
+                    audio
+                        .begin_running_replacement_observed(candidate, &mut store)
+                        .unwrap(),
+                );
+            }),
+            0
+        );
+        let mut candidate = returned.unwrap();
+        let mut sound = Vec::new();
+        let mut taps = vec![0.0; 2560];
+        let mut total = 0;
+        for start in (0..1280).step_by(partition) {
+            let frames = partition.min(1280 - start);
+            let mut output = vec![0.0; frames * 2];
+            assert_eq!(
+                crate::render_allocation::count_allocs(|| {
+                    let block =
+                        AudioBlockMut::new(&mut output, frames, ChannelLayout::Stereo).unwrap();
+                    if candidate.outcome().is_none() {
+                        audio
+                            .render_running_replacement_observed(&mut candidate, block, &mut store)
+                            .unwrap();
+                    } else {
+                        audio.render_observed(block, Some(&mut store)).unwrap();
+                    }
+                    let read = store.read(handle, &mut taps[total..]).unwrap();
+                    total += read.frames.as_usize().unwrap() * 2;
+                    assert_eq!(read.generation.as_u64(), 1);
+                    assert_eq!(read.dropped.as_u64(), 0);
+                    assert!(!read.ended);
+                }),
+                0
+            );
+            assert_eq!(output, render(&mut reference, frames));
+            sound.extend(output);
+        }
+        assert_eq!(total, sound.len());
+        assert_eq!(taps, sound);
+        assert!(sound.iter().any(|sample| *sample != 0.0));
+        assert!(sound[2000..].iter().all(|sample| *sample == 0.0));
+        assert_eq!(audio.origin.table, table);
+        assert_eq!(audio.epoch(), epoch);
+        let receipt = control.collect_replacement(candidate).unwrap();
+        assert!(matches!(
+            receipt.observation,
+            ObservationReplacementOutcome::HandedOff { .. }
+        ));
+    }
+}
+
+#[path = "relocation_tests.rs"]
+mod relocation_tests;

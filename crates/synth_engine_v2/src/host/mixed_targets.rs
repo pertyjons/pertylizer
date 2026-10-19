@@ -678,3 +678,44 @@ fn expand_parameter(
     }
     Ok(())
 }
+
+#[cfg(feature = "mixed-transfer-rehearsal")]
+mod hot;
+
+#[cfg(feature = "mixed-transfer-rehearsal")]
+impl MixedTargetAdmission {
+    /// Additional owned metadata, excluding immutable plan and renderer geometry.
+    pub(crate) fn owned_heap_bytes(&self) -> Option<crate::quantities::PreparedBytes> {
+        let mut bytes = size_of::<MixedInstancePartition>().checked_add(
+            self.compiled_slots
+                .capacity()
+                .checked_mul(size_of::<NoteSlot>())?,
+        )?;
+        for nodes in [
+            &self.partition.compiled_nodes,
+            &self.partition.live_nodes,
+            &self.partition.shared_sum_nodes,
+            &self.partition.global_nodes,
+        ] {
+            bytes = bytes.checked_add(nodes.capacity().checked_mul(size_of::<NodeSlot>())?)?;
+        }
+        for rows in [
+            &self.partition.compiled_rows,
+            &self.partition.live_rows,
+            &self.partition.shared_sum_rows,
+            &self.partition.global_rows,
+        ] {
+            bytes = bytes.checked_add(rows.capacity().checked_mul(size_of::<ParameterRow>())?)?;
+        }
+        bytes = bytes.checked_add(
+            self.partition
+                .restoration_groups
+                .capacity()
+                .checked_mul(size_of::<MixedRestorationGroup>())?,
+        )?;
+        let bytes = u64::try_from(bytes)
+            .ok()?
+            .checked_add(self.stream.owned_heap_bytes()?.get())?;
+        Some(crate::quantities::PreparedBytes::measured(bytes))
+    }
+}

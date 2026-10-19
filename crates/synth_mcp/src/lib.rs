@@ -19,6 +19,7 @@ pub mod bridge;
 pub mod error;
 pub mod server;
 pub mod types;
+pub mod v2_playback;
 
 pub use bridge::{AnalysisScope, RenderQuality, SpectrumSource, SynthBridge, TimeResolvedOptions};
 pub use error::McpBridgeError;

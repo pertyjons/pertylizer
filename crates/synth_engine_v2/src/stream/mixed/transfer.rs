@@ -52,8 +52,9 @@ use std::sync::{
     atomic::{AtomicU8, AtomicU64, Ordering},
 };
 
-mod activation;
+pub(super) mod activation;
 mod bridge;
+pub(super) mod continuation;
 mod publication;
 pub use activation::{
     MixedActivationAdopted, MixedActivationCollectError, MixedActivationCollectRefusal,
@@ -114,40 +115,47 @@ const REHEARSAL_SOURCE: MixedLiveSource = MixedLiveSource::new(1);
 /// them, so a legal first bend never exhausts either table.
 const REHEARSAL_SCOPES: MixedTransferScopeCount = MixedTransferScopeCount(16);
 
-/// Cumulative publication charges observed by one rehearsal owner. The two unavailable
-/// producers have no executable path in this host; their observations remain `None`.
-/// Peaks belong to this owner, and the external total is a same-quantum peak rather than
-/// the sum of the independent class peaks. The renderer-internal arena is not included.
+/// Actual per-owner publication occupancy. Absent or never-observed producer
+/// paths remain `None`; an installed idle emitter can report `Some(0)`.
+/// Class peaks are independent. Combined occupancy uses each same-quantum sealed
+/// external total (including Session operations) plus that quantum's internal arena.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[must_use]
 pub struct MixedTransferPublicationUsage {
     high_water: [Option<EventCount>; 6],
     external_total: EventCount,
+    combined_total: Option<EventCount>,
     last_quantum: Option<(SampleTime, [Option<EventCount>; 6])>,
 }
 
 impl MixedTransferPublicationUsage {
     pub(crate) fn of(audio: &MixedOneShotAudio) -> Self {
         Self {
-            high_water: ProducerClass::ALL.map(|class| {
-                match (class, audio.arbiter.high_water(class)) {
-                    (
-                        ProducerClass::AuthoredRuntime | ProducerClass::Internal,
-                        EventCount::NONE,
-                    ) => None,
-                    (_, observed) => Some(observed),
-                }
+            high_water: ProducerClass::ALL.map(|class| match class {
+                ProducerClass::AuthoredRuntime => audio
+                    .audio
+                    .renderer
+                    .runtime_authored_usage()
+                    .or_else(|| {
+                        (audio.arbiter.high_water(class).get() > 0).then_some(EventCount::NONE)
+                    })
+                    .map(|_| audio.arbiter.high_water(class)),
+                ProducerClass::Internal => audio.audio.renderer.runtime_internal_usage(),
+                _ => Some(audio.arbiter.high_water(class)),
             }),
+            combined_total: audio.audio.renderer.runtime_combined_usage(),
             external_total: audio.arbiter.high_water_external_total(),
             last_quantum: audio.arbiter.rehearsal_quantum().map(|(start, counts)| {
                 (
                     start,
-                    ProducerClass::ALL.map(|class| match (class, counts[class.index()]) {
-                        (
-                            ProducerClass::AuthoredRuntime | ProducerClass::Internal,
-                            EventCount::NONE,
-                        ) => None,
-                        (_, count) => Some(count),
+                    ProducerClass::ALL.map(|class| match class {
+                        ProducerClass::AuthoredRuntime => audio
+                            .audio
+                            .renderer
+                            .runtime_authored_usage()
+                            .map(|_| counts[class.index()]),
+                        ProducerClass::Internal => audio.audio.renderer.runtime_internal_at(start),
+                        _ => Some(counts[class.index()]),
                     }),
                 )
             }),
@@ -163,6 +171,11 @@ impl MixedTransferPublicationUsage {
     /// The highest total external charge reached in any single quantum for this owner.
     pub const fn high_water_external_total(&self) -> EventCount {
         self.external_total
+    }
+
+    /// Peak of actual external plus internal occupancy in the same rendered quantum.
+    pub const fn high_water_combined_total(&self) -> Option<EventCount> {
+        self.combined_total
     }
 
     /// Actual charges in the most recently opened single-quantum window and its
@@ -366,7 +379,8 @@ impl MixedTransferCommandId {
     }
 }
 
-/// The owner, plan, epoch, table and transfer one arm bound its wrappers and handles to.
+/// The stable stream/table owner and transfer serial one arm bound its wrappers
+/// and handles to. Immutable DSP plan identity is a separate geometry binding.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct MixedTransferBinding {
     owner: MixedIngressOwner,
@@ -403,10 +417,12 @@ pub(super) enum MixedResetSealPhase {
     Declined,
 }
 
+const OPEN_RESET_SEAL_PHASE: u8 = 0;
+
 impl MixedResetSealPhase {
     const fn encode(self) -> u8 {
         match self {
-            Self::Open => 0,
+            Self::Open => OPEN_RESET_SEAL_PHASE,
             Self::Sealed => 1,
             Self::Cancelled => 2,
             Self::Acquired => 3,
@@ -417,7 +433,7 @@ impl MixedResetSealPhase {
     /// Only the five encodings above are ever stored; any other byte reads as spent.
     const fn decode(byte: u8) -> Self {
         match byte {
-            0 => Self::Open,
+            OPEN_RESET_SEAL_PHASE => Self::Open,
             1 => Self::Sealed,
             2 => Self::Cancelled,
             3 => Self::Acquired,
@@ -567,15 +583,14 @@ static NEXT_TRANSFER: AtomicU64 = AtomicU64::new(1);
 
 /// A fresh transfer serial, or `None` once the space is spent. Never reissued.
 fn issue_transfer() -> Option<u64> {
-    let mut serial = NEXT_TRANSFER.load(Ordering::Relaxed);
+    issue_transfer_from(&NEXT_TRANSFER)
+}
+
+fn issue_transfer_from(counter: &AtomicU64) -> Option<u64> {
+    let mut serial = counter.load(Ordering::Relaxed);
     loop {
         let next = serial.checked_add(1)?;
-        match NEXT_TRANSFER.compare_exchange_weak(
-            serial,
-            next,
-            Ordering::Relaxed,
-            Ordering::Relaxed,
-        ) {
+        match counter.compare_exchange_weak(serial, next, Ordering::Relaxed, Ordering::Relaxed) {
             Ok(_) => return Some(serial),
             Err(current) => serial = current,
         }
@@ -1329,6 +1344,7 @@ impl<CQ, RQ> MixedTransferArmRefusal<CQ, RQ> {
 /// must reach, and whether the arm carries Panic.
 #[derive(Clone, Copy, Debug)]
 struct MixedTransferShape {
+    origin: crate::ingress::IngressOrigin,
     tables: MixedBendTables,
     scopes: MixedTransferScopeCount,
     panic: MixedPanicCapability,
@@ -1432,6 +1448,7 @@ impl MixedJoinedPrepared {
                 tables,
                 scopes: REHEARSAL_SCOPES,
                 panic: MixedPanicCapability::Absent,
+                origin: crate::ingress::IngressOrigin::Simulated,
             },
         )
     }
@@ -1456,6 +1473,7 @@ impl MixedJoinedPrepared {
             tables,
             scopes,
             panic,
+            origin,
         } = shape;
         let ordinary = Self::transfer_capacity(profile);
         let required = match panic {
@@ -1516,7 +1534,7 @@ impl MixedJoinedPrepared {
             }));
         };
         let (control, mut audio) =
-            match self.arm_one_shot_with(candidate, profile, Some(tables), panic) {
+            match self.arm_one_shot_with(candidate, profile, Some(tables), panic, origin) {
                 Ok(halves) => halves,
                 Err(refusal) => {
                     let refusal = *refusal;
@@ -1536,10 +1554,15 @@ impl MixedJoinedPrepared {
             transfer,
         };
         audio.transfer_binding = Some(binding);
+        let activation_custody = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        audio.activation_custody = Some(Arc::clone(&activation_custody));
         let (command_producer, command_consumer) = commands.split();
         let (result_producer, result_consumer) = results.split();
         Ok(MixedTransferArmed {
             control: MixedTransferControl {
+                activation_custody,
+                continuation_pending: None,
+                continuation_custody: None,
                 inner: control,
                 binding,
                 frontier: None,
@@ -1577,6 +1600,9 @@ impl MixedJoinedPrepared {
 #[derive(Debug)]
 #[must_use]
 pub struct MixedTransferControl {
+    activation_custody: Arc<std::sync::atomic::AtomicUsize>,
+    pub(super) continuation_pending: Option<crate::plan::PlanId>,
+    continuation_custody: Option<std::sync::Weak<()>>,
     inner: MixedOneShotControl,
     binding: MixedTransferBinding,
     /// The nominal stamp of the last consumed observation.
@@ -2219,9 +2245,11 @@ impl MixedTransferControl {
         CC: MixedTransferConsumer<MixedTransferCommand>,
         RP: MixedTransferProducer<MixedTransferResult>,
     {
-        let reason = if audio.inner.transfer_binding != Some(self.binding)
-            || !mixed_collection_pair(&self.inner.control, &audio.inner)
-        {
+        let reason = if audio.inner.transfer_binding != Some(self.binding) {
+            Some(MixedTransferJoinError::CrossedPair)
+        } else if self.continuation_pending.is_some() || audio.inner.continuation.is_some() {
+            Some(MixedTransferJoinError::ContinuationPending)
+        } else if !mixed_collection_pair(&self.inner.control, &audio.inner) {
             Some(MixedTransferJoinError::CrossedPair)
         } else if control_port
             .as_ref()
@@ -2402,6 +2430,8 @@ impl MixedTransferControl {
 /// Why a join returned everything unchanged.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Error)]
 pub enum MixedTransferJoinError {
+    #[error("an owning continuation must be returned and collected before join")]
+    ContinuationPending,
     /// The audio half belongs to another transfer.
     #[error("the control and audio halves belong to different transfers")]
     CrossedPair,

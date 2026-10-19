@@ -33,6 +33,22 @@ const BLOCK: usize = 256;
 const RING_FRAMES: u64 = 4 * QUANTUM_FRAMES as u64;
 const ORIGIN: StreamAnchor = StreamAnchor::new(SampleTime::ZERO, PlanPosition::ZERO);
 
+#[test]
+fn exhausted_store_ids_refuse_permanently_without_reissuing_a_foreign_handle_owner() {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    let counter = AtomicU64::new(u64::MAX - 2);
+    let first = super::StoreId::issue(&counter).expect("penultimate identity");
+    let last = super::StoreId::issue(&counter).expect("last identity");
+    assert_ne!(first, last);
+    for _ in 0..4 {
+        assert_eq!(
+            super::StoreId::issue(&counter),
+            Err(SubscriptionRefused::IdentityExhausted)
+        );
+        assert_eq!(counter.load(Ordering::Relaxed), u64::MAX);
+    }
+}
+
 /// How a render is observed, for the equivalence renders.
 enum Observed {
     /// No store at all.
@@ -142,7 +158,8 @@ fn a_subscription_is_admitted_against_the_plans_taps_and_refused_by_name() {
     // holds what it held.
     let plan = admit(&monitored_voice());
     let other = admit(&monitored_voice());
-    let mut store = ObservationSubscriptions::prepare(&profile(), &plan);
+    let mut store = ObservationSubscriptions::prepare(&profile(), &plan)
+        .expect("observation identities available");
     let slot = plan
         .resolve_tap(MONITOR, PortId::FIRST)
         .expect("the monitor declares a tap");
@@ -184,7 +201,8 @@ fn a_subscription_is_admitted_against_the_plans_taps_and_refused_by_name() {
     assert_eq!(store.channels(id), Some(1));
     // A handle is the issuing store's: a second store for the same plan issues index zero
     // too, and this store's handle names nothing in it.
-    let mut second = ObservationSubscriptions::prepare(&profile(), &plan);
+    let mut second = ObservationSubscriptions::prepare(&profile(), &plan)
+        .expect("observation identities available");
     let second_id = second
         .subscribe(&plan, slot)
         .expect("admitted in its own store");
@@ -194,7 +212,8 @@ fn a_subscription_is_admitted_against_the_plans_taps_and_refused_by_name() {
     assert_eq!(second.read(id, &mut [0.0; 4]), None);
     // A telemetry window no address space holds is refused before anything is allocated.
     let huge = profile_with_ring(FrameCount::new(u64::MAX));
-    let mut unrepresentable = ObservationSubscriptions::prepare(&huge, &plan);
+    let mut unrepresentable =
+        ObservationSubscriptions::prepare(&huge, &plan).expect("observation identities available");
     assert_eq!(
         unrepresentable.subscribe(&plan, slot),
         Err(SubscriptionRefused::RingUnrepresentable {
@@ -203,7 +222,8 @@ fn a_subscription_is_admitted_against_the_plans_taps_and_refused_by_name() {
     );
     // A store prepared for the other plan receives nothing from this renderer: its handle
     // reads no frames after a render it was handed to.
-    let mut foreign_store = ObservationSubscriptions::prepare(&profile(), &other);
+    let mut foreign_store = ObservationSubscriptions::prepare(&profile(), &other)
+        .expect("observation identities available");
     let foreign_id = foreign_store
         .subscribe(&other, foreign)
         .expect("the other plan's tap is admitted against its own store");
@@ -229,7 +249,8 @@ fn an_activation_adopted_inside_a_block_loses_the_observer_no_quantum() {
     // path is the one exercised.
     let plan = admit(&monitored_voice());
     let mut renderer = Renderer::open(&plan);
-    let mut store = ObservationSubscriptions::prepare(&profile(), &plan);
+    let mut store = ObservationSubscriptions::prepare(&profile(), &plan)
+        .expect("observation identities available");
     let slot = plan
         .resolve_tap(MONITOR, PortId::FIRST)
         .expect("the monitor declares a tap");
@@ -468,7 +489,8 @@ fn drive(plan: &CompiledPlan, mode: Observed, quanta: usize) -> Driven {
     let (mut store, id) = match mode {
         Observed::Nobody => (None, None),
         Observed::Reader | Observed::Saturated => {
-            let mut store = ObservationSubscriptions::prepare(&profile(), plan);
+            let mut store = ObservationSubscriptions::prepare(&profile(), plan)
+                .expect("observation identities available");
             let slot = plan
                 .resolve_tap(MONITOR, PortId::FIRST)
                 .expect("the monitor declares a tap");
@@ -660,7 +682,8 @@ fn channel_return_and_master_taps_are_stereo_lossy_and_audio_invariant() {
         let mut scheduler =
             CompiledEventScheduler::prepare(&mut control, &quiet).expect("scheduler");
         let mut arbiter = PublicationArbiter::prepare(&profile).expect("arbiter");
-        let mut store = ObservationSubscriptions::prepare(&profile, &plan);
+        let mut store = ObservationSubscriptions::prepare(&profile, &plan)
+            .expect("observation identities available");
         let ids: Vec<_> = [5, 6, 9, 11]
             .map(|id| {
                 store
